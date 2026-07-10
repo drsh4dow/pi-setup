@@ -1,6 +1,6 @@
 ---
 name: abstraction-economics
-description: The design-time rent test deciding whether a helper, wrapper, getter, interface, constant, config option, or module earns its keep. Use when introducing or naming a new abstraction, when deciding whether to split or inline a function, when reviewing code for needless indirection or over-engineering, or when another skill (beauty-gate, code-review) needs the earning criteria.
+description: Use when working with code always. Teaches you when to abstract correctly.
 ---
 
 Every name is a loan. A helper, wrapper, interface, or module borrows attention from every future reader: one more place to look, one more hop between intent and behavior. **Rent** is the ongoing cost - reading, testing, debugging, migration, ownership. The economics are blunt: an abstraction lives only while it pays rent, and the cheapest abstraction is the one never introduced.

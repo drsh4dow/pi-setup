@@ -1,6 +1,6 @@
 ---
 name: beauty-gate
-description: A behavior-preserving audit of the full diff after an implementation works and before declaring it complete. Use when a change has just gone green, when you are reviewing a diff, when the user says "audit this diff", or asks whether a change can be simplified or shrunk.
+description: Use when working with code or auditing code.
 ---
 
 A working implementation is a **draft**. The beauty gate is the pass that turns a draft into a finished change: one behavior-preserving audit of the entire affected seam. Green tests open the gate; they never waive it - tests establish behavior, not design quality.

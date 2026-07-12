@@ -1,6 +1,11 @@
 {
   "lastChangelogVersion": "0.80.6",
-  "packages": ["npm:pi-web-access", "npm:pi-questions", "npm:pi-claude-auth"],
+  "packages": [
+    "npm:pi-web-access",
+    "npm:pi-questions",
+    "npm:pi-claude-auth",
+    "npm:pi-subagents"
+  ],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
   "enabledModels": ["anthropic/claude-fable-5", "openai-codex/gpt-5.6-sol"],
@@ -27,7 +32,7 @@
       },
       "researcher": {
         "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "high"
+        "thinking": "medium"
       },
       "planner": {
         "model": "anthropic/claude-fable-5",
@@ -39,8 +44,9 @@
         "thinking": "medium"
       },
       "reviewer": {
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "high"
+        "model": "anthropic/claude-fable-5",
+        "thinking": "low",
+        "fallbackModels": ["openai-codex/gpt-5.6-sol"]
       },
       "context-builder": {
         "model": "openai-codex/gpt-5.6-sol",

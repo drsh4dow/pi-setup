@@ -3,7 +3,8 @@
   "packages": [
     "npm:pi-web-access",
     "npm:pi-delegate",
-    "npm:pi-questions"
+    "npm:pi-questions",
+    "npm:@plannotator/pi-extension"
   ],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",

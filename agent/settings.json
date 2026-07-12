@@ -31,7 +31,8 @@
       },
       "planner": {
         "model": "anthropic/claude-fable-5",
-        "thinking": "high"
+        "thinking": "high",
+        "fallbackModels": ["openai-codex/gpt-5.6-sol"]
       },
       "worker": {
         "model": "openai-codex/gpt-5.6-sol",
@@ -47,7 +48,8 @@
       },
       "oracle": {
         "model": "anthropic/claude-fable-5",
-        "thinking": "low"
+        "thinking": "low",
+        "fallbackModels": ["openai-codex/gpt-5.6-sol"]
       },
       "delegate": {
         "model": "openai-codex/gpt-5.6-sol",

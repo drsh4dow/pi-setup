@@ -3,12 +3,14 @@
   "packages": [
     "npm:pi-web-access",
     "npm:pi-questions",
-    "npm:pi-claude-auth",
-    "npm:pi-subagents"
+    "npm:pi-delegate"
   ],
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-fable-5",
-  "enabledModels": ["anthropic/claude-fable-5", "openai-codex/gpt-5.6-sol"],
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-sol",
+  "enabledModels": [
+    "anthropic/claude-fable-5",
+    "openai-codex/gpt-5.6-sol"
+  ],
   "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,
   "treeFilterMode": "default",
@@ -21,45 +23,5 @@
   },
   "compaction": {
     "enabled": false
-  },
-  "subagents": {
-    "defaultModel": "openai-codex/gpt-5.6-sol",
-    "defaultThinking": "medium",
-    "agentOverrides": {
-      "scout": {
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "minimal"
-      },
-      "researcher": {
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "medium"
-      },
-      "planner": {
-        "enabled": false,
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "xhigh"
-      },
-      "worker": {
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "medium"
-      },
-      "reviewer": {
-        "enabled": false,
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "medium"
-      },
-      "context-builder": {
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "medium"
-      },
-      "oracle": {
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "medium"
-      },
-      "delegate": {
-        "model": "openai-codex/gpt-5.6-sol",
-        "thinking": "medium"
-      }
-    }
   }
 }

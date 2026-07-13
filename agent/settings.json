@@ -3,16 +3,18 @@
   "packages": [
     "npm:pi-web-access",
     "npm:pi-questions",
-    "npm:pi-delegate"
+    "npm:pi-delegate",
+    "npm:pi-better-openai"
   ],
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultProvider": "opencode",
+  "defaultModel": "claude-fable-5",
   "enabledModels": [
-    "anthropic/claude-fable-5",
-    "openai-codex/gpt-5.6-sol"
+    "openai-codex/gpt-5.6-sol",
+    "opencode/claude-fable-5",
+    "opencode/grok-4.5"
   ],
   "defaultThinkingLevel": "high",
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",
   "terminal": {
@@ -22,6 +24,6 @@
     "anthropicExtraUsage": false
   },
   "compaction": {
-    "enabled": false
+    "enabled": true
   }
 }

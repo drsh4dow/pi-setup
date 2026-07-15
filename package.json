@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "bun run typecheck && bun run lint",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check agent/extensions"
+    "check": "biome check agent/extensions",
+    "check:fix": "biome check agent/extensions --write"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",

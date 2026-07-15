@@ -13,6 +13,7 @@
     "@earendil-works/pi-tui": "^0.80.6",
     "acorn": "^8.17.0",
     "firecrawl": "^4.30.0",
+    "effect": "4.0.0-beta.98",
     "typebox": "^1.3.6"
   },
   "devDependencies": {

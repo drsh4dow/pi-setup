@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.80.6",
+  "lastChangelogVersion": "0.80.7",
   "packages": [
     "npm:pi-web-access",
     "npm:pi-questions",
@@ -13,7 +13,7 @@
     "opencode/claude-fable-5",
     "opencode/grok-4.5"
   ],
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "high",
   "hideThinkingBlock": true,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",

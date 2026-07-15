@@ -1,4 +1,5 @@
-import { mapConcurrent } from "./concurrency.ts";
+import { Effect } from "effect";
+import { errorMessage } from "./errors.ts";
 import { fetchExaContents } from "./exa.ts";
 import { extractGitHub, parseGitHubUrl } from "./github.ts";
 import { extractMedia, isMediaInput, parseTimestamp } from "./media.ts";
@@ -105,96 +106,103 @@ function itemError(url: string, error: string): ExtractedContent {
   return { url, title: "", content: "", error };
 }
 
-async function specializedContent(
+function specializedContent(
   url: string,
   options: FetchOptions,
-  signal?: AbortSignal,
-): Promise<ExtractedContent> {
-  try {
-    if (isMediaInput(url)) {
-      return (
-        (await extractMedia(url, options, signal)) ??
-        itemError(url, "Unsupported media input")
-      );
-    }
-    if (options.timestamp || options.frames) {
-      return itemError(
-        url,
-        "Frame extraction only supports YouTube URLs and local video files",
-      );
-    }
-    return (
-      (await extractGitHub(url, signal, options.forceClone)) ??
-      itemError(url, "GitHub extraction failed")
-    );
-  } catch (error) {
-    return itemError(
-      url,
-      error instanceof Error ? error.message : String(error),
+): Effect.Effect<ExtractedContent> {
+  if (isMediaInput(url)) {
+    return extractMedia(url, options).pipe(
+      Effect.map((item) => item ?? itemError(url, "Unsupported media input")),
     );
   }
+  if (options.timestamp || options.frames) {
+    return Effect.succeed(
+      itemError(
+        url,
+        "Frame extraction only supports YouTube URLs and local video files",
+      ),
+    );
+  }
+  return extractGitHub(url, options.forceClone).pipe(
+    Effect.map((item) => item ?? itemError(url, "GitHub extraction failed")),
+    Effect.catch((error) =>
+      Effect.succeed(itemError(url, errorMessage(error))),
+    ),
+  );
 }
 
-export async function fetchContent(
+export function fetchContent(
   urls: string[],
   options: FetchOptions,
-  signal?: AbortSignal,
-): Promise<ExtractedContent[]> {
-  const results = Array<ExtractedContent>(urls.length);
-  const ordinary: Array<{ url: string; index: number }> = [];
-  const specialized: Array<{ url: string; index: number }> = [];
+): Effect.Effect<ExtractedContent[]> {
+  return Effect.gen(function* () {
+    const results = Array<ExtractedContent>(urls.length);
+    const ordinary: Array<{ url: string; index: number }> = [];
+    const specialized: Array<{ url: string; index: number }> = [];
 
-  for (const [index, url] of urls.entries()) {
-    if (parseGitHubUrl(url) || isMediaInput(url)) {
-      specialized.push({ url, index });
-      continue;
-    }
-    if (options.timestamp || options.frames) {
-      results[index] = itemError(
-        url,
-        "Frame extraction only supports YouTube URLs and local video files",
-      );
-      continue;
-    }
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    for (const [index, url] of urls.entries()) {
+      if (parseGitHubUrl(url) || isMediaInput(url)) {
+        specialized.push({ url, index });
+        continue;
+      }
+      if (options.timestamp || options.frames) {
         results[index] = itemError(
           url,
-          "Only HTTP and HTTPS URLs are supported",
+          "Frame extraction only supports YouTube URLs and local video files",
         );
-      } else {
-        ordinary.push({ url, index });
+        continue;
       }
-    } catch {
-      results[index] = itemError(url, "Invalid URL or unsupported local file");
+      try {
+        const parsed = new URL(url);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          results[index] = itemError(
+            url,
+            "Only HTTP and HTTPS URLs are supported",
+          );
+        } else {
+          ordinary.push({ url, index });
+        }
+      } catch {
+        results[index] = itemError(
+          url,
+          "Invalid URL or unsupported local file",
+        );
+      }
     }
-  }
 
-  const ordinaryPromise = ordinary.length
-    ? fetchExaContents(
-        ordinary.map((item) => item.url),
-        signal,
-      ).then(
-        (items) => {
-          for (const [position, item] of items.entries()) {
-            results[ordinary[position].index] = item;
-          }
-        },
-        (error: unknown) => {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          for (const item of ordinary) {
-            results[item.index] = itemError(item.url, message);
-          }
-        },
-      )
-    : Promise.resolve();
+    const ordinaryEffect = ordinary.length
+      ? fetchExaContents(ordinary.map((item) => item.url)).pipe(
+          Effect.map((items) =>
+            items.map((content, position) => ({
+              index: ordinary[position].index,
+              content,
+            })),
+          ),
+          Effect.catch((error) =>
+            Effect.succeed(
+              ordinary.map((item) => ({
+                index: item.index,
+                content: itemError(item.url, errorMessage(error)),
+              })),
+            ),
+          ),
+        )
+      : Effect.succeed([]);
+    const specializedEffect = Effect.forEach(
+      specialized,
+      (item) =>
+        specializedContent(item.url, options).pipe(
+          Effect.map((content) => ({ index: item.index, content })),
+        ),
+      { concurrency: 2 },
+    );
 
-  const specializedPromise = mapConcurrent(specialized, 2, async (item) => {
-    results[item.index] = await specializedContent(item.url, options, signal);
+    const groups = yield* Effect.all([ordinaryEffect, specializedEffect], {
+      concurrency: 2,
+    });
+    for (const group of groups) {
+      for (const item of group) results[item.index] = item.content;
+    }
+    return results;
   });
-
-  await Promise.all([ordinaryPromise, specializedPromise]);
-  return results;
 }

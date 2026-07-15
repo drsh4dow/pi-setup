@@ -25,7 +25,6 @@ export interface SearchOptions {
   includeContent?: boolean;
   recencyFilter?: "day" | "week" | "month" | "year";
   domainFilter?: string[];
-  signal?: AbortSignal;
 }
 
 export interface FetchOptions {

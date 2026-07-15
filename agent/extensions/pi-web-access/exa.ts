@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import { asError } from "./errors.ts";
 import type {
   ExtractedContent,
   SearchOptions,
@@ -46,37 +48,45 @@ function apiKey(): string {
   return key;
 }
 
-function requestSignal(signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  return signal ? AbortSignal.any([signal, timeout]) : timeout;
-}
-
-async function post<T>(
+function post<T>(
   path: string,
   body: Record<string, unknown>,
-  signal?: AbortSignal,
-): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey(),
-    },
-    body: JSON.stringify(body),
-    signal: requestSignal(signal),
+): Effect.Effect<T, Error> {
+  return Effect.gen(function* () {
+    const response = yield* Effect.tryPromise({
+      try: (signal) =>
+        fetch(`${API_BASE}${path}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey(),
+          },
+          body: JSON.stringify(body),
+          signal,
+        }),
+      catch: asError,
+    }).pipe(Effect.timeout(REQUEST_TIMEOUT_MS), Effect.mapError(asError));
+
+    if (!response.ok) {
+      const detail = (yield* Effect.tryPromise({
+        try: () => response.text(),
+        catch: asError,
+      }))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+      return yield* Effect.fail(
+        new Error(
+          `Exa API error ${response.status}${detail ? `: ${detail}` : ""}`,
+        ),
+      );
+    }
+
+    return yield* Effect.tryPromise({
+      try: () => response.json() as Promise<T>,
+      catch: asError,
+    });
   });
-
-  if (!response.ok) {
-    const detail = (await response.text())
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 300);
-    throw new Error(
-      `Exa API error ${response.status}${detail ? `: ${detail}` : ""}`,
-    );
-  }
-
-  return (await response.json()) as T;
 }
 
 function highlights(value: unknown): string[] {
@@ -158,38 +168,36 @@ function domainFilters(domains: string[] | undefined) {
   };
 }
 
-export async function searchExa(
+export function searchExa(
   query: string,
   options: SearchOptions = {},
-): Promise<SearchResult> {
-  const useSearch =
-    options.includeContent === true ||
-    options.recencyFilter !== undefined ||
-    (options.domainFilter?.length ?? 0) > 0 ||
-    options.numResults !== undefined;
+): Effect.Effect<SearchResult, Error> {
+  return Effect.gen(function* () {
+    const useSearch =
+      options.includeContent === true ||
+      options.recencyFilter !== undefined ||
+      (options.domainFilter?.length ?? 0) > 0 ||
+      options.numResults !== undefined;
 
-  if (!useSearch) {
-    const response = await post<ExaAnswerResponse>(
-      "/answer",
-      { query, text: true },
-      options.signal,
-    );
-    const answer =
-      typeof response.answer === "string"
-        ? response.answer
-        : response.answer
-          ? JSON.stringify(response.answer)
-          : "";
-    return {
-      answer: answer.slice(0, FETCH_CONTENT_CHARS),
-      sources: sources(response.citations),
-      content: [],
-    };
-  }
+    if (!useSearch) {
+      const response = yield* post<ExaAnswerResponse>("/answer", {
+        query,
+        text: true,
+      });
+      const answer =
+        typeof response.answer === "string"
+          ? response.answer
+          : response.answer
+            ? JSON.stringify(response.answer)
+            : "";
+      return {
+        answer: answer.slice(0, FETCH_CONTENT_CHARS),
+        sources: sources(response.citations),
+        content: [],
+      };
+    }
 
-  const response = await post<ExaSearchResponse>(
-    "/search",
-    {
+    const response = yield* post<ExaSearchResponse>("/search", {
       query,
       type: "auto",
       numResults: options.numResults ?? 5,
@@ -203,15 +211,14 @@ export async function searchExa(
           ? { text: { maxCharacters: SEARCH_CONTENT_CHARS } }
           : {}),
       },
-    },
-    options.signal,
-  );
+    });
 
-  return {
-    answer: evidence(response.results),
-    sources: sources(response.results),
-    content: options.includeContent ? inlineContent(response.results) : [],
-  };
+    return {
+      answer: evidence(response.results),
+      sources: sources(response.results),
+      content: options.includeContent ? inlineContent(response.results) : [],
+    };
+  });
 }
 
 function statusError(
@@ -228,45 +235,43 @@ function statusError(
   );
 }
 
-export async function fetchExaContents(
+export function fetchExaContents(
   urls: string[],
-  signal?: AbortSignal,
-): Promise<ExtractedContent[]> {
-  const response = await post<ExaContentsResponse>(
-    "/contents",
-    {
+): Effect.Effect<ExtractedContent[], Error> {
+  return Effect.gen(function* () {
+    const response = yield* post<ExaContentsResponse>("/contents", {
       urls,
       text: { maxCharacters: FETCH_CONTENT_CHARS },
       livecrawlTimeout: 15_000,
-    },
-    signal,
-  );
-  const results = response.results ?? [];
-  const canonical = (url: string) => {
-    try {
-      return new URL(url).href;
-    } catch {
-      return url;
-    }
-  };
-  const byUrl = new Map<string, ExaResult>();
-  for (const result of results) {
-    if (result.url) byUrl.set(canonical(result.url), result);
-    if (result.id) byUrl.set(canonical(result.id), result);
-  }
-
-  return urls.map((url) => {
-    const result = byUrl.get(canonical(url));
-    const error = statusError(response.statuses, url);
-    if (!result?.text) {
-      const message = error ?? "Exa returned no readable content for this URL";
-      return { url, title: result?.title ?? "", content: "", error: message };
-    }
-    return {
-      url,
-      title: result.title?.trim() || url,
-      content: result.text.slice(0, FETCH_CONTENT_CHARS),
-      error: null,
+    });
+    const results = response.results ?? [];
+    const canonical = (url: string) => {
+      try {
+        return new URL(url).href;
+      } catch {
+        return url;
+      }
     };
+    const byUrl = new Map<string, ExaResult>();
+    for (const result of results) {
+      if (result.url) byUrl.set(canonical(result.url), result);
+      if (result.id) byUrl.set(canonical(result.id), result);
+    }
+
+    return urls.map((url) => {
+      const result = byUrl.get(canonical(url));
+      const error = statusError(response.statuses, url);
+      if (!result?.text) {
+        const message =
+          error ?? "Exa returned no readable content for this URL";
+        return { url, title: result?.title ?? "", content: "", error: message };
+      }
+      return {
+        url,
+        title: result.title?.trim() || url,
+        content: result.text.slice(0, FETCH_CONTENT_CHARS),
+        error: null,
+      };
+    });
   });
 }

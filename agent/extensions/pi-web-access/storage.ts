@@ -1,7 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
 import {
-  access,
   chmod,
   mkdir,
   readdir,
@@ -12,20 +10,24 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Effect, SynchronizedRef } from "effect";
+import { asError } from "./errors.ts";
 import type { StoredResponse } from "./types.ts";
 
 const MAX_RESPONSES = 20;
-const cache = new Map<string, StoredResponse>();
-let cacheDirectory: string | null = null;
-let storageOperation: Promise<void> = Promise.resolve();
 
-function serialize<T>(operation: () => Promise<T>): Promise<T> {
-  const result = storageOperation.then(operation, operation);
-  storageOperation = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
+interface StorageState {
+  cache: Map<string, StoredResponse>;
+  directory: string | null;
+}
+
+const storage = SynchronizedRef.makeUnsafe<StorageState>({
+  cache: new Map(),
+  directory: null,
+});
+
+function io<A>(operation: () => Promise<A>): Effect.Effect<A, Error> {
+  return Effect.tryPromise({ try: operation, catch: asError });
 }
 
 function isStoredResponse(value: unknown): value is StoredResponse {
@@ -44,92 +46,127 @@ function directoryFor(sessionId: string, root: string): string {
   return join(root, "pi-web-access", id);
 }
 
-async function removeResponse(id: string): Promise<void> {
-  if (!cacheDirectory) return;
-  await rm(join(cacheDirectory, `${id}.json`), { force: true });
-}
-
-function evictOldest(): StoredResponse[] {
+function evictOldest(cache: Map<string, StoredResponse>): {
+  cache: Map<string, StoredResponse>;
+  evicted: StoredResponse[];
+} {
+  const next = new Map(cache);
   const evicted: StoredResponse[] = [];
-  while (cache.size > MAX_RESPONSES) {
-    const oldest = [...cache.values()].sort(
+  while (next.size > MAX_RESPONSES) {
+    const oldest = [...next.values()].sort(
       (left, right) => left.timestamp - right.timestamp,
     )[0];
     if (!oldest) break;
-    cache.delete(oldest.id);
+    next.delete(oldest.id);
     evicted.push(oldest);
   }
-  return evicted;
+  return { cache: next, evicted };
+}
+
+function removeResponses(
+  directory: string,
+  responses: StoredResponse[],
+): Effect.Effect<void, Error> {
+  return Effect.forEach(
+    responses,
+    (response) =>
+      io(() => rm(join(directory, `${response.id}.json`), { force: true })),
+    { discard: true },
+  );
 }
 
 export function createResponseId(): string {
   return randomUUID();
 }
 
-export async function initializeStorage(
+export function initializeStorage(
   sessionId: string,
   root = tmpdir(),
-): Promise<void> {
-  await serialize(async () => {
-    cache.clear();
-    cacheDirectory = directoryFor(sessionId, root);
-    await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
-    await chmod(cacheDirectory, 0o700);
+): Effect.Effect<void, Error> {
+  return SynchronizedRef.updateEffect(storage, () =>
+    Effect.gen(function* () {
+      const directory = directoryFor(sessionId, root);
+      yield* io(() => mkdir(directory, { recursive: true, mode: 0o700 }));
+      yield* io(() => chmod(directory, 0o700));
 
-    const files = (await readdir(cacheDirectory)).filter((name) =>
-      name.endsWith(".json"),
-    );
-    for (const file of files) {
-      try {
-        const parsed = JSON.parse(
-          await readFile(join(cacheDirectory, file), "utf8"),
-        ) as unknown;
-        if (isStoredResponse(parsed)) cache.set(parsed.id, parsed);
-      } catch {
-        await rm(join(cacheDirectory, file), { force: true });
+      const files = (yield* io(() => readdir(directory))).filter((name) =>
+        name.endsWith(".json"),
+      );
+      const loaded = new Map<string, StoredResponse>();
+      yield* Effect.forEach(
+        files,
+        (file) =>
+          Effect.gen(function* () {
+            const path = join(directory, file);
+            const parsed = yield* io(() => readFile(path, "utf8")).pipe(
+              Effect.flatMap((content) =>
+                Effect.try({
+                  try: () => JSON.parse(content) as unknown,
+                  catch: asError,
+                }),
+              ),
+              Effect.catch(() =>
+                io(() => rm(path, { force: true })).pipe(Effect.as(null)),
+              ),
+            );
+            if (parsed && isStoredResponse(parsed))
+              loaded.set(parsed.id, parsed);
+          }),
+        { discard: true },
+      );
+
+      const { cache, evicted } = evictOldest(loaded);
+      yield* removeResponses(directory, evicted);
+      return { cache, directory };
+    }),
+  ).pipe(Effect.asVoid);
+}
+
+export function storeResponse(
+  response: StoredResponse,
+): Effect.Effect<void, Error> {
+  return SynchronizedRef.updateEffect(storage, (state) =>
+    Effect.gen(function* () {
+      if (!state.directory) {
+        return yield* Effect.fail(
+          new Error("Web access storage is not initialized"),
+        );
       }
-    }
 
-    const evicted = evictOldest();
-    await Promise.all(evicted.map((response) => removeResponse(response.id)));
-  });
+      const target = join(state.directory, `${response.id}.json`);
+      const temporary = join(
+        state.directory,
+        `.${response.id}.${randomUUID()}.tmp`,
+      );
+      yield* Effect.gen(function* () {
+        yield* io(() =>
+          writeFile(temporary, `${JSON.stringify(response)}\n`, {
+            encoding: "utf8",
+            mode: 0o600,
+            flag: "wx",
+          }),
+        );
+        yield* io(() => rename(temporary, target));
+        yield* io(() => chmod(target, 0o600));
+      }).pipe(
+        Effect.ensuring(
+          io(() => rm(temporary, { force: true })).pipe(
+            Effect.catch(() => Effect.void),
+          ),
+        ),
+      );
+
+      const withResponse = new Map(state.cache);
+      withResponse.set(response.id, response);
+      const { cache, evicted } = evictOldest(withResponse);
+      yield* removeResponses(state.directory, evicted);
+      return { cache, directory: state.directory };
+    }),
+  ).pipe(Effect.asVoid);
 }
 
-export async function storeResponse(response: StoredResponse): Promise<void> {
-  await serialize(async () => {
-    if (!cacheDirectory) {
-      throw new Error("Web access storage is not initialized");
-    }
-
-    const target = join(cacheDirectory, `${response.id}.json`);
-    const temporary = join(
-      cacheDirectory,
-      `.${response.id}.${randomUUID()}.tmp`,
-    );
-    await writeFile(temporary, `${JSON.stringify(response)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx",
-    });
-    await rename(temporary, target);
-    await chmod(target, 0o600);
-
-    cache.set(response.id, response);
-    const evicted = evictOldest();
-    await Promise.all(evicted.map((item) => removeResponse(item.id)));
-  });
-}
-
-export function getResponse(id: string): StoredResponse | null {
-  return cache.get(id) ?? null;
-}
-
-export async function storageIsReady(): Promise<boolean> {
-  if (!cacheDirectory) return false;
-  try {
-    await access(cacheDirectory, constants.R_OK | constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
+export function getResponse(id: string): Effect.Effect<StoredResponse | null> {
+  return SynchronizedRef.get(storage).pipe(
+    Effect.map((state) => state.cache.get(id) ?? null),
+  );
 }

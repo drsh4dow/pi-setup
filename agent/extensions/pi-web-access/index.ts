@@ -4,6 +4,8 @@ import type {
   ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Effect } from "effect";
+import { errorMessage } from "./errors.ts";
 import { searchExa } from "./exa.ts";
 import {
   fetchContent,
@@ -287,32 +289,30 @@ function textOnly(item: ExtractedContent): ExtractedContent {
   };
 }
 
-async function cacheResponse(
+function cacheResponse(
   response: StoredResponse,
-): Promise<string | undefined> {
-  try {
-    await storeResponse(response);
-    return undefined;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
+): Effect.Effect<string | undefined> {
+  return storeResponse(response).pipe(
+    Effect.as(undefined),
+    Effect.catch((error) => Effect.succeed(errorMessage(error))),
+  );
 }
 
 export default function webAccessExtension(pi: ExtensionAPI) {
-  pi.on("session_start", async (_event, context) => {
-    try {
-      await initializeStorage(context.sessionManager.getSessionId());
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(
-        `[pi-web-access] Could not initialize response storage: ${message}`,
-      );
-    }
-  });
+  pi.on("session_start", (_event, context) =>
+    Effect.runPromise(
+      initializeStorage(context.sessionManager.getSessionId()).pipe(
+        Effect.catch((error) => {
+          console.error(
+            `[pi-web-access] Could not initialize response storage: ${errorMessage(error)}`,
+          );
+          return Effect.void;
+        }),
+      ),
+    ),
+  );
 
-  pi.on("session_shutdown", () => {
-    clearCloneCache();
-  });
+  pi.on("session_shutdown", () => Effect.runPromise(clearCloneCache()));
 
   pi.registerTool({
     name: "web_search",
@@ -333,41 +333,50 @@ export default function webAccessExtension(pi: ExtensionAPI) {
         });
       }
 
-      const items: StoredSearchItem[] = [];
-      for (const [index, query] of normalized.queries.entries()) {
-        onUpdate?.({
-          content: [
-            {
-              type: "text",
-              text: `Searching ${index + 1}/${normalized.queries.length}: ${query}`,
-            },
-          ],
-          details: { index, query },
-        });
-        try {
-          const result = await searchExa(query, {
-            ...normalized.options,
-            signal,
-          });
-          items.push({ query, ...result, error: null });
-        } catch (error) {
-          items.push({
-            query,
-            answer: "",
-            sources: [],
-            content: [],
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
+      const items = await Effect.runPromise(
+        Effect.forEach(normalized.queries, (query, index) =>
+          Effect.sync(() =>
+            onUpdate?.({
+              content: [
+                {
+                  type: "text",
+                  text: `Searching ${index + 1}/${normalized.queries.length}: ${query}`,
+                },
+              ],
+              details: { index, query },
+            }),
+          ).pipe(
+            Effect.andThen(searchExa(query, normalized.options)),
+            Effect.map(
+              (result): StoredSearchItem => ({
+                query,
+                ...result,
+                error: null,
+              }),
+            ),
+            Effect.catch((error) =>
+              Effect.succeed({
+                query,
+                answer: "",
+                sources: [],
+                content: [],
+                error: errorMessage(error),
+              }),
+            ),
+          ),
+        ),
+        { signal },
+      );
 
       const responseId = createResponseId();
-      const cacheError = await cacheResponse({
-        id: responseId,
-        type: "search",
-        timestamp: Date.now(),
-        items,
-      });
+      const cacheError = await Effect.runPromise(
+        cacheResponse({
+          id: responseId,
+          type: "search",
+          timestamp: Date.now(),
+          items,
+        }),
+      );
       const successful = items.filter((item) => item.error === null).length;
       const output = [
         ...items.map((item) => formatSearchItem(item, false)),
@@ -431,18 +440,19 @@ export default function webAccessExtension(pi: ExtensionAPI) {
         details: { itemCount: normalized.urls.length },
       });
 
-      const items = await fetchContent(
-        normalized.urls,
-        normalized.options,
-        signal,
+      const items = await Effect.runPromise(
+        fetchContent(normalized.urls, normalized.options),
+        { signal },
       );
       const responseId = createResponseId();
-      const cacheError = await cacheResponse({
-        id: responseId,
-        type: "fetch",
-        timestamp: Date.now(),
-        items: items.map(textOnly),
-      });
+      const cacheError = await Effect.runPromise(
+        cacheResponse({
+          id: responseId,
+          type: "fetch",
+          timestamp: Date.now(),
+          items: items.map(textOnly),
+        }),
+      );
       const successful = items.filter((item) => item.error === null).length;
       const output = [
         ...items.map((item) => formatFetchedItem(item, true)),
@@ -503,7 +513,7 @@ export default function webAccessExtension(pi: ExtensionAPI) {
     parameters: GetContentParams,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      const response = getResponse(params.responseId);
+      const response = await Effect.runPromise(getResponse(params.responseId));
       if (!response) {
         const error = `Response not found: ${params.responseId}`;
         return textResult<GetContentDetails>(`Error: ${error}`, {

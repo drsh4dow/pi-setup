@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
+import { Effect } from "effect";
 import { queryGeminiVideo } from "../gemini-video.ts";
 import { extractMedia, parseTimestamp } from "../media.ts";
 
@@ -36,13 +37,11 @@ test("Gemini video request uses API-key auth and fileData", async () => {
     });
   };
 
-  const result = await queryGeminiVideo(
-    "Find the error",
-    "https://video.test",
-    {
+  const result = await Effect.runPromise(
+    queryGeminiVideo("Find the error", "https://video.test", {
       model: "gemini-test",
       mimeType: "video/mp4",
-    },
+    }),
   );
 
   assert.equal(result, "# Analysis\nUseful");
@@ -88,7 +87,9 @@ test("local frame extraction works with ffmpeg", {
     );
     assert.equal(generated.status, 0, generated.stderr);
 
-    const result = await extractMedia(video, { timestamp: "0" });
+    const result = await Effect.runPromise(
+      extractMedia(video, { timestamp: "0" }),
+    );
     assert.equal(result?.error, null);
     assert.equal(result?.thumbnail?.mimeType, "image/jpeg");
     assert.ok((result?.thumbnail?.data.length ?? 0) > 100);

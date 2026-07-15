@@ -1,7 +1,8 @@
-import { execFile } from "node:child_process";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Effect } from "effect";
+import { asError } from "./errors.ts";
 import {
   checkGhAvailable,
   checkRepoSize,
@@ -9,6 +10,7 @@ import {
   showGhHint,
 } from "./github-api.ts";
 import { renderCloneContent } from "./github-content.ts";
+import { runCommand } from "./subprocess.ts";
 import type { ExtractedContent } from "./types.ts";
 
 const MAX_REPO_SIZE_MB = 350;
@@ -27,7 +29,7 @@ export interface GitHubUrlInfo {
 
 interface CachedClone {
   localPath: string;
-  clonePromise: Promise<string | null>;
+  clone: Effect.Effect<string | null>;
 }
 
 const cloneCache = new Map<string, CachedClone>();
@@ -111,7 +113,7 @@ export function parseGitHubUrl(url: string): GitHubUrlInfo | null {
     ref,
     refIsFullSha,
     path,
-    type: action as "blob" | "tree",
+    type: action,
   };
 }
 
@@ -124,233 +126,186 @@ function cloneDir(owner: string, repo: string, ref?: string): string {
   return join(CLONE_ROOT, owner, dirName);
 }
 
-function execClone(
-  args: string[],
-  localPath: string,
-  signal?: AbortSignal,
-): Promise<string | null> {
-  if (signal?.aborted) return Promise.resolve(null);
-  return new Promise((resolvePromise) => {
-    execFile(
-      args[0],
-      args.slice(1),
-      { timeout: CLONE_TIMEOUT_MS, signal },
-      (error) => {
-        if (error) {
-          try {
-            rmSync(localPath, { recursive: true, force: true });
-          } catch {
-            // The original clone failure is the useful error path.
-          }
-          resolvePromise(null);
-          return;
-        }
-        resolvePromise(localPath);
-      },
+function removeClone(localPath: string): boolean {
+  try {
+    rmSync(localPath, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cloneRepo(
+  owner: string,
+  repo: string,
+  ref: string | undefined,
+): Effect.Effect<string | null> {
+  return Effect.gen(function* () {
+    const localPath = cloneDir(owner, repo, ref);
+    if (!removeClone(localPath)) return null;
+    const hasGh = yield* checkGhAvailable();
+    const args = hasGh
+      ? [
+          "gh",
+          "repo",
+          "clone",
+          `${owner}/${repo}`,
+          localPath,
+          "--",
+          "--depth",
+          "1",
+          "--single-branch",
+        ]
+      : ["git", "clone", "--depth", "1", "--single-branch"];
+    if (ref) args.push("--branch", ref);
+    if (!hasGh) {
+      showGhHint();
+      args.push(`https://github.com/${owner}/${repo}.git`, localPath);
+    }
+
+    return yield* runCommand(args[0], args.slice(1), {
+      timeoutMs: CLONE_TIMEOUT_MS,
+      maxBuffer: 2 * 1024 * 1024,
+    }).pipe(
+      Effect.as(localPath),
+      Effect.catch(() => {
+        removeClone(localPath);
+        return Effect.succeed(null);
+      }),
     );
   });
 }
 
-async function cloneRepo(
+function cloneResult(
+  result: string | null,
+  url: string,
   owner: string,
   repo: string,
-  ref: string | undefined,
-  signal?: AbortSignal,
-): Promise<string | null> {
-  const localPath = cloneDir(owner, repo, ref);
-  try {
-    rmSync(localPath, { recursive: true, force: true });
-  } catch {
-    return null;
-  }
-  const hasGh = await checkGhAvailable(signal);
-
-  if (hasGh) {
-    const args = [
-      "gh",
-      "repo",
-      "clone",
-      `${owner}/${repo}`,
-      localPath,
-      "--",
-      "--depth",
-      "1",
-      "--single-branch",
-    ];
-    if (ref) args.push("--branch", ref);
-    return execClone(args, localPath, signal);
-  }
-
-  showGhHint();
-  const args = ["git", "clone", "--depth", "1", "--single-branch"];
-  if (ref) args.push("--branch", ref);
-  args.push(`https://github.com/${owner}/${repo}.git`, localPath);
-  return execClone(args, localPath, signal);
+  info: GitHubUrlInfo,
+): Effect.Effect<ExtractedContent | null, Error> {
+  if (!result) return Effect.succeed(null);
+  return Effect.try({
+    try: () => {
+      const content = renderCloneContent(result, info).slice(0, 100_000);
+      const title = info.path
+        ? `${owner}/${repo} - ${info.path}`
+        : `${owner}/${repo}`;
+      return { url, title, content, error: null };
+    },
+    catch: asError,
+  });
 }
 
-async function awaitCachedClone(
+function awaitCachedClone(
   cached: CachedClone,
   url: string,
   owner: string,
   repo: string,
   info: GitHubUrlInfo,
-  signal?: AbortSignal,
-): Promise<ExtractedContent | null> {
-  if (signal?.aborted) return null;
-  const result = await cached.clonePromise;
-  if (signal?.aborted) return null;
-  if (result) {
-    const content = renderCloneContent(result, info).slice(0, 100_000);
-    const title = info.path
-      ? `${owner}/${repo} - ${info.path}`
-      : `${owner}/${repo}`;
-    return { url, title, content, error: null };
-  }
-  return fetchViaApi(url, owner, repo, info, undefined, signal);
+): Effect.Effect<ExtractedContent | null, Error> {
+  return Effect.gen(function* () {
+    const result = yield* cloneResult(
+      yield* cached.clone,
+      url,
+      owner,
+      repo,
+      info,
+    );
+    return result ?? (yield* fetchViaApi(url, owner, repo, info));
+  });
 }
 
-export async function extractGitHub(
+function failed(url: string, error: string): ExtractedContent {
+  return { url, title: "", content: "", error };
+}
+
+export function extractGitHub(
   url: string,
-  signal?: AbortSignal,
   forceClone = false,
-): Promise<ExtractedContent | null> {
-  const info = parseGitHubUrl(url);
-  if (!info) return null;
-  if (signal?.aborted) {
-    return { url, title: "", content: "", error: "Aborted" };
-  }
+): Effect.Effect<ExtractedContent | null, Error> {
+  return Effect.gen(function* () {
+    const info = parseGitHubUrl(url);
+    if (!info) return null;
 
-  const { owner, repo } = info;
-  const key = cacheKey(owner, repo, info.ref);
-  const cached = cloneCache.get(key);
-  if (cached) {
-    return (
-      (await awaitCachedClone(cached, url, owner, repo, info, signal)) ?? {
-        url,
-        title: "",
-        content: "",
-        error: "GitHub clone and API fallback failed",
-      }
-    );
-  }
-
-  if (info.refIsFullSha) {
-    return (
-      (await fetchViaApi(
-        url,
-        owner,
-        repo,
-        info,
-        "Note: Commit SHA URLs use the GitHub API instead of cloning.",
-        signal,
-      )) ?? {
-        url,
-        title: "",
-        content: "",
-        error: "GitHub API access failed for this commit",
-      }
-    );
-  }
-
-  if (!forceClone) {
-    const sizeKB = await checkRepoSize(owner, repo, signal);
-    if (signal?.aborted) {
-      return { url, title: "", content: "", error: "Aborted" };
-    }
-    if (sizeKB === null) {
-      return {
-        url,
-        title: "",
-        content: "",
-        error:
-          "Could not determine repository size. Use forceClone: true to clone explicitly.",
-      };
-    }
-    if (sizeKB / 1024 > MAX_REPO_SIZE_MB) {
-      const note =
-        `Note: Repository is ${Math.round(sizeKB / 1024)}MB ` +
-        `(threshold: ${MAX_REPO_SIZE_MB}MB). Showing the API view. ` +
-        "Call fetch_content with forceClone: true to bypass the size check.";
+    const { owner, repo } = info;
+    const key = cacheKey(owner, repo, info.ref);
+    const cached = cloneCache.get(key);
+    if (cached) {
       return (
-        (await fetchViaApi(url, owner, repo, info, note, signal)) ?? {
-          url,
-          title: "",
-          content: "",
-          error:
-            "Repository exceeds the clone threshold and its API view failed",
-        }
+        (yield* awaitCachedClone(cached, url, owner, repo, info)) ??
+        failed(url, "GitHub clone and API fallback failed")
       );
     }
-  }
 
-  const concurrentClone = cloneCache.get(key);
-  if (concurrentClone) {
-    return (
-      (await awaitCachedClone(
-        concurrentClone,
-        url,
-        owner,
-        repo,
-        info,
-        signal,
-      )) ?? {
-        url,
-        title: "",
-        content: "",
-        error: "GitHub clone and API fallback failed",
+    if (info.refIsFullSha) {
+      return (
+        (yield* fetchViaApi(
+          url,
+          owner,
+          repo,
+          info,
+          "Note: Commit SHA URLs use the GitHub API instead of cloning.",
+        )) ?? failed(url, "GitHub API access failed for this commit")
+      );
+    }
+
+    if (!forceClone) {
+      const sizeKB = yield* checkRepoSize(owner, repo);
+      if (sizeKB === null) {
+        return failed(
+          url,
+          "Could not determine repository size. Use forceClone: true to clone explicitly.",
+        );
       }
-    );
-  }
-
-  while (cloneCache.size >= MAX_CACHED_CLONES) {
-    const oldestKey = cloneCache.keys().next().value as string | undefined;
-    if (!oldestKey) break;
-    const oldest = cloneCache.get(oldestKey);
-    if (oldest) {
-      try {
-        rmSync(oldest.localPath, { recursive: true, force: true });
-      } catch {
-        // A failed eviction must not make the new request fail.
+      if (sizeKB / 1024 > MAX_REPO_SIZE_MB) {
+        const note =
+          `Note: Repository is ${Math.round(sizeKB / 1024)}MB ` +
+          `(threshold: ${MAX_REPO_SIZE_MB}MB). Showing the API view. ` +
+          "Call fetch_content with forceClone: true to bypass the size check.";
+        return (
+          (yield* fetchViaApi(url, owner, repo, info, note)) ??
+          failed(
+            url,
+            "Repository exceeds the clone threshold and its API view failed",
+          )
+        );
       }
     }
-    cloneCache.delete(oldestKey);
-  }
 
-  const clonePromise = cloneRepo(owner, repo, info.ref, signal);
-  const localPath = cloneDir(owner, repo, info.ref);
-  cloneCache.set(key, { localPath, clonePromise });
-  const result = await clonePromise;
+    const concurrentClone = cloneCache.get(key);
+    if (concurrentClone) {
+      return (
+        (yield* awaitCachedClone(concurrentClone, url, owner, repo, info)) ??
+        failed(url, "GitHub clone and API fallback failed")
+      );
+    }
 
-  if (signal?.aborted) {
-    if (!result) cloneCache.delete(key);
-    return { url, title: "", content: "", error: "Aborted" };
-  }
-  if (!result) {
-    cloneCache.delete(key);
-    return (
-      (await fetchViaApi(url, owner, repo, info, undefined, signal)) ?? {
-        url,
-        title: "",
-        content: "",
-        error: "GitHub clone and API fallback failed",
-      }
-    );
-  }
+    while (cloneCache.size >= MAX_CACHED_CLONES) {
+      const oldestKey = cloneCache.keys().next().value;
+      if (!oldestKey) break;
+      const oldest = cloneCache.get(oldestKey);
+      if (oldest) removeClone(oldest.localPath);
+      cloneCache.delete(oldestKey);
+    }
 
-  const content = renderCloneContent(result, info).slice(0, 100_000);
-  const title = info.path
-    ? `${owner}/${repo} - ${info.path}`
-    : `${owner}/${repo}`;
-  return { url, title, content, error: null };
+    const clone = yield* Effect.cached(cloneRepo(owner, repo, info.ref));
+    const localPath = cloneDir(owner, repo, info.ref);
+    cloneCache.set(key, { localPath, clone });
+    const result = yield* clone;
+    if (!result) {
+      cloneCache.delete(key);
+      return (
+        (yield* fetchViaApi(url, owner, repo, info)) ??
+        failed(url, "GitHub clone and API fallback failed")
+      );
+    }
+    return yield* cloneResult(result, url, owner, repo, info);
+  });
 }
 
-export function clearCloneCache(): void {
-  for (const entry of cloneCache.values()) {
-    try {
-      rmSync(entry.localPath, { recursive: true, force: true });
-    } catch {
-      // Temporary clone cleanup is best-effort during process teardown.
-    }
-  }
-  cloneCache.clear();
+export function clearCloneCache(): Effect.Effect<void> {
+  return Effect.sync(() => {
+    for (const entry of cloneCache.values()) removeClone(entry.localPath);
+    cloneCache.clear();
+  });
 }

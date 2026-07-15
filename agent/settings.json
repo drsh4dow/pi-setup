@@ -1,8 +1,6 @@
 {
   "lastChangelogVersion": "0.80.7",
-  "packages": [
-    "npm:pi-web-access"
-  ],
+  "packages": [],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
   "enabledModels": [

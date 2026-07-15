@@ -5,7 +5,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "check": "biome check agent/extensions",
-    "check:fix": "biome check agent/extensions --write"
+    "check:fix": "biome check agent/extensions --write",
+    "test:web-access": "node --test agent/extensions/pi-web-access/test/*.test.ts",
+    "verify": "bun run typecheck && bun run check && bun run test:web-access"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.6",

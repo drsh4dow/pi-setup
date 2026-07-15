@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { errorMessage } from "./errors.ts";
+import { errorMessage, type WebAccessError, webAccessError } from "./errors.ts";
 import { runCommand } from "./subprocess.ts";
 import type { FrameResult } from "./types.ts";
 
@@ -33,7 +33,7 @@ function processError(
 
 export function getYouTubeStream(
   videoId: string,
-): Effect.Effect<YouTubeStream, Error> {
+): Effect.Effect<YouTubeStream, WebAccessError> {
   return Effect.gen(function* () {
     const output = yield* runCommand(
       "yt-dlp",
@@ -45,12 +45,12 @@ export function getYouTubeStream(
       ],
       { timeoutMs: 15_000, maxBuffer: 5 * 1024 * 1024 },
     ).pipe(
-      Effect.mapError((error) => new Error(processError("yt-dlp", error))),
+      Effect.mapError((error) => webAccessError(processError("yt-dlp", error))),
     );
     const lines = output.toString("utf8").trim().split(/\r?\n/);
     const streamUrl = lines[1]?.trim();
     if (!streamUrl)
-      return yield* Effect.fail(new Error("yt-dlp returned no stream URL"));
+      return yield* webAccessError("yt-dlp returned no stream URL");
     const duration = Number.parseFloat(lines[0] ?? "");
     return {
       streamUrl,
@@ -109,7 +109,9 @@ export function extractLocalFrame(
   return extractFrame(path, seconds, 10_000);
 }
 
-export function getLocalDuration(path: string): Effect.Effect<number, Error> {
+export function getLocalDuration(
+  path: string,
+): Effect.Effect<number, WebAccessError> {
   return Effect.gen(function* () {
     const output = yield* runCommand(
       "ffprobe",
@@ -124,13 +126,13 @@ export function getLocalDuration(path: string): Effect.Effect<number, Error> {
       ],
       { timeoutMs: 10_000, maxBuffer: 1024 * 1024 },
     ).pipe(
-      Effect.mapError((error) => new Error(processError("ffprobe", error))),
+      Effect.mapError((error) =>
+        webAccessError(processError("ffprobe", error)),
+      ),
     );
     const duration = Number.parseFloat(output.toString("utf8").trim());
     return Number.isFinite(duration)
       ? duration
-      : yield* Effect.fail(
-          new Error("ffprobe failed: invalid duration output"),
-        );
+      : yield* webAccessError("ffprobe failed: invalid duration output");
   });
 }

@@ -32,11 +32,11 @@ Never commit real API keys, auth files, run history, telemetry, or trusted local
 ## Validate changes
 
 ```bash
-npm install
-npm run check
+bun install
+bun run verify
 ```
 
-CI runs the same check on GitHub Actions.
+Installation patches TypeScript-Go with the Effect language service. CI runs the same typecheck, Effect diagnostics, Biome check, and web-access tests.
 
 ## Loop
 

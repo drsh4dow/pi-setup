@@ -54,6 +54,6 @@ test("live public GitHub API view and clone", { skip: !live }, async () => {
     assert.match(result?.content ?? "", /Repository cloned to:/);
     assert.match(result?.content ?? "", /README/i);
   } finally {
-    await Effect.runPromise(clearCloneCache());
+    await Effect.runPromise(clearCloneCache);
   }
 });

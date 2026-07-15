@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { Effect } from "effect";
-import { asError, errorMessage } from "./errors.ts";
+import {
+  asError,
+  errorMessage,
+  type WebAccessError,
+  webAccessError,
+} from "./errors.ts";
 import type { ExtractedContent } from "./types.ts";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -17,11 +22,12 @@ export interface VideoFile {
 
 function key(): string {
   const value = process.env.GEMINI_API_KEY?.trim();
-  if (!value) throw new Error("GEMINI_API_KEY is required for video analysis");
+  if (!value)
+    throw webAccessError("GEMINI_API_KEY is required for video analysis");
   return value;
 }
 
-function errorBody(response: Response): Effect.Effect<string, Error> {
+function errorBody(response: Response): Effect.Effect<string, WebAccessError> {
   return Effect.tryPromise({ try: () => response.text(), catch: asError }).pipe(
     Effect.map((body) => body.replace(/\s+/g, " ").trim().slice(0, 300)),
   );
@@ -43,7 +49,7 @@ export function queryGeminiVideo(
     mimeType?: string;
     timeoutMs?: number;
   } = {},
-): Effect.Effect<string, Error> {
+): Effect.Effect<string, WebAccessError> {
   return Effect.gen(function* () {
     const model = options.model ?? DEFAULT_GEMINI_MODEL;
     const fileData: Record<string, string> = { fileUri: videoUri };
@@ -70,10 +76,8 @@ export function queryGeminiVideo(
       Effect.mapError(asError),
     );
     if (!response.ok) {
-      return yield* Effect.fail(
-        new Error(
-          `Gemini API error ${response.status}: ${yield* errorBody(response)}`,
-        ),
+      return yield* webAccessError(
+        `Gemini API error ${response.status}: ${yield* errorBody(response)}`,
       );
     }
 
@@ -91,15 +95,13 @@ export function queryGeminiVideo(
       .join("\n");
     return text
       ? text.slice(0, 100_000)
-      : yield* Effect.fail(
-          new Error("Gemini API returned empty video analysis"),
-        );
+      : yield* webAccessError("Gemini API returned empty video analysis");
   });
 }
 
 function upload(
   video: VideoFile,
-): Effect.Effect<{ name: string; uri: string }, Error> {
+): Effect.Effect<{ name: string; uri: string }, WebAccessError> {
   return Effect.gen(function* () {
     const start = yield* Effect.tryPromise({
       try: (signal) =>
@@ -121,17 +123,13 @@ function upload(
       catch: asError,
     }).pipe(Effect.timeout(180_000), Effect.mapError(asError));
     if (!start.ok) {
-      return yield* Effect.fail(
-        new Error(
-          `Gemini upload initialization failed ${start.status}: ${yield* errorBody(start)}`,
-        ),
+      return yield* webAccessError(
+        `Gemini upload initialization failed ${start.status}: ${yield* errorBody(start)}`,
       );
     }
     const uploadUrl = start.headers.get("x-goog-upload-url");
     if (!uploadUrl) {
-      return yield* Effect.fail(
-        new Error("Gemini returned no video upload URL"),
-      );
+      return yield* webAccessError("Gemini returned no video upload URL");
     }
 
     const body = yield* Effect.tryPromise({
@@ -153,10 +151,8 @@ function upload(
       catch: asError,
     }).pipe(Effect.timeout(180_000), Effect.mapError(asError));
     if (!result.ok) {
-      return yield* Effect.fail(
-        new Error(
-          `Gemini video upload failed ${result.status}: ${yield* errorBody(result)}`,
-        ),
+      return yield* webAccessError(
+        `Gemini video upload failed ${result.status}: ${yield* errorBody(result)}`,
       );
     }
     const data = yield* Effect.tryPromise({
@@ -166,13 +162,13 @@ function upload(
     });
     return data.file?.name && data.file.uri
       ? { name: data.file.name, uri: data.file.uri }
-      : yield* Effect.fail(
-          new Error("Gemini returned an invalid video upload response"),
+      : yield* webAccessError(
+          "Gemini returned an invalid video upload response",
         );
   });
 }
 
-function waitUntilActive(name: string): Effect.Effect<void, Error> {
+function waitUntilActive(name: string): Effect.Effect<void, WebAccessError> {
   return Effect.gen(function* () {
     for (let attempt = 0; attempt < 24; attempt += 1) {
       const response = yield* Effect.tryPromise({
@@ -184,8 +180,8 @@ function waitUntilActive(name: string): Effect.Effect<void, Error> {
         catch: asError,
       }).pipe(Effect.timeout(15_000), Effect.mapError(asError));
       if (!response.ok) {
-        return yield* Effect.fail(
-          new Error(`Gemini file-state check failed ${response.status}`),
+        return yield* webAccessError(
+          `Gemini file-state check failed ${response.status}`,
         );
       }
       const data = yield* Effect.tryPromise({
@@ -194,11 +190,11 @@ function waitUntilActive(name: string): Effect.Effect<void, Error> {
       });
       if (data.state === "ACTIVE") return;
       if (data.state === "FAILED") {
-        return yield* Effect.fail(new Error("Gemini video processing failed"));
+        return yield* webAccessError("Gemini video processing failed");
       }
       yield* Effect.sleep(5_000);
     }
-    return yield* Effect.fail(new Error("Gemini video processing timed out"));
+    return yield* webAccessError("Gemini video processing timed out");
   }).pipe(Effect.timeout(120_000), Effect.mapError(asError));
 }
 
@@ -233,7 +229,7 @@ export function analyzeYouTube(
   videoId: string,
   prompt: string,
   model: string,
-): Effect.Effect<ExtractedContent, Error> {
+): Effect.Effect<ExtractedContent, WebAccessError> {
   return queryGeminiVideo(
     prompt,
     `https://www.youtube.com/watch?v=${videoId}`,
@@ -253,7 +249,7 @@ export function analyzeLocalVideo(
   video: VideoFile,
   prompt: string,
   model: string,
-): Effect.Effect<ExtractedContent, Error> {
+): Effect.Effect<ExtractedContent, WebAccessError> {
   return Effect.acquireUseRelease(
     upload(video),
     (uploaded) =>

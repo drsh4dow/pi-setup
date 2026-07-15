@@ -18,11 +18,11 @@ function runGh(
     maxBuffer: options.maxBuffer ?? 2 * 1024 * 1024,
   }).pipe(
     Effect.map((output) => output.toString("utf8")),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
 }
 
-export function checkGhAvailable(): Effect.Effect<boolean> {
+export const checkGhAvailable: Effect.Effect<boolean> = Effect.suspend(() => {
   if (ghAvailable !== null) return Effect.succeed(ghAvailable);
   return runGh(["--version"], { timeoutMs: 5_000 }).pipe(
     Effect.map((output) => {
@@ -30,7 +30,7 @@ export function checkGhAvailable(): Effect.Effect<boolean> {
       return ghAvailable;
     }),
   );
-}
+});
 
 export function showGhHint(): void {
   if (ghHintShown) return;
@@ -45,7 +45,7 @@ export function checkRepoSize(
   repo: string,
 ): Effect.Effect<number | null> {
   return Effect.gen(function* () {
-    if (yield* checkGhAvailable()) {
+    if (yield* checkGhAvailable) {
       const output = yield* runGh(
         ["api", `repos/${owner}/${repo}`, "--jq", ".size"],
         { timeoutMs: 10_000 },
@@ -76,7 +76,7 @@ export function checkRepoSize(
       return typeof data.size === "number" && Number.isFinite(data.size)
         ? data.size
         : null;
-    }).pipe(Effect.catch(() => Effect.succeed(null)));
+    }).pipe(Effect.orElseSucceed(() => null));
   });
 }
 
@@ -85,7 +85,7 @@ function defaultBranch(
   repo: string,
 ): Effect.Effect<string | null> {
   return Effect.gen(function* () {
-    if (!(yield* checkGhAvailable())) return null;
+    if (!(yield* checkGhAvailable)) return null;
     const output = yield* runGh(
       ["api", `repos/${owner}/${repo}`, "--jq", ".default_branch"],
       { timeoutMs: 10_000 },
@@ -165,7 +165,7 @@ export function fetchViaApi(
   sizeNote?: string,
 ): Effect.Effect<ExtractedContent | null> {
   return Effect.gen(function* () {
-    if (!(yield* checkGhAvailable())) return null;
+    if (!(yield* checkGhAvailable)) return null;
     const ref = info.ref || (yield* defaultBranch(owner, repo));
     if (!ref) return null;
 

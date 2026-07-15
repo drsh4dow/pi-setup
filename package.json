@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prepare": "effect-tsgo patch",
     "typecheck": "tsc --noEmit",
     "check": "biome check agent/extensions",
     "check:fix": "biome check agent/extensions --write",
@@ -16,10 +17,11 @@
     "effect": "4.0.0-beta.98"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.4",
+    "@effect/tsgo": "0.22.0",
     "@types/node": "^26.1.1",
     "prettier": "^3.9.5",
-    "typescript": "^7.0.2",
-    "@biomejs/biome": "2.5.4"
+    "typescript": "^7.0.2"
   },
   "trustedDependencies": [
     "@google/genai",

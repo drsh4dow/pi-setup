@@ -1,12 +1,12 @@
 import { execFile } from "node:child_process";
 import { Effect } from "effect";
-import { asError } from "./errors.ts";
+import { asError, type WebAccessError } from "./errors.ts";
 
 export function runCommand(
   command: string,
   args: string[],
   options: { timeoutMs: number; maxBuffer: number },
-): Effect.Effect<Buffer, Error> {
+): Effect.Effect<Buffer, WebAccessError> {
   return Effect.tryPromise({
     try: (signal) =>
       new Promise<Buffer>((resolve, reject) => {

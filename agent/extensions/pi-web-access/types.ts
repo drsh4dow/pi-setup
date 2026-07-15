@@ -45,25 +45,3 @@ export interface VideoFrame extends FrameData {
 }
 
 export type FrameResult = FrameData | { error: string };
-
-export interface StoredSearchItem {
-  query: string;
-  answer: string;
-  sources: SearchSource[];
-  content: ExtractedContent[];
-  error: string | null;
-}
-
-export type StoredResponse =
-  | {
-      id: string;
-      type: "search";
-      timestamp: number;
-      items: StoredSearchItem[];
-    }
-  | {
-      id: string;
-      type: "fetch";
-      timestamp: number;
-      items: ExtractedContent[];
-    };

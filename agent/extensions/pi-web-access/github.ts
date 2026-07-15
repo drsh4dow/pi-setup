@@ -2,7 +2,7 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { asError } from "./errors.ts";
+import { asError, type WebAccessError } from "./errors.ts";
 import {
   checkGhAvailable,
   checkRepoSize,
@@ -143,7 +143,7 @@ function cloneRepo(
   return Effect.gen(function* () {
     const localPath = cloneDir(owner, repo, ref);
     if (!removeClone(localPath)) return null;
-    const hasGh = yield* checkGhAvailable();
+    const hasGh = yield* checkGhAvailable;
     const args = hasGh
       ? [
           "gh",
@@ -182,7 +182,7 @@ function cloneResult(
   owner: string,
   repo: string,
   info: GitHubUrlInfo,
-): Effect.Effect<ExtractedContent | null, Error> {
+): Effect.Effect<ExtractedContent | null, WebAccessError> {
   if (!result) return Effect.succeed(null);
   return Effect.try({
     try: () => {
@@ -202,7 +202,7 @@ function awaitCachedClone(
   owner: string,
   repo: string,
   info: GitHubUrlInfo,
-): Effect.Effect<ExtractedContent | null, Error> {
+): Effect.Effect<ExtractedContent | null, WebAccessError> {
   return Effect.gen(function* () {
     const result = yield* cloneResult(
       yield* cached.clone,
@@ -222,7 +222,7 @@ function failed(url: string, error: string): ExtractedContent {
 export function extractGitHub(
   url: string,
   forceClone = false,
-): Effect.Effect<ExtractedContent | null, Error> {
+): Effect.Effect<ExtractedContent | null, WebAccessError> {
   return Effect.gen(function* () {
     const info = parseGitHubUrl(url);
     if (!info) return null;
@@ -303,9 +303,7 @@ export function extractGitHub(
   });
 }
 
-export function clearCloneCache(): Effect.Effect<void> {
-  return Effect.sync(() => {
-    for (const entry of cloneCache.values()) removeClone(entry.localPath);
-    cloneCache.clear();
-  });
-}
+export const clearCloneCache: Effect.Effect<void> = Effect.sync(() => {
+  for (const entry of cloneCache.values()) removeClone(entry.localPath);
+  cloneCache.clear();
+});

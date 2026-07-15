@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { errorMessage } from "./errors.ts";
+import { asError, errorMessage } from "./errors.ts";
 import { fetchExaContents } from "./exa.ts";
 import { extractGitHub, parseGitHubUrl } from "./github.ts";
 import { extractMedia, isMediaInput, parseTimestamp } from "./media.ts";
@@ -152,21 +152,22 @@ export function fetchContent(
         );
         continue;
       }
-      try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-          results[index] = itemError(
-            url,
-            "Only HTTP and HTTPS URLs are supported",
-          );
-        } else {
-          ordinary.push({ url, index });
-        }
-      } catch {
+      const parsed = yield* Effect.try({
+        try: () => new URL(url),
+        catch: asError,
+      }).pipe(Effect.orElseSucceed(() => null));
+      if (!parsed) {
         results[index] = itemError(
           url,
           "Invalid URL or unsupported local file",
         );
+      } else if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        results[index] = itemError(
+          url,
+          "Only HTTP and HTTPS URLs are supported",
+        );
+      } else {
+        ordinary.push({ url, index });
       }
     }
 

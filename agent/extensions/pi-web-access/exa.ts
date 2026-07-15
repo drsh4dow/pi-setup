@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { asError } from "./errors.ts";
+import { asError, type WebAccessError, webAccessError } from "./errors.ts";
 import type {
   ExtractedContent,
   SearchOptions,
@@ -41,7 +41,7 @@ interface ExaContentsResponse {
 function apiKey(): string {
   const key = process.env.EXA_API_KEY?.trim();
   if (!key) {
-    throw new Error(
+    throw webAccessError(
       "EXA_API_KEY is required for Exa search and URL extraction",
     );
   }
@@ -51,7 +51,7 @@ function apiKey(): string {
 function post<T>(
   path: string,
   body: Record<string, unknown>,
-): Effect.Effect<T, Error> {
+): Effect.Effect<T, WebAccessError> {
   return Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
       try: (signal) =>
@@ -75,10 +75,8 @@ function post<T>(
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 300);
-      return yield* Effect.fail(
-        new Error(
-          `Exa API error ${response.status}${detail ? `: ${detail}` : ""}`,
-        ),
+      return yield* webAccessError(
+        `Exa API error ${response.status}${detail ? `: ${detail}` : ""}`,
       );
     }
 
@@ -171,7 +169,7 @@ function domainFilters(domains: string[] | undefined) {
 export function searchExa(
   query: string,
   options: SearchOptions = {},
-): Effect.Effect<SearchResult, Error> {
+): Effect.Effect<SearchResult, WebAccessError> {
   return Effect.gen(function* () {
     const useSearch =
       options.includeContent === true ||
@@ -237,7 +235,7 @@ function statusError(
 
 export function fetchExaContents(
   urls: string[],
-): Effect.Effect<ExtractedContent[], Error> {
+): Effect.Effect<ExtractedContent[], WebAccessError> {
   return Effect.gen(function* () {
     const response = yield* post<ExaContentsResponse>("/contents", {
       urls,

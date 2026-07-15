@@ -14,17 +14,10 @@ import {
 } from "./fetch-content.ts";
 import { clearCloneCache } from "./github.ts";
 import {
-  createResponseId,
-  getResponse,
-  initializeStorage,
-  storeResponse,
-} from "./storage.ts";
-import type {
-  ExtractedContent,
-  SearchOptions,
-  StoredResponse,
-  StoredSearchItem,
-} from "./types.ts";
+  openSessionResponseArchive,
+  type SessionResponseArchive,
+} from "./response-archive.ts";
+import type { ExtractedContent, SearchOptions, SearchResult } from "./types.ts";
 
 const MAX_QUERIES = 4;
 const MAX_QUERY_LENGTH = 2_000;
@@ -139,12 +132,17 @@ const GetContentParams = Type.Object({
   ),
 });
 
+type SearchItem = SearchResult & {
+  query: string;
+  error: string | null;
+};
+
 interface SearchDetails {
   responseId?: string;
   itemCount: number;
   successful: number;
   error?: string;
-  cacheError?: string;
+  archiveError?: string;
 }
 
 interface FetchDetails {
@@ -152,7 +150,7 @@ interface FetchDetails {
   itemCount: number;
   successful: number;
   error?: string;
-  cacheError?: string;
+  archiveError?: string;
 }
 
 interface GetContentDetails {
@@ -241,7 +239,7 @@ function normalizeSearch(
   };
 }
 
-function formatSources(item: StoredSearchItem): string {
+function formatSources(item: SearchItem): string {
   return item.sources.length === 0
     ? ""
     : `\n\nSources:\n${item.sources
@@ -249,10 +247,7 @@ function formatSources(item: StoredSearchItem): string {
         .join("\n")}`;
 }
 
-function formatSearchItem(
-  item: StoredSearchItem,
-  includeContent: boolean,
-): string {
+function formatSearchItem(item: SearchItem, includeContent: boolean): string {
   if (item.error) return `## ${item.query}\n\nError: ${item.error}`;
   const fullContent =
     includeContent && item.content.length > 0
@@ -274,45 +269,55 @@ function formatFetchedItem(item: ExtractedContent, initial: boolean): string {
     : item.content;
   const truncated =
     initial && item.content.length > INITIAL_FETCH_CHARS
-      ? `\n\n[Showing ${INITIAL_FETCH_CHARS} of ${item.content.length} characters. Use get_search_content for the stored text.]`
+      ? `\n\n[Showing ${INITIAL_FETCH_CHARS} of ${item.content.length} characters. Use get_search_content for the archived text.]`
       : "";
   return `## ${heading}\n\n${content}${truncated}`;
 }
 
-function textOnly(item: ExtractedContent): ExtractedContent {
-  return {
-    url: item.url,
-    title: item.title,
-    content: item.content.slice(0, 100_000),
-    error: item.error,
-    duration: item.duration,
-  };
-}
-
-function cacheResponse(
-  response: StoredResponse,
-): Effect.Effect<string | undefined> {
-  return storeResponse(response).pipe(
-    Effect.as(undefined),
-    Effect.catch((error) => Effect.succeed(errorMessage(error))),
+function archiveResponse(
+  archive: SessionResponseArchive | null,
+  items: readonly string[],
+): Effect.Effect<{ responseId?: string; archiveError?: string }> {
+  if (!archive) {
+    return Effect.succeed({
+      archiveError: "Session Response Archive is unavailable",
+    });
+  }
+  return archive.archive(items).pipe(
+    Effect.map((responseId) => ({ responseId })),
+    Effect.catch((error) =>
+      Effect.succeed({ archiveError: errorMessage(error) }),
+    ),
   );
 }
 
 export default function webAccessExtension(pi: ExtensionAPI) {
-  pi.on("session_start", (_event, context) =>
-    Effect.runPromise(
-      initializeStorage(context.sessionManager.getSessionId()).pipe(
+  let responseArchive: SessionResponseArchive | null = null;
+
+  pi.on("session_start", (_event, context) => {
+    responseArchive = null;
+    return Effect.runPromise(
+      openSessionResponseArchive(context.sessionManager.getSessionId()).pipe(
+        Effect.tap((archive) =>
+          Effect.sync(() => {
+            responseArchive = archive;
+          }),
+        ),
         Effect.catch((error) => {
           console.error(
-            `[pi-web-access] Could not initialize response storage: ${errorMessage(error)}`,
+            `[pi-web-access] Could not open Session Response Archive: ${errorMessage(error)}`,
           );
           return Effect.void;
         }),
+        Effect.asVoid,
       ),
-    ),
-  );
+    );
+  });
 
-  pi.on("session_shutdown", () => Effect.runPromise(clearCloneCache()));
+  pi.on("session_shutdown", () => {
+    responseArchive = null;
+    return Effect.runPromise(clearCloneCache);
+  });
 
   pi.registerTool({
     name: "web_search",
@@ -348,7 +353,7 @@ export default function webAccessExtension(pi: ExtensionAPI) {
           ).pipe(
             Effect.andThen(searchExa(query, normalized.options)),
             Effect.map(
-              (result): StoredSearchItem => ({
+              (result): SearchItem => ({
                 query,
                 ...result,
                 error: null,
@@ -368,27 +373,24 @@ export default function webAccessExtension(pi: ExtensionAPI) {
         { signal },
       );
 
-      const responseId = createResponseId();
-      const cacheError = await Effect.runPromise(
-        cacheResponse({
-          id: responseId,
-          type: "search",
-          timestamp: Date.now(),
-          items,
-        }),
+      const { responseId, archiveError } = await Effect.runPromise(
+        archiveResponse(
+          responseArchive,
+          items.map((item) => formatSearchItem(item, true)),
+        ),
       );
       const successful = items.filter((item) => item.error === null).length;
       const output = [
         ...items.map((item) => formatSearchItem(item, false)),
-        `Response ID: ${responseId}`,
-        ...(cacheError ? [`Cache error: ${cacheError}`] : []),
+        ...(responseId ? [`Response ID: ${responseId}`] : []),
+        ...(archiveError ? [`Archive error: ${archiveError}`] : []),
       ].join("\n\n---\n\n");
       return textResult<SearchDetails>(output, {
-        responseId,
+        ...(responseId ? { responseId } : {}),
         itemCount: items.length,
         successful,
         ...(successful === 0 ? { error: "All searches failed" } : {}),
-        ...(cacheError ? { cacheError } : {}),
+        ...(archiveError ? { archiveError } : {}),
       });
     },
     renderCall(args, theme) {
@@ -403,7 +405,7 @@ export default function webAccessExtension(pi: ExtensionAPI) {
     renderResult(result, _options, theme) {
       const details = result.details as SearchDetails | undefined;
       if (!details) return new Text("Search finished", 0, 0);
-      const text = `${details.successful}/${details.itemCount} searches • ${details.responseId ?? details.error ?? "no response"}`;
+      const text = `${details.successful}/${details.itemCount} searches • ${details.responseId ?? details.archiveError ?? details.error ?? "not archived"}`;
       return new Text(
         theme.fg(details.successful > 0 ? "success" : "error", text),
         0,
@@ -444,29 +446,26 @@ export default function webAccessExtension(pi: ExtensionAPI) {
         fetchContent(normalized.urls, normalized.options),
         { signal },
       );
-      const responseId = createResponseId();
-      const cacheError = await Effect.runPromise(
-        cacheResponse({
-          id: responseId,
-          type: "fetch",
-          timestamp: Date.now(),
-          items: items.map(textOnly),
-        }),
+      const { responseId, archiveError } = await Effect.runPromise(
+        archiveResponse(
+          responseArchive,
+          items.map((item) => formatFetchedItem(item, false)),
+        ),
       );
       const successful = items.filter((item) => item.error === null).length;
       const output = [
         ...items.map((item) => formatFetchedItem(item, true)),
-        `Response ID: ${responseId}`,
-        ...(cacheError ? [`Cache error: ${cacheError}`] : []),
+        ...(responseId ? [`Response ID: ${responseId}`] : []),
+        ...(archiveError ? [`Archive error: ${archiveError}`] : []),
       ].join("\n\n---\n\n");
       const result: AgentToolResult<FetchDetails> = {
         content: [{ type: "text", text: output }],
         details: {
-          responseId,
+          ...(responseId ? { responseId } : {}),
           itemCount: items.length,
           successful,
           ...(successful === 0 ? { error: "All fetches failed" } : {}),
-          ...(cacheError ? { cacheError } : {}),
+          ...(archiveError ? { archiveError } : {}),
         },
       };
       for (const item of items) {
@@ -494,7 +493,7 @@ export default function webAccessExtension(pi: ExtensionAPI) {
     renderResult(result, _options, theme) {
       const details = result.details as FetchDetails | undefined;
       if (!details) return new Text("Fetch finished", 0, 0);
-      const text = `${details.successful}/${details.itemCount} fetched • ${details.responseId ?? details.error ?? "no response"}`;
+      const text = `${details.successful}/${details.itemCount} fetched • ${details.responseId ?? details.archiveError ?? details.error ?? "not archived"}`;
       return new Text(
         theme.fg(details.successful > 0 ? "success" : "error", text),
         0,
@@ -507,15 +506,14 @@ export default function webAccessExtension(pi: ExtensionAPI) {
     name: "get_search_content",
     label: "Get Search Content",
     description:
-      "Retrieve a cached web_search or fetch_content response. Pass itemIndex to select one query or URL; omit it for the whole response.",
+      "Retrieve an archived web_search or fetch_content response. Pass itemIndex to select one query or URL; omit it for the whole response.",
     promptSnippet:
-      "Use a response ID to retrieve stored full text, optionally selecting one item by zero-based index.",
+      "Use a response ID to retrieve archived full text, optionally selecting one item by zero-based index.",
     parameters: GetContentParams,
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      const response = await Effect.runPromise(getResponse(params.responseId));
-      if (!response) {
-        const error = `Response not found: ${params.responseId}`;
+      if (!responseArchive) {
+        const error = "Session Response Archive is unavailable";
         return textResult<GetContentDetails>(`Error: ${error}`, {
           responseId: params.responseId,
           itemCount: 0,
@@ -523,36 +521,30 @@ export default function webAccessExtension(pi: ExtensionAPI) {
         });
       }
 
-      if (
-        params.itemIndex !== undefined &&
-        (params.itemIndex < 0 || params.itemIndex >= response.items.length)
-      ) {
-        const error = `itemIndex ${params.itemIndex} is outside 0-${response.items.length - 1}`;
+      const result = await Effect.runPromise(
+        responseArchive.retrieve(params.responseId, params.itemIndex),
+      );
+      if (result.status === "not-found") {
+        const error = `Response not found: ${params.responseId}`;
         return textResult<GetContentDetails>(`Error: ${error}`, {
           responseId: params.responseId,
-          itemCount: response.items.length,
+          itemCount: 0,
+          error,
+        });
+      }
+      if (result.status === "item-index-out-of-range") {
+        const error = `itemIndex ${params.itemIndex} is outside 0-${result.itemCount - 1}`;
+        return textResult<GetContentDetails>(`Error: ${error}`, {
+          responseId: params.responseId,
+          itemCount: result.itemCount,
           itemIndex: params.itemIndex,
           error,
         });
       }
 
-      const output =
-        response.type === "search"
-          ? (params.itemIndex === undefined
-              ? response.items
-              : [response.items[params.itemIndex]]
-            )
-              .map((item) => formatSearchItem(item, true))
-              .join("\n\n---\n\n")
-          : (params.itemIndex === undefined
-              ? response.items
-              : [response.items[params.itemIndex]]
-            )
-              .map((item) => formatFetchedItem(item, false))
-              .join("\n\n---\n\n");
-      return textResult<GetContentDetails>(output, {
-        responseId: response.id,
-        itemCount: params.itemIndex === undefined ? response.items.length : 1,
+      return textResult<GetContentDetails>(result.text, {
+        responseId: params.responseId,
+        itemCount: result.itemCount,
         ...(params.itemIndex !== undefined
           ? { itemIndex: params.itemIndex }
           : {}),

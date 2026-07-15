@@ -1,7 +1,12 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { Effect } from "effect";
-import { asError, errorMessage } from "./errors.ts";
+import {
+  asError,
+  errorMessage,
+  type WebAccessError,
+  webAccessError,
+} from "./errors.ts";
 import {
   analyzeLocalVideo,
   analyzeYouTube,
@@ -210,7 +215,7 @@ function extractFrames(
   values: number[],
 ): Effect.Effect<
   { frames: VideoFrame[]; error: string | null; duration?: number },
-  Error
+  WebAccessError
 > {
   return Effect.gen(function* () {
     const stream =
@@ -279,7 +284,9 @@ function frameResult(
   };
 }
 
-function mediaDuration(media: MediaTarget): Effect.Effect<number, Error> {
+function mediaDuration(
+  media: MediaTarget,
+): Effect.Effect<number, WebAccessError> {
   if (media.kind === "local") {
     return getLocalDuration(media.local?.absolutePath as string);
   }
@@ -287,7 +294,7 @@ function mediaDuration(media: MediaTarget): Effect.Effect<number, Error> {
     Effect.flatMap((stream) =>
       stream.duration === null
         ? Effect.fail(
-            new Error(
+            webAccessError(
               "Cannot determine video duration; provide an explicit timestamp range",
             ),
           )
@@ -299,7 +306,7 @@ function mediaDuration(media: MediaTarget): Effect.Effect<number, Error> {
 function extractRequestedFrames(
   media: MediaTarget,
   options: FetchOptions,
-): Effect.Effect<ExtractedContent, Error> {
+): Effect.Effect<ExtractedContent, WebAccessError> {
   return Effect.gen(function* () {
     if (options.frames && !options.timestamp) {
       const duration = yield* mediaDuration(media);
@@ -315,9 +322,7 @@ function extractRequestedFrames(
 
     const spec = parseTimestamp(options.timestamp as string);
     if (!spec) {
-      return yield* Effect.fail(
-        new Error(`Invalid timestamp: ${options.timestamp}`),
-      );
+      return yield* webAccessError(`Invalid timestamp: ${options.timestamp}`);
     }
 
     if (spec.type === "range") {
@@ -356,7 +361,7 @@ function extractRequestedFrames(
             spec.seconds,
           );
     if ("error" in frame) {
-      return yield* Effect.fail(new Error(frame.error));
+      return yield* webAccessError(frame.error);
     }
     return {
       url: media.input,
@@ -389,13 +394,13 @@ function youtubeThumbnail(
     return data.length > 0
       ? { data: data.toString("base64"), mimeType: "image/jpeg" }
       : undefined;
-  }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+  }).pipe(Effect.orElseSucceed(() => undefined));
 }
 
 function analyze(
   media: MediaTarget,
   options: FetchOptions,
-): Effect.Effect<ExtractedContent, Error> {
+): Effect.Effect<ExtractedContent, WebAccessError> {
   const prompt = options.prompt ?? DEFAULT_VIDEO_PROMPT;
   const model = options.model ?? DEFAULT_GEMINI_MODEL;
   if (media.kind === "youtube") {

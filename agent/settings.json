@@ -1,7 +1,6 @@
 {
   "lastChangelogVersion": "0.80.7",
   "packages": [
-    "npm:pi-better-openai",
     "npm:pi-web-access"
   ],
   "defaultProvider": "openai-codex",

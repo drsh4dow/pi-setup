@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -22,8 +22,7 @@ export const SUPPORTED_MODELS = new Set([
 export const TARGET_PROVIDER = "openai-codex";
 export const TARGET_MODEL = "gpt-5.6";
 export const FAST_SERVICE_TIER = "priority";
-export const CONFIG_FIELD = "pi-gpt-fast-mode";
-export const KEYBINDING_FIELD = CONFIG_FIELD;
+export const KEYBINDING_FIELD = "pi-gpt-fast-mode";
 export const DEFAULT_SHORTCUT = "ctrl+alt+m";
 export const RESERVED_SHORTCUTS = new Set(["ctrl+m", "enter", "return"]);
 
@@ -31,12 +30,18 @@ type PiModel = { provider?: string; id?: string };
 type ProviderPayload = Record<string, unknown>;
 type PiConfig = Record<string, unknown>;
 type ReadTextFile = (path: string, encoding: "utf8") => string;
+type WriteTextFile = (
+  path: string,
+  data: string,
+  options: { encoding: "utf8"; mode: number },
+) => void;
 
-type PiFileLoadOptions = {
+type PiFileOptions = {
   env?: Record<string, string | undefined>;
   home?: string;
   exists?: (path: string) => boolean;
   readFile?: ReadTextFile;
+  writeFile?: WriteTextFile;
 };
 
 /**
@@ -82,7 +87,7 @@ function expandHome(input: string, home: string): string {
  */
 export function resolvePiFilePath(
   fileName: string,
-  options: PiFileLoadOptions = {},
+  options: PiFileOptions = {},
 ): string {
   const env = options.env ?? process.env;
   const home = options.home ?? homedir();
@@ -108,15 +113,14 @@ export function resolvePiFilePath(
 }
 
 /** Resolve the global Pi keybindings file this extension should read. */
-export function resolveKeybindingsPath(
-  options: PiFileLoadOptions = {},
-): string {
+export function resolveKeybindingsPath(options: PiFileOptions = {}): string {
   return resolvePiFilePath("keybindings.json", options);
 }
 
-/** Resolve the global Pi settings file this extension should read. */
-export function resolveSettingsPath(options: PiFileLoadOptions = {}): string {
-  return resolvePiFilePath("settings.json", options);
+export function resolveFastModeSettingsPath(
+  options: PiFileOptions = {},
+): string {
+  return resolvePiFilePath("gpt-fast-mode.json", options);
 }
 
 function normalizeShortcutList(values: unknown[]): string[] {
@@ -155,7 +159,7 @@ function readPiJson(
  * Uses the field `pi-gpt-fast-mode`. Missing or invalid config falls back to ctrl+alt+m.
  * Set the field to false or null to disable the shortcut entirely.
  */
-export function loadShortcuts(options: PiFileLoadOptions = {}): string[] {
+export function loadShortcuts(options: PiFileOptions = {}): string[] {
   const readFile: ReadTextFile =
     options.readFile ?? ((path, encoding) => readFileSync(path, encoding));
   const parsed = readPiJson(resolveKeybindingsPath(options), readFile);
@@ -164,23 +168,25 @@ export function loadShortcuts(options: PiFileLoadOptions = {}): string[] {
     : [DEFAULT_SHORTCUT];
 }
 
-/**
- * Read the default Fast mode state from global Pi settings.
- * `{ "pi-gpt-fast-mode": { "enabled": true } }` starts sessions enabled.
- */
-export function loadDefaultEnabled(options: PiFileLoadOptions = {}): boolean {
+export function loadEnabled(options: PiFileOptions = {}): boolean {
   const readFile: ReadTextFile =
     options.readFile ?? ((path, encoding) => readFileSync(path, encoding));
-  const parsed = readPiJson(resolveSettingsPath(options), readFile);
-  const extensionConfig = parsed?.[CONFIG_FIELD];
+  const settings = readPiJson(resolveFastModeSettingsPath(options), readFile);
+  return settings?.enabled === true;
+}
 
-  if (
-    !extensionConfig ||
-    typeof extensionConfig !== "object" ||
-    Array.isArray(extensionConfig)
-  )
-    return false;
-  return (extensionConfig as { enabled?: unknown }).enabled === true;
+export function saveEnabled(
+  enabled: boolean,
+  options: PiFileOptions = {},
+): void {
+  const writeFile: WriteTextFile =
+    options.writeFile ??
+    ((path, data, writeOptions) => writeFileSync(path, data, writeOptions));
+  writeFile(
+    resolveFastModeSettingsPath(options),
+    `${JSON.stringify({ enabled }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
 }
 
 function isSupportedModelContext(ctx: unknown): boolean {
@@ -225,17 +231,23 @@ function announceState(ctx: unknown, enabled: boolean): void {
 }
 
 export default function fastModeExtension(pi: ExtensionAPI): void {
-  let enabled = loadDefaultEnabled();
+  let enabled = loadEnabled();
 
-  async function toggle(ctx: unknown): Promise<void> {
-    enabled = !enabled;
-    announceState(ctx, enabled);
+  function toggle(ctx: unknown): void {
+    const nextEnabled = !enabled;
+    try {
+      saveEnabled(nextEnabled);
+      enabled = nextEnabled;
+      announceState(ctx, enabled);
+    } catch {
+      notify(ctx, "Could not save GPT Fast mode setting.", "error");
+    }
   }
 
   pi.registerCommand("fast", {
     description: "Toggle GPT Fast mode (service_tier: priority)",
     handler: async (_args, ctx) => {
-      await toggle(ctx);
+      toggle(ctx);
     },
   });
 
@@ -244,15 +256,15 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
       shortcut as Parameters<ExtensionAPI["registerShortcut"]>[0],
       {
         description: "Toggle GPT Fast mode",
-        handler: async (ctx) => {
-          await toggle(ctx);
+        handler: (ctx) => {
+          toggle(ctx);
         },
       },
     );
   }
 
   pi.on("session_start", () => {
-    enabled = loadDefaultEnabled();
+    enabled = loadEnabled();
   });
 
   pi.on("before_provider_request", (event, ctx) => {

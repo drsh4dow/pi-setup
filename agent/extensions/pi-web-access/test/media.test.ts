@@ -92,7 +92,9 @@ test("local frame extraction works with ffmpeg", {
     );
     assert.equal(result?.error, null);
     assert.equal(result?.thumbnail?.mimeType, "image/jpeg");
-    assert.ok((result?.thumbnail?.data.length ?? 0) > 100);
+    const frame = Buffer.from(result?.thumbnail?.data ?? "", "base64");
+    assert.deepEqual(frame.subarray(0, 3), Buffer.from([0xff, 0xd8, 0xff]));
+    assert.deepEqual(frame.subarray(-2), Buffer.from([0xff, 0xd9]));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

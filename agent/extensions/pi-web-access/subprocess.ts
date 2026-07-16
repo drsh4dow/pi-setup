@@ -17,6 +17,7 @@ export function runCommand(
             timeout: options.timeoutMs,
             maxBuffer: options.maxBuffer,
             signal,
+            encoding: "buffer",
           },
           (error, stdout, stderr) => {
             if (error) {
@@ -24,9 +25,7 @@ export function runCommand(
               reject(error);
               return;
             }
-            resolve(
-              Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout, "utf8"),
-            );
+            resolve(stdout);
           },
         );
       }),

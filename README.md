@@ -52,7 +52,10 @@ Prompts are for deterministic triggers. Skills are injected into context, so the
 ## Extensions
 
 - `pi-questions` — `ask_questions` TUI.
-- `pi-delegate` — `delegate` to isolated child sessions. The only subagent primitive.
+- `pi-delegate` — `delegate` to isolated child sessions. The only subagent primitive. Set its model globally in `~/.pi/agent/settings.json`; unavailable or invalid models fall back to the parent model:
+  ```json
+  { "delegate": { "model": "provider/model-id" } }
+  ```
 - `pi-web-minimal` — web, code, docs, URL, and GitHub retrieval.
 - `pi-notify` — desktop notifications.
 

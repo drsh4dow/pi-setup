@@ -15,6 +15,7 @@ export { extractAssistantText, formatDelegateOutput } from "./output.ts";
 export {
   childExtensionPaths,
   DELEGATION_TOOL_DENYLIST,
+  readDelegateModelSetting,
   resolveDelegateModel,
   selectChildToolNames,
   thinkingForEffort,

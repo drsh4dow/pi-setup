@@ -5,6 +5,10 @@ export class DelegateError extends Data.TaggedError("DelegateError")<{
   readonly cause?: unknown;
 }> {}
 
+export class DelegateTimeout extends Data.TaggedError("DelegateTimeout")<{
+  readonly message: string;
+}> {}
+
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

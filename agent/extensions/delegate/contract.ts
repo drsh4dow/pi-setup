@@ -5,7 +5,6 @@ export const TOOL_NAME = "delegate";
 export const TIMEOUT_MS = 15 * 60 * 1000;
 export const COLLAPSED_PREVIEW_LINES = 4;
 export const COLLAPSED_PREVIEW_CHARS = 360;
-export const REQUESTED_MODEL = "parent model";
 export const CHILD_EXTENSION_PATHS_ENV = "PI_CHILD_EXTENSION_PATHS";
 
 export const DelegateParams = Type.Object({

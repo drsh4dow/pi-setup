@@ -1,15 +1,17 @@
-import { delimiter } from "node:path";
+import { readFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import {
   type AgentSessionEvent,
   createAgentSession,
   DefaultResourceLoader,
   type ExtensionContext,
   getAgentDir,
+  type ModelRegistry,
   SessionManager,
   type ToolDefinition,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import {
   CHILD_EXTENSION_PATHS_ENV,
   type DelegateDetails,
@@ -18,11 +20,10 @@ import {
   type DelegateParams as DelegateParamsSchema,
   type DelegateThinking,
   type DelegateUsageStats,
-  REQUESTED_MODEL,
   TIMEOUT_MS,
   TOOL_NAME,
 } from "./contract.ts";
-import { delegateError, errorMessage } from "./errors.ts";
+import { DelegateTimeout, delegateError, errorMessage } from "./errors.ts";
 import { formatStatusParts } from "./format.ts";
 import { extractAssistantText, formatDelegateOutputEffect } from "./output.ts";
 
@@ -67,14 +68,13 @@ interface DelegateState {
   readonly effort: DelegateEffort;
   readonly thinking: DelegateThinking;
   readonly assignedTask: string;
+  readonly requestedModel: string;
   readonly fallbackReason?: string;
   readonly childUsage: DelegateUsageStats;
   model?: string;
   toolCalls: number;
   failedToolCalls: number;
   lastAssistantText: string;
-  timedOut: boolean;
-  aborted: boolean;
 }
 
 export function thinkingForEffort(effort: DelegateEffort): DelegateThinking {
@@ -114,17 +114,114 @@ function modelName(
   return `${model.provider}/${model.id}`;
 }
 
-export function resolveDelegateModel(ctx: ExtensionContext): {
-  model: ExtensionContext["model"];
-  fallbackReason?: string;
-} {
-  if (ctx.model) return { model: ctx.model };
+interface DelegateModelSetting {
+  model?: string;
+  problem?: string;
+}
 
-  return {
-    model: undefined,
-    fallbackReason:
-      "No parent model was available; Pi will use its normal session default.",
+/**
+ * Read the optional `{"delegate": {"model": "provider/model-id"}}` section of
+ * Pi's global settings.json. Malformed settings never fail the delegation;
+ * they surface as a problem that becomes the fallback reason.
+ */
+export function readDelegateModelSetting(
+  settingsPath = join(getAgentDir(), "settings.json"),
+): DelegateModelSetting {
+  let raw: string;
+  try {
+    raw = readFileSync(settingsPath, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return {};
+    }
+    return {
+      problem: `Could not read ${settingsPath}: ${errorMessage(error)}.`,
+    };
+  }
+
+  let settings: unknown;
+  try {
+    settings = JSON.parse(raw);
+  } catch (error) {
+    return {
+      problem: `Could not parse ${settingsPath}: ${errorMessage(error)}.`,
+    };
+  }
+
+  const delegate = (settings as { delegate?: unknown } | null)?.delegate;
+  if (delegate === undefined) return {};
+  if (!delegate || typeof delegate !== "object" || Array.isArray(delegate)) {
+    return {
+      problem: `"delegate" in ${settingsPath} must be an object.`,
+    };
+  }
+  const model = (delegate as { model?: unknown }).model;
+  if (model === undefined) return {};
+  if (typeof model !== "string" || model.trim() === "") {
+    return {
+      problem: `"delegate.model" in ${settingsPath} must be a "provider/model-id" string.`,
+    };
+  }
+  return { model: model.trim() };
+}
+
+interface DelegateModelChoice {
+  model: ExtensionContext["model"];
+  requestedModel: string;
+  fallbackReason?: string;
+}
+
+export function resolveDelegateModel(
+  ctx: {
+    model: ExtensionContext["model"];
+    modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
+  },
+  setting: DelegateModelSetting = readDelegateModelSetting(),
+): DelegateModelChoice {
+  const parentModel = (
+    requestedModel: string,
+    problem?: string,
+  ): DelegateModelChoice => {
+    const noParent =
+      "No parent model was available; Pi will use its normal session default.";
+    return {
+      model: ctx.model,
+      requestedModel,
+      fallbackReason: problem
+        ? `${problem} ${ctx.model ? "Using the parent model instead." : noParent}`
+        : ctx.model
+          ? undefined
+          : noParent,
+    };
   };
+
+  if (setting.problem) return parentModel("parent model", setting.problem);
+  if (!setting.model) return parentModel("parent model");
+
+  const slash = setting.model.indexOf("/");
+  if (slash <= 0 || slash === setting.model.length - 1) {
+    return parentModel(
+      setting.model,
+      `Configured delegate model "${setting.model}" must be a "provider/model-id" string.`,
+    );
+  }
+  const model = ctx.modelRegistry.find(
+    setting.model.slice(0, slash),
+    setting.model.slice(slash + 1),
+  );
+  if (!model) {
+    return parentModel(
+      setting.model,
+      `Configured delegate model "${setting.model}" was not found in the model registry.`,
+    );
+  }
+  if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
+    return parentModel(
+      setting.model,
+      `Configured delegate model "${setting.model}" has no auth configured.`,
+    );
+  }
+  return { model, requestedModel: setting.model };
 }
 
 export function childExtensionPaths(
@@ -158,7 +255,7 @@ function detailsFrom(state: DelegateState): DelegateDetails {
     success: false,
     assignedTask: state.assignedTask,
     effort: state.effort,
-    requestedModel: REQUESTED_MODEL,
+    requestedModel: state.requestedModel,
     model: state.model,
     thinking: state.thinking,
     fallbackReason: state.fallbackReason,
@@ -166,8 +263,8 @@ function detailsFrom(state: DelegateState): DelegateDetails {
     toolCalls: state.toolCalls,
     failedToolCalls: state.failedToolCalls,
     childUsage: { ...state.childUsage },
-    timedOut: state.timedOut,
-    aborted: state.aborted,
+    timedOut: false,
+    aborted: false,
   };
 }
 
@@ -262,14 +359,13 @@ export const executeDelegate: DelegateExecute = async (
     effort,
     thinking: thinkingForEffort(effort),
     assignedTask: params.task,
+    requestedModel: modelChoice.requestedModel,
     fallbackReason: modelChoice.fallbackReason,
     model: modelName(modelChoice.model),
     childUsage: emptyUsageStats(),
     toolCalls: 0,
     failedToolCalls: 0,
     lastAssistantText: "",
-    timedOut: false,
-    aborted: false,
   };
 
   const updateProgress = () => {
@@ -323,14 +419,10 @@ export const executeDelegate: DelegateExecute = async (
               Effect.timeoutOrElse({
                 duration: TIMEOUT_MS,
                 orElse: () =>
-                  Effect.sync(() => {
-                    state.timedOut = true;
-                  }).pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        delegateError(new Error("Timed out after 15 minutes")),
-                      ),
-                    ),
+                  Effect.fail(
+                    new DelegateTimeout({
+                      message: `Timed out after ${TIMEOUT_MS / 60_000} minutes`,
+                    }),
                   ),
               }),
             ),
@@ -342,17 +434,24 @@ export const executeDelegate: DelegateExecute = async (
     disposeChild,
   );
 
-  try {
-    await Effect.runPromise(program, { signal });
-  } catch (error) {
-    state.aborted = !state.timedOut && signal?.aborted === true;
-    const message = state.aborted ? "Delegation aborted" : errorMessage(error);
-    const details = { ...detailsFrom(state), error: message };
+  const exit = await Effect.runPromiseExit(program, { signal });
+  if (Exit.isFailure(exit)) {
+    const aborted =
+      Cause.hasInterruptsOnly(exit.cause) && signal?.aborted === true;
+    const error = Cause.squash(exit.cause);
+    const timedOut = error instanceof DelegateTimeout;
+    const message = aborted ? "Delegation aborted" : errorMessage(error);
+    const details = {
+      ...detailsFrom(state),
+      timedOut,
+      aborted,
+      error: message,
+    };
     let failure = `Delegated task failed: ${message} (${formatStatusParts(details)}`;
-    if (state.timedOut) failure += " • timed out";
-    if (state.aborted) failure += " • aborted";
+    if (timedOut) failure += " • timed out";
+    if (aborted) failure += " • aborted";
     failure += ")";
-    throw new Error(failure);
+    throw new Error(failure, { cause: error });
   }
 
   const output = await Effect.runPromise(

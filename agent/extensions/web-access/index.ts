@@ -2,6 +2,7 @@ import { type Static, StringEnum, Type } from "@earendil-works/pi-ai";
 import type {
   AgentToolResult,
   ExtensionAPI,
+  Theme,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Effect } from "effect";
@@ -162,6 +163,16 @@ interface GetContentDetails {
 
 function textResult<T>(text: string, details: T): AgentToolResult<T> {
   return { content: [{ type: "text", text }], details };
+}
+
+function renderProgress(
+  result: AgentToolResult<unknown>,
+  fallback: string,
+  theme: Theme,
+): Text {
+  const block = result.content[0];
+  const text = block?.type === "text" && block.text ? block.text : fallback;
+  return new Text(theme.fg("muted", text), 0, 0);
 }
 
 function normalizeSearch(
@@ -402,7 +413,8 @@ export default function webAccessExtension(pi: ExtensionAPI) {
         0,
       );
     },
-    renderResult(result, _options, theme) {
+    renderResult(result, options, theme) {
+      if (options.isPartial) return renderProgress(result, "Searching…", theme);
       const details = result.details as SearchDetails | undefined;
       if (!details) return new Text("Search finished", 0, 0);
       const text = `${details.successful}/${details.itemCount} searches • ${details.responseId ?? details.archiveError ?? details.error ?? "not archived"}`;
@@ -490,7 +502,8 @@ export default function webAccessExtension(pi: ExtensionAPI) {
         0,
       );
     },
-    renderResult(result, _options, theme) {
+    renderResult(result, options, theme) {
+      if (options.isPartial) return renderProgress(result, "Fetching…", theme);
       const details = result.details as FetchDetails | undefined;
       if (!details) return new Text("Fetch finished", 0, 0);
       const text = `${details.successful}/${details.itemCount} fetched • ${details.responseId ?? details.archiveError ?? details.error ?? "not archived"}`;

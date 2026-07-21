@@ -1,13 +1,9 @@
 {
-  "lastChangelogVersion": "0.81.0",
+  "lastChangelogVersion": "0.81.1",
   "packages": [],
-  "defaultProvider": "opencode",
-  "defaultModel": "claude-fable-5",
-  "enabledModels": [
-    "openai-codex/gpt-5.6-sol",
-    "opencode/claude-fable-5",
-    "anthropic/claude-fable-5"
-  ],
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-sol",
+  "enabledModels": ["openai-codex/gpt-5.6-sol"],
   "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,
   "treeFilterMode": "default",

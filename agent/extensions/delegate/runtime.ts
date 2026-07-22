@@ -302,7 +302,7 @@ function abortChild(child: ChildSession): Effect.Effect<void> {
   }).pipe(Effect.timeout(5_000), Effect.ignore);
 }
 
-function createChild(
+export function createChild(
   ctx: ExtensionContext,
   model: ExtensionContext["model"],
   thinking: DelegateThinking,
@@ -334,6 +334,17 @@ function createChild(
         }),
       catch: delegateError,
     });
+    yield* Effect.tryPromise({
+      try: () =>
+        result.session.bindExtensions({
+          onError: ({ extensionPath, event, error }) => {
+            throw new Error(
+              `Child extension ${extensionPath} failed during ${event}: ${error}`,
+            );
+          },
+        }),
+      catch: delegateError,
+    }).pipe(Effect.tapError(() => disposeChild(result.session)));
     return result.session;
   });
 }

@@ -4,10 +4,14 @@ import { readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
+  type AgentSession,
   DEFAULT_MAX_LINES,
   type ExtensionAPI,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Effect } from "effect";
 import delegateExtension, {
   childExtensionPaths,
   extractAssistantText,
@@ -17,6 +21,7 @@ import delegateExtension, {
   selectChildToolNames,
   thinkingForEffort,
 } from "../index.ts";
+import { createChild } from "../runtime.ts";
 
 type ResolveContext = Parameters<typeof resolveDelegateModel>[0];
 type RegistryModel = NonNullable<ResolveContext["model"]>;
@@ -189,6 +194,64 @@ test("normalizes configured child extension paths", () => {
     }),
     ["/one", "/two"],
   );
+});
+
+test("initializes lifecycle-dependent web tools in child sessions", async () => {
+  const originalPaths = process.env.PI_CHILD_EXTENSION_PATHS;
+  process.env.PI_CHILD_EXTENSION_PATHS = fileURLToPath(
+    new URL("../../web-access/index.ts", import.meta.url),
+  );
+  let child: AgentSession | undefined;
+  try {
+    child = await Effect.runPromise(
+      createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
+    );
+    const retrieval = child.getToolDefinition("get_search_content");
+    assert.ok(retrieval);
+    const result = await retrieval.execute(
+      "call-1",
+      { responseId: "missing-response" },
+      undefined,
+      undefined,
+      {} as ExtensionContext,
+    );
+    const text =
+      result.content.find((item) => item.type === "text")?.text ?? "";
+    assert.match(text, /Response not found: missing-response/);
+    assert.doesNotMatch(text, /Session Response Archive is unavailable/);
+  } finally {
+    child?.dispose();
+    if (originalPaths === undefined)
+      delete process.env.PI_CHILD_EXTENSION_PATHS;
+    else process.env.PI_CHILD_EXTENSION_PATHS = originalPaths;
+  }
+});
+
+test("surfaces delegated child extension startup failures", async () => {
+  const extension = join(settingsDir, "failing-lifecycle-extension.ts");
+  writeFileSync(
+    extension,
+    `export default function (pi) {
+  pi.on("session_start", () => { throw new Error("fixture startup failed"); });
+}
+`,
+    "utf8",
+  );
+
+  const originalPaths = process.env.PI_CHILD_EXTENSION_PATHS;
+  process.env.PI_CHILD_EXTENSION_PATHS = extension;
+  try {
+    await assert.rejects(
+      Effect.runPromise(
+        createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
+      ),
+      /Child extension .* failed during session_start: fixture startup failed/,
+    );
+  } finally {
+    if (originalPaths === undefined)
+      delete process.env.PI_CHILD_EXTENSION_PATHS;
+    else process.env.PI_CHILD_EXTENSION_PATHS = originalPaths;
+  }
 });
 
 test("extracts only assistant text blocks", () => {

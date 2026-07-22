@@ -41,5 +41,5 @@ bun run verify
 Live Exa and GitHub smoke tests are opt-in:
 
 ```sh
-PI_WEB_ACCESS_LIVE=1 node --test agent/extensions/pi-web-access/test/live.test.ts
+PI_WEB_ACCESS_LIVE=1 node --test agent/extensions/web-access/test/live.test.ts
 ```

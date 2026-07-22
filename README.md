@@ -1,81 +1,106 @@
-# Pi
+# Pi setup
 
-Personal dotfiles for [Pi](https://github.com/earendil-works/pi). Opinionated, public-safe config for people who want my defaults without my local secrets.
+My global configuration for [Pi](https://github.com/earendil-works/pi): a strict system prompt, local TypeScript extensions, model defaults, themes, keybindings, and a small set of reusable prompts.
 
-- Engine: `openai-codex/gpt-5.5`, high thinking.
-- Taste: *suckless*, *A Philosophy of Software Design*, *The Pragmatic Programmer*.
-- Human owns direction. Agent owns evidence.
+This repository is meant to live at `~/.pi`. The extensions are vendored here and loaded directly by Pi; they are not separate packages to install.
 
-Behavior contract: [`agent/SYSTEM.md`](agent/SYSTEM.md).
+## Defaults
+
+- Primary model: `openai-codex/gpt-5.6-sol` with high thinking
+- Additional model: `opencode-go/kimi-k3`
+- Child-agent model: `openai-codex/gpt-5.6-sol`
+- Theme: Catppuccin Mocha; Gruvbox Dark Hard is also included
+- Automatic context compaction enabled
+- GPT Fast mode enabled
+
+The agent's behavior and engineering standards are defined in [`agent/SYSTEM.md`](agent/SYSTEM.md). In short: act autonomously, investigate before editing, prefer simple and deep designs, verify before claiming success, and preserve user-owned work.
 
 ## Install
 
-```bash
-git clone https://github.com/drsh4dow/.pi ~/.pi
-npm i -g @earendil-works/pi-coding-agent
-pi install npm:pi-questions
-pi install npm:pi-delegate
-pi install npm:pi-web-minimal
-pi install npm:pi-notify
-npm i -g agent-browser && agent-browser install  # optional, for the agent-browser skill
-```
-
-Local-only files are ignored. Copy examples when you need them:
+Requires Node.js 22.19 or newer and [Bun](https://bun.sh). Install Pi and clone this repository into its global configuration directory:
 
 ```bash
-cp ~/.pi/web-search.example.json ~/.pi/web-search.json
-cp ~/.pi/agent/trust.example.json ~/.pi/agent/trust.json
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+git clone https://github.com/drsh4dow/pi-setup.git ~/.pi
+cd ~/.pi
+bun install
+pi
 ```
 
-Never commit real API keys, auth files, run history, telemetry, or trusted local paths.
+Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exists, move or merge it before cloning.
 
-## Validate changes
+Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
+
+## Included tools and extensions
+
+| Extension | What it adds |
+| --- | --- |
+| `questions` | `ask_questions`, an interactive questionnaire with predefined or free-form answers |
+| `delegate` | `delegate`, a bounded child Pi session for isolated research, review, debugging, and repository mapping |
+| `web-access` | `web_search`, `fetch_content`, and `get_search_content` for Exa search, pages and PDFs, GitHub repositories, and video analysis |
+| `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle OpenAI's priority service tier for supported GPT models |
+| `shake-images` | `/shake-images` to retain only the newest two images in model context for the current session |
+| `skill-visibility` | `/skill-visibility` to choose which loaded skills are discoverable by the model |
+| `session-timer` | Per-run and cumulative session timing in the status bar |
+| `tps-tracker` | Live and final output-token throughput |
+| `ui-moto` | A compact model and project header |
+
+Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). Invalid, unavailable, or unauthenticated child models fall back to the parent model.
+
+## Web access
+
+Set credentials in the environment before starting Pi:
+
+```bash
+export EXA_API_KEY="..."       # web search and ordinary URL/PDF extraction
+export GEMINI_API_KEY="..."    # YouTube and local-video analysis
+```
+
+GitHub access works without Exa. `git` enables shallow public-repository clones, while an authenticated `gh` CLI adds private-repository access. Video frame extraction can also use `ffmpeg`, `ffprobe`, and `yt-dlp` when installed.
+
+See [`agent/extensions/web-access/README.md`](agent/extensions/web-access/README.md) for limits and implementation details.
+
+## Prompts and shortcuts
+
+Prompt templates:
+
+- `/beautify-dirty-worktree` — audit uncommitted code for simpler, more native structure without changing behavior
+- `/handoff [focus]` — write a redacted handoff document to the operating system's temporary directory
+
+Custom keybindings:
+
+- `Ctrl-P` / `Ctrl-N` — move through selectors
+- `Alt-P` — cycle enabled models
+- `Ctrl-Alt-M` — toggle GPT Fast mode
+
+## Repository layout
+
+```text
+agent/
+├── SYSTEM.md          # agent behavior contract
+├── settings.json      # models, thinking level, theme, and delegate model
+├── keybindings.json
+├── extensions/        # local tools, commands, and UI extensions
+├── prompts/           # prompt templates
+└── themes/            # Catppuccin and Gruvbox themes
+```
+
+Runtime state and secrets such as `auth.json`, sessions, API configuration, run history, and trusted local paths are ignored. Do not commit them. [`agent/trust.example.json`](agent/trust.example.json) documents the trust-file shape without including machine-specific paths.
+
+## Development
+
+Requires Bun. Install the pinned dependencies and run the complete check suite:
 
 ```bash
 bun install
 bun run verify
 ```
 
-Installation patches TypeScript-Go with the Effect language service. CI runs the same typecheck, Effect diagnostics, Biome check, and web-access tests.
+`verify` runs TypeScript type checking, Effect diagnostics, Biome, delegate tests, and web-access tests. GitHub Actions runs the same command on pushes and pull requests. Live web-access smoke tests are opt-in:
 
-## Loop
-
-1. `/do-plan <task>` — read-only. Explores, researches, interviews, emits a plan.
-2. Approve or revise. To deepen the plan, run `/skill:grill-with-docs`.
-3. `/do-work proceed with the plan` — small slices, each verified before claiming done.
-4. Review diff + evidence. Commit only on accept.
-
-## Prompts ([`agent/prompts/`](agent/prompts))
-
-Prompts are for deterministic triggers. Skills are injected into context, so they are better for behavior that must trigger automatically.
-
-## Extensions
-
-- `pi-questions` — `ask_questions` TUI.
-- `pi-delegate` — `delegate` to isolated child sessions. The only subagent primitive. Set its model globally in `~/.pi/agent/settings.json`; unavailable or invalid models fall back to the parent model:
-  ```json
-  { "delegate": { "model": "provider/model-id" } }
-  ```
-- `pi-web-minimal` — web, code, docs, URL, and GitHub retrieval.
-- `pi-notify` — desktop notifications.
-
-## Web search setup
-
-`pi-web-minimal` reads `~/.pi/web-search.json`:
-
-```json
-{
-  "exaApiKey": "...",
-  "context7ApiKey": "..."
-}
+```bash
+PI_WEB_ACCESS_LIVE=1 node --test agent/extensions/web-access/test/live.test.ts
 ```
-
-Environment alternatives:
-
-- `EXA_API_KEY`
-- `CONTEXT7_API_KEY`
-
-Tools exposed: `web_search`, `code_search`, `documentation_search`, `fetch_content`, `get_search_content`.
 
 ## License
 

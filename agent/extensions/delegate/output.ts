@@ -9,7 +9,7 @@ import {
   truncateHead,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import type { DelegateOutput } from "./contract.ts";
+import type { DelegateOutput, DelegateSnapshot } from "./contract.ts";
 import { delegateError } from "./errors.ts";
 
 export function extractAssistantText(message: {
@@ -33,6 +33,15 @@ export function extractAssistantText(message: {
       return text ? [text] : [];
     })
     .join("\n");
+}
+
+export function formatSnapshotOutput(
+  snapshot: Pick<DelegateSnapshot, "output" | "structured">,
+  indentation?: number,
+): string {
+  return snapshot.structured === undefined
+    ? snapshot.output
+    : JSON.stringify(snapshot.structured, null, indentation);
 }
 
 export function formatDelegateOutputEffect(

@@ -10,9 +10,11 @@ import {
   DEFAULT_MAX_LINES,
   type ExtensionAPI,
   type ExtensionContext,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import delegateExtension, {
+  BackgroundDelivery,
   childExtensionPaths,
   extractAssistantText,
   formatDelegateOutput,
@@ -146,27 +148,106 @@ test("defaults to the parent model without a configured delegate model", () => {
   );
 });
 
-test("registers the parallel delegate tool", () => {
-  let tool:
-    | {
-        name: string;
-        executionMode?: "sequential" | "parallel";
-        execute: unknown;
-        renderCall?: unknown;
-        renderResult?: unknown;
-      }
-    | undefined;
+test("registers blocking, control, and workflow tools", () => {
+  const tools: Array<{
+    name: string;
+    executionMode?: "sequential" | "parallel";
+    execute: unknown;
+    renderCall?: unknown;
+    renderResult?: unknown;
+  }> = [];
   delegateExtension({
-    registerTool(registered) {
-      tool = registered;
+    on() {},
+    registerTool(registered: ToolDefinition) {
+      tools.push(registered);
     },
-  } as ExtensionAPI);
+  } as unknown as ExtensionAPI);
 
-  assert.equal(tool?.name, "delegate");
-  assert.equal(tool?.executionMode, "parallel");
-  assert.equal(typeof tool?.execute, "function");
-  assert.equal(typeof tool?.renderCall, "function");
-  assert.equal(typeof tool?.renderResult, "function");
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    ["delegate", "delegate_control", "delegate_workflow"],
+  );
+  assert.ok(tools.every((tool) => tool.executionMode === "parallel"));
+  assert.equal(typeof tools[0].execute, "function");
+  assert.equal(typeof tools[0].renderCall, "function");
+  assert.equal(typeof tools[0].renderResult, "function");
+  const blockingProperties = (
+    tools[0] as unknown as { parameters: { properties: object } }
+  ).parameters.properties;
+  const controlProperties = (
+    tools[1] as unknown as { parameters: { properties: object } }
+  ).parameters.properties;
+  assert.ok("schema" in blockingProperties);
+  assert.ok("schema" in controlProperties);
+});
+
+test("background delivery follows up once and retries failed sends", async () => {
+  const messages: Array<{ message: unknown; options: unknown }> = [];
+  let attempts = 0;
+  let idle = true;
+  const delivery = new BackgroundDelivery({
+    sendMessage(message: unknown, options: unknown) {
+      attempts++;
+      if (attempts === 1) throw new Error("temporary send failure");
+      messages.push({ message, options });
+    },
+  } as unknown as ExtensionAPI);
+  delivery.setContext({ isIdle: () => idle } as ExtensionContext);
+  const snapshot = {
+    id: "delegate-1",
+    status: "done",
+    workspace: "read",
+    output: "background result",
+    resumable: true,
+    success: true,
+    assignedTask: "fixture",
+    effort: "fast",
+    requestedModel: "test/model",
+    model: "test/model",
+    thinking: "low",
+    createdAt: 0,
+    settledAt: 1,
+    durationMs: 1,
+    toolCalls: 0,
+    failedToolCalls: 0,
+    childUsage: {
+      turns: 1,
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: 0,
+    },
+    timedOut: false,
+    aborted: false,
+  } as const;
+
+  delivery.enqueue(snapshot);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(attempts, 1);
+  assert.equal(messages.length, 0);
+
+  await delivery.flush();
+  assert.equal(attempts, 2);
+  assert.equal(messages.length, 1);
+  assert.deepEqual(messages[0].options, {
+    deliverAs: "followUp",
+    triggerTurn: true,
+  });
+  assert.match(
+    (messages[0].message as { content: string }).content,
+    /background result/,
+  );
+
+  await delivery.flush();
+  assert.equal(attempts, 2);
+
+  idle = false;
+  delivery.enqueue({ ...snapshot, id: "delegate-2" });
+  delivery.consume(["delegate-2"]);
+  await delivery.flush();
+  assert.equal(attempts, 2);
 });
 
 test("maps effort to the child thinking level", () => {

@@ -37,6 +37,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | --- | --- |
 | `questions` | `ask_questions`, an interactive questionnaire with predefined or free-form answers |
 | `delegate` | `delegate`, a bounded child Pi session for isolated research, review, debugging, and repository mapping |
+| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked session-scoped processes; `/ps` lists tracked terminals |
 | `web-access` | `web_search`, `fetch_content`, and `get_search_content` for Exa search, pages and PDFs, GitHub repositories, and video analysis |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle OpenAI's priority service tier for supported GPT models |
 | `shake-images` | `/shake-images` to retain only the newest two images in model context for the current session |
@@ -96,7 +97,7 @@ bun install
 bun run verify
 ```
 
-`verify` runs TypeScript type checking, Effect diagnostics, Biome, delegate tests, and web-access tests. GitHub Actions runs the same command on pushes and pull requests. Live web-access smoke tests are opt-in:
+`verify` runs TypeScript type checking, Effect diagnostics, Biome, delegate, background-terminal, and web-access tests. GitHub Actions runs the same command on pushes and pull requests. Live web-access smoke tests are opt-in:
 
 ```bash
 PI_WEB_ACCESS_LIVE=1 node --test agent/extensions/web-access/test/live.test.ts

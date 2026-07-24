@@ -13,6 +13,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
+import { processIsGone } from "../../test/process.ts";
 import delegateExtension, {
   BackgroundDelivery,
   childExtensionPaths,
@@ -23,7 +24,7 @@ import delegateExtension, {
   selectChildToolNames,
   thinkingForEffort,
 } from "../index.ts";
-import { createChild } from "../runtime.ts";
+import { createChild, shutdownChild } from "../runtime.ts";
 
 type ResolveContext = Parameters<typeof resolveDelegateModel>[0];
 type RegistryModel = NonNullable<ResolveContext["model"]>;
@@ -255,16 +256,20 @@ test("maps effort to the child thinking level", () => {
   assert.equal(thinkingForEffort("thorough"), "high");
 });
 
-test("keeps child tools unique and prevents recursive delegation", () => {
+test("keeps child tools unique and allows owned background terminals", () => {
   assert.deepEqual(
     selectChildToolNames([
       { name: "read" },
       { name: "delegate" },
       { name: "read" },
       { name: "bash" },
+      { name: "bg_start" },
+      { name: "bg_status" },
+      { name: "bg_list" },
+      { name: "bg_kill" },
       { name: "subagent" },
     ]),
-    ["read", "bash"],
+    ["read", "bash", "bg_start", "bg_status", "bg_list", "bg_kill"],
   );
 });
 
@@ -298,6 +303,44 @@ test("uses the standalone delegated system prompt", async () => {
     assert.doesNotMatch(child.systemPrompt, /Final report:/);
   } finally {
     child.dispose();
+  }
+});
+
+test("child runs release owned background terminals before returning", async () => {
+  const child = await Effect.runPromise(
+    createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
+  );
+  try {
+    assert.ok(child.getActiveToolNames().includes("bg_start"));
+    const start = child.getToolDefinition("bg_start");
+    assert.ok(start);
+    const first = await start.execute(
+      "call-1",
+      { command: "sleep 30", title: "child terminal" },
+      undefined,
+      undefined,
+      { cwd: settingsDir } as ExtensionContext,
+    );
+    const pid = (first.details as { pid: number }).pid;
+    assert.ok(pid);
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      await child.extensionRunner.emit({ type: "agent_end", messages: [] });
+    } finally {
+      console.error = originalError;
+    }
+    assert.ok(processIsGone(pid));
+    const second = await start.execute(
+      "call-2",
+      { command: "true", title: "next run" },
+      undefined,
+      undefined,
+      { cwd: settingsDir } as ExtensionContext,
+    );
+    assert.ok((second.details as { pid?: number }).pid);
+  } finally {
+    await shutdownChild(child);
   }
 });
 

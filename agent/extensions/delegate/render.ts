@@ -8,8 +8,8 @@ import { Box, Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import {
   COLLAPSED_PREVIEW_LINES,
   type DelegateDetails,
-  type DelegateParams,
-  TOOL_NAME,
+  type DelegateRunParams,
+  RUN_TOOL_NAME,
 } from "./contract.ts";
 import {
   formatCollapsedPreview,
@@ -71,16 +71,16 @@ function renderAssignedTask(
 }
 
 type DelegateRenderCall = NonNullable<
-  ToolDefinition<typeof DelegateParams, DelegateDetails>["renderCall"]
+  ToolDefinition<typeof DelegateRunParams, DelegateDetails>["renderCall"]
 >;
 type DelegateRenderResult = NonNullable<
-  ToolDefinition<typeof DelegateParams, DelegateDetails>["renderResult"]
+  ToolDefinition<typeof DelegateRunParams, DelegateDetails>["renderResult"]
 >;
 
 export const renderDelegateCall: DelegateRenderCall = (args, theme) => {
   const effort = args.effort ?? "fast";
   return new Text(
-    theme.fg("toolTitle", theme.bold(TOOL_NAME)) +
+    theme.fg("toolTitle", theme.bold(RUN_TOOL_NAME)) +
       theme.fg("muted", " • ") +
       theme.fg("accent", effort),
     0,

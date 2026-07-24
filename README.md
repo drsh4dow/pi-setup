@@ -36,7 +36,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | Extension | What it adds |
 | --- | --- |
 | `questions` | `ask_questions`, an interactive questionnaire with predefined or free-form answers |
-| `delegate` | `delegate`, a bounded child Pi session for isolated research, review, debugging, and repository mapping |
+| `delegate` | `delegate_run` for one new child, `delegate_session` for existing children, and `delegate_workflow` for two or more predetermined tasks |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked session-scoped processes |
 | `process-status` | `/ps` lists active work (Ctrl+O shows all tracked entries); `/ps <id>` shows a bounded detail snapshot with recent activity |
 | `web-access` | `web_search`, `fetch_content`, and `get_search_content` for Exa search, pages and PDFs, GitHub repositories, and video analysis |

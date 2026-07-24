@@ -5,13 +5,14 @@ import type {
 import { truncateUtf8Head } from "../../lib/text.ts";
 import { registerProcessStatusSource } from "../process-status/status.ts";
 import {
-  CONTROL_TOOL_NAME,
-  DelegateControlParams,
   type DelegateDetails,
-  DelegateParams,
+  DelegateRunParams,
+  DelegateSessionParams,
   type DelegateSnapshot,
   DelegateWorkflowParams,
-  TOOL_NAME,
+  MAX_TRACKED_CHILDREN,
+  RUN_TOOL_NAME,
+  SESSION_TOOL_NAME,
   WORKFLOW_TOOL_NAME,
 } from "./contract.ts";
 import { formatStatusParts } from "./format.ts";
@@ -43,6 +44,7 @@ export {
 } from "./runtime.ts";
 
 const MAX_TRACKED_WORKFLOWS = 64;
+const DELIVERY_RETRY_DELAYS_MS = [25, 100] as const;
 
 interface TrackedWorkflowTask {
   id: string;
@@ -67,12 +69,20 @@ export interface TrackedWorkflow {
 
 function statusSummary(snapshot: DelegateSnapshot) {
   const status = snapshot.status.replace("_", " ");
-  const resumable = snapshot.resumable ? " · resumable" : "";
-  return `[${status}] ${snapshot.workspace} · ${formatStatusParts(snapshot)}${resumable}`;
+  return `[${status}] ${snapshot.workspace} · ${formatStatusParts(snapshot)}`;
 }
 
 function summary(snapshot: DelegateSnapshot) {
   return `${snapshot.id} ${statusSummary(snapshot)}`;
+}
+
+function taskPreview(task: string) {
+  const singleLine = task.replace(/\s+/g, " ").trim();
+  return singleLine.length <= 160 ? singleLine : `${singleLine.slice(0, 159)}…`;
+}
+
+function sessionSummary(snapshot: DelegateSnapshot) {
+  return `${summary(snapshot)} · ${taskPreview(snapshot.assignedTask) || "(empty task)"}`;
 }
 
 function delegateDetail(manager: DelegateManager, id: string) {
@@ -204,55 +214,123 @@ async function workflowText(result: WorkflowResult) {
 
 export class BackgroundDelivery {
   private context: ExtensionContext | undefined;
-  private readonly pending = new Map<string, DelegateSnapshot>();
+  private readonly pending = new Map<
+    string,
+    {
+      snapshot: DelegateSnapshot;
+      attempts: number;
+      exhausted: boolean;
+      diagnosed: boolean;
+    }
+  >();
+  private readonly reservations = new Map<symbol, string | undefined>();
   private readonly pi: Pick<ExtensionAPI, "sendMessage">;
   private readonly render: typeof resultText;
+  private readonly acknowledge: (ids: readonly string[]) => void;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private flushing = false;
+  private version = 0;
 
   constructor(
     pi: Pick<ExtensionAPI, "sendMessage">,
     render: typeof resultText = resultText,
+    acknowledge: (ids: readonly string[]) => void = () => {},
   ) {
     this.pi = pi;
     this.render = render;
+    this.acknowledge = acknowledge;
   }
 
   setContext(context: ExtensionContext) {
     this.context = context;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.version++;
+    if (context.isIdle()) void this.flush();
   }
 
   clear() {
     this.context = undefined;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
     this.pending.clear();
+    this.reservations.clear();
+    this.version++;
   }
 
-  consume(ids: readonly string[]) {
-    for (const id of ids) this.pending.delete(id);
+  reserve(): symbol {
+    if (this.reservations.size >= MAX_TRACKED_CHILDREN) {
+      throw new Error(
+        `Delegate registry is full (${MAX_TRACKED_CHILDREN} tracked children).`,
+      );
+    }
+    const reservation = Symbol("delegate-delivery");
+    this.reservations.set(reservation, undefined);
+    this.version++;
+    return reservation;
+  }
+
+  attach(reservation: symbol, snapshot: DelegateSnapshot) {
+    if (!this.reservations.has(reservation)) {
+      throw new Error("Background delivery reservation is no longer active.");
+    }
+    this.reservations.set(reservation, snapshot.id);
+    this.version++;
+  }
+
+  release(reservation: symbol) {
+    if (this.reservations.delete(reservation)) this.version++;
+  }
+
+  consume(snapshots: readonly DelegateSnapshot[]) {
+    let changed = false;
+    for (const snapshot of snapshots) {
+      changed = this.pending.delete(snapshot.id) || changed;
+      for (const [reservation, id] of this.reservations) {
+        if (id !== snapshot.id) continue;
+        this.reservations.delete(reservation);
+        changed = true;
+      }
+    }
+    if (changed) this.version++;
+    this.acknowledge(snapshots.map((snapshot) => snapshot.id));
   }
 
   enqueue(snapshot: DelegateSnapshot) {
     if (!this.context) return;
-    this.pending.set(snapshot.id, snapshot);
+    const existing = this.pending.get(snapshot.id);
+    if (existing) existing.snapshot = snapshot;
+    else {
+      this.pending.set(snapshot.id, {
+        snapshot,
+        attempts: 0,
+        exhausted: false,
+        diagnosed: false,
+      });
+    }
+    this.version++;
     if (this.context.isIdle()) void this.flush();
   }
 
   async flush() {
-    if (this.flushing || !this.context || this.pending.size === 0) return;
+    const context = this.context;
+    if (this.flushing || this.retryTimer || !context || this.pending.size === 0)
+      return;
+    const entries = [...this.pending.values()].filter(
+      (entry) => !entry.exhausted,
+    );
+    if (entries.length === 0) return;
     this.flushing = true;
-    let sent = false;
+    const startVersion = this.version;
+    const snapshots = entries.map((entry) => entry.snapshot);
     try {
-      const candidates = [...this.pending.values()];
-      const candidateContent = await this.render(candidates);
-      if (!this.context) return;
-      const snapshots = candidates.filter(
-        (snapshot) => this.pending.get(snapshot.id) === snapshot,
-      );
-      if (snapshots.length === 0) return;
-      const content =
-        snapshots.length === candidates.length
-          ? candidateContent
-          : await this.render(snapshots);
-      if (!this.context) return;
+      const content = await this.render(snapshots);
+      if (
+        this.context !== context ||
+        entries.some((entry) => this.pending.get(entry.snapshot.id) !== entry)
+      ) {
+        return;
+      }
       this.pi.sendMessage(
         {
           customType: "delegate-results",
@@ -262,17 +340,50 @@ export class BackgroundDelivery {
         },
         { deliverAs: "followUp", triggerTurn: true },
       );
-      this.consume(
-        snapshots
-          .filter((snapshot) => this.pending.get(snapshot.id) === snapshot)
-          .map((snapshot) => snapshot.id),
-      );
-      sent = true;
-    } catch {
-      // Keep results pending for the next idle/settled delivery attempt.
+      this.consume(snapshots);
+    } catch (error) {
+      if (this.context !== context) return;
+      const exhausted: string[] = [];
+      let retryDelay: number | undefined;
+      for (const entry of entries) {
+        if (this.pending.get(entry.snapshot.id) !== entry) continue;
+        entry.attempts++;
+        if (entry.attempts > DELIVERY_RETRY_DELAYS_MS.length) {
+          entry.exhausted = true;
+          if (!entry.diagnosed) {
+            entry.diagnosed = true;
+            exhausted.push(entry.snapshot.id);
+          }
+        } else {
+          retryDelay = Math.min(
+            retryDelay ?? Number.POSITIVE_INFINITY,
+            DELIVERY_RETRY_DELAYS_MS[entry.attempts - 1],
+          );
+        }
+      }
+      if (exhausted.length > 0) {
+        const evidence = String(error).replace(/\s+/g, " ").slice(0, 512);
+        for (const id of exhausted) {
+          console.error(
+            `[delegate] background delivery failed for ${id}; use delegate_session wait to recover retained results: ${evidence}`,
+          );
+        }
+      }
+      if (retryDelay !== undefined) {
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = undefined;
+          if (this.context?.isIdle()) void this.flush();
+        }, retryDelay);
+        this.retryTimer.unref?.();
+      }
     } finally {
       this.flushing = false;
-      if (sent && this.context?.isIdle() && this.pending.size > 0) {
+      if (
+        !this.retryTimer &&
+        this.version !== startVersion &&
+        this.context?.isIdle() &&
+        [...this.pending.values()].some((entry) => !entry.exhausted)
+      ) {
         void this.flush();
       }
     }
@@ -280,8 +391,11 @@ export class BackgroundDelivery {
 }
 
 export default function delegateExtension(pi: ExtensionAPI) {
-  const delivery = new BackgroundDelivery(pi);
-  const manager = new DelegateManager({
+  let manager!: DelegateManager;
+  const delivery = new BackgroundDelivery(pi, resultText, (ids) =>
+    manager.acknowledge(ids),
+  );
+  manager = new DelegateManager({
     onSettled: (snapshot) => delivery.enqueue(snapshot),
   });
   const workflows = new Map<string, TrackedWorkflow>();
@@ -311,30 +425,50 @@ export default function delegateExtension(pi: ExtensionAPI) {
     await manager.shutdown();
   });
 
-  pi.registerTool<typeof DelegateParams, DelegateDetails>({
-    name: TOOL_NAME,
-    label: "Delegate",
+  pi.registerTool<typeof DelegateRunParams, DelegateDetails>({
+    name: RUN_TOOL_NAME,
+    label: "Delegate Run",
     description:
-      "Run one fresh child agent and wait for its final result. Use this blocking path for isolated broad scans, current docs/API research, noisy debugging, plan critique, or an explicitly requested independent review. Do not use it for trivial work. Optional JSON Schema output provides a reliable typed result. The parent owns implementation and final validation by default. Children have fresh context but share the working tree; set workspace=write for any task that may edit so it runs exclusively. Use delegate_control for background work or messaging and delegate_workflow for staged fan-out.",
+      "One new child: delegate_run. Existing child: delegate_session. Two or more tasks known in advance: delegate_workflow. Creates exactly one child with fresh context that cannot see the parent conversation, so task must be self-contained with the objective, relevant context/files, constraints, permissions, verification, and output contract. By default waits for the final result; background=true returns the child id immediately and automatically delivers completion later. Never start background then immediately wait; use blocking delegate_run. Parent owns implementation and final verification unless explicitly delegated. Children share the working tree; workspace=write runs exclusively.",
     promptSnippet:
-      "Run one fresh child agent and wait for its result; mandatory for an explicitly requested independent review",
+      "Create exactly one fresh child, blocking by default or delivering later in background",
     promptGuidelines: [
-      "Use delegate early when isolated context helps; it is mandatory when the user explicitly requests child delegation or an independent/fresh review.",
-      "Use delegate_control start for background work and delegate_workflow for staged fan-out; do not delegate trivial tasks answerable with one or two cheap local calls.",
-      "Mark every task that may modify files as workspace=write. Shared-write jobs run exclusively; filesystem isolation is not provided.",
-      "Parent owns implementation, final validation, and the user-facing answer unless child implementation is explicitly assigned.",
-      "Fast is the default. Use thorough only when explicitly requested, after fast demonstrates reasoning-limited uncertainty, or when an error is costly and hard to detect or rerun.",
+      "One new child: delegate_run. Existing child: delegate_session. Two or more tasks known in advance: delegate_workflow.",
+      "Child context is fresh and cannot see the parent conversation; every task must be self-contained.",
+      "Never start background then immediately wait; use blocking delegate_run. For background runs, continue useful parent work and wait only when blocked.",
+      "Parent owns implementation and final verification unless explicitly delegated.",
+      "Mark every task that may modify files as workspace=write; shared-write jobs run exclusively without filesystem isolation.",
     ],
-    parameters: DelegateParams,
+    parameters: DelegateRunParams,
     executionMode: "parallel",
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const snapshot = manager.spawn({
-        task: params.task,
-        effort: params.effort,
-        workspace: params.workspace,
-        schema: params.schema,
-        ctx,
-      });
+      const reservation = params.background ? delivery.reserve() : undefined;
+      let snapshot: DelegateSnapshot;
+      try {
+        snapshot = manager.spawn({
+          task: params.task,
+          effort: params.effort,
+          workspace: params.workspace,
+          schema: params.schema,
+          background: params.background,
+          ctx,
+        });
+        if (reservation) delivery.attach(reservation, snapshot);
+      } catch (error) {
+        if (reservation) delivery.release(reservation);
+        throw error;
+      }
+      if (params.background) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${summary(snapshot)}\nResult will be delivered automatically; continue useful work and wait only when blocked.`,
+            },
+          ],
+          details: snapshot,
+        };
+      }
       const unsubscribe = manager.subscribe((update) => {
         if (update.id !== snapshot.id) return;
         onUpdate?.({
@@ -373,42 +507,21 @@ export default function delegateExtension(pi: ExtensionAPI) {
     renderResult: renderDelegateResult,
   });
 
-  pi.registerTool({
-    name: CONTROL_TOOL_NAME,
-    label: "Delegate Control",
+  pi.registerTool<typeof DelegateSessionParams, unknown>({
+    name: SESSION_TOOL_NAME,
+    label: "Delegate Session",
     description:
-      "Manage background child agents. start returns immediately and may require JSON Schema output; wait collects one or more results without cancelling them when the wait is interrupted; send steers a running child or continues a retained session; cancel stops work; status inspects tracked children. At most four read children run together, while write children run exclusively.",
+      "Existing child: delegate_session. One new child: delegate_run. Two or more tasks known in advance: delegate_workflow. Manages tracked children only and cannot create or resume one. list recovers all live-session child ids; status inspects without waiting; wait returns outputs; send steers one running child; cancel stops work. Settled children cannot receive more messages; use delegate_run with a new self-contained task instead. Never start background then immediately wait; use blocking delegate_run.",
     promptSnippet:
-      "Start, wait for, message, cancel, or inspect bounded background child agents",
+      "List, inspect, wait for, steer, or cancel existing child sessions",
     promptGuidelines: [
-      "After starting background children, continue useful parent work. Wait only when blocked on their results.",
-      "Use send to add information or redirect a running child; settled sessions are resumable only while retained.",
-      "Never overlap workspace writes: classify modifying tasks as workspace=write.",
+      "Use send only to steer a running child. A child sees its own session, not the parent conversation, so include any new context it needs.",
+      "After a background run, continue useful parent work and wait only when blocked.",
+      "A settled child is finished and cannot be resumed; use delegate_run for new work. Tracked ids last only for the current parent session.",
     ],
-    parameters: DelegateControlParams,
+    parameters: DelegateSessionParams,
     executionMode: "parallel",
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (params.action === "start") {
-        if (!params.task) throw new Error("start requires task.");
-        const snapshot = manager.spawn({
-          task: params.task,
-          effort: params.effort,
-          workspace: params.workspace,
-          schema: params.schema,
-          background: true,
-          ctx,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${summary(snapshot)}\nResult will be delivered automatically; use wait only when blocked.`,
-            },
-          ],
-          details: snapshot,
-        };
-      }
-
+    async execute(_toolCallId, params, signal) {
       if (params.action === "send") {
         if (!params.id || !params.message) {
           throw new Error("send requires id and message.");
@@ -421,37 +534,44 @@ export default function delegateExtension(pi: ExtensionAPI) {
           details: snapshot,
         };
       }
-
-      const ids = params.ids ?? (params.id ? [params.id] : []);
+      const ids = params.ids ?? [];
+      if (params.action === "list") {
+        const snapshots = manager.list();
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                snapshots.length > 0
+                  ? snapshots.map(sessionSummary).join("\n")
+                  : "No delegates are tracked.",
+            },
+          ],
+          details: { results: snapshots },
+        };
+      }
+      if (ids.length === 0)
+        throw new Error("Provide at least one delegate id.");
       if (params.action === "wait") {
-        if (ids.length === 0) throw new Error("wait requires ids.");
-        delivery.consume(ids);
         const snapshots = await manager.wait(ids, signal);
+        delivery.consume(snapshots);
         return {
           content: [{ type: "text", text: await resultText(snapshots) }],
           details: { results: snapshots },
         };
       }
       if (params.action === "cancel") {
-        if (ids.length === 0) throw new Error("cancel requires ids.");
-        delivery.consume(ids);
         const snapshots = await manager.cancel(ids);
+        delivery.consume(snapshots);
         return {
           content: [{ type: "text", text: await resultText(snapshots) }],
           details: { results: snapshots },
         };
       }
-
-      const snapshots = manager.list(ids.length > 0 ? ids : undefined);
+      const snapshots = manager.list(ids);
       return {
         content: [
-          {
-            type: "text",
-            text:
-              snapshots.length > 0
-                ? snapshots.map(summary).join("\n")
-                : "No delegates are tracked.",
-          },
+          { type: "text", text: snapshots.map(sessionSummary).join("\n") },
         ],
         details: { results: snapshots },
       };
@@ -462,11 +582,11 @@ export default function delegateExtension(pi: ExtensionAPI) {
     name: WORKFLOW_TOOL_NAME,
     label: "Delegate Workflow",
     description:
-      "Run an inspectable staged workflow through the same child manager. Stages execute sequentially; tasks within a stage execute concurrently under the global four-child cap. Later tasks can name earlier task ids as inputs. Optional JSON Schemas require structured_output. Failures stop the workflow unless allow_failure=true. A write task must be alone in its stage.",
+      "Two or more tasks known in advance: delegate_workflow. One new child: delegate_run. Existing child: delegate_session. Blocks while running staged fan-out/fan-in: stages execute sequentially and tasks within a stage concurrently under the global four-child cap. Children have fresh context and cannot see the parent conversation, so every task must include its objective, relevant context/files, constraints, permissions, verification, and expected output. Earlier workflow inputs provide only declared outputs, not undeclared parent context. Parent owns implementation and final verification unless explicitly delegated. A write task must be alone in its stage.",
     promptSnippet:
       "Run sequential stages with bounded parallel child tasks and structured handoffs",
     promptGuidelines: [
-      "Use delegate_workflow for multi-step fan-out/fan-in work. Keep a single child task in delegate.",
+      "Use delegate_workflow only for two or more predetermined tasks; use delegate_run for one new child and delegate_session for an existing child.",
       "Use schemas when later tasks branch on results; reference only earlier-stage task ids in inputs.",
       "Put each workspace-writing task in its own stage.",
     ],

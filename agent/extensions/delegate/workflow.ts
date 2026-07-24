@@ -31,9 +31,19 @@ function taskOutput(result: WorkflowTaskResult): string {
 }
 
 function validateWorkflow(params: DelegateWorkflowParams) {
+  const totalTasks = params.stages.reduce(
+    (count, stage) => count + stage.tasks.length,
+    0,
+  );
+  if (totalTasks < 2) {
+    throw new Error(
+      "A workflow requires at least two tasks; use delegate_run for one task.",
+    );
+  }
   const ids = new Set<string>();
   let count = 0;
   for (const [stageIndex, stage] of params.stages.entries()) {
+    const priorStageIds = new Set(ids);
     count += stage.tasks.length;
     if (count > MAX_WORKFLOW_TASKS) {
       throw new Error(`Workflow exceeds the ${MAX_WORKFLOW_TASKS}-task limit.`);
@@ -56,7 +66,7 @@ function validateWorkflow(params: DelegateWorkflowParams) {
         throw new Error(`Duplicate workflow task id "${task.id}".`);
       }
       for (const input of task.inputs ?? []) {
-        if (!ids.has(input)) {
+        if (!priorStageIds.has(input)) {
           throw new Error(
             `Task "${task.id}" input "${input}" must reference an earlier-stage task.`,
           );

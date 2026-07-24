@@ -1,6 +1,7 @@
 ---
 name: abstraction-economics
 description: Use when working with code always. Teaches you when to abstract correctly.
+user-invokable: false
 ---
 
 Every name is a loan. A helper, wrapper, interface, or module borrows attention from every future reader: one more place to look, one more hop between intent and behavior. **Rent** is the ongoing cost - reading, testing, debugging, migration, ownership. The economics are blunt: an abstraction lives only while it pays rent, and the cheapest abstraction is the one never introduced.

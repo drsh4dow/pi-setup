@@ -1,6 +1,7 @@
 ---
 name: software-stewardship
 description: Stewardship for user-facing production software. Use when a change affects failure or recovery, interruptions, updates, product scope, or user-facing prose.
+user-invokable: false
 ---
 
 Software deserves **stewardship** when people must live with its failures, demands, growth, repairs, and words. This skill owns user-facing product obligations; the implementation mechanics stay with their engineering skills.

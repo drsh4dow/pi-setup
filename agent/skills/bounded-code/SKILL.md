@@ -1,6 +1,7 @@
 ---
 name: bounded-code
 description: Runtime discipline for production code. Use when writing or editing code that will run in production, when a change introduces a loop, retry, queue, cache, buffer, spawn, or concurrent access, or when reviewing code for runtime robustness.
+user-invokable: false
 ---
 
 Production code is **bounded**: every loop, allocation, retry, and lifetime has a limit a reader can point at, and every failure path is visible in source. The lineage is NASA/JPL's Power of Ten - rules built so that code can be verified by analysis rather than trusted by intent. This skill owns runtime discipline only; `seam-mapping` chooses the design, `abstraction-economics` prices the names, `beauty-gate` audits the diff.

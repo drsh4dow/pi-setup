@@ -10,7 +10,7 @@ export const CHILD_EXTENSION_PATHS_ENV = "PI_CHILD_EXTENSION_PATHS";
 export const DelegateParams = Type.Object({
   task: Type.String({
     description:
-      "Self-contained task for the delegated child agent. Include objective, useful context/files, constraints, edit permission/read-only status, expected output, verification needs, and request for a concise handoff-ready report.",
+      "Self-contained task for the delegated child agent. Include objective, useful context/files, constraints, permissions, verification needs, and the audience or output contract required by the parent or downstream chain.",
   }),
   effort: Type.Optional(
     StringEnum(["fast", "thorough"], {

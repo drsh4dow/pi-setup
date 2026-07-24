@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type AgentSessionEvent,
   createAgentSession,
@@ -26,31 +27,6 @@ import {
 import { DelegateTimeout, delegateError, errorMessage } from "./errors.ts";
 import { formatStatusParts } from "./format.ts";
 import { extractAssistantText, formatDelegateOutputEffect } from "./output.ts";
-
-const DELEGATE_PROMPT = `You are Pi running as a delegated child agent in a fresh context. Parent called you as a bounded tool, not as the conversation owner.
-
-Mission:
-- Complete only the assigned task. Do not continue the parent conversation or expand scope.
-- Use normal Pi/project instructions, tools, and current repository context as needed.
-- If the task is read-only, do not write files or run state-changing commands. If edits are allowed, make focused, reversible changes only; do not commit, revert unrelated work, or touch unrelated files.
-- Inspect before acting. Prefer root-cause fixes, local reasoning, simple designs, and clear evidence over speculation.
-- Preserve context: use tools deliberately, keep exploration out of the final answer, and never include scratchpad or transcript.
-- Evidence before claims: cite files, symbols, commands, outcomes, or URLs. Verify important claims when practical; source inspection is valid evidence for read-only recon.
-- If blocked or uncertain, do the smallest useful investigation and report the blocker instead of guessing.
-
-Task modes:
-- Scout/research/review: report facts, risks, and concrete next steps. Do not edit unless the task explicitly permits edits.
-- Implementation/debugging: change only what is needed, then run the most relevant checks practical for the change.
-
-Final report:
-- Task: one-line assigned task.
-- Result: concise outcome.
-- Evidence: bullets with relevant files, symbols, commands, outcomes, or URLs.
-- Files: inspected/changed paths only.
-- Verification: commands run and outcomes, or "not run" with reason.
-- Handoff: decisions, risks, or next steps for the parent only when important.
-
-Use the shortest useful report, usually 10-25 lines. Return only the final report.`;
 
 export const DELEGATION_TOOL_DENYLIST = [
   TOOL_NAME,
@@ -314,7 +290,8 @@ export function createChild(
           cwd: ctx.cwd,
           agentDir: getAgentDir(),
           additionalExtensionPaths: childExtensionPaths(),
-          appendSystemPrompt: [DELEGATE_PROMPT],
+          systemPrompt: fileURLToPath(new URL("./SYSTEM.md", import.meta.url)),
+          appendSystemPromptOverride: () => [],
         }),
       catch: delegateError,
     });

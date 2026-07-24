@@ -261,10 +261,11 @@ test("registers run, session, and workflow tools", () => {
 });
 
 test("background run returns immediately and list recovers a bounded task preview", async () => {
+  const events = eventBus();
   const tools: ToolDefinition[] = [];
   let shutdown: (() => Promise<void>) | undefined;
   delegateExtension({
-    events: noEvents,
+    events,
     on(event: string, handler: () => Promise<void>) {
       if (event === "session_shutdown") shutdown = handler;
     },
@@ -289,6 +290,10 @@ test("background run returns immediately and list recovers a bounded task previe
       started.content[0]?.type === "text" ? started.content[0].text : "",
       /delegate-1/,
     );
+    const processStatus = processStatusView({ events }).collapsed;
+    assert.match(processStatus, /delegate-1 \[running\]/);
+    assert.doesNotMatch(processStatus, /inspect first line|x{10}/);
+    assert.equal(processStatus.split("\n").length, 1);
     const listed = await session.execute(
       "list-1",
       { action: "list" },
@@ -347,13 +352,12 @@ test("retains at most 64 settled workflows for process status", async () => {
   }
 
   const list = processStatusView({ events }).expanded;
-  assert.equal(list.match(/^ {2}workflow-/gm)?.length, 64);
+  assert.equal(list.match(/workflow-\d+ /g)?.length, 64);
   assert.doesNotMatch(list, /workflow-1 /);
   assert.match(list, /workflow-65 \[error\]/);
-  assert.match(
-    processStatusView({ events }, "workflow-65").expanded,
-    /must reference an earlier-stage task/,
-  );
+  const status = processStatusView({ events }, "workflow-65").expanded;
+  assert.match(status, /workflow-65 \[error\]/);
+  assert.match(status, /must reference an earlier-stage task/);
 });
 
 test("background delivery retries once and delivers at most once", async (t) => {

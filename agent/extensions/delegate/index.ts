@@ -401,22 +401,31 @@ export default function delegateExtension(pi: ExtensionAPI) {
   const workflows = new Map<string, TrackedWorkflow>();
   let nextWorkflowId = 0;
 
-  registerProcessStatusSource(pi, "delegate", () => [
-    ...manager.list().map((snapshot) => ({
-      id: snapshot.id,
-      kind: "subagents" as const,
-      active: snapshot.status === "queued" || snapshot.status === "running",
-      summary: `${statusSummary(snapshot)} · ${snapshot.assignedTask}`,
-      detail: () => delegateDetail(manager, snapshot.id),
-    })),
-    ...[...workflows.values()].map((workflow) => ({
-      id: workflow.id,
-      kind: "workflows" as const,
-      active: workflow.status === "running",
-      summary: workflowSummary(workflow),
-      detail: () => workflowDetail(manager, workflow),
-    })),
-  ]);
+  registerProcessStatusSource(
+    pi,
+    "delegate",
+    () => [
+      ...manager.list().map((snapshot) => ({
+        id: snapshot.id,
+        kind: "subagents" as const,
+        active: snapshot.status === "queued" || snapshot.status === "running",
+        summary: statusSummary(snapshot),
+        usage: {
+          tokens: snapshot.childUsage.totalTokens,
+          cost: snapshot.childUsage.cost,
+        },
+        detail: () => delegateDetail(manager, snapshot.id),
+      })),
+      ...[...workflows.values()].map((workflow) => ({
+        id: workflow.id,
+        kind: "workflows" as const,
+        active: workflow.status === "running",
+        summary: workflowSummary(workflow),
+        detail: () => workflowDetail(manager, workflow),
+      })),
+    ],
+    () => manager.sessionUsage(),
+  );
 
   pi.on("session_start", (_event, ctx) => delivery.setContext(ctx));
   pi.on("agent_settled", () => delivery.flush());

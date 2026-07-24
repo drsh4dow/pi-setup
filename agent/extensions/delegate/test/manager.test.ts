@@ -354,10 +354,11 @@ test("rejected child prompt settles, remains inspectable, and releases capacity"
         cacheRead: 0,
         cacheWrite: 0,
         totalTokens: 3,
-        cost: { total: 0 },
+        cost: { total: 0.0123 },
       },
     },
   } as AgentSessionEvent);
+  assert.deepEqual(manager.sessionUsage(), { tokens: 3, cost: 0.0123 });
   sessions[0].rejectPrompt(new Error("prompt transport rejected"));
 
   const [snapshot] = await manager.wait([failed.id]);
@@ -1063,6 +1064,36 @@ test("settled sessions are disposed and list keeps active children first", async
     manager.list().map((snapshot) => snapshot.id),
     [active.id, jobs[2].id, jobs[1].id, jobs[0].id],
   );
+  await manager.shutdown();
+});
+
+test("session usage survives pruning settled children", async () => {
+  const { manager, sessions } = harness();
+  for (let index = 0; index < 65; index++) {
+    const job = manager.spawn({ task: `task ${index}`, ctx: context });
+    await eventually(() => sessions.length === index + 1);
+    sessions[index].emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        usage: {
+          input: 1,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 1,
+          cost: { total: 0.01 },
+        },
+      },
+    } as AgentSessionEvent);
+    sessions[index].finish("done");
+    await manager.wait([job.id]);
+  }
+
+  assert.ok(manager.list().length <= 64);
+  assert.equal(manager.sessionUsage().tokens, 65 * 16);
+  assert.ok(Math.abs(manager.sessionUsage().cost - 65 * 0.011) < 1e-10);
   await manager.shutdown();
 });
 

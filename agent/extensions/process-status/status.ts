@@ -10,12 +10,18 @@ const MAX_DETAIL_BYTES = 64 * 1024;
 
 export type ProcessStatusKind = "subagents" | "workflows" | "terminals";
 
+export interface ProcessStatusUsage {
+  tokens: number;
+  cost: number;
+}
+
 export interface ProcessStatusActivity {
   id: string;
   kind: ProcessStatusKind;
   active: boolean;
   summary: string;
-  detail: () => string;
+  usage?: ProcessStatusUsage;
+  detail?: () => string;
 }
 
 export interface ProcessStatusView {
@@ -24,9 +30,14 @@ export interface ProcessStatusView {
 }
 
 type ProcessStatusSource = () => readonly ProcessStatusActivity[];
+type ProcessStatusUsageSource = () => ProcessStatusUsage;
 
 interface CollectionRequest {
-  add(name: string, load: ProcessStatusSource): void;
+  add(
+    name: string,
+    load: ProcessStatusSource,
+    loadUsage?: ProcessStatusUsageSource,
+  ): void;
 }
 
 function sanitize(text: string): string {
@@ -58,19 +69,29 @@ function boundedDetail(text: string): string {
   );
 }
 
+function validUsage(usage: ProcessStatusUsage): boolean {
+  return (
+    Number.isFinite(usage.tokens) &&
+    usage.tokens >= 0 &&
+    Number.isFinite(usage.cost) &&
+    usage.cost >= 0
+  );
+}
+
 export function registerProcessStatusSource(
   pi: Pick<ExtensionAPI, "events">,
   name: string,
   load: ProcessStatusSource,
+  loadUsage?: ProcessStatusUsageSource,
 ): () => void {
   return pi.events.on(COLLECT_CHANNEL, (data) => {
     const request = data as Partial<CollectionRequest> | undefined;
     if (typeof request?.add !== "function") return;
-    request.add(name, load);
+    request.add(name, load, loadUsage);
   });
 }
 
-function collect(pi: Pick<ExtensionAPI, "events">) {
+function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
   const groups: Record<ProcessStatusKind, ProcessStatusActivity[]> = {
     subagents: [],
     workflows: [],
@@ -81,6 +102,7 @@ function collect(pi: Pick<ExtensionAPI, "events">) {
     workflows: 0,
     terminals: 0,
   };
+  const usage: ProcessStatusUsage = { tokens: 0, cost: 0 };
   const errors: string[] = [];
   const ids = new Set<string>();
   let sourceCount = 0;
@@ -88,7 +110,11 @@ function collect(pi: Pick<ExtensionAPI, "events">) {
   let accepting = true;
 
   pi.events.emit(COLLECT_CHANNEL, {
-    add(name: string, load: ProcessStatusSource) {
+    add(
+      name: string,
+      load: ProcessStatusSource,
+      loadUsage?: ProcessStatusUsageSource,
+    ) {
       if (!accepting) return;
       sourceCount += 1;
       if (sourceCount > MAX_SOURCES) {
@@ -96,6 +122,13 @@ function collect(pi: Pick<ExtensionAPI, "events">) {
         return;
       }
       try {
+        if (loadUsage) {
+          const sourceUsage = loadUsage();
+          if (!validUsage(sourceUsage)) throw new Error("invalid usage");
+          usage.tokens += sourceUsage.tokens;
+          usage.cost += sourceUsage.cost;
+        }
+        if (!includeActivities) return;
         const activities = load();
         if (activities.length > MAX_ACTIVITIES_PER_SOURCE) {
           throw new Error(
@@ -110,6 +143,12 @@ function collect(pi: Pick<ExtensionAPI, "events">) {
           if (ids.has(activity.id)) {
             errors.push(
               `${inline(name)}: error=duplicate-id id=${activity.id}`,
+            );
+            continue;
+          }
+          if (activity.usage && !validUsage(activity.usage)) {
+            errors.push(
+              `${inline(name)}: error=invalid-usage id=${activity.id}`,
             );
             continue;
           }
@@ -136,40 +175,37 @@ function collect(pi: Pick<ExtensionAPI, "events">) {
   } satisfies CollectionRequest);
   accepting = false;
 
-  return { groups, omitted, errors, omittedSources };
+  return { groups, omitted, usage, errors, omittedSources };
+}
+
+function usageText(usage: ProcessStatusUsage): string {
+  return `${usage.tokens.toLocaleString("en-US")} tokens · $${usage.cost.toFixed(4)}`;
 }
 
 function listText(
   collection: ReturnType<typeof collect>,
   expanded: boolean,
 ): string {
-  const sections = (
-    [
-      ["subagents", "subagents"],
-      ["workflows", "workflows"],
-      ["terminals", "terminals"],
-    ] as const
-  ).map(([title, kind]) => {
-    const entries = collection.groups[kind]
-      .filter((activity) => expanded || activity.active)
-      .map(
-        (activity) =>
-          `  ${activity.id} ${inline(activity.summary) || "summary=none"}`,
-      );
-    if (collection.omitted[kind] > 0) {
-      entries.push(`  omitted: ${collection.omitted[kind]}`);
-    }
-    return `${title}:\n${entries.length > 0 ? entries.join("\n") : "  -"}`;
-  });
-  if (collection.errors.length > 0) {
-    sections.push(
-      `errors:\n${collection.errors.map((error) => `  ${error}`).join("\n")}`,
+  const entries = Object.values(collection.groups)
+    .flat()
+    .filter((activity) => expanded || activity.active)
+    .map(
+      (activity) =>
+        `${activity.id} ${inline(activity.summary) || "summary=none"}`,
     );
+  const omitted = Object.values(collection.omitted).reduce(
+    (total, count) => total + count,
+    collection.omittedSources,
+  );
+  if (omitted > 0) entries.push(`${omitted} omitted`);
+  if (collection.errors.length > 0) {
+    entries.push(`errors: ${collection.errors.join("; ")}`);
   }
-  if (collection.omittedSources > 0) {
-    sections.push(`sources:\n  omitted: ${collection.omittedSources}`);
-  }
-  return sections.join("\n\n");
+  return `${usageText(collection.usage)} · ${entries.join(" · ") || "idle"}`;
+}
+
+export function processStatusCost(pi: Pick<ExtensionAPI, "events">): number {
+  return collect(pi, false).usage.cost;
 }
 
 export function processStatusView(
@@ -189,16 +225,16 @@ export function processStatusView(
     .flat()
     .find((candidate) => candidate.id === requestedId);
   if (!activity) {
-    const text = `error: unknown-id\nid: ${id}\naction: /ps`;
+    const text = `error: unknown-id · id: ${id} · action: /ps`;
     return { collapsed: text, expanded: text };
   }
 
-  let detail: string;
+  let detail = "";
   try {
-    detail = boundedDetail(activity.detail());
+    if (activity.detail) detail = boundedDetail(activity.detail());
   } catch (error) {
     detail = `detail-error: ${inline(error instanceof Error ? error.message : String(error))}`;
   }
-  const text = `${activity.id} ${inline(activity.summary) || "summary=none"}${detail ? `\n\n${detail}` : ""}`;
+  const text = `${activity.usage ? `${usageText(activity.usage)} · ` : ""}${activity.id} ${inline(activity.summary) || "summary=none"}${detail ? `\n\n${detail}` : ""}`;
   return { collapsed: text, expanded: text };
 }

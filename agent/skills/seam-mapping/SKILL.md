@@ -1,6 +1,7 @@
 ---
 name: seam-mapping
 description: The pre-edit pass that maps a change's blast radius and picks the smallest viable design before any code is written. Use before implementing a non-trivial feature, fix, or refactor; when starting work in unfamiliar code; when the user asks what a change will touch or how to approach it; or when a fix keeps regressing somewhere else.
+user-invokable: false
 ---
 
 A change lands on a **seam**: the region of code whose behavior, data flow, and invariants the change passes through. Editing before the seam is mapped produces the additive patch - new code bolted beside old, special cases multiplying, parallel paths coexisting. Seam mapping is the pass that runs before the first edit; `abstraction-economics` prices each name during the edit, and `beauty-gate` audits the diff after. Map, then build.

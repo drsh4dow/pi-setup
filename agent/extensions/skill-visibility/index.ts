@@ -1,8 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  Skill,
+import {
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  parseFrontmatter,
+  type Skill,
 } from "@earendil-works/pi-coding-agent";
 
 const DONE_LABEL = "Done";
@@ -30,7 +31,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const skills = listLoadedSkills(
+      const skills = await listLoadedSkills(
         ctx.getSystemPromptOptions().skills ?? [],
       );
       if (skills.length === 0) {
@@ -100,12 +101,12 @@ function skillChoices(skills: SkillVisibility[]): Map<string, SkillVisibility> {
   return choices;
 }
 
-function listLoadedSkills(skills: Skill[]): SkillVisibility[] {
+async function listLoadedSkills(skills: Skill[]): Promise<SkillVisibility[]> {
   const visibleSkills: SkillVisibility[] = [];
 
   for (const skill of skills) {
     const name = normalizeSkillName(skill.name);
-    if (!name) continue;
+    if (!name || !(await isUserInvokable(skill.filePath))) continue;
 
     visibleSkills.push({
       name,
@@ -117,6 +118,15 @@ function listLoadedSkills(skills: Skill[]): SkillVisibility[] {
   return visibleSkills.sort((left, right) =>
     left.name.localeCompare(right.name),
   );
+}
+
+async function isUserInvokable(filePath: string): Promise<boolean> {
+  try {
+    const content = await readFile(filePath, "utf-8");
+    return parseFrontmatter(content).frontmatter["user-invokable"] !== false;
+  } catch {
+    return true;
+  }
 }
 
 async function writeSkillVisibility(

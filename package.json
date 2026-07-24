@@ -8,8 +8,9 @@
     "check": "biome check agent/extensions",
     "check:fix": "biome check agent/extensions --write",
     "test:delegate": "node --test agent/extensions/delegate/test/*.test.ts",
+    "test:skill-visibility": "node --test agent/extensions/skill-visibility/test/*.test.ts",
     "test:web-access": "node --test agent/extensions/web-access/test/*.test.ts",
-    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:web-access"
+    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:skill-visibility && bun run test:web-access"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.6",

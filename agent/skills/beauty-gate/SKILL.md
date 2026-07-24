@@ -1,6 +1,7 @@
 ---
 name: beauty-gate
 description: Use when working with code or auditing code.
+user-invokable: false
 ---
 
 A working implementation is a **draft**. The beauty gate is the pass that turns a draft into a finished change: one behavior-preserving audit of the entire affected seam. Green tests open the gate; they never waive it - tests establish behavior, not design quality.

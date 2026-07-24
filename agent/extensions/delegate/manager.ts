@@ -15,7 +15,6 @@ import {
   MAX_PENDING_CHILDREN,
   MAX_RETAINED_SESSIONS,
   MAX_TRACKED_CHILDREN,
-  TIMEOUT_MS,
 } from "./contract.ts";
 import { errorMessage } from "./errors.ts";
 import { extractAssistantText } from "./output.ts";
@@ -68,9 +67,8 @@ interface Job {
   usage: DelegateUsageStats;
   child?: ChildSession;
   unsubscribe?: () => void;
-  timeout?: ReturnType<typeof setTimeout>;
   run: number;
-  stopping?: DelegateStatus;
+  stopping?: boolean;
   completion: Deferred;
   sendChain: Promise<void>;
   background: boolean;
@@ -86,7 +84,6 @@ export interface DelegateManagerOptions {
   ) => Promise<ChildSession>;
   shutdownSession?: (child: ChildSession) => Promise<void>;
   onSettled?: (snapshot: DelegateSnapshot) => void;
-  timeoutMs?: number;
 }
 
 function deferred(): Deferred {
@@ -132,7 +129,6 @@ export class DelegateManager {
     DelegateManagerOptions["shutdownSession"]
   >;
   private readonly onSettled?: (snapshot: DelegateSnapshot) => void;
-  private readonly timeoutMs: number;
   private readonly listeners = new Set<(snapshot: DelegateSnapshot) => void>();
   private readonly runTasks = new Set<Promise<void>>();
   private nextId = 0;
@@ -150,7 +146,6 @@ export class DelegateManager {
         ));
     this.shutdownSession = options.shutdownSession ?? shutdownChild;
     this.onSettled = options.onSettled;
-    this.timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
   }
 
   subscribe(listener: (snapshot: DelegateSnapshot) => void): () => void {
@@ -291,7 +286,7 @@ export class DelegateManager {
   async cancel(ids: readonly string[]): Promise<DelegateSnapshot[]> {
     const jobs = [...new Set(ids)].map((id) => this.requireJob(id));
     for (const job of jobs) job.deliverRun = false;
-    await Promise.all(jobs.map((job) => this.stop(job, "cancelled")));
+    await Promise.all(jobs.map((job) => this.stop(job)));
     return jobs.map((job) => this.snapshot(job));
   }
 
@@ -302,7 +297,7 @@ export class DelegateManager {
     await Promise.all(
       jobs.map((job) =>
         job.status === "queued" || job.status === "running"
-          ? this.stop(job, "cancelled")
+          ? this.stop(job)
           : Promise.resolve(),
       ),
     );
@@ -351,11 +346,6 @@ export class DelegateManager {
   }
 
   private async run(job: Job, run: number) {
-    job.timeout = setTimeout(() => {
-      void this.stop(job, "timed_out");
-    }, this.timeoutMs);
-    job.timeout.unref?.();
-
     if (!job.child) {
       const request: DelegateRequest = {
         task: job.task,
@@ -461,21 +451,15 @@ export class DelegateManager {
     this.notify(this.snapshot(job));
   }
 
-  private async stop(job: Job, status: "cancelled" | "timed_out") {
+  private async stop(job: Job) {
     if (job.status === "queued") {
       const index = this.pending.indexOf(job);
       if (index >= 0) this.pending.splice(index, 1);
-      this.finalize(
-        job,
-        status,
-        status === "timed_out"
-          ? "Delegation timed out"
-          : "Delegation cancelled",
-      );
+      this.finalize(job, "cancelled", "Delegation cancelled");
       return;
     }
     if (job.status !== "running" || job.stopping) return;
-    job.stopping = status;
+    job.stopping = true;
     if (job.child) {
       const child = job.child;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -498,19 +482,11 @@ export class DelegateManager {
       }
     }
     if (job.status === "running") {
-      this.finalize(
-        job,
-        status,
-        status === "timed_out"
-          ? "Delegation timed out"
-          : "Delegation cancelled",
-      );
+      this.finalize(job, "cancelled", "Delegation cancelled");
     }
   }
 
   private finalize(job: Job, status: DelegateStatus, error?: string) {
-    if (job.timeout) clearTimeout(job.timeout);
-    job.timeout = undefined;
     job.status = status;
     job.settledAt = Date.now();
     job.error = error;
@@ -547,7 +523,6 @@ export class DelegateManager {
       toolCalls: job.toolCalls,
       failedToolCalls: job.failedToolCalls,
       childUsage: { ...job.usage },
-      timedOut: job.status === "timed_out",
       aborted: job.status === "cancelled",
       error: job.error,
     };

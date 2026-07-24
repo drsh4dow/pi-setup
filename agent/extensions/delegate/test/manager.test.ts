@@ -91,15 +91,11 @@ class FakeChild {
   }
 }
 
-function harness(
-  timeoutMs = 10_000,
-  onSettled?: (snapshot: DelegateSnapshot) => void,
-) {
+function harness(onSettled?: (snapshot: DelegateSnapshot) => void) {
   const sessions: FakeChild[] = [];
   const shutdown: FakeChild[] = [];
   const requests: DelegateRequest[] = [];
   const manager = new DelegateManager({
-    timeoutMs,
     onSettled,
     async createSession(request, _model, _thinking, captureStructured) {
       requests.push(request);
@@ -268,9 +264,7 @@ test("structured retained sessions capture one result per resumed run", async ()
 
 test("only unconsumed background runs trigger automatic delivery", async () => {
   const delivered: DelegateSnapshot[] = [];
-  const { manager, sessions } = harness(10_000, (snapshot) =>
-    delivered.push(snapshot),
-  );
+  const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
   const automatic = manager.spawn({
     task: "automatic",
     background: true,
@@ -303,35 +297,24 @@ test("only unconsumed background runs trigger automatic delivery", async () => {
   await manager.shutdown();
 });
 
-test("child deadlines include session creation and dispose late arrivals", async () => {
+test("cancelling during session creation disposes late arrivals", async () => {
   let resolveCreation!: (child: ChildSession) => void;
   const created = new Promise<ChildSession>((resolve) => {
     resolveCreation = resolve;
   });
   const child = new FakeChild(() => {});
   const manager = new DelegateManager({
-    timeoutMs: 10,
     createSession: async () => created,
     async shutdownSession(session) {
       (session as unknown as FakeChild).disposed = true;
     },
   });
   const job = manager.spawn({ task: "slow startup", ctx: context });
-  const [result] = await manager.wait([job.id]);
-  assert.equal(result.status, "timed_out");
+  const [result] = await manager.cancel([job.id]);
+  assert.equal(result.status, "cancelled");
 
   resolveCreation(child as unknown as ChildSession);
   await eventually(() => child.disposed);
-  await manager.shutdown();
-});
-
-test("child deadlines abort and settle as timed out", async () => {
-  const { manager, sessions } = harness(10);
-  const job = manager.spawn({ task: "stall", ctx: context });
-  await eventually(() => sessions.length === 1);
-  const [result] = await manager.wait([job.id]);
-  assert.equal(result.status, "timed_out");
-  assert.equal(result.timedOut, true);
   await manager.shutdown();
 });
 

@@ -4,7 +4,6 @@ import type { TruncationResult } from "@earendil-works/pi-coding-agent";
 export const TOOL_NAME = "delegate";
 export const CONTROL_TOOL_NAME = "delegate_control";
 export const WORKFLOW_TOOL_NAME = "delegate_workflow";
-export const TIMEOUT_MS = 15 * 60 * 1000;
 export const MAX_ACTIVE_CHILDREN = 4;
 export const MAX_PENDING_CHILDREN = 32;
 export const MAX_TRACKED_CHILDREN = 64;
@@ -136,8 +135,7 @@ export type DelegateStatus =
   | "running"
   | "done"
   | "error"
-  | "cancelled"
-  | "timed_out";
+  | "cancelled";
 
 export interface DelegateUsageStats {
   turns: number;
@@ -161,7 +159,6 @@ export interface DelegateDetails {
   toolCalls: number;
   failedToolCalls: number;
   childUsage: DelegateUsageStats;
-  timedOut: boolean;
   aborted: boolean;
   error?: string;
   structured?: unknown;

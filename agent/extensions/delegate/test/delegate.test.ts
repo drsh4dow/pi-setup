@@ -220,7 +220,6 @@ test("background delivery follows up once and retries failed sends", async () =>
       totalTokens: 2,
       cost: 0,
     },
-    timedOut: false,
     aborted: false,
   } as const;
 

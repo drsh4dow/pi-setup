@@ -376,11 +376,19 @@ test("sanitizes displayed data and list details omit process output", async () =
   assert.ok(!started.content[0].text.includes("\u001b"));
   assert.ok(!started.content[0].text.includes("\u202e"));
   assert.ok(!started.content[0].text.includes("\u200b"));
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  const result = (await status.execute("2", { id: started.details.id })) as {
+  // Poll rather than sleep: a fixed delay races the child process exit on a
+  // loaded machine and reports [running] instead of [done].
+  let result!: {
     details: Record<string, unknown>;
     content: [{ text: string }];
   };
+  for (let attempt = 0; attempt < 200; attempt++) {
+    result = (await status.execute("2", {
+      id: started.details.id,
+    })) as typeof result;
+    if (/\[done\]/.test(result.content[0].text)) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
   assert.doesNotMatch(result.content[0].text, /[\u0080-\u009f]/u);
   assert.match(
     result.content[0].text,

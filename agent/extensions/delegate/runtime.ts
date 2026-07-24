@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Type } from "@earendil-works/pi-ai";
 import {
-  type AgentSessionEvent,
   createAgentSession,
   DefaultResourceLoader,
+  defineTool,
   type ExtensionContext,
   getAgentDir,
   type ModelRegistry,
@@ -12,46 +13,35 @@ import {
   type ToolDefinition,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { Cause, Effect, Exit } from "effect";
+import { Effect } from "effect";
 import {
   CHILD_EXTENSION_PATHS_ENV,
-  type DelegateDetails,
+  CONTROL_TOOL_NAME,
   type DelegateEffort,
-  type DelegateParams,
-  type DelegateParams as DelegateParamsSchema,
   type DelegateThinking,
-  type DelegateUsageStats,
-  TIMEOUT_MS,
+  MAX_CHILD_OUTPUT_BYTES,
   TOOL_NAME,
+  WORKFLOW_TOOL_NAME,
 } from "./contract.ts";
-import { DelegateTimeout, delegateError, errorMessage } from "./errors.ts";
-import { formatStatusParts } from "./format.ts";
-import { extractAssistantText, formatDelegateOutputEffect } from "./output.ts";
+import { delegateError, errorMessage } from "./errors.ts";
 
 export const DELEGATION_TOOL_DENYLIST = [
   TOOL_NAME,
+  CONTROL_TOOL_NAME,
+  WORKFLOW_TOOL_NAME,
   "subagent",
   "subagent_status",
+  "subagent_spawn",
+  "subagent_wait",
+  "subagent_cancel",
+  "workflow",
+  "ask_user",
+  "ask_questions",
 ] as const;
 
-type ChildSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
-type DelegateExecute = NonNullable<
-  ToolDefinition<typeof DelegateParamsSchema, DelegateDetails>["execute"]
->;
-
-interface DelegateState {
-  readonly startedAt: number;
-  readonly effort: DelegateEffort;
-  readonly thinking: DelegateThinking;
-  readonly assignedTask: string;
-  readonly requestedModel: string;
-  readonly fallbackReason?: string;
-  readonly childUsage: DelegateUsageStats;
-  model?: string;
-  toolCalls: number;
-  failedToolCalls: number;
-  lastAssistantText: string;
-}
+export type ChildSession = Awaited<
+  ReturnType<typeof createAgentSession>
+>["session"];
 
 export function thinkingForEffort(effort: DelegateEffort): DelegateThinking {
   return effort === "fast" ? "low" : "high";
@@ -63,18 +53,12 @@ export function selectChildToolNames(
   const deny = new Set<string>(DELEGATION_TOOL_DENYLIST);
   const selected: string[] = [];
   const seen = new Set<string>();
-
   for (const tool of tools) {
     if (deny.has(tool.name) || seen.has(tool.name)) continue;
     seen.add(tool.name);
     selected.push(tool.name);
   }
-
   return selected;
-}
-
-function normalizeEffort(effort: DelegateParams["effort"]): DelegateEffort {
-  return effort === "thorough" ? "thorough" : "fast";
 }
 
 function modelName(
@@ -90,16 +74,13 @@ function modelName(
   return `${model.provider}/${model.id}`;
 }
 
+export { modelName };
+
 interface DelegateModelSetting {
   model?: string;
   problem?: string;
 }
 
-/**
- * Read the optional `{"delegate": {"model": "provider/model-id"}}` section of
- * Pi's global settings.json. Malformed settings never fail the delegation;
- * they surface as a problem that becomes the fallback reason.
- */
 export function readDelegateModelSetting(
   settingsPath = join(getAgentDir(), "settings.json"),
 ): DelegateModelSetting {
@@ -127,9 +108,7 @@ export function readDelegateModelSetting(
   const delegate = (settings as { delegate?: unknown } | null)?.delegate;
   if (delegate === undefined) return {};
   if (!delegate || typeof delegate !== "object" || Array.isArray(delegate)) {
-    return {
-      problem: `"delegate" in ${settingsPath} must be an object.`,
-    };
+    return { problem: `"delegate" in ${settingsPath} must be an object.` };
   }
   const model = (delegate as { model?: unknown }).model;
   if (model === undefined) return {};
@@ -141,7 +120,7 @@ export function readDelegateModelSetting(
   return { model: model.trim() };
 }
 
-interface DelegateModelChoice {
+export interface DelegateModelChoice {
   model: ExtensionContext["model"];
   requestedModel: string;
   fallbackReason?: string;
@@ -214,74 +193,84 @@ export function childExtensionPaths(
   return paths;
 }
 
-function emptyUsageStats(): DelegateUsageStats {
-  return {
-    turns: 0,
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: 0,
+function boundedJsonSchema(schema: unknown): schema is Record<string, unknown> {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema))
+    return false;
+  const seen = new WeakSet<object>();
+  let nodes = 0;
+  const visit = (value: unknown, depth: number): boolean => {
+    if (++nodes > 10_000 || depth > 24) return false;
+    if (
+      value === null ||
+      typeof value === "string" ||
+      typeof value === "boolean"
+    ) {
+      return true;
+    }
+    if (typeof value === "number") return Number.isFinite(value);
+    if (Array.isArray(value)) {
+      return (
+        value.length <= 1_000 && value.every((item) => visit(item, depth + 1))
+      );
+    }
+    if (typeof value !== "object" || seen.has(value)) return false;
+    seen.add(value);
+    return Object.keys(value).every(
+      (key) =>
+        key !== "__proto__" &&
+        key !== "constructor" &&
+        key !== "prototype" &&
+        visit((value as Record<string, unknown>)[key], depth + 1),
+    );
   };
+  return visit(schema, 0);
 }
 
-function detailsFrom(state: DelegateState): DelegateDetails {
-  return {
-    success: false,
-    assignedTask: state.assignedTask,
-    effort: state.effort,
-    requestedModel: state.requestedModel,
-    model: state.model,
-    thinking: state.thinking,
-    fallbackReason: state.fallbackReason,
-    durationMs: Date.now() - state.startedAt,
-    toolCalls: state.toolCalls,
-    failedToolCalls: state.failedToolCalls,
-    childUsage: { ...state.childUsage },
-    timedOut: false,
-    aborted: false,
-  };
+export interface CreateChildOptions {
+  schema?: unknown;
+  captureStructured?: (value: unknown) => void;
 }
 
-function updateUsage(state: DelegateState, event: AgentSessionEvent): void {
-  if (event.type !== "message_end") return;
-
-  const text = extractAssistantText(event.message);
-  if (text) state.lastAssistantText = text;
-  if (event.message.role !== "assistant") return;
-
-  const usage = event.message.usage as
-    | {
-        input?: number;
-        output?: number;
-        cacheRead?: number;
-        cacheWrite?: number;
-        totalTokens?: number;
-        cost?: { total?: number };
-      }
-    | undefined;
-  state.childUsage.turns++;
-  state.childUsage.input += usage?.input ?? 0;
-  state.childUsage.output += usage?.output ?? 0;
-  state.childUsage.cacheRead += usage?.cacheRead ?? 0;
-  state.childUsage.cacheWrite += usage?.cacheWrite ?? 0;
-  state.childUsage.totalTokens += usage?.totalTokens ?? 0;
-  state.childUsage.cost += usage?.cost?.total ?? 0;
-}
-
-function abortChild(child: ChildSession): Effect.Effect<void> {
-  if (!child.isStreaming) return Effect.void;
-  return Effect.tryPromise({
-    try: () => child.abort(),
-    catch: delegateError,
-  }).pipe(Effect.timeout(5_000), Effect.ignore);
+function structuredOutputTool(options: CreateChildOptions): ToolDefinition[] {
+  if (options.schema === undefined) return [];
+  if (!boundedJsonSchema(options.schema)) {
+    throw new Error("Structured output schema must be a bounded JSON object.");
+  }
+  return [
+    defineTool({
+      name: "structured_output",
+      label: "Structured Output",
+      description:
+        "Return the final result matching the required schema. Call this exactly once as your final action.",
+      parameters: Type.Unsafe(options.schema),
+      async execute(_toolCallId, params) {
+        let json: string;
+        try {
+          json = JSON.stringify(params);
+        } catch {
+          throw new Error("Structured output must be JSON serializable.");
+        }
+        if (Buffer.byteLength(json, "utf8") > MAX_CHILD_OUTPUT_BYTES) {
+          throw new Error(
+            `Structured output exceeds ${MAX_CHILD_OUTPUT_BYTES} bytes.`,
+          );
+        }
+        options.captureStructured?.(params);
+        return {
+          content: [{ type: "text", text: "Structured result recorded." }],
+          details: params,
+          terminate: true,
+        };
+      },
+    }),
+  ];
 }
 
 export function createChild(
   ctx: ExtensionContext,
   model: ExtensionContext["model"],
   thinking: DelegateThinking,
+  options: CreateChildOptions = {},
 ) {
   return Effect.gen(function* () {
     const resourceLoader = yield* Effect.try({
@@ -308,12 +297,15 @@ export function createChild(
           sessionManager: SessionManager.inMemory(ctx.cwd),
           model,
           thinkingLevel: thinking,
+          excludeTools: [...DELEGATION_TOOL_DENYLIST],
+          customTools: structuredOutputTool(options),
         }),
       catch: delegateError,
     });
     yield* Effect.tryPromise({
       try: () =>
         result.session.bindExtensions({
+          mode: "print",
           onError: ({ extensionPath, event, error }) => {
             throw new Error(
               `Child extension ${extensionPath} failed during ${event}: ${error}`,
@@ -321,142 +313,65 @@ export function createChild(
           },
         }),
       catch: delegateError,
-    }).pipe(Effect.tapError(() => disposeChild(result.session)));
+    }).pipe(
+      Effect.tapError(() =>
+        Effect.promise(() => shutdownChild(result.session)),
+      ),
+    );
+
+    result.session.setActiveToolsByName(
+      selectChildToolNames(result.session.getAllTools()),
+    );
     return result.session;
   });
 }
 
-function disposeChild(child: ChildSession) {
-  return Effect.try({
-    try: () => child.dispose(),
-    catch: delegateError,
+const childShutdowns = new WeakMap<object, Promise<void>>();
+
+function waitBounded(operation: Promise<unknown>, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
   });
+  return Promise.race([
+    operation.then(
+      () => undefined,
+      () => undefined,
+    ),
+    timeout,
+  ])
+    .catch(() => {})
+    .finally(() => {
+      if (timer) clearTimeout(timer);
+    });
 }
 
-export const executeDelegate: DelegateExecute = async (
-  _toolCallId,
-  params,
-  signal,
-  onUpdate,
-  ctx,
-) => {
-  const effort = normalizeEffort(params.effort);
-  const modelChoice = resolveDelegateModel(ctx);
-  const state: DelegateState = {
-    startedAt: Date.now(),
-    effort,
-    thinking: thinkingForEffort(effort),
-    assignedTask: params.task,
-    requestedModel: modelChoice.requestedModel,
-    fallbackReason: modelChoice.fallbackReason,
-    model: modelName(modelChoice.model),
-    childUsage: emptyUsageStats(),
-    toolCalls: 0,
-    failedToolCalls: 0,
-    lastAssistantText: "",
-  };
-
-  const updateProgress = () => {
-    onUpdate?.({
-      content: [{ type: "text", text: `Delegating (${effort})...` }],
-      details: detailsFrom(state),
-    });
-  };
-
-  updateProgress();
-
-  const program = Effect.acquireUseRelease(
-    createChild(ctx, modelChoice.model, state.thinking),
-    (child) => {
-      state.model = modelName(child.model ?? modelChoice.model);
-      return Effect.gen(function* () {
-        yield* Effect.try({
-          try: () =>
-            child.setActiveToolsByName(
-              selectChildToolNames(child.getAllTools()),
-            ),
-          catch: delegateError,
-        });
-
-        yield* Effect.acquireUseRelease(
-          Effect.try({
-            try: () =>
-              child.subscribe((event) => {
-                if (event.type === "tool_execution_start") {
-                  state.toolCalls++;
-                  updateProgress();
-                }
-                if (event.type === "tool_execution_end") {
-                  if (event.isError) state.failedToolCalls++;
-                  updateProgress();
-                }
-                updateUsage(state, event);
-              }),
-            catch: delegateError,
+export function shutdownChild(child: ChildSession): Promise<void> {
+  const existing = childShutdowns.get(child);
+  if (existing) return existing;
+  const shutdown = (async () => {
+    if (child.isStreaming) await waitBounded(child.abort(), 5_000);
+    try {
+      if (child.extensionRunner.hasHandlers("session_shutdown")) {
+        await waitBounded(
+          child.extensionRunner.emit({
+            type: "session_shutdown",
+            reason: "quit",
           }),
-          () =>
-            Effect.tryPromise({
-              try: () =>
-                child.prompt(params.task, {
-                  expandPromptTemplates: false,
-                  source: "extension",
-                }),
-              catch: delegateError,
-            }).pipe(
-              Effect.onInterrupt(() => abortChild(child)),
-              Effect.timeoutOrElse({
-                duration: TIMEOUT_MS,
-                orElse: () =>
-                  Effect.fail(
-                    new DelegateTimeout({
-                      message: `Timed out after ${TIMEOUT_MS / 60_000} minutes`,
-                    }),
-                  ),
-              }),
-            ),
-          (unsubscribe) =>
-            Effect.try({ try: unsubscribe, catch: delegateError }),
+          5_000,
         );
-      });
-    },
-    disposeChild,
-  );
-
-  const exit = await Effect.runPromiseExit(program, { signal });
-  if (Exit.isFailure(exit)) {
-    const aborted =
-      Cause.hasInterruptsOnly(exit.cause) && signal?.aborted === true;
-    const error = Cause.squash(exit.cause);
-    const timedOut = error instanceof DelegateTimeout;
-    const message = aborted ? "Delegation aborted" : errorMessage(error);
-    const details = {
-      ...detailsFrom(state),
-      timedOut,
-      aborted,
-      error: message,
-    };
-    let failure = `Delegated task failed: ${message} (${formatStatusParts(details)}`;
-    if (timedOut) failure += " • timed out";
-    if (aborted) failure += " • aborted";
-    failure += ")";
-    throw new Error(failure, { cause: error });
-  }
-
-  const output = await Effect.runPromise(
-    formatDelegateOutputEffect(
-      state.lastAssistantText ||
-        "Delegated task completed without a final text response.",
-    ),
-  );
-  const details: DelegateDetails = {
-    ...detailsFrom(state),
-    success: true,
-    outputTruncated: output.truncation?.truncated,
-    fullOutputFile: output.fullOutputFile,
-  };
-
-  return {
-    content: [{ type: "text", text: output.text }],
-    details,
-  };
-};
+      }
+    } catch {
+      // Teardown must still dispose a child when an extension hook fails.
+    } finally {
+      try {
+        child.dispose();
+      } catch {
+        // Disposal is terminal and idempotent at this ownership seam.
+      }
+    }
+  })();
+  childShutdowns.set(child, shutdown);
+  return shutdown;
+}

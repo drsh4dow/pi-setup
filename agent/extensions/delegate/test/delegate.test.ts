@@ -196,6 +196,30 @@ test("normalizes configured child extension paths", () => {
   );
 });
 
+test("uses the standalone delegated system prompt", async () => {
+  const child = await Effect.runPromise(
+    createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
+  );
+  try {
+    assert.match(
+      child.systemPrompt,
+      /^You are Pi running as a delegated child agent in a fresh context\./,
+    );
+    assert.match(
+      child.systemPrompt,
+      /The child role does not itself prohibit commits/,
+    );
+    assert.match(child.systemPrompt, /# Code economy/);
+    assert.doesNotMatch(
+      child.systemPrompt,
+      /your job is to collaborate with them until their goal is genuinely handled/,
+    );
+    assert.doesNotMatch(child.systemPrompt, /Final report:/);
+  } finally {
+    child.dispose();
+  }
+});
+
 test("initializes lifecycle-dependent web tools in child sessions", async () => {
   const originalPaths = process.env.PI_CHILD_EXTENSION_PATHS;
   process.env.PI_CHILD_EXTENSION_PATHS = fileURLToPath(

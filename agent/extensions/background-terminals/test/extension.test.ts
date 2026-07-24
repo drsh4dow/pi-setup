@@ -9,9 +9,17 @@ import { processIsGone } from "../../test/process.ts";
 import extension, { BackgroundTerminalDelivery } from "../index.ts";
 import { MAX_TRACKED, type TerminalSnapshot } from "../manager.ts";
 
+const noEvents = {
+  emit() {},
+  on() {
+    return () => {};
+  },
+};
+
 function registeredTools() {
   const tools: ToolDefinition[] = [];
   extension({
+    events: noEvents,
     on() {},
     registerCommand() {},
     registerTool(tool: ToolDefinition) {
@@ -26,24 +34,21 @@ function registeredTools() {
 test("registers four parallel tools and lifecycle hooks", () => {
   const tools: ToolDefinition[] = [];
   const events = new Set<string>();
-  let command = "";
   extension({
+    events: noEvents,
     on(name: string) {
       events.add(name);
     },
     registerTool(tool: ToolDefinition) {
       tools.push(tool);
     },
-    registerCommand(name: string) {
-      command = name;
-    },
+    registerCommand() {},
   } as unknown as ExtensionAPI);
   assert.deepEqual(
     tools.map((tool) => tool.name),
     ["bg_start", "bg_status", "bg_list", "bg_kill"],
   );
   assert.ok(tools.every((tool) => tool.executionMode === "parallel"));
-  assert.equal(command, "ps");
   assert.ok(
     events.has("session_start") &&
       events.has("agent_end") &&
@@ -56,6 +61,7 @@ test("no-UI runs stop terminals before release and can start another run", async
   const tools: ToolDefinition[] = [];
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   extension({
+    events: noEvents,
     on(name: string, handler: (...args: unknown[]) => unknown) {
       handlers.set(name, handler);
     },
@@ -100,6 +106,7 @@ test("no-UI runs stop terminals before release and can start another run", async
       context,
     );
     assert.ok(second.details.pid);
+    assert.notEqual(second.details.id, first.details.id);
   } finally {
     await handlers.get("session_shutdown")?.(
       { type: "session_shutdown", reason: "quit" },
@@ -113,6 +120,7 @@ test("session shutdown clears status, kills processes, and permits restart", asy
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const statuses: Array<string | undefined> = [];
   extension({
+    events: noEvents,
     on(name: string, handler: (...args: unknown[]) => unknown) {
       handlers.set(name, handler);
     },
@@ -176,6 +184,7 @@ test("successful completions are passive while failures trigger a turn", async (
   const tools: ToolDefinition[] = [];
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   extension({
+    events: noEvents,
     on(name: string, handler: (...args: unknown[]) => unknown) {
       handlers.set(name, handler);
     },
@@ -373,6 +382,10 @@ test("sanitizes displayed data and list details omit process output", async () =
     content: [{ text: string }];
   };
   assert.doesNotMatch(result.content[0].text, /[\u0080-\u009f]/u);
+  assert.match(
+    result.content[0].text,
+    /^bt-\d+ \[done\][\s\S]*command: node -e/,
+  );
   assert.ok(!("stdout" in result.details));
   assert.ok(!("stderr" in result.details));
   const listed = (await list.execute("3", {})) as {

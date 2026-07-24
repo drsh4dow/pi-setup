@@ -128,10 +128,13 @@ export class BackgroundTerminalManager {
     snapshot: TerminalSnapshot,
     consumed: boolean,
   ) => void;
+  private readonly allocateId: () => string;
   constructor(
     onSettled?: (snapshot: TerminalSnapshot, consumed: boolean) => void,
+    allocateId?: () => string,
   ) {
     this.onSettled = onSettled;
+    this.allocateId = allocateId ?? (() => `bt-${++this.counter}`);
   }
 
   list(): TerminalSnapshot[] {
@@ -192,7 +195,7 @@ export class BackgroundTerminalManager {
       detached: process.platform !== "win32",
       windowsHide: true,
     });
-    const id = `bt-${++this.counter}`;
+    const id = this.allocateId();
     let resolveSettled = () => {};
     const settled = new Promise<void>((resolve) => {
       resolveSettled = resolve;

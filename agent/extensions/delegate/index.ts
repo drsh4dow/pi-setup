@@ -2,6 +2,8 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { truncateUtf8Head } from "../../lib/text.ts";
+import { registerProcessStatusSource } from "../process-status/status.ts";
 import {
   CONTROL_TOOL_NAME,
   DelegateControlParams,
@@ -16,7 +18,11 @@ import { formatStatusParts } from "./format.ts";
 import { DelegateManager } from "./manager.ts";
 import { formatDelegateOutput, formatSnapshotOutput } from "./output.ts";
 import { renderDelegateCall, renderDelegateResult } from "./render.ts";
-import { runWorkflow, type WorkflowResult } from "./workflow.ts";
+import {
+  runWorkflow,
+  type WorkflowResult,
+  type WorkflowTaskResult,
+} from "./workflow.ts";
 
 export {
   CHILD_EXTENSION_PATHS_ENV,
@@ -36,10 +42,132 @@ export {
   thinkingForEffort,
 } from "./runtime.ts";
 
-function summary(snapshot: DelegateSnapshot) {
+const MAX_TRACKED_WORKFLOWS = 64;
+
+interface TrackedWorkflowTask {
+  id: string;
+  stage: string;
+  delegateId: string;
+  summary: string;
+}
+
+export interface TrackedWorkflow {
+  id: string;
+  status: "running" | "done" | "error";
+  startedAt: number;
+  settledAt?: number;
+  stage: string;
+  settledTasks: number;
+  totalTasks: number;
+  tasks: TrackedWorkflowTask[];
+  activeTasks: TrackedWorkflowTask[];
+  activity: Array<{ task: string; text: string }>;
+  error?: string;
+}
+
+function statusSummary(snapshot: DelegateSnapshot) {
   const status = snapshot.status.replace("_", " ");
   const resumable = snapshot.resumable ? " · resumable" : "";
-  return `${snapshot.id} [${status}] ${snapshot.workspace} · ${formatStatusParts(snapshot)}${resumable}`;
+  return `[${status}] ${snapshot.workspace} · ${formatStatusParts(snapshot)}${resumable}`;
+}
+
+function summary(snapshot: DelegateSnapshot) {
+  return `${snapshot.id} ${statusSummary(snapshot)}`;
+}
+
+function delegateDetail(manager: DelegateManager, id: string) {
+  const snapshot = manager.list([id])[0];
+  const lines = [
+    `task: ${snapshot.assignedTask}`,
+    `model: ${snapshot.model ?? snapshot.requestedModel}`,
+    `workspace: ${snapshot.workspace}`,
+    `tool-calls: ${snapshot.toolCalls}`,
+    `tool-errors: ${snapshot.failedToolCalls}`,
+  ];
+  if (snapshot.error) lines.push(`error: ${snapshot.error}`);
+  const activity = manager.recentActivity(id);
+  lines.push(
+    "",
+    "activity:",
+    activity.length > 0 ? activity.join("\n\n---\n\n") : "  -",
+  );
+  return lines.join("\n");
+}
+
+function workflowSummary(workflow: TrackedWorkflow) {
+  const elapsed = Math.max(
+    0,
+    Math.round(
+      ((workflow.settledAt ?? Date.now()) - workflow.startedAt) / 1000,
+    ),
+  );
+  return `[${workflow.status}] stage=${workflow.stage} · tasks=${workflow.settledTasks}/${workflow.totalTasks} · elapsed=${elapsed}s`;
+}
+
+function trackedWorkflowTasks(tasks: readonly WorkflowTaskResult[]) {
+  return tasks.map((task) => ({
+    id: task.id,
+    stage: task.stage,
+    delegateId: task.snapshot.id,
+    summary: statusSummary(task.snapshot),
+  }));
+}
+
+function retainWorkflowActivity(
+  manager: DelegateManager,
+  workflow: TrackedWorkflow,
+  tasks: readonly TrackedWorkflowTask[],
+) {
+  for (const task of tasks) {
+    let items: readonly string[];
+    try {
+      items = manager.recentActivity(task.delegateId);
+    } catch {
+      continue;
+    }
+    if (items.length === 0) continue;
+    const existing = workflow.activity.findIndex(
+      (entry) => entry.task === task.id,
+    );
+    if (existing >= 0) workflow.activity.splice(existing, 1);
+    workflow.activity.push({
+      task: task.id,
+      text: truncateUtf8Head(
+        items.slice(-3).join("\n\n---\n\n"),
+        4 * 1024,
+        "\n[truncated]",
+      ),
+    });
+    if (workflow.activity.length > 8) workflow.activity.shift();
+  }
+}
+
+export function workflowDetail(
+  manager: DelegateManager,
+  workflow: TrackedWorkflow,
+) {
+  const tasks = [...workflow.tasks, ...workflow.activeTasks];
+  const lines = [
+    `stage: ${workflow.stage}`,
+    `progress: ${workflow.settledTasks}/${workflow.totalTasks}`,
+  ];
+  retainWorkflowActivity(manager, workflow, tasks);
+  if (workflow.error) lines.push(`error: ${workflow.error}`);
+  lines.push("", "tasks:");
+  if (tasks.length === 0) lines.push("  -");
+  for (const task of tasks) {
+    let summary = task.summary;
+    try {
+      summary = statusSummary(manager.list([task.delegateId])[0]);
+    } catch {}
+    lines.push(`${task.id} (${task.stage}) · ${task.delegateId} ${summary}`);
+  }
+  lines.push("", "activity:");
+  if (workflow.activity.length === 0) lines.push("  -");
+  for (const activity of [...workflow.activity].reverse()) {
+    lines.push("", `${activity.task}:`, activity.text);
+  }
+  return lines.join("\n");
 }
 
 async function resultText(snapshots: DelegateSnapshot[]) {
@@ -156,6 +284,25 @@ export default function delegateExtension(pi: ExtensionAPI) {
   const manager = new DelegateManager({
     onSettled: (snapshot) => delivery.enqueue(snapshot),
   });
+  const workflows = new Map<string, TrackedWorkflow>();
+  let nextWorkflowId = 0;
+
+  registerProcessStatusSource(pi, "delegate", () => [
+    ...manager.list().map((snapshot) => ({
+      id: snapshot.id,
+      kind: "subagents" as const,
+      active: snapshot.status === "queued" || snapshot.status === "running",
+      summary: `${statusSummary(snapshot)} · ${snapshot.assignedTask}`,
+      detail: () => delegateDetail(manager, snapshot.id),
+    })),
+    ...[...workflows.values()].map((workflow) => ({
+      id: workflow.id,
+      kind: "workflows" as const,
+      active: workflow.status === "running",
+      summary: workflowSummary(workflow),
+      detail: () => workflowDetail(manager, workflow),
+    })),
+  ]);
 
   pi.on("session_start", (_event, ctx) => delivery.setContext(ctx));
   pi.on("agent_settled", () => delivery.flush());
@@ -326,27 +473,82 @@ export default function delegateExtension(pi: ExtensionAPI) {
     parameters: DelegateWorkflowParams,
     executionMode: "parallel",
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const result = await runWorkflow(
-        manager,
-        params,
-        ctx,
-        signal,
-        (progress) => {
-          onUpdate?.({
-            content: [
-              {
-                type: "text",
-                text: `Workflow: ${progress.tasks.length} tasks settled...`,
-              },
-            ],
-            details: progress,
-          });
-        },
-      );
-      return {
-        content: [{ type: "text", text: await workflowText(result) }],
-        details: result,
+      if (workflows.size >= MAX_TRACKED_WORKFLOWS) {
+        const settled = [...workflows.values()].find(
+          (workflow) => workflow.status !== "running",
+        );
+        if (!settled) {
+          throw new Error(
+            `error=workflow-registry-full running=${MAX_TRACKED_WORKFLOWS} max=${MAX_TRACKED_WORKFLOWS}`,
+          );
+        }
+        workflows.delete(settled.id);
+      }
+      const id = `workflow-${++nextWorkflowId}`;
+      const workflow: TrackedWorkflow = {
+        id,
+        status: "running",
+        startedAt: Date.now(),
+        stage: params.stages[0]?.name?.trim() || "stage-1",
+        settledTasks: 0,
+        totalTasks: params.stages.reduce(
+          (count, stage) => count + stage.tasks.length,
+          0,
+        ),
+        tasks: [],
+        activeTasks: [],
+        activity: [],
       };
+      workflows.set(id, workflow);
+      try {
+        const result = await runWorkflow(
+          manager,
+          params,
+          ctx,
+          signal,
+          (progress) => {
+            workflow.settledTasks = progress.tasks.length;
+            workflow.tasks = trackedWorkflowTasks(progress.tasks);
+            workflow.activeTasks = trackedWorkflowTasks(progress.activeTasks);
+            retainWorkflowActivity(manager, workflow, [
+              ...workflow.tasks,
+              ...workflow.activeTasks,
+            ]);
+            if (progress.activeStage) workflow.stage = progress.activeStage;
+            onUpdate?.({
+              content: [
+                {
+                  type: "text",
+                  text: `workflow: running settled=${progress.tasks.length} total=${workflow.totalTasks}`,
+                },
+              ],
+              details: progress,
+            });
+          },
+        );
+        workflow.status = result.success ? "done" : "error";
+        workflow.settledAt = Date.now();
+        workflow.settledTasks = result.tasks.length;
+        workflow.tasks = trackedWorkflowTasks(result.tasks);
+        workflow.activeTasks = [];
+        retainWorkflowActivity(manager, workflow, workflow.tasks);
+        workflow.error = result.error
+          ? truncateUtf8Head(result.error, 4 * 1024, "\n[truncated]")
+          : undefined;
+        return {
+          content: [{ type: "text", text: await workflowText(result) }],
+          details: result,
+        };
+      } catch (error) {
+        workflow.status = "error";
+        workflow.settledAt = Date.now();
+        workflow.error = truncateUtf8Head(
+          error instanceof Error ? error.message : String(error),
+          4 * 1024,
+          "\n[truncated]",
+        );
+        throw error;
+      }
     },
   });
 }

@@ -5,6 +5,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { DelegateSnapshot } from "../contract.ts";
+import { workflowDetail } from "../index.ts";
 import { DelegateManager, type DelegateRequest } from "../manager.ts";
 import type { ChildSession } from "../runtime.ts";
 import { runWorkflow } from "../workflow.ts";
@@ -86,7 +87,7 @@ class FakeChild {
     return () => this.listeners.delete(listener);
   }
 
-  private emit(event: AgentSessionEvent) {
+  emit(event: AgentSessionEvent) {
     for (const listener of this.listeners) listener(event);
   }
 }
@@ -262,6 +263,108 @@ test("structured retained sessions capture one result per resumed run", async ()
   await manager.shutdown();
 });
 
+test("retains bounded recent messages and tool inputs and outputs", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "inspect activity", ctx: context });
+  await eventually(() => sessions.length === 1);
+  sessions[0].emit({
+    type: "message_end",
+    message: { role: "user", content: "inspect activity" },
+  } as AgentSessionEvent);
+  sessions[0].emit({
+    type: "tool_execution_start",
+    toolCallId: "call-1",
+    toolName: "read",
+    args: { path: "src/a.ts" },
+  } as AgentSessionEvent);
+  sessions[0].emit({
+    type: "tool_execution_end",
+    toolCallId: "call-1",
+    toolName: "read",
+    result: { content: [{ type: "text", text: "source" }] },
+    isError: false,
+  } as AgentSessionEvent);
+  const toolActivity = manager.recentActivity(job.id).join("\n");
+  assert.match(toolActivity, /role: user\nmessage:\ninspect activity/);
+  assert.match(toolActivity, /path: 'src\/a.ts'/);
+  assert.match(
+    toolActivity,
+    /tool: read[\s\S]*status: running[\s\S]*started: \d{4}-\d{2}-\d{2}T/,
+  );
+  assert.match(
+    toolActivity,
+    /tool: read[\s\S]*status: done[\s\S]*duration: \d+ms[\s\S]*output:[\s\S]*source/,
+  );
+  const workflowActivity = workflowDetail(manager, {
+    id: "workflow-1",
+    status: "running",
+    startedAt: Date.now(),
+    stage: "inspect",
+    settledTasks: 0,
+    totalTasks: 1,
+    tasks: [],
+    activity: [],
+    activeTasks: [
+      {
+        id: "reader",
+        stage: "inspect",
+        delegateId: job.id,
+        summary: "[running] read",
+      },
+    ],
+  });
+  assert.match(
+    workflowActivity,
+    /activity:[\s\S]*reader:[\s\S]*status: done[\s\S]*source/,
+  );
+  sessions[0].emit({
+    type: "tool_execution_end",
+    toolCallId: "wide-result",
+    toolName: "wide",
+    result: Object.fromEntries(
+      Array.from({ length: 1_000 }, (_, index) => [`key-${index}`, index]),
+    ),
+    isError: false,
+  } as AgentSessionEvent);
+  const wide = manager.recentActivity(job.id).at(-1) ?? "";
+  assert.ok(Buffer.byteLength(wide) <= 8 * 1024);
+  assert.match(wide, /properties omitted/);
+  assert.doesNotMatch(wide, /key-999/);
+  const hugeText = "x".repeat(20_000);
+  sessions[0].emit({
+    type: "tool_execution_end",
+    toolCallId: "huge-strings",
+    toolName: "wide",
+    result: { [hugeText]: new Error(hugeText) },
+    isError: true,
+  } as AgentSessionEvent);
+  const hugeStrings = manager.recentActivity(job.id).at(-1) ?? "";
+  assert.ok(Buffer.byteLength(hugeStrings) <= 8 * 1024);
+  assert.doesNotMatch(hugeStrings, /x{4_001}/);
+  for (let index = 0; index < 30; index++) {
+    sessions[0].emit({
+      type: "tool_execution_start",
+      toolCallId: `extra-${index}`,
+      toolName: "read",
+      args: { index },
+    } as AgentSessionEvent);
+  }
+
+  const activity = manager.recentActivity(job.id);
+  assert.ok(activity.length <= 24);
+  assert.ok(Buffer.byteLength(activity.join("")) <= 32 * 1024);
+  assert.doesNotMatch(activity.join("\n"), /inspect activity/);
+  assert.match(activity.join("\n"), /index: 29/);
+
+  sessions[0].finish("done");
+  await manager.wait([job.id]);
+  assert.match(
+    manager.recentActivity(job.id).at(-1) ?? "",
+    /role: assistant\nmessage:\ndone/,
+  );
+  await manager.shutdown();
+});
+
 test("only unconsumed background runs trigger automatic delivery", async () => {
   const delivered: DelegateSnapshot[] = [];
   const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
@@ -335,6 +438,8 @@ test("only eight settled sessions remain resumable", async () => {
 
 test("workflow runs stages in order, fans out, and passes structured inputs", async () => {
   const { manager, sessions } = harness();
+  const activeStages: Array<string | undefined> = [];
+  const activeTasks: string[][] = [];
   const running = runWorkflow(
     manager,
     {
@@ -361,6 +466,11 @@ test("workflow runs stages in order, fans out, and passes structured inputs", as
       ],
     },
     context,
+    undefined,
+    (progress) => {
+      activeStages.push(progress.activeStage);
+      activeTasks.push(progress.activeTasks.map((task) => task.snapshot.id));
+    },
   );
 
   await eventually(() => sessions.length === 2);
@@ -373,6 +483,14 @@ test("workflow runs stages in order, fans out, and passes structured inputs", as
 
   const result = await running;
   assert.equal(result.success, true);
+  assert.equal(result.activeStage, undefined);
+  assert.deepEqual(activeStages, ["scan", "scan", "report", "report"]);
+  assert.deepEqual(activeTasks, [
+    ["delegate-1", "delegate-2"],
+    [],
+    ["delegate-3"],
+    [],
+  ]);
   assert.deepEqual(
     result.tasks.map((task) => task.id),
     ["a", "b", "report"],

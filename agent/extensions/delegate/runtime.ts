@@ -307,9 +307,12 @@ export function createChild(
         result.session.bindExtensions({
           mode: "print",
           onError: ({ extensionPath, event, error }) => {
-            throw new Error(
-              `Child extension ${extensionPath} failed during ${event}: ${error}`,
-            );
+            const failure = `Child extension ${extensionPath} failed during ${event}: ${error}`;
+            if (event === "agent_end" || event === "session_shutdown") {
+              console.error(`[delegate] ${failure.slice(0, 4_096)}`);
+              return;
+            }
+            throw new Error(failure);
           },
         }),
       catch: delegateError,
@@ -326,6 +329,7 @@ export function createChild(
   });
 }
 
+const CHILD_SHUTDOWN_MS = 7_500;
 const childShutdowns = new WeakMap<object, Promise<void>>();
 
 function waitBounded(operation: Promise<unknown>, timeoutMs: number) {
@@ -351,7 +355,7 @@ export function shutdownChild(child: ChildSession): Promise<void> {
   const existing = childShutdowns.get(child);
   if (existing) return existing;
   const shutdown = (async () => {
-    if (child.isStreaming) await waitBounded(child.abort(), 5_000);
+    if (child.isStreaming) await waitBounded(child.abort(), CHILD_SHUTDOWN_MS);
     try {
       if (child.extensionRunner.hasHandlers("session_shutdown")) {
         await waitBounded(
@@ -359,7 +363,7 @@ export function shutdownChild(child: ChildSession): Promise<void> {
             type: "session_shutdown",
             reason: "quit",
           }),
-          5_000,
+          CHILD_SHUTDOWN_MS,
         );
       }
     } catch {

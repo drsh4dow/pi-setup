@@ -5,6 +5,8 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { truncateUtf8Tail } from "../../lib/text.ts";
+import { registerProcessStatusSource } from "../process-status/status.ts";
 import {
   BackgroundTerminalManager,
   MAX_TRACKED,
@@ -41,13 +43,7 @@ function sanitizeErrorForDisplay(error: unknown): Error {
   return new Error(sanitizeInline(message));
 }
 function tail(text: string, maxBytes = MAX_TEXT): string {
-  const sanitized = Buffer.from(sanitizeMultiline(text));
-  let start = Math.max(0, sanitized.length - maxBytes);
-  while (start < sanitized.length && (sanitized[start] & 0xc0) === 0x80)
-    start++;
-  return sanitized
-    .subarray(start)
-    .toString("utf8")
+  return truncateUtf8Tail(sanitizeMultiline(text), maxBytes)
     .split("\n")
     .slice(-MAX_LINES)
     .join("\n");
@@ -55,7 +51,7 @@ function tail(text: string, maxBytes = MAX_TEXT): string {
 function elapsed(snapshot: TerminalSnapshot): string {
   return `${Math.max(0, Math.round(((snapshot.settledAt ?? Date.now()) - snapshot.createdAt) / 1000))}s`;
 }
-function summary(snapshot: TerminalSnapshot): string {
+function statusSummary(snapshot: TerminalSnapshot): string {
   const exit =
     snapshot.state === "running"
       ? "running"
@@ -63,7 +59,10 @@ function summary(snapshot: TerminalSnapshot): string {
         (snapshot.exitCode === undefined
           ? snapshot.state
           : `exit ${snapshot.exitCode}`));
-  return `${sanitizeInline(snapshot.id)} [${snapshot.state}] ${sanitizeInline(snapshot.title)} · ${exit} · ${elapsed(snapshot)}`;
+  return `[${snapshot.state}] ${sanitizeInline(snapshot.title)} · ${exit} · ${elapsed(snapshot)}`;
+}
+function summary(snapshot: TerminalSnapshot): string {
+  return `${sanitizeInline(snapshot.id)} ${statusSummary(snapshot)}`;
 }
 function terminalMetadata(snapshot: TerminalSnapshot) {
   return {
@@ -78,11 +77,14 @@ function terminalMetadata(snapshot: TerminalSnapshot) {
     stderrBytes: snapshot.stderr.totalBytes,
   };
 }
-function formatTerminalReport(
+function formatTerminalDetails(
   snapshot: TerminalSnapshot,
   outputBytes = MAX_TEXT,
 ): string {
-  const sections = [summary(snapshot), `cwd: ${sanitizeInline(snapshot.cwd)}`];
+  const sections = [
+    `command: ${sanitizeInline(snapshot.command)}`,
+    `cwd: ${sanitizeInline(snapshot.cwd)}`,
+  ];
   for (const [name, output] of [
     ["stdout", snapshot.stdout],
     ["stderr", snapshot.stderr],
@@ -97,10 +99,14 @@ function formatTerminalReport(
   if (snapshot.error)
     sections.push(`\nerror: ${sanitizeInline(snapshot.error)}`);
   if (snapshot.stdout.truncatedBytes || snapshot.stderr.truncatedBytes)
-    sections.push(
-      "\nOnly bounded output tails are retained. Redirect output explicitly when durable or full logs matter.",
-    );
+    sections.push("\noutput-retention: bounded-tail");
   return sections.join("\n");
+}
+function formatTerminalReport(
+  snapshot: TerminalSnapshot,
+  outputBytes = MAX_TEXT,
+): string {
+  return `${summary(snapshot)}\n${formatTerminalDetails(snapshot, outputBytes)}`;
 }
 
 export class BackgroundTerminalDelivery {
@@ -249,6 +255,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
   let context: ExtensionContext | undefined;
   let lastStatus: string | undefined | null = null;
   let manager: BackgroundTerminalManager;
+  let terminalSequence = 0;
   const updateStatus = () => {
     if (!context?.hasUI) return;
     const running = manager
@@ -260,18 +267,34 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     context.ui.setStatus("background-terminals", status);
   };
   const createManager = () =>
-    new BackgroundTerminalManager((snapshot, consumed) => {
-      updateStatus();
-      if (consumed) delivery.consume([snapshot.id]);
-      else if (
-        snapshot.state !== "done" ||
-        snapshot.stdout.totalBytes > 0 ||
-        snapshot.stderr.totalBytes > 0 ||
-        snapshot.error
-      )
-        delivery.enqueue(snapshot);
-    });
+    new BackgroundTerminalManager(
+      (snapshot, consumed) => {
+        updateStatus();
+        if (consumed) delivery.consume([snapshot.id]);
+        else if (
+          snapshot.state !== "done" ||
+          snapshot.stdout.totalBytes > 0 ||
+          snapshot.stderr.totalBytes > 0 ||
+          snapshot.error
+        )
+          delivery.enqueue(snapshot);
+      },
+      () => `bt-${++terminalSequence}`,
+    );
   manager = createManager();
+  registerProcessStatusSource(pi, "background-terminals", () =>
+    manager.list().map((snapshot) => ({
+      id: snapshot.id,
+      kind: "terminals" as const,
+      active: snapshot.state === "running",
+      summary: statusSummary(snapshot),
+      detail: () => {
+        const current = manager.get(snapshot.id);
+        if (!current) throw new Error(`error=not-tracked id=${snapshot.id}`);
+        return formatTerminalDetails(current);
+      },
+    })),
+  );
   const stopSession = async (keepContext: boolean) => {
     delivery.clear();
     if (context?.hasUI) {
@@ -455,13 +478,6 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
           })),
         },
       };
-    },
-  });
-  pi.registerCommand("ps", {
-    description: "List tracked background terminals",
-    handler: async (_args, ctx) => {
-      const entries = manager.list();
-      if (ctx.hasUI) ctx.ui.notify(listText(entries), "info");
     },
   });
 }

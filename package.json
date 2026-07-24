@@ -5,13 +5,14 @@
   "scripts": {
     "prepare": "effect-tsgo patch",
     "typecheck": "tsc --noEmit",
-    "check": "biome check agent/extensions",
-    "check:fix": "biome check agent/extensions --write",
+    "check": "biome check agent/extensions agent/lib",
+    "check:fix": "biome check agent/extensions agent/lib --write",
     "test:delegate": "node --test agent/extensions/delegate/test/*.test.ts",
     "test:background-terminals": "node --test agent/extensions/background-terminals/test/*.test.ts",
+    "test:process-status": "node --test agent/extensions/process-status/test/*.test.ts",
     "test:skill-visibility": "node --test agent/extensions/skill-visibility/test/*.test.ts",
     "test:web-access": "node --test agent/extensions/web-access/test/*.test.ts",
-    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:skill-visibility && bun run test:web-access"
+    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:skill-visibility && bun run test:web-access"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.6",

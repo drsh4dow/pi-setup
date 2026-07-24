@@ -19,6 +19,8 @@ export interface WorkflowTaskResult {
 export interface WorkflowResult {
   success: boolean;
   error?: string;
+  activeStage?: string;
+  activeTasks: WorkflowTaskResult[];
   startedAt: number;
   finishedAt: number;
   tasks: WorkflowTaskResult[];
@@ -77,19 +79,24 @@ export async function runWorkflow(
   const results: WorkflowTaskResult[] = [];
   const byId = new Map<string, WorkflowTaskResult>();
   const startedIds: string[] = [];
+  let activeStage: string | undefined;
+  let activeTasks: WorkflowTaskResult[] = [];
 
   const current = (success: boolean, error?: string): WorkflowResult => ({
     success,
     error,
+    activeStage,
+    activeTasks: activeTasks.map((task) => ({ ...task })),
     startedAt,
     finishedAt: Date.now(),
-    tasks: [...results],
+    tasks: results.map((task) => ({ ...task })),
   });
 
   try {
     for (const [stageIndex, stage] of params.stages.entries()) {
       if (signal?.aborted) throw signal.reason ?? new Error("Workflow aborted");
       const stageName = stage.name?.trim() || `stage-${stageIndex + 1}`;
+      activeStage = stageName;
       const jobs = stage.tasks.map((task) => {
         const handoff = (task.inputs ?? [])
           .map((id) => byId.get(id))
@@ -116,12 +123,19 @@ export async function runWorkflow(
         startedIds.push(snapshot.id);
         return { task, snapshot };
       });
+      activeTasks = jobs.map(({ task, snapshot }) => ({
+        id: task.id,
+        stage: stageName,
+        allowFailure: task.allow_failure === true,
+        snapshot,
+      }));
       onProgress?.(current(true));
 
       const settled = await manager.wait(
         jobs.map(({ snapshot }) => snapshot.id),
         signal,
       );
+      activeTasks = [];
       for (const [index, snapshot] of settled.entries()) {
         const task = jobs[index].task;
         const result: WorkflowTaskResult = {
@@ -148,6 +162,7 @@ export async function runWorkflow(
         );
       }
     }
+    activeStage = undefined;
     return current(true);
   } catch (error) {
     const active = manager

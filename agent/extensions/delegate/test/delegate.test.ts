@@ -13,6 +13,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
+import { processStatusView } from "../../process-status/status.ts";
 import { processIsGone } from "../../test/process.ts";
 import delegateExtension, {
   BackgroundDelivery,
@@ -32,6 +33,28 @@ type RegistryModel = NonNullable<ResolveContext["model"]>;
 const parentModel = { provider: "anthropic", id: "parent" } as RegistryModel;
 const configuredModel = { provider: "opencode", id: "fable" } as RegistryModel;
 const settingsDir = mkdtempSync(join(tmpdir(), "pi-delegate-test-"));
+const noEvents = {
+  emit() {},
+  on() {
+    return () => {};
+  },
+};
+
+function eventBus() {
+  const listeners = new Map<string, Set<(data: unknown) => void>>();
+  return {
+    emit(channel: string, data: unknown) {
+      for (const listener of listeners.get(channel) ?? []) listener(data);
+    },
+    on(channel: string, listener: (data: unknown) => void) {
+      const channelListeners = listeners.get(channel) ?? new Set();
+      channelListeners.add(listener);
+      listeners.set(channel, channelListeners);
+      return () => channelListeners.delete(listener);
+    },
+  };
+}
+
 let settingsNumber = 0;
 
 test.after(() => rmSync(settingsDir, { recursive: true, force: true }));
@@ -158,6 +181,7 @@ test("registers blocking, control, and workflow tools", () => {
     renderResult?: unknown;
   }> = [];
   delegateExtension({
+    events: noEvents,
     on() {},
     registerTool(registered: ToolDefinition) {
       tools.push(registered);
@@ -180,6 +204,54 @@ test("registers blocking, control, and workflow tools", () => {
   ).parameters.properties;
   assert.ok("schema" in blockingProperties);
   assert.ok("schema" in controlProperties);
+});
+
+test("retains at most 64 settled workflows for process status", async () => {
+  const events = eventBus();
+  const tools: ToolDefinition[] = [];
+  delegateExtension({
+    events,
+    on() {},
+    registerTool(tool: ToolDefinition) {
+      tools.push(tool);
+    },
+  } as unknown as ExtensionAPI);
+  const workflow = tools.find((tool) => tool.name === "delegate_workflow");
+  assert.ok(workflow);
+  const params = {
+    stages: [
+      {
+        tasks: [
+          {
+            id: "blocked",
+            task: "never starts",
+            inputs: ["missing"],
+          },
+        ],
+      },
+    ],
+  };
+  for (let index = 0; index < 65; index++) {
+    await assert.rejects(
+      workflow.execute(
+        `workflow-${index}`,
+        params,
+        undefined,
+        undefined,
+        fakeContext() as ExtensionContext,
+      ),
+      /must reference an earlier-stage task/,
+    );
+  }
+
+  const list = processStatusView({ events }).expanded;
+  assert.equal(list.match(/^ {2}workflow-/gm)?.length, 64);
+  assert.doesNotMatch(list, /workflow-1 /);
+  assert.match(list, /workflow-65 \[error\]/);
+  assert.match(
+    processStatusView({ events }, "workflow-65").expanded,
+    /must reference an earlier-stage task/,
+  );
 });
 
 test("background delivery follows up once and retries failed sends", async () => {

@@ -1,23 +1,18 @@
-import type {
-  AgentSessionEvent,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
+import { ChildActivity } from "./activity.ts";
 import {
   type DelegateEffort,
   type DelegateSnapshot,
   type DelegateStatus,
   type DelegateThinking,
-  type DelegateUsageStats,
   type DelegateWorkspace,
   MAX_ACTIVE_CHILDREN,
-  MAX_CHILD_OUTPUT_BYTES,
   MAX_PENDING_CHILDREN,
   MAX_RETAINED_SESSIONS,
   MAX_TRACKED_CHILDREN,
 } from "./contract.ts";
 import { errorMessage } from "./errors.ts";
-import { extractAssistantText } from "./output.ts";
 import {
   type ChildSession,
   createChild,
@@ -59,12 +54,7 @@ interface Job {
   createdAt: number;
   settledAt?: number;
   error?: string;
-  assistantStop?: "error" | "aborted";
-  assistantError?: string;
-  output: string;
-  toolCalls: number;
-  failedToolCalls: number;
-  usage: DelegateUsageStats;
+  activity: ChildActivity;
   child?: ChildSession;
   unsubscribe?: () => void;
   run: number;
@@ -92,24 +82,6 @@ function deferred(): Deferred {
     resolve = done;
   });
   return { promise, resolve };
-}
-
-function emptyUsage(): DelegateUsageStats {
-  return {
-    turns: 0,
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: 0,
-  };
-}
-
-function boundedOutput(text: string) {
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.length <= MAX_CHILD_OUTPUT_BYTES) return text;
-  return `${bytes.subarray(0, MAX_CHILD_OUTPUT_BYTES - 28).toString("utf8")}\n[child output truncated]`;
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -186,10 +158,7 @@ export class DelegateManager {
       model: modelName(modelChoice.model),
       status: "queued",
       createdAt: Date.now(),
-      output: "",
-      toolCalls: 0,
-      failedToolCalls: 0,
-      usage: emptyUsage(),
+      activity: new ChildActivity(),
       run: 0,
       completion: deferred(),
       sendChain: Promise.resolve(),
@@ -207,6 +176,10 @@ export class DelegateManager {
   list(ids?: readonly string[]): DelegateSnapshot[] {
     if (!ids) return [...this.jobs.values()].map((job) => this.snapshot(job));
     return [...new Set(ids)].map((id) => this.snapshot(this.requireJob(id)));
+  }
+
+  recentActivity(id: string): readonly string[] {
+    return this.requireJob(id).activity.recent();
   }
 
   async wait(
@@ -269,9 +242,7 @@ export class DelegateManager {
     job.status = "queued";
     job.settledAt = undefined;
     job.error = undefined;
-    job.assistantStop = undefined;
-    job.assistantError = undefined;
-    job.output = "";
+    job.activity.beginRun();
     job.structured = undefined;
     job.stopping = undefined;
     job.completion = deferred();
@@ -392,19 +363,20 @@ export class DelegateManager {
         source: "extension",
       });
       if (job.run !== run || job.status !== "running" || job.stopping) return;
-      if (job.assistantStop === "error") {
+      const activity = job.activity.state();
+      if (activity.assistantStop === "error") {
         this.finalize(
           job,
           "error",
-          job.assistantError ?? "Child agent failed.",
+          activity.assistantError ?? "Child agent failed.",
         );
         return;
       }
-      if (job.assistantStop === "aborted") {
+      if (activity.assistantStop === "aborted") {
         this.finalize(
           job,
           "cancelled",
-          job.assistantError ?? "Child agent aborted.",
+          activity.assistantError ?? "Child agent aborted.",
         );
         return;
       }
@@ -423,31 +395,8 @@ export class DelegateManager {
     }
   }
 
-  private onEvent(job: Job, event: AgentSessionEvent) {
-    if (event.type === "tool_execution_start") job.toolCalls++;
-    if (event.type === "tool_execution_end" && event.isError) {
-      job.failedToolCalls++;
-    }
-    this.notify(this.snapshot(job));
-    if (event.type !== "message_end") return;
-    const text = extractAssistantText(event.message);
-    if (text) job.output = boundedOutput(text);
-    if (event.message.role !== "assistant") return;
-    if (
-      event.message.stopReason === "error" ||
-      event.message.stopReason === "aborted"
-    ) {
-      job.assistantStop = event.message.stopReason;
-      job.assistantError = event.message.errorMessage;
-    }
-    const usage = event.message.usage;
-    job.usage.turns++;
-    job.usage.input += usage?.input ?? 0;
-    job.usage.output += usage?.output ?? 0;
-    job.usage.cacheRead += usage?.cacheRead ?? 0;
-    job.usage.cacheWrite += usage?.cacheWrite ?? 0;
-    job.usage.totalTokens += usage?.totalTokens ?? 0;
-    job.usage.cost += usage?.cost?.total ?? 0;
+  private onEvent(job: Job, event: Parameters<ChildActivity["capture"]>[0]) {
+    job.activity.capture(event);
     this.notify(this.snapshot(job));
   }
 
@@ -503,13 +452,14 @@ export class DelegateManager {
   }
 
   private snapshot(job: Job): DelegateSnapshot {
+    const activity = job.activity.state();
     return {
       id: job.id,
       status: job.status,
       workspace: job.workspace,
       createdAt: job.createdAt,
       settledAt: job.settledAt,
-      output: job.output,
+      output: activity.output,
       structured: job.structured,
       resumable: job.child !== undefined,
       success: job.status === "done",
@@ -520,9 +470,9 @@ export class DelegateManager {
       thinking: job.thinking,
       fallbackReason: job.fallbackReason,
       durationMs: (job.settledAt ?? Date.now()) - job.createdAt,
-      toolCalls: job.toolCalls,
-      failedToolCalls: job.failedToolCalls,
-      childUsage: { ...job.usage },
+      toolCalls: activity.toolCalls,
+      failedToolCalls: activity.failedToolCalls,
+      childUsage: activity.usage,
       aborted: job.status === "cancelled",
       error: job.error,
     };

@@ -134,6 +134,8 @@ export class DelegateManager {
   private readonly childDisposals = new WeakMap<object, Promise<void>>();
   private nextId = 0;
   private nextSettlementOrder = 0;
+  private archivedTokens = 0;
+  private archivedCost = 0;
   private disposed = false;
   private shutdownPromise?: Promise<void>;
 
@@ -155,6 +157,17 @@ export class DelegateManager {
   subscribe(listener: (snapshot: DelegateSnapshot) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  sessionUsage() {
+    let tokens = this.archivedTokens;
+    let cost = this.archivedCost;
+    for (const job of this.jobs.values()) {
+      const usage = job.activity.state().usage;
+      tokens += usage.totalTokens;
+      cost += usage.cost;
+    }
+    return { tokens, cost };
   }
 
   spawn(request: DelegateRequest): DelegateSnapshot {
@@ -658,6 +671,9 @@ export class DelegateManager {
     while (this.jobs.size >= MAX_TRACKED_CHILDREN && settled.length > 0) {
       const job = settled.shift();
       if (!job) break;
+      const usage = job.activity.state().usage;
+      this.archivedTokens += usage.totalTokens;
+      this.archivedCost += usage.cost;
       this.jobs.delete(job.id);
       if (job.child) {
         const child = job.child;

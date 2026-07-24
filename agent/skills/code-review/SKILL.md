@@ -57,7 +57,7 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 ### 4. Spawn both sub-agents in parallel
 
-Send a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both.
+Use one `delegate_workflow` stage containing the two review tasks. Each child lacks the parent conversation, so each task brief must be fully self-contained with the objective, diff command and commits, relevant source files or contents, constraints, permissions, verification expectations, and output contract.
 
 **Standards sub-agent prompt** — include:
 

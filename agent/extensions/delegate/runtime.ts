@@ -16,18 +16,18 @@ import {
 import { Effect } from "effect";
 import {
   CHILD_EXTENSION_PATHS_ENV,
-  CONTROL_TOOL_NAME,
   type DelegateEffort,
   type DelegateThinking,
   MAX_CHILD_OUTPUT_BYTES,
-  TOOL_NAME,
+  RUN_TOOL_NAME,
+  SESSION_TOOL_NAME,
   WORKFLOW_TOOL_NAME,
 } from "./contract.ts";
 import { delegateError, errorMessage } from "./errors.ts";
 
 export const DELEGATION_TOOL_DENYLIST = [
-  TOOL_NAME,
-  CONTROL_TOOL_NAME,
+  RUN_TOOL_NAME,
+  SESSION_TOOL_NAME,
   WORKFLOW_TOOL_NAME,
   "subagent",
   "subagent_status",
@@ -289,7 +289,7 @@ export function createChild(
       catch: delegateError,
     });
     const result = yield* Effect.tryPromise({
-      try: () =>
+      try: (signal) =>
         createAgentSession({
           cwd: ctx.cwd,
           agentDir: getAgentDir(),
@@ -299,22 +299,31 @@ export function createChild(
           thinkingLevel: thinking,
           excludeTools: [...DELEGATION_TOOL_DENYLIST],
           customTools: structuredOutputTool(options),
+        }).then(async (created) => {
+          if (!signal.aborted) return created;
+          await shutdownChild(created.session);
+          throw signal.reason ?? new Error("Child session creation aborted.");
         }),
       catch: delegateError,
     });
     yield* Effect.tryPromise({
-      try: () =>
-        result.session.bindExtensions({
-          mode: "print",
-          onError: ({ extensionPath, event, error }) => {
-            const failure = `Child extension ${extensionPath} failed during ${event}: ${error}`;
-            if (event === "agent_end" || event === "session_shutdown") {
-              console.error(`[delegate] ${failure.slice(0, 4_096)}`);
-              return;
-            }
-            throw new Error(failure);
-          },
-        }),
+      try: (signal) => {
+        const onAbort = () => void shutdownChild(result.session);
+        signal.addEventListener("abort", onAbort, { once: true });
+        return result.session
+          .bindExtensions({
+            mode: "print",
+            onError: ({ extensionPath, event, error }) => {
+              const failure = `Child extension ${extensionPath} failed during ${event}: ${error}`;
+              if (event === "agent_end" || event === "session_shutdown") {
+                console.error(`[delegate] ${failure.slice(0, 4_096)}`);
+                return;
+              }
+              throw new Error(failure);
+            },
+          })
+          .finally(() => signal.removeEventListener("abort", onAbort));
+      },
       catch: delegateError,
     }).pipe(
       Effect.tapError(() =>

@@ -1,13 +1,12 @@
 import { type Static, StringEnum, Type } from "@earendil-works/pi-ai";
 import type { TruncationResult } from "@earendil-works/pi-coding-agent";
 
-export const TOOL_NAME = "delegate";
-export const CONTROL_TOOL_NAME = "delegate_control";
+export const RUN_TOOL_NAME = "delegate_run";
+export const SESSION_TOOL_NAME = "delegate_session";
 export const WORKFLOW_TOOL_NAME = "delegate_workflow";
 export const MAX_ACTIVE_CHILDREN = 4;
 export const MAX_PENDING_CHILDREN = 32;
 export const MAX_TRACKED_CHILDREN = 64;
-export const MAX_RETAINED_SESSIONS = 8;
 export const MAX_CHILD_OUTPUT_BYTES = 256 * 1024;
 export const MAX_WORKFLOW_TASKS = 32;
 export const MAX_WORKFLOW_STAGES = 8;
@@ -22,12 +21,19 @@ const StructuredOutputSchema = Type.Optional(
   }),
 );
 
-export const DelegateParams = Type.Object({
+export const DelegateRunParams = Type.Object({
   task: Type.String({
     maxLength: 100_000,
     description:
-      "Self-contained task for the delegated child agent. Include objective, useful context/files, constraints, permissions, verification needs, and the audience or output contract required by the parent or downstream chain.",
+      "Self-contained task for a fresh child that cannot see the parent conversation. Include the objective, relevant context/files, constraints, permissions, verification, and expected output.",
   }),
+  background: Type.Optional(
+    Type.Boolean({
+      description:
+        "Return the child id immediately and automatically deliver its result later. Defaults to false, which waits for the final result.",
+      default: false,
+    }),
+  ),
   effort: Type.Optional(
     StringEnum(["fast", "thorough"], {
       description:
@@ -45,22 +51,16 @@ export const DelegateParams = Type.Object({
   schema: StructuredOutputSchema,
 });
 
-export const DelegateControlParams = Type.Object({
-  action: StringEnum(["start", "wait", "send", "cancel", "status"], {
+export const DelegateSessionParams = Type.Object({
+  action: StringEnum(["list", "status", "wait", "send", "cancel"], {
     description:
-      "start a background child; wait for children; send a message to one child; cancel children; or inspect status (omit ids to list all)",
+      "list all children; inspect status; wait for results; steer one running child; or cancel children",
   }),
-  task: Type.Optional(
-    Type.String({
-      maxLength: 100_000,
-      description: "Self-contained task required by start",
-    }),
-  ),
-  effort: Type.Optional(StringEnum(["fast", "thorough"])),
-  workspace: Type.Optional(StringEnum(["read", "write"])),
-  schema: StructuredOutputSchema,
   id: Type.Optional(
-    Type.String({ maxLength: 64, description: "Child id required by send" }),
+    Type.String({
+      maxLength: 64,
+      description: "Child id required by send",
+    }),
   ),
   ids: Type.Optional(
     Type.Array(Type.String({ maxLength: 64 }), {
@@ -72,7 +72,7 @@ export const DelegateControlParams = Type.Object({
     Type.String({
       maxLength: 64_000,
       description:
-        "Message required by send. It steers a running child or starts another turn in a retained child session.",
+        "Message required by send. It steers a running child, which sees only its own session; include any new context from the parent conversation that the child needs.",
     }),
   ),
 });
@@ -84,7 +84,8 @@ const WorkflowTask = Type.Object({
   }),
   task: Type.String({
     maxLength: 100_000,
-    description: "Self-contained delegated task",
+    description:
+      "Self-contained task for a fresh child that cannot see the parent conversation. Include the objective, relevant context/files, constraints, permissions, verification, and expected output. Earlier workflow inputs provide only their declared outputs, not undeclared parent context.",
   }),
   effort: Type.Optional(StringEnum(["fast", "thorough"])),
   workspace: Type.Optional(StringEnum(["read", "write"])),
@@ -124,8 +125,8 @@ export const DelegateWorkflowParams = Type.Object({
   }),
 });
 
-export type DelegateParams = Static<typeof DelegateParams>;
-export type DelegateControlParams = Static<typeof DelegateControlParams>;
+export type DelegateRunParams = Static<typeof DelegateRunParams>;
+export type DelegateSessionParams = Static<typeof DelegateSessionParams>;
 export type DelegateWorkflowParams = Static<typeof DelegateWorkflowParams>;
 export type DelegateEffort = "fast" | "thorough";
 export type DelegateThinking = "low" | "high";
@@ -173,7 +174,6 @@ export interface DelegateSnapshot extends DelegateDetails {
   createdAt: number;
   settledAt?: number;
   output: string;
-  resumable: boolean;
 }
 
 export interface DelegateOutput {

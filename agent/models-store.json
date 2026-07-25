@@ -244,7 +244,7 @@
         }
       }
     ],
-    "checkedAt": 1784927325389,
+    "checkedAt": 1784943732588,
     "lastModified": 1784920533000
   },
   "huggingface": {
@@ -1428,7 +1428,7 @@
         "maxTokens": 131072
       }
     ],
-    "checkedAt": 1784927325397,
+    "checkedAt": 1784943732589,
     "lastModified": 1784920521000
   },
   "opencode": {
@@ -4009,7 +4009,7 @@
         }
       }
     ],
-    "checkedAt": 1784927325192,
+    "checkedAt": 1784943732792,
     "lastModified": 1784920532000
   },
   "anthropic": {
@@ -4782,7 +4782,7 @@
         "maxTokens": 65536
       }
     ],
-    "checkedAt": 1784927325392,
+    "checkedAt": 1784943732793,
     "lastModified": 1784920536000
   }
 }

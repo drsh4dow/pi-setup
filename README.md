@@ -38,7 +38,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | `questions` | `ask_questions`, an interactive questionnaire with predefined or free-form answers |
 | `delegate` | `delegate_run` for one new child, `delegate_session` for existing children, and `delegate_workflow` for two or more predetermined tasks |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked session-scoped processes |
-| `process-status` | `/ps` shows a compact line of active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded diagnostics and recent activity |
+| `process-status` | `/ps` shows a compact list of active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded diagnostics and recent activity |
 | `web-access` | `web_search`, `fetch_content`, and `get_search_content` for Exa search, pages and PDFs, GitHub repositories, and video analysis |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle OpenAI's priority service tier for supported GPT models |
 | `shake-images` | `/shake-images` to retain only the newest two images in model context for the current session |

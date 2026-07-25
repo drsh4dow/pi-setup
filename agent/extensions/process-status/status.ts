@@ -27,6 +27,7 @@ export interface ProcessStatusActivity {
 export interface ProcessStatusView {
   collapsed: string;
   expanded: string;
+  list: boolean;
 }
 
 type ProcessStatusSource = () => readonly ProcessStatusActivity[];
@@ -198,10 +199,11 @@ function listText(
     collection.omittedSources,
   );
   if (omitted > 0) entries.push(`${omitted} omitted`);
-  if (collection.errors.length > 0) {
-    entries.push(`errors: ${collection.errors.join("; ")}`);
-  }
-  return `${usageText(collection.usage)} · ${entries.join(" · ") || "idle"}`;
+  entries.push(...collection.errors.map((error) => `error: ${error}`));
+  const usage = usageText(collection.usage);
+  return entries.length > 0
+    ? [usage, ...entries].join("\n")
+    : `${usage} · idle`;
 }
 
 export function processStatusCost(pi: Pick<ExtensionAPI, "events">): number {
@@ -217,6 +219,7 @@ export function processStatusView(
     return {
       collapsed: listText(collection, false),
       expanded: listText(collection, true),
+      list: true,
     };
   }
 
@@ -226,7 +229,7 @@ export function processStatusView(
     .find((candidate) => candidate.id === requestedId);
   if (!activity) {
     const text = `error: unknown-id · id: ${id} · action: /ps`;
-    return { collapsed: text, expanded: text };
+    return { collapsed: text, expanded: text, list: false };
   }
 
   let detail = "";
@@ -236,5 +239,5 @@ export function processStatusView(
     detail = `detail-error: ${inline(error instanceof Error ? error.message : String(error))}`;
   }
   const text = `${activity.usage ? `${usageText(activity.usage)} · ` : ""}${activity.id} ${inline(activity.summary) || "summary=none"}${detail ? `\n\n${detail}` : ""}`;
-  return { collapsed: text, expanded: text };
+  return { collapsed: text, expanded: text, list: false };
 }

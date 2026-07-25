@@ -8,6 +8,7 @@ import {
   type ExtensionEvent,
   initTheme,
 } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import extension from "../index.ts";
 import { processStatusView, registerProcessStatusSource } from "../status.ts";
 
@@ -45,7 +46,7 @@ function activity(
   };
 }
 
-test("lists work and aggregate usage on one line", () => {
+test("lists each activity on its own line with aggregate usage", () => {
   const events = eventBus();
   registerProcessStatusSource(
     { events },
@@ -63,15 +64,19 @@ test("lists work and aggregate usage on one line", () => {
   ]);
 
   const view = processStatusView({ events });
-  assert.equal(view.collapsed.split("\n").length, 1);
-  assert.equal(view.expanded.split("\n").length, 1);
-  assert.match(view.collapsed, /^2,000 tokens · \$0\.3000/);
-  assert.match(view.collapsed, /d1 \[running\]/);
-  assert.match(view.collapsed, /t1 \[running\]/);
-  assert.doesNotMatch(view.collapsed, /d2|w1|t2/);
-  assert.match(view.expanded, /d2 \[done\]/);
-  assert.match(view.expanded, /w1 \[done\]/);
-  assert.match(view.expanded, /t2 \[failed\]/);
+  assert.deepEqual(view.collapsed.split("\n"), [
+    "2,000 tokens · $0.3000",
+    "d1 [running] read · model",
+    "t1 [running] test watcher",
+  ]);
+  assert.deepEqual(view.expanded.split("\n"), [
+    "2,000 tokens · $0.3000",
+    "d1 [running] read · model",
+    "d2 [done] read · model",
+    "w1 [done] tasks=2/2",
+    "t1 [running] test watcher",
+    "t2 [failed] build",
+  ]);
 });
 
 test("shows one worker's usage and bounded diagnostics", () => {
@@ -119,7 +124,7 @@ test("reports a bounded detail loader failure", () => {
   );
 });
 
-test("reports unknown and duplicate ids without adding lines", () => {
+test("reports unknown and duplicate ids without hiding valid entries", () => {
   const events = eventBus();
   registerProcessStatusSource({ events }, "first", () => [
     activity("d1", "subagents", true, "first"),
@@ -138,7 +143,7 @@ test("reports unknown and duplicate ids without adding lines", () => {
   assert.equal(unknown.split("\n").length, 1);
 });
 
-test("isolates source failures and discloses collection limits inline", () => {
+test("isolates source failures and discloses collection limits", () => {
   const events = eventBus();
   registerProcessStatusSource({ events }, "broken", () => {
     throw new Error("registry unavailable");
@@ -156,7 +161,7 @@ test("isolates source failures and discloses collection limits inline", () => {
   assert.match(text, /1 omitted/);
   assert.match(text, /broken: registry unavailable/);
   assert.match(text, /runaway: limit=activities count=193 max=192/);
-  assert.equal(text.split("\n").length, 1);
+  assert.equal(text.split("\n").length, 4);
 });
 
 test("keeps active entries when a group reaches its display bound", () => {
@@ -189,7 +194,7 @@ test("renders compact lists, multiline details, and compounded worker cost", asy
         0.75,
         "task: inspect\n\nactivity:\nread source",
       ),
-      activity("d2", "subagents", false, "[done] review"),
+      activity("d2", "subagents", false, `[done] review ${"x".repeat(80)}`),
     ],
     () => ({ tokens: 200, cost: 0.75 }),
   );
@@ -290,17 +295,19 @@ test("renders compact lists, multiline details, and compounded worker cost", asy
     { expanded: false },
     theme,
   )?.render(45);
-  assert.equal(rendered?.length, 1);
-  assert.ok((rendered?.[0]?.length ?? 0) <= 45);
+  assert.equal(rendered?.length, 4);
+  assert.ok(rendered?.every((line) => visibleWidth(line) <= 45));
   assert.doesNotMatch(rendered?.join("\n") ?? "", /d2/);
-  const expanded = renderer(
+  const expandedLines = renderer(
     { data: appended[0] } as never,
     { expanded: true },
     theme,
-  )
-    ?.render(45)
-    .join("\n");
-  assert.match(expanded ?? "", /d2 \[done\] review/);
+  )?.render(45);
+  const expanded = expandedLines?.join("\n");
+  assert.equal(expandedLines?.length, 5);
+  assert.ok(expandedLines?.every((line) => visibleWidth(line) <= 45));
+  assert.equal(expandedLines?.filter((line) => line.includes("d2")).length, 1);
+  assert.match(expanded ?? "", /d2 \[done\] review x+.*\.\.\./);
   const detail = renderer(
     { data: appended[1] } as never,
     { expanded: false },

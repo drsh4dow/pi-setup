@@ -293,7 +293,7 @@ test("background run returns immediately and list recovers a bounded task previe
     const processStatus = processStatusView({ events }).collapsed;
     assert.match(processStatus, /delegate-1 \[running\]/);
     assert.doesNotMatch(processStatus, /inspect first line|x{10}/);
-    assert.equal(processStatus.split("\n").length, 1);
+    assert.equal(processStatus.split("\n").length, 2);
     const listed = await session.execute(
       "list-1",
       { action: "list" },

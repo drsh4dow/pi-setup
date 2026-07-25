@@ -21,22 +21,25 @@ export default function processStatus(pi: ExtensionAPI) {
     (entry, { expanded }, theme) => {
       if (!entry.data) return undefined;
       const text = expanded ? entry.data.expanded : entry.data.collapsed;
-      if (!expanded && !text.includes("\n")) {
-        return {
+      const box = new Box(1, 1, (line) => theme.bg("customMessageBg", line));
+      if (entry.data.list) {
+        box.addChild({
           invalidate() {},
           render(width: number) {
-            return [
-              truncateToWidth(
-                `${theme.fg("accent", "[ps]")} ${text}`,
-                width,
-                theme.fg("dim", "..."),
-              ),
-            ];
+            return text
+              .split("\n")
+              .map((line, index) =>
+                truncateToWidth(
+                  `${index === 0 ? `${theme.fg("accent", "[ps]")} ` : ""}${line}`,
+                  width,
+                  theme.fg("dim", "..."),
+                ),
+              );
           },
-        };
+        });
+      } else {
+        box.addChild(new Text(`${theme.fg("accent", "[ps]")}\n${text}`, 0, 0));
       }
-      const box = new Box(1, 1, (line) => theme.bg("customMessageBg", line));
-      box.addChild(new Text(`${theme.fg("accent", "[ps]")}\n${text}`, 0, 0));
       return box;
     },
   );

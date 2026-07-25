@@ -26,7 +26,36 @@ const STEER_TIMEOUT_MS = 5_000;
 const CREATION_TIMEOUT_MS = 30_000;
 const DISPOSAL_TIMEOUT_MS = 16_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
+const MINUTE_MS = 60_000;
 export const MAX_CONCURRENT_WAITS_PER_CHILD = 4;
+
+function executionBudget(effort: DelegateEffort, workspace: DelegateWorkspace) {
+  if (effort === "fast") {
+    return {
+      softMs: 4 * MINUTE_MS,
+      softTokens: 1_500_000,
+      hardMs: 8 * MINUTE_MS,
+      hardTokens: 3_000_000,
+    };
+  }
+  if (workspace === "read") {
+    return {
+      softMs: 8 * MINUTE_MS,
+      softTokens: 4_000_000,
+      hardMs: 15 * MINUTE_MS,
+      hardTokens: 8_000_000,
+    };
+  }
+  return {
+    softMs: 20 * MINUTE_MS,
+    softTokens: 15_000_000,
+    hardMs: 60 * MINUTE_MS,
+    hardTokens: 60_000_000,
+  };
+}
+
+const CONVERGENCE_MESSAGE =
+  "Execution budget is nearing its limit. Converge now: finish the current coherent operation, run only essential verification, and return the best complete result with any remaining work stated explicitly.";
 
 export interface DelegateRequest {
   task: string;
@@ -72,6 +101,10 @@ interface Job {
   deliveryPending: boolean;
   deliveryWaiters: number;
   waiters: number;
+  softLimitReached: boolean;
+  softTimer?: ReturnType<typeof setTimeout>;
+  hardTimer?: ReturnType<typeof setTimeout>;
+  hardLimitError?: string;
 }
 
 export interface DelegateManagerOptions {
@@ -211,6 +244,7 @@ export class DelegateManager {
       deliveryPending: request.background === true,
       deliveryWaiters: 0,
       waiters: 0,
+      softLimitReached: false,
     };
     this.jobs.set(job.id, job);
     this.pending.push(job);
@@ -387,6 +421,7 @@ export class DelegateManager {
       this.pending.shift();
       this.active.add(next.id);
       next.status = "running";
+      this.startExecutionBudget(next);
       this.notify(this.snapshot(next));
       const task = this.run(next).catch((error) => {
         if (next.status === "running" && !next.stopping) {
@@ -533,7 +568,72 @@ export class DelegateManager {
 
   private onEvent(job: Job, event: Parameters<ChildActivity["capture"]>[0]) {
     job.activity.capture(event);
+    const tokens = job.activity.state().usage.totalTokens;
+    const budget = executionBudget(job.effort, job.workspace);
+    if (tokens >= budget.hardTokens) {
+      this.stopAtHardLimit(
+        job,
+        `${budget.hardTokens.toLocaleString("en-US")} reported tokens`,
+      );
+    } else if (
+      tokens >= budget.softTokens &&
+      !(
+        event.type === "message_end" &&
+        event.message.role === "assistant" &&
+        event.message.stopReason === "stop"
+      )
+    ) {
+      this.steerAtSoftLimit(job);
+    }
     this.notify(this.snapshot(job));
+  }
+
+  private startExecutionBudget(job: Job) {
+    const budget = executionBudget(job.effort, job.workspace);
+    job.softTimer = setTimeout(() => this.steerAtSoftLimit(job), budget.softMs);
+    job.softTimer.unref?.();
+    job.hardTimer = setTimeout(
+      () =>
+        this.stopAtHardLimit(
+          job,
+          `${budget.hardMs / MINUTE_MS} minutes of wall time`,
+        ),
+      budget.hardMs,
+    );
+    job.hardTimer.unref?.();
+  }
+
+  private steerAtSoftLimit(job: Job) {
+    if (
+      job.status !== "running" ||
+      job.stopping ||
+      job.softLimitReached ||
+      !job.child
+    ) {
+      return;
+    }
+    job.softLimitReached = true;
+    void job.child.steer(CONVERGENCE_MESSAGE).catch((error) => {
+      if (job.status === "running" && !job.stopping) {
+        const evidence = errorMessage(error).replace(/\s+/g, " ").slice(0, 512);
+        console.error(
+          `[delegate] budget steering failed for ${job.id}: ${evidence}`,
+        );
+      }
+    });
+  }
+
+  private stopAtHardLimit(job: Job, limit: string) {
+    if (job.status !== "running" || job.stopping) return;
+    job.hardLimitError = `Delegation stopped at the hard execution ceiling: ${limit}.`;
+    void this.stopOwned(job);
+  }
+
+  private clearExecutionBudget(job: Job) {
+    if (job.softTimer !== undefined) clearTimeout(job.softTimer);
+    if (job.hardTimer !== undefined) clearTimeout(job.hardTimer);
+    job.softTimer = undefined;
+    job.hardTimer = undefined;
   }
 
   private stopOwned(job: Job): Promise<void> {
@@ -546,7 +646,11 @@ export class DelegateManager {
   }
 
   private async stop(job: Job) {
-    this.endOwnership(job, new Error(`Delegate ${job.id} ownership ended.`));
+    this.clearExecutionBudget(job);
+    this.endOwnership(
+      job,
+      new Error(job.hardLimitError ?? `Delegate ${job.id} ownership ended.`),
+    );
     if (job.status === "queued") {
       const index = this.pending.indexOf(job);
       if (index >= 0) this.pending.splice(index, 1);
@@ -588,12 +692,17 @@ export class DelegateManager {
     }
     if (job.status === "running") {
       const child = job.child;
-      this.finalize(job, "cancelled", "Delegation cancelled");
+      this.finalize(
+        job,
+        job.hardLimitError ? "error" : "cancelled",
+        job.hardLimitError ?? "Delegation cancelled",
+      );
       if (child) await this.disposeOwned(child, job.id);
     }
   }
 
   private finalize(job: Job, status: DelegateStatus, error?: string) {
+    this.clearExecutionBudget(job);
     this.endOwnership(job, new Error(`Delegate ${job.id} ownership ended.`));
     job.status = status;
     job.settledAt = Date.now();

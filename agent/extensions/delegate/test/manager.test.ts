@@ -80,23 +80,32 @@ class FakeChild {
     this.promptReject = undefined;
   }
 
-  finish(output: string, structured?: unknown) {
-    if (structured !== undefined) this.captureStructured(structured);
+  emitAssistant(
+    output: string,
+    totalTokens: number,
+    stopReason: "stop" | "toolUse" = "toolUse",
+  ) {
     this.emit({
       type: "message_end",
       message: {
         role: "assistant",
         content: [{ type: "text", text: output }],
+        stopReason,
         usage: {
           input: 10,
           output: 5,
           cacheRead: 0,
           cacheWrite: 0,
-          totalTokens: 15,
+          totalTokens,
           cost: { total: 0.001 },
         },
       },
     } as AgentSessionEvent);
+  }
+
+  finish(output: string, structured?: unknown, totalTokens = 15) {
+    if (structured !== undefined) this.captureStructured(structured);
+    this.emitAssistant(output, totalTokens, "stop");
     this.isStreaming = false;
     this.promptResolve?.();
     this.promptResolve = undefined;
@@ -215,6 +224,127 @@ test("session creation timeout is inspectable and owns a late child", async (t) 
   assert.equal(child.disposed, true);
   assert.deepEqual(child.prompts, []);
   await manager.shutdown();
+});
+
+test("fast children converge at four minutes and stop at eight", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 });
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "bounded fast task", ctx: context });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  t.mock.timers.tick(4 * 60_000 - 1);
+  assert.equal(sessions[0].steeringStarted.length, 0);
+  t.mock.timers.tick(1);
+  assert.equal(sessions[0].steeringStarted.length, 1);
+
+  sessions[0].emitAssistant("checkpoint", 15);
+  t.mock.timers.tick(4 * 60_000);
+  const [stopped] = await manager.wait([job.id]);
+  assert.equal(stopped.status, "error");
+  assert.equal(stopped.output, "checkpoint");
+  assert.match(stopped.error ?? "", /8 minutes of wall time/);
+  assert.equal(sessions[0].disposed, true);
+  await manager.shutdown();
+});
+
+test("thorough read and write children use distinct wall-time budgets", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 });
+  const { manager, sessions } = harness();
+  const reader = manager.spawn({
+    task: "thorough reader",
+    effort: "thorough",
+    ctx: context,
+  });
+  const writer = manager.spawn({
+    task: "thorough writer",
+    effort: "thorough",
+    workspace: "write",
+    ctx: context,
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  t.mock.timers.tick(8 * 60_000);
+  assert.equal(sessions[0].steeringStarted.length, 1);
+  t.mock.timers.tick(7 * 60_000);
+  const [stoppedReader] = await manager.wait([reader.id]);
+  assert.match(stoppedReader.error ?? "", /15 minutes of wall time/);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions[1].steeringStarted.length, 0);
+
+  t.mock.timers.tick(20 * 60_000 - 1);
+  assert.equal(sessions[1].steeringStarted.length, 0);
+  t.mock.timers.tick(1);
+  assert.equal(sessions[1].steeringStarted.length, 1);
+
+  t.mock.timers.tick(40 * 60_000);
+  const [stopped] = await manager.wait([writer.id]);
+  assert.match(stopped.error ?? "", /60 minutes of wall time/);
+  await manager.shutdown();
+});
+
+test("a final answer crossing the soft token limit completes without another turn", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "finish near the limit", ctx: context });
+  await eventually(() => sessions.length === 1);
+
+  sessions[0].finish("complete result", undefined, 1_500_000);
+  const [done] = await manager.wait([job.id]);
+  assert.equal(done.status, "done");
+  assert.equal(done.output, "complete result");
+  assert.equal(sessions[0].steeringStarted.length, 0);
+  await manager.shutdown();
+});
+
+test("reported token budgets steer once and preserve hard-stop evidence", async () => {
+  const scenarios = [
+    {
+      request: { task: "fast token-heavy task", ctx: context },
+      softTokens: 1_500_000,
+      hardTokens: 3_000_000,
+    },
+    {
+      request: {
+        task: "thorough read token-heavy task",
+        effort: "thorough",
+        ctx: context,
+      },
+      softTokens: 4_000_000,
+      hardTokens: 8_000_000,
+    },
+    {
+      request: {
+        task: "thorough write token-heavy task",
+        effort: "thorough",
+        workspace: "write",
+        ctx: context,
+      },
+      softTokens: 15_000_000,
+      hardTokens: 60_000_000,
+    },
+  ] as const;
+
+  for (const { request, softTokens, hardTokens } of scenarios) {
+    const { manager, sessions } = harness();
+    const job = manager.spawn(request);
+    await eventually(() => sessions.length === 1);
+
+    sessions[0].emitAssistant("soft checkpoint", softTokens);
+    sessions[0].emitAssistant("still working", 1);
+    assert.equal(sessions[0].steeringStarted.length, 1);
+
+    sessions[0].emitAssistant("hard checkpoint", hardTokens - softTokens - 1);
+    const [stopped] = await manager.wait([job.id]);
+    assert.equal(stopped.status, "error");
+    assert.equal(stopped.output, "hard checkpoint");
+    assert.equal(stopped.childUsage.totalTokens, hardTokens);
+    assert.match(
+      stopped.error ?? "",
+      new RegExp(`${hardTokens.toLocaleString("en-US")} reported tokens`),
+    );
+    assert.equal(sessions[0].disposed, true);
+    await manager.shutdown();
+  }
 });
 
 test("cancellation releases prompts that ignore child abort", async () => {

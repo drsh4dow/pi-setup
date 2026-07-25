@@ -490,7 +490,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
         if (!result.success) {
           const reason = result.error ?? result.status;
           throw new Error(
-            `Delegated task failed: ${reason} (${formatStatusParts(result)})`,
+            `Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Use delegate_session wait with ids=["${result.id}"] to recover retained output.`,
           );
         }
         const output = await formatDelegateOutput(

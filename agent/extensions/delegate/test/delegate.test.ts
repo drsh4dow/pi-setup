@@ -683,11 +683,22 @@ test("uses the standalone delegated system prompt", async () => {
       child.systemPrompt,
       /^You are Pi running as a delegated child agent in a fresh context\./,
     );
+    assert.match(child.systemPrompt, /The assignment is your briefing packet/);
     assert.match(
       child.systemPrompt,
-      /The child role does not itself prohibit commits/,
+      /The assignment determines whether commits, destructive operations/,
     );
-    assert.match(child.systemPrompt, /# Code economy/);
+    assert.match(child.systemPrompt, /# Engineering standard/);
+    assert.match(child.systemPrompt, /# Execution budget/);
+    assert.doesNotMatch(
+      child.systemPrompt,
+      /exhaust safe in-scope alternatives/,
+    );
+    assert.doesNotMatch(
+      child.systemPrompt,
+      /Do not stop because the run is long/,
+    );
+    assert.doesNotMatch(child.systemPrompt, /never to the effort you spend/);
     assert.doesNotMatch(
       child.systemPrompt,
       /your job is to collaborate with them until their goal is genuinely handled/,

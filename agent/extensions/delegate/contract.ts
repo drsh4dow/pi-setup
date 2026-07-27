@@ -3,23 +3,10 @@ import type { TruncationResult } from "@earendil-works/pi-coding-agent";
 
 export const RUN_TOOL_NAME = "delegate_run";
 export const SESSION_TOOL_NAME = "delegate_session";
-export const WORKFLOW_TOOL_NAME = "delegate_workflow";
-export const MAX_ACTIVE_CHILDREN = 4;
-export const MAX_PENDING_CHILDREN = 32;
-export const MAX_TRACKED_CHILDREN = 64;
 export const MAX_CHILD_OUTPUT_BYTES = 256 * 1024;
-export const MAX_WORKFLOW_TASKS = 32;
-export const MAX_WORKFLOW_STAGES = 8;
 export const COLLAPSED_PREVIEW_LINES = 4;
 export const COLLAPSED_PREVIEW_CHARS = 360;
 export const CHILD_EXTENSION_PATHS_ENV = "PI_CHILD_EXTENSION_PATHS";
-
-const StructuredOutputSchema = Type.Optional(
-  Type.Unknown({
-    description:
-      "Optional bounded JSON Schema. The child must finish with structured_output matching it.",
-  }),
-);
 
 export const DelegateRunParams = Type.Object({
   task: Type.String({
@@ -41,14 +28,13 @@ export const DelegateRunParams = Type.Object({
       default: "fast",
     }),
   ),
-  workspace: Type.Optional(
-    StringEnum(["read", "write"], {
+  output_format: Type.Optional(
+    Type.String({
+      maxLength: 20_000,
       description:
-        "Workspace intent. Read jobs may overlap. Write jobs run exclusively because all children share one working tree. This schedules safely but does not sandbox filesystem writes.",
-      default: "read",
+        "Advisory guidance for presenting the result. Correct and complete information takes precedence over exact formatting.",
     }),
   ),
-  schema: StructuredOutputSchema,
 });
 
 export const DelegateSessionParams = Type.Object({
@@ -62,9 +48,9 @@ export const DelegateSessionParams = Type.Object({
       description: "Child id required by send",
     }),
   ),
+  // Session batches are deliberately unbounded: the product contract requires every parent-owned id to remain manageable without aggregate cutoffs.
   ids: Type.Optional(
     Type.Array(Type.String({ maxLength: 64 }), {
-      maxItems: 16,
       description: "Child ids for wait, cancel, or status",
     }),
   ),
@@ -77,66 +63,11 @@ export const DelegateSessionParams = Type.Object({
   ),
 });
 
-const WorkflowTask = Type.Object({
-  id: Type.String({
-    maxLength: 64,
-    description: "Unique task id used by later-stage inputs",
-  }),
-  task: Type.String({
-    maxLength: 100_000,
-    description:
-      "Self-contained task for a fresh child that cannot see the parent conversation. Include the objective, relevant context/files, constraints, permissions, verification, and expected output. Earlier workflow inputs provide only their declared outputs, not undeclared parent context.",
-  }),
-  effort: Type.Optional(StringEnum(["fast", "thorough"])),
-  workspace: Type.Optional(StringEnum(["read", "write"])),
-  inputs: Type.Optional(
-    Type.Array(Type.String({ maxLength: 64 }), {
-      maxItems: 16,
-      description:
-        "Ids of earlier-stage tasks whose outputs should be appended to this task",
-    }),
-  ),
-  schema: StructuredOutputSchema,
-  allow_failure: Type.Optional(
-    Type.Boolean({
-      description:
-        "Continue later stages when this task fails. Defaults to false.",
-    }),
-  ),
-});
-
-const WorkflowStage = Type.Object({
-  name: Type.Optional(
-    Type.String({ maxLength: 160, description: "Stage label" }),
-  ),
-  tasks: Type.Array(WorkflowTask, {
-    minItems: 1,
-    maxItems: 16,
-    description: "Tasks in a stage run concurrently within the global cap",
-  }),
-});
-
-export const DelegateWorkflowParams = Type.Object({
-  stages: Type.Array(WorkflowStage, {
-    minItems: 1,
-    maxItems: MAX_WORKFLOW_STAGES,
-    description:
-      "Stages run sequentially; tasks within each stage run concurrently. A stage containing a write task must contain only that task.",
-  }),
-});
-
 export type DelegateRunParams = Static<typeof DelegateRunParams>;
 export type DelegateSessionParams = Static<typeof DelegateSessionParams>;
-export type DelegateWorkflowParams = Static<typeof DelegateWorkflowParams>;
 export type DelegateEffort = "fast" | "thorough";
 export type DelegateThinking = "low" | "high";
-export type DelegateWorkspace = "read" | "write";
-export type DelegateStatus =
-  | "queued"
-  | "running"
-  | "done"
-  | "error"
-  | "cancelled";
+export type DelegateStatus = "running" | "done" | "error" | "cancelled";
 
 export interface DelegateUsageStats {
   turns: number;
@@ -162,7 +93,6 @@ export interface DelegateDetails {
   childUsage: DelegateUsageStats;
   aborted: boolean;
   error?: string;
-  structured?: unknown;
   outputTruncated?: boolean;
   fullOutputFile?: string;
 }
@@ -170,7 +100,6 @@ export interface DelegateDetails {
 export interface DelegateSnapshot extends DelegateDetails {
   id: string;
   status: DelegateStatus;
-  workspace: DelegateWorkspace;
   createdAt: number;
   settledAt?: number;
   output: string;

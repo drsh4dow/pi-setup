@@ -1,11 +1,9 @@
 import { readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Type } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
-  defineTool,
   type ExtensionContext,
   getAgentDir,
   type ModelRegistry,
@@ -18,23 +16,21 @@ import {
   CHILD_EXTENSION_PATHS_ENV,
   type DelegateEffort,
   type DelegateThinking,
-  MAX_CHILD_OUTPUT_BYTES,
   RUN_TOOL_NAME,
   SESSION_TOOL_NAME,
-  WORKFLOW_TOOL_NAME,
 } from "./contract.ts";
 import { delegateError, errorMessage } from "./errors.ts";
+
+export const CHILD_TOOL_CALL_TIMEOUT_MS = 3 * 60 * 1_000;
 
 export const DELEGATION_TOOL_DENYLIST = [
   RUN_TOOL_NAME,
   SESSION_TOOL_NAME,
-  WORKFLOW_TOOL_NAME,
   "subagent",
   "subagent_status",
   "subagent_spawn",
   "subagent_wait",
   "subagent_cancel",
-  "workflow",
   "ask_user",
   "ask_questions",
 ] as const;
@@ -45,6 +41,110 @@ export type ChildSession = Awaited<
 
 export function thinkingForEffort(effort: DelegateEffort): DelegateThinking {
   return effort === "fast" ? "low" : "high";
+}
+
+interface ToolRegistry {
+  getAllTools(): Array<{ name: string }>;
+  getToolDefinition(name: string): ToolDefinition | undefined;
+}
+
+function formatTimeout(timeoutMs: number) {
+  if (timeoutMs % 60_000 === 0) {
+    const minutes = timeoutMs / 60_000;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  if (timeoutMs % 1_000 === 0) {
+    const seconds = timeoutMs / 1_000;
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+  return `${timeoutMs} ms`;
+}
+
+export class ToolCallTimeoutError extends Error {
+  constructor(toolName: string, timeoutMs: number) {
+    super(
+      `Tool call "${toolName}" timed out after ${formatTimeout(timeoutMs)}.`,
+    );
+    this.name = "ToolCallTimeoutError";
+  }
+}
+
+export async function runWithToolCallTimeout<T>(
+  toolName: string,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  execute: (signal: AbortSignal) => Promise<T>,
+) {
+  const timeoutController = new AbortController();
+  const executionSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal;
+  const timeoutError = new ToolCallTimeoutError(toolName, timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timer = undefined;
+      timeoutController.abort(timeoutError);
+      reject(timeoutError);
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  let removeAbortListener: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    if (!signal) return;
+    const onAbort = () => {
+      reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : new Error(`Tool call "${toolName}" was aborted.`),
+      );
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+  });
+  try {
+    return await Promise.race([execute(executionSignal), timeout, aborted]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    removeAbortListener?.();
+  }
+}
+
+export function createToolCallTimeoutGuard(
+  timeoutMs = CHILD_TOOL_CALL_TIMEOUT_MS,
+) {
+  const wrapped = new WeakSet<ToolDefinition>();
+  return {
+    apply(registry: ToolRegistry) {
+      for (const { name } of registry.getAllTools()) {
+        const definition = registry.getToolDefinition(name);
+        if (!definition || wrapped.has(definition)) continue;
+        wrapped.add(definition);
+        const execute = definition.execute;
+        definition.execute = async (
+          toolCallId,
+          params,
+          signal,
+          onUpdate,
+          ctx,
+        ) =>
+          runWithToolCallTimeout(name, timeoutMs, signal, (executionSignal) =>
+            execute.call(
+              definition,
+              toolCallId,
+              params,
+              executionSignal,
+              onUpdate,
+              ctx,
+            ),
+          );
+      }
+    },
+  };
 }
 
 export function selectChildToolNames(
@@ -193,84 +293,10 @@ export function childExtensionPaths(
   return paths;
 }
 
-function boundedJsonSchema(schema: unknown): schema is Record<string, unknown> {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema))
-    return false;
-  const seen = new WeakSet<object>();
-  let nodes = 0;
-  const visit = (value: unknown, depth: number): boolean => {
-    if (++nodes > 10_000 || depth > 24) return false;
-    if (
-      value === null ||
-      typeof value === "string" ||
-      typeof value === "boolean"
-    ) {
-      return true;
-    }
-    if (typeof value === "number") return Number.isFinite(value);
-    if (Array.isArray(value)) {
-      return (
-        value.length <= 1_000 && value.every((item) => visit(item, depth + 1))
-      );
-    }
-    if (typeof value !== "object" || seen.has(value)) return false;
-    seen.add(value);
-    return Object.keys(value).every(
-      (key) =>
-        key !== "__proto__" &&
-        key !== "constructor" &&
-        key !== "prototype" &&
-        visit((value as Record<string, unknown>)[key], depth + 1),
-    );
-  };
-  return visit(schema, 0);
-}
-
-export interface CreateChildOptions {
-  schema?: unknown;
-  captureStructured?: (value: unknown) => void;
-}
-
-function structuredOutputTool(options: CreateChildOptions): ToolDefinition[] {
-  if (options.schema === undefined) return [];
-  if (!boundedJsonSchema(options.schema)) {
-    throw new Error("Structured output schema must be a bounded JSON object.");
-  }
-  return [
-    defineTool({
-      name: "structured_output",
-      label: "Structured Output",
-      description:
-        "Return the final result matching the required schema. Call this exactly once as your final action.",
-      parameters: Type.Unsafe(options.schema),
-      async execute(_toolCallId, params) {
-        let json: string;
-        try {
-          json = JSON.stringify(params);
-        } catch {
-          throw new Error("Structured output must be JSON serializable.");
-        }
-        if (Buffer.byteLength(json, "utf8") > MAX_CHILD_OUTPUT_BYTES) {
-          throw new Error(
-            `Structured output exceeds ${MAX_CHILD_OUTPUT_BYTES} bytes.`,
-          );
-        }
-        options.captureStructured?.(params);
-        return {
-          content: [{ type: "text", text: "Structured result recorded." }],
-          details: params,
-          terminate: true,
-        };
-      },
-    }),
-  ];
-}
-
 export function createChild(
   ctx: ExtensionContext,
   model: ExtensionContext["model"],
   thinking: DelegateThinking,
-  options: CreateChildOptions = {},
 ) {
   return Effect.gen(function* () {
     const resourceLoader = yield* Effect.try({
@@ -298,7 +324,6 @@ export function createChild(
           model,
           thinkingLevel: thinking,
           excludeTools: [...DELEGATION_TOOL_DENYLIST],
-          customTools: structuredOutputTool(options),
         }).then(async (created) => {
           if (!signal.aborted) return created;
           await shutdownChild(created.session);
@@ -331,6 +356,11 @@ export function createChild(
       ),
     );
 
+    const toolTimeout = createToolCallTimeoutGuard();
+    toolTimeout.apply(result.session);
+    result.session.subscribe((event) => {
+      if (event.type === "agent_start") toolTimeout.apply(result.session);
+    });
     result.session.setActiveToolsByName(
       selectChildToolNames(result.session.getAllTools()),
     );

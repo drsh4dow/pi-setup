@@ -1,15 +1,14 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSessionEvent,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import { ChildActivity } from "./activity.ts";
-import {
-  type DelegateEffort,
-  type DelegateSnapshot,
-  type DelegateStatus,
-  type DelegateThinking,
-  type DelegateWorkspace,
-  MAX_ACTIVE_CHILDREN,
-  MAX_PENDING_CHILDREN,
-  MAX_TRACKED_CHILDREN,
+import { ChildState } from "./child-state.ts";
+import type {
+  DelegateEffort,
+  DelegateSnapshot,
+  DelegateStatus,
+  DelegateThinking,
 } from "./contract.ts";
 import { errorMessage } from "./errors.ts";
 import {
@@ -26,24 +25,17 @@ const STEER_TIMEOUT_MS = 5_000;
 const CREATION_TIMEOUT_MS = 30_000;
 const DISPOSAL_TIMEOUT_MS = 16_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
+export const FIRST_RESPONSE_TIMEOUT_MS = 45_000;
 const MINUTE_MS = 60_000;
 export const MAX_CONCURRENT_WAITS_PER_CHILD = 4;
 
-function executionBudget(effort: DelegateEffort, workspace: DelegateWorkspace) {
+function executionBudget(effort: DelegateEffort) {
   if (effort === "fast") {
     return {
       softMs: 4 * MINUTE_MS,
       softTokens: 1_500_000,
       hardMs: 8 * MINUTE_MS,
       hardTokens: 3_000_000,
-    };
-  }
-  if (workspace === "read") {
-    return {
-      softMs: 8 * MINUTE_MS,
-      softTokens: 4_000_000,
-      hardMs: 15 * MINUTE_MS,
-      hardTokens: 8_000_000,
     };
   }
   return {
@@ -60,8 +52,7 @@ const CONVERGENCE_MESSAGE =
 export interface DelegateRequest {
   task: string;
   effort?: string;
-  workspace?: string;
-  schema?: unknown;
+  outputFormat?: string;
   background?: boolean;
   ctx: ExtensionContext;
 }
@@ -76,9 +67,7 @@ interface Job {
   task: string;
   effort: DelegateEffort;
   thinking: DelegateThinking;
-  workspace: DelegateWorkspace;
-  schema?: unknown;
-  structured?: unknown;
+  outputFormat?: string;
   ctx: ExtensionContext;
   requestedModel: string;
   fallbackReason?: string;
@@ -89,7 +78,7 @@ interface Job {
   settledAt?: number;
   settlementOrder: number;
   error?: string;
-  activity: ChildActivity;
+  childState: ChildState;
   child?: ChildSession;
   unsubscribe?: () => void;
   stopping?: boolean;
@@ -112,7 +101,6 @@ export interface DelegateManagerOptions {
     request: DelegateRequest,
     model: ExtensionContext["model"],
     thinking: DelegateThinking,
-    captureStructured: (value: unknown) => void,
     signal: AbortSignal,
   ) => Promise<ChildSession>;
   shutdownSession?: (child: ChildSession) => Promise<void>;
@@ -133,6 +121,47 @@ function abortError(signal: AbortSignal): Error {
     : new Error("Operation aborted");
 }
 
+function isAssistantResponse(event: AgentSessionEvent) {
+  return (
+    (event.type === "message_start" ||
+      event.type === "message_update" ||
+      event.type === "message_end") &&
+    event.message.role === "assistant"
+  );
+}
+
+function firstResponseWatchdog(id: string, model: string | undefined) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let responded = false;
+  const error = new Error(
+    `Delegate ${id} received no assistant response${model ? ` from ${model}` : ""} within ${FIRST_RESPONSE_TIMEOUT_MS / 1_000} seconds; the provider request may be stalled. Retry the delegation.`,
+  );
+  const promise = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timer = undefined;
+      reject(error);
+    }, FIRST_RESPONSE_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  const cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    promise,
+    error,
+    get received() {
+      return responded;
+    },
+    markResponse() {
+      if (responded) return;
+      responded = true;
+      cancel();
+    },
+    cancel,
+  };
+}
+
 async function waitUntil(
   promises: readonly Promise<unknown>[],
   deadline: number,
@@ -150,9 +179,8 @@ async function waitUntil(
 }
 
 export class DelegateManager {
+  // The product contract deliberately admits every run immediately and retains it for the parent session; the user accepts unbounded aggregate use instead of backpressure or eviction.
   private readonly jobs = new Map<string, Job>();
-  private readonly pending: Job[] = [];
-  private readonly active = new Set<string>();
   private readonly createSession: NonNullable<
     DelegateManagerOptions["createSession"]
   >;
@@ -167,22 +195,16 @@ export class DelegateManager {
   private readonly childDisposals = new WeakMap<object, Promise<void>>();
   private nextId = 0;
   private nextSettlementOrder = 0;
-  private archivedTokens = 0;
-  private archivedCost = 0;
   private disposed = false;
   private shutdownPromise?: Promise<void>;
 
   constructor(options: DelegateManagerOptions = {}) {
     this.createSession =
       options.createSession ??
-      ((request, model, thinking, captureStructured, signal) =>
-        Effect.runPromise(
-          createChild(request.ctx, model, thinking, {
-            schema: request.schema,
-            captureStructured,
-          }),
-          { signal },
-        ));
+      ((request, model, thinking, signal) =>
+        Effect.runPromise(createChild(request.ctx, model, thinking), {
+          signal,
+        }));
     this.shutdownSession = options.shutdownSession ?? shutdownChild;
     this.onSettled = options.onSettled;
   }
@@ -193,10 +215,10 @@ export class DelegateManager {
   }
 
   sessionUsage() {
-    let tokens = this.archivedTokens;
-    let cost = this.archivedCost;
+    let tokens = 0;
+    let cost = 0;
     for (const job of this.jobs.values()) {
-      const usage = job.activity.state().usage;
+      const usage = job.childState.state().usage;
       tokens += usage.totalTokens;
       cost += usage.cost;
     }
@@ -207,17 +229,6 @@ export class DelegateManager {
     if (this.disposed) throw new Error("Delegate manager is shutting down.");
     if (!request.task.trim())
       throw new Error("Delegated task must not be empty.");
-    if (this.pending.length >= MAX_PENDING_CHILDREN) {
-      throw new Error(
-        `Delegate queue is full (${MAX_PENDING_CHILDREN} pending children).`,
-      );
-    }
-    this.pruneTracked();
-    if (this.jobs.size >= MAX_TRACKED_CHILDREN) {
-      throw new Error(
-        `Delegate registry is full (${MAX_TRACKED_CHILDREN} tracked children).`,
-      );
-    }
 
     const modelChoice = resolveDelegateModel(request.ctx);
     const effort = request.effort === "thorough" ? "thorough" : "fast";
@@ -226,17 +237,16 @@ export class DelegateManager {
       task: request.task,
       effort,
       thinking: thinkingForEffort(effort),
-      workspace: request.workspace === "write" ? "write" : "read",
-      schema: request.schema,
+      outputFormat: request.outputFormat,
       ctx: request.ctx,
       requestedModel: modelChoice.requestedModel,
       fallbackReason: modelChoice.fallbackReason,
       modelChoice: modelChoice.model,
       model: modelName(modelChoice.model),
-      status: "queued",
+      status: "running",
       createdAt: Date.now(),
       settlementOrder: 0,
-      activity: new ChildActivity(),
+      childState: new ChildState(),
       completion: deferred(),
       ownership: new AbortController(),
       sendChain: Promise.resolve(),
@@ -247,10 +257,16 @@ export class DelegateManager {
       softLimitReached: false,
     };
     this.jobs.set(job.id, job);
-    this.pending.push(job);
-    this.schedule();
+    this.startExecutionBudget(job);
     const snapshot = this.snapshot(job);
     this.notify(snapshot);
+    const task = this.run(job).catch((error) => {
+      if (job.status === "running" && !job.stopping) {
+        this.finalize(job, "error", errorMessage(error));
+      }
+    });
+    this.runTasks.add(task);
+    void task.finally(() => this.runTasks.delete(task));
     return snapshot;
   }
 
@@ -260,15 +276,18 @@ export class DelegateManager {
     }
     return [...this.jobs.values()]
       .sort((a, b) => {
-        const active = (job: Job) =>
-          job.status === "queued" || job.status === "running" ? 0 : 1;
+        const active = (job: Job) => (job.status === "running" ? 0 : 1);
         return active(a) - active(b) || b.settlementOrder - a.settlementOrder;
       })
       .map((job) => this.snapshot(job));
   }
 
-  recentActivity(id: string): readonly string[] {
-    return this.requireJob(id).activity.recent();
+  recentConversation(id: string): readonly string[] {
+    return this.requireJob(id).childState.recentConversation();
+  }
+
+  latestProgress(id: string): string | undefined {
+    return this.requireJob(id).childState.latestProgress();
   }
 
   async wait(
@@ -294,7 +313,7 @@ export class DelegateManager {
     });
     const completion = Promise.all(
       jobs.map((job) =>
-        job.status === "queued" || job.status === "running"
+        job.status === "running"
           ? job.completion.promise
           : Promise.resolve(this.snapshot(job)),
       ),
@@ -324,7 +343,6 @@ export class DelegateManager {
           !completed &&
           job.deliveryWaiters === 0 &&
           job.deliveryPending &&
-          job.status !== "queued" &&
           job.status !== "running"
         ) {
           this.onSettled?.(this.snapshot(job));
@@ -398,65 +416,21 @@ export class DelegateManager {
     const deadline = Date.now() + SHUTDOWN_TIMEOUT_MS;
     const jobs = [...this.jobs.values()];
     const stopping = jobs.map((job) =>
-      job.status === "queued" || job.status === "running"
-        ? this.stopOwned(job)
-        : Promise.resolve(),
+      job.status === "running" ? this.stopOwned(job) : Promise.resolve(),
     );
     await waitUntil(stopping, deadline);
     await waitUntil([...this.runTasks], deadline);
     await waitUntil([...this.lateCreations, ...this.disposals], deadline);
-    this.pending.length = 0;
-    this.active.clear();
-  }
-
-  private schedule() {
-    if (this.disposed || this.pending.length === 0) return;
-    while (
-      this.pending.length > 0 &&
-      this.runTasks.size + this.lateCreations.size + this.disposals.size <
-        MAX_ACTIVE_CHILDREN
-    ) {
-      const next = this.pending[0];
-      if (!this.canRun(next)) return;
-      this.pending.shift();
-      this.active.add(next.id);
-      next.status = "running";
-      this.startExecutionBudget(next);
-      this.notify(this.snapshot(next));
-      const task = this.run(next).catch((error) => {
-        if (next.status === "running" && !next.stopping) {
-          this.finalize(next, "error", errorMessage(error));
-        }
-      });
-      this.runTasks.add(task);
-      void task.then(
-        () => {
-          this.runTasks.delete(task);
-          this.schedule();
-        },
-        () => {
-          this.runTasks.delete(task);
-          this.schedule();
-        },
-      );
-    }
-  }
-
-  private canRun(job: Job): boolean {
-    if (this.active.size === 0) return true;
-    if (job.workspace === "write") return false;
-    return ![...this.active].some(
-      (id) => this.jobs.get(id)?.workspace === "write",
-    );
+    for (const job of jobs) job.childState.cleanup();
   }
 
   private async run(job: Job) {
+    let markFirstResponse: (() => void) | undefined;
     if (!job.child) {
       const request: DelegateRequest = {
         task: job.task,
         effort: job.effort,
-        workspace: job.workspace,
-        schema: job.schema,
+        outputFormat: job.outputFormat,
         ctx: job.ctx,
       };
       const signal = job.ownership.signal;
@@ -464,15 +438,6 @@ export class DelegateManager {
         request,
         job.modelChoice,
         job.thinking,
-        (value) => {
-          if (job.status !== "running") return;
-          if (job.structured !== undefined) {
-            throw new Error(
-              "structured_output may be called only once per run.",
-            );
-          }
-          job.structured = value;
-        },
         signal,
       );
       const timeoutError = new Error(
@@ -515,47 +480,50 @@ export class DelegateManager {
         return;
       }
       job.model = modelName(job.child.model ?? job.modelChoice);
-      job.unsubscribe = job.child.subscribe((event) =>
-        this.onEvent(job, event),
-      );
+      job.unsubscribe = job.child.subscribe((event) => {
+        if (isAssistantResponse(event)) markFirstResponse?.();
+        this.onEvent(job, event);
+      });
     }
 
     const child = job.child;
+    const watchdog = firstResponseWatchdog(job.id, job.model);
+    markFirstResponse = () => watchdog.markResponse();
     try {
-      const instruction =
-        job.schema === undefined
-          ? job.task
-          : `${job.task}\n\nReturn the final result by calling structured_output exactly once as your final action. Do not write text after that call.`;
+      const outputFormat = job.outputFormat?.trim();
+      const instruction = outputFormat
+        ? `${job.task}\n\nPreferred output format (advisory):\n${outputFormat}\n\nPrioritize correct and complete information over exact formatting.`
+        : job.task;
       await this.untilOwnershipEnds(
         job,
-        child.prompt(instruction, {
-          expandPromptTemplates: false,
-          source: "extension",
-        }),
+        Promise.race([
+          child.prompt(instruction, {
+            expandPromptTemplates: false,
+            source: "extension",
+          }),
+          watchdog.promise,
+        ]),
       );
+      if (!watchdog.received) {
+        throw new Error(
+          `Delegate ${job.id} finished without an assistant response. Retry the delegation.`,
+        );
+      }
       if (job.status !== "running" || job.stopping) return;
-      const activity = job.activity.state();
-      if (activity.assistantStop === "error") {
+      const childState = job.childState.state();
+      if (childState.assistantStop === "error") {
         this.finalize(
           job,
           "error",
-          activity.assistantError ?? "Child agent failed.",
+          childState.assistantError ?? "Child agent failed.",
         );
         return;
       }
-      if (activity.assistantStop === "aborted") {
+      if (childState.assistantStop === "aborted") {
         this.finalize(
           job,
           "cancelled",
-          activity.assistantError ?? "Child agent aborted.",
-        );
-        return;
-      }
-      if (job.schema !== undefined && job.structured === undefined) {
-        this.finalize(
-          job,
-          "error",
-          "Child finished without producing the required structured output.",
+          childState.assistantError ?? "Child agent aborted.",
         );
         return;
       }
@@ -563,13 +531,16 @@ export class DelegateManager {
     } catch (error) {
       if (job.status !== "running" || job.stopping) return;
       this.finalize(job, "error", errorMessage(error));
+    } finally {
+      markFirstResponse = undefined;
+      watchdog.cancel();
     }
   }
 
-  private onEvent(job: Job, event: Parameters<ChildActivity["capture"]>[0]) {
-    job.activity.capture(event);
-    const tokens = job.activity.state().usage.totalTokens;
-    const budget = executionBudget(job.effort, job.workspace);
+  private onEvent(job: Job, event: Parameters<ChildState["capture"]>[0]) {
+    job.childState.capture(event);
+    const tokens = job.childState.state().usage.totalTokens;
+    const budget = executionBudget(job.effort);
     if (tokens >= budget.hardTokens) {
       this.stopAtHardLimit(
         job,
@@ -589,7 +560,7 @@ export class DelegateManager {
   }
 
   private startExecutionBudget(job: Job) {
-    const budget = executionBudget(job.effort, job.workspace);
+    const budget = executionBudget(job.effort);
     job.softTimer = setTimeout(() => this.steerAtSoftLimit(job), budget.softMs);
     job.softTimer.unref?.();
     job.hardTimer = setTimeout(
@@ -651,12 +622,6 @@ export class DelegateManager {
       job,
       new Error(job.hardLimitError ?? `Delegate ${job.id} ownership ended.`),
     );
-    if (job.status === "queued") {
-      const index = this.pending.indexOf(job);
-      if (index >= 0) this.pending.splice(index, 1);
-      this.finalize(job, "cancelled", "Delegation cancelled");
-      return;
-    }
     if (job.status !== "running" || job.stopping) return;
     job.stopping = true;
     if (job.child) {
@@ -709,7 +674,6 @@ export class DelegateManager {
     job.settlementOrder = ++this.nextSettlementOrder;
     job.error = error;
     job.stopping = undefined;
-    this.active.delete(job.id);
     const snapshot = this.snapshot(job);
     job.completion.resolve(snapshot);
     this.notify(snapshot);
@@ -721,20 +685,19 @@ export class DelegateManager {
     job.unsubscribe?.();
     job.unsubscribe = undefined;
     if (child) void this.disposeOwned(child, job.id);
-    this.pruneTracked();
-    this.schedule();
+    if (this.disposed) job.childState.cleanup();
   }
 
   private snapshot(job: Job): DelegateSnapshot {
-    const activity = job.activity.state();
+    const childState = job.childState.state();
     return {
       id: job.id,
       status: job.status,
-      workspace: job.workspace,
       createdAt: job.createdAt,
       settledAt: job.settledAt,
-      output: activity.output,
-      structured: job.structured,
+      output: childState.output,
+      outputTruncated: childState.outputTruncated,
+      fullOutputFile: childState.fullOutputFile,
       success: job.status === "done",
       assignedTask: job.task,
       effort: job.effort,
@@ -743,9 +706,9 @@ export class DelegateManager {
       thinking: job.thinking,
       fallbackReason: job.fallbackReason,
       durationMs: (job.settledAt ?? Date.now()) - job.createdAt,
-      toolCalls: activity.toolCalls,
-      failedToolCalls: activity.failedToolCalls,
-      childUsage: activity.usage,
+      toolCalls: childState.toolCalls,
+      failedToolCalls: childState.failedToolCalls,
+      childUsage: childState.usage,
       aborted: job.status === "cancelled",
       error: job.error,
     };
@@ -765,32 +728,6 @@ export class DelegateManager {
     const job = this.jobs.get(id);
     if (!job) throw new Error(`Unknown delegate id "${id}".`);
     return job;
-  }
-
-  private pruneTracked() {
-    if (this.jobs.size < MAX_TRACKED_CHILDREN) return;
-    const settled = [...this.jobs.values()]
-      .filter(
-        (job) =>
-          job.status !== "queued" &&
-          job.status !== "running" &&
-          !job.deliveryPending,
-      )
-      .sort((a, b) => a.settlementOrder - b.settlementOrder);
-    while (this.jobs.size >= MAX_TRACKED_CHILDREN && settled.length > 0) {
-      const job = settled.shift();
-      if (!job) break;
-      const usage = job.activity.state().usage;
-      this.archivedTokens += usage.totalTokens;
-      this.archivedCost += usage.cost;
-      this.jobs.delete(job.id);
-      if (job.child) {
-        const child = job.child;
-        job.child = undefined;
-        job.unsubscribe?.();
-        void this.disposeOwned(child, job.id);
-      }
-    }
   }
 
   private endOwnership(job: Job, reason: Error) {
@@ -847,7 +784,6 @@ export class DelegateManager {
       },
       () => {
         this.lateCreations.delete(cleanup);
-        this.schedule();
       },
     );
     this.lateCreations.add(cleanup);
@@ -887,7 +823,6 @@ export class DelegateManager {
       .finally(() => {
         if (timer) clearTimeout(timer);
         this.disposals.delete(disposal);
-        this.schedule();
       });
     this.childDisposals.set(child, disposal);
     this.disposals.add(disposal);

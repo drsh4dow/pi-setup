@@ -18,18 +18,17 @@ Completion criterion: every proposed child has a concrete advantage over parent 
 
 Give one child one outcome it can complete and verify within its execution budget. Split large work at durable seams such as independent modules, implementation versus adversarial review, or research versus application. Keep coupled edits and their tests together. Prefer the fewest coherent jobs because every child pays startup and integration costs.
 
-Size work to finish before automatic convergence: `fast` within 4 minutes/1.5M reported tokens, `thorough/read` within 8 minutes/4M, and `thorough/write` within 20 minutes/15M. Hard ceilings are recovery fuses, not planning targets.
+Size work to finish before automatic convergence: `fast` within 4 minutes/1.5M reported tokens and `thorough` within 20 minutes/15M. Hard ceilings are recovery fuses, not planning targets.
 
 Choose execution deliberately:
 
-- `fast/read` for scouting, focused research, review, critique, and diagnosis.
-- `fast/write` for small, well-located corrections.
-- `thorough/read` when synthesis is genuinely reasoning-heavy.
-- `thorough/write` for a bounded implementation where mistakes are expensive or difficult to detect.
-- `delegate_run` for one new child; `delegate_workflow` for two or more tasks known in advance.
-- Background execution only when useful parent work can proceed concurrently. Read jobs may overlap; a write job runs alone.
+- `fast` for scouting, focused research, review, critique, diagnosis, and small well-located corrections.
+- `thorough` only for genuinely reasoning-heavy work or a bounded implementation where mistakes are expensive or difficult to detect.
+- One `delegate_run` call creates one child. Issue independent calls together for parallel work; after dependent work completes, use its result to compose the next child task.
+- Background execution only when useful parent work can proceed concurrently.
+- State mutation authority in every task brief. Children share the same worktree without write isolation; parallel writers can conflict.
 
-Completion criterion: each assignment has one deliverable, one workspace intent, explicit boundaries, and a finish line that fits its class.
+Completion criterion: each assignment has one deliverable, explicit mutation authority and boundaries, and a finish line that fits its effort class.
 
 ## 3. Write the briefing packet
 
@@ -40,7 +39,7 @@ A child starts with no parent conversation. Put all decision-relevant context in
 3. **Work seam** — repository path, exact files/symbols or URLs, and the smallest area it should inspect.
 4. **Boundaries** — in-scope behavior, permissions, preserved invariants, and excluded work.
 5. **Verification** — specific checks to run and evidence to inspect.
-6. **Output contract** — what the response must contain, including residual risk or incomplete work.
+6. **Expected result** — the information the response must contain, including residual risk or incomplete work. Use `output_format` only as advisory presentation guidance.
 
 Supply excerpts or earlier outputs only when they change the child's decisions. An execution assignment begins from the supplied evidence and confines discovery to the named seam. A research assignment names the question, source standard, and stopping criterion.
 
@@ -48,7 +47,7 @@ Completion criterion: a fresh agent can start at the named seam without rediscov
 
 ## 4. Dispatch and supervise
 
-Run independent tasks concurrently up to the global child cap; stage tasks only when a later task truly consumes an earlier result. Pass only declared, bounded handoffs. Inspect status instead of duplicating work. Steer a running child only with new facts or a changed decision, phrased as a complete update. Cancel work that has become stale.
+Issue independent `delegate_run` calls together. For dependent tasks, wait for the earlier child, inspect its result, and compose the next self-contained brief. Inspect status instead of duplicating work. Steer a running child only with new facts or a changed decision, phrased as a complete update. Cancel work that has become stale.
 
 If a child reaches a limit or reports partial progress, preserve its workspace state and result. Re-scope the remainder into a smaller briefing packet rather than repeating the original assignment.
 

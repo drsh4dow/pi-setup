@@ -15,6 +15,7 @@ import {
   formatCollapsedPreview,
   formatCompactUsage,
   formatDetailedUsage,
+  formatProgress,
   formatStatusParts,
 } from "./format.ts";
 
@@ -100,6 +101,10 @@ export const renderDelegateResult: DelegateRenderResult = (
     container.addChild(
       new Text(renderStatus("running", "muted", details, true, theme), 0, 0),
     );
+    const progress = formatProgress(details);
+    if (progress) {
+      container.addChild(new Text(theme.fg("muted", progress), 0, 0));
+    }
     const task = renderAssignedTask(
       details.assignedTask ?? "",
       options.expanded,

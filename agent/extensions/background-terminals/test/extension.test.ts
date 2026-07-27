@@ -7,7 +7,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { processIsGone } from "../../test/process.ts";
 import extension, { BackgroundTerminalDelivery } from "../index.ts";
-import { MAX_TRACKED, type TerminalSnapshot } from "../manager.ts";
+import {
+  MAX_RUNNING_PER_OWNER,
+  MAX_TRACKED,
+  type TerminalSnapshot,
+} from "../manager.ts";
 
 const noEvents = {
   emit() {},
@@ -156,6 +160,89 @@ test("child terminals die with the child and stay out of the parent's list", asy
     await parentHandlers.get("session_shutdown")?.(
       { type: "session_shutdown", reason: "quit" },
       parentContext,
+    );
+  }
+});
+
+test("a saturated child cannot exhaust the parent's terminal slots", async () => {
+  const parentTools: ToolDefinition[] = [];
+  const childTools: ToolDefinition[] = [];
+  const parentHandlers = new Map<string, (...args: unknown[]) => unknown>();
+  const childHandlers = new Map<string, (...args: unknown[]) => unknown>();
+  const api = (
+    tools: ToolDefinition[],
+    handlers: Map<string, (...args: unknown[]) => unknown>,
+  ) =>
+    ({
+      events: noEvents,
+      on(name: string, handler: (...args: unknown[]) => unknown) {
+        handlers.set(name, handler);
+      },
+      registerCommand() {},
+      registerTool(tool: ToolDefinition) {
+        tools.push(tool);
+      },
+      sendMessage() {},
+    }) as unknown as ExtensionAPI;
+  extension(api(parentTools, parentHandlers));
+  extension(api(childTools, childHandlers));
+  const context = {
+    cwd: process.cwd(),
+    hasUI: false,
+    isIdle: () => false,
+  } as ExtensionContext;
+  await parentHandlers.get("session_start")?.(
+    { type: "session_start", reason: "startup" },
+    context,
+  );
+  await childHandlers.get("session_start")?.(
+    { type: "session_start", reason: "startup" },
+    context,
+  );
+  const childStart = childTools[0] as unknown as {
+    execute: (...args: unknown[]) => Promise<unknown>;
+  };
+  const parentStart = parentTools[0] as unknown as {
+    execute: (...args: unknown[]) => Promise<{ details: { id: string } }>;
+  };
+  try {
+    for (let index = 0; index < MAX_RUNNING_PER_OWNER; index++) {
+      await childStart.execute(
+        `child-${index}`,
+        { command: "sleep 30", title: `child ${index}` },
+        undefined,
+        undefined,
+        context,
+      );
+    }
+    await assert.rejects(
+      childStart.execute(
+        "child-overflow",
+        { command: "sleep 30", title: "child overflow" },
+        undefined,
+        undefined,
+        context,
+      ),
+      new RegExp(
+        `Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${MAX_RUNNING_PER_OWNER}\\.`,
+      ),
+    );
+    const parentTerminal = await parentStart.execute(
+      "parent-1",
+      { command: "sleep 30", title: "parent work" },
+      undefined,
+      undefined,
+      context,
+    );
+    assert.ok(parentTerminal.details.id);
+  } finally {
+    await childHandlers.get("session_shutdown")?.(
+      { type: "session_shutdown", reason: "quit" },
+      context,
+    );
+    await parentHandlers.get("session_shutdown")?.(
+      { type: "session_shutdown", reason: "quit" },
+      context,
     );
   }
 });

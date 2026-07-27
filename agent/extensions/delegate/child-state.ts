@@ -4,9 +4,26 @@ import { truncateUtf8Head, truncateUtf8Window } from "../../lib/text.ts";
 import { type DelegateUsageStats, MAX_CHILD_OUTPUT_BYTES } from "./contract.ts";
 import { extractAssistantText, saveDelegateOutput } from "./output.ts";
 
-const MAX_CONVERSATION_MESSAGES = 6;
+const MAX_TRAIL_MESSAGES = 6;
+const MAX_TRAIL_TOOLS = 12;
 const MAX_MESSAGE_BYTES = 4 * 1024;
 const MAX_PROGRESS_BYTES = 240;
+const MAX_TOOL_ARGS_BYTES = 120;
+const MAX_TOOL_ERROR_BYTES = 200;
+
+interface ToolEntry {
+  seq: number;
+  id: string;
+  name: string;
+  args: string;
+  status: "running" | "done" | "error";
+  error?: string;
+}
+
+interface MessageEntry {
+  seq: number;
+  text: string;
+}
 
 function messageText(event: AgentSessionEvent & { type: "message_end" }) {
   if (!("content" in event.message)) return "";
@@ -38,8 +55,47 @@ function conversationMessage(role: string, text: string) {
   return `${role}\n\n${bounded}`;
 }
 
+function compact(value: unknown, maxBytes: number) {
+  if (value === undefined || value === null) return "";
+  let text: string;
+  if (typeof value === "string") text = value;
+  else {
+    try {
+      text = JSON.stringify(value) ?? "";
+    } catch {
+      return "";
+    }
+  }
+  return truncateUtf8Head(text.replace(/\s+/gu, " ").trim(), maxBytes, "…");
+}
+
+// Tool results carry their message in content text parts; the envelope would eat the excerpt budget.
+function resultText(result: unknown): unknown {
+  const content = (result as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return result;
+  const text = content
+    .flatMap((part) =>
+      part &&
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "text" &&
+      typeof (part as { text?: unknown }).text === "string"
+        ? [(part as { text: string }).text]
+        : [],
+    )
+    .join(" ");
+  return text || result;
+}
+
+function toolLine(entry: ToolEntry) {
+  const head = `Tool: ${entry.name}${entry.args ? ` ${entry.args}` : ""} · ${entry.status}`;
+  return entry.error ? `${head}: ${entry.error}` : head;
+}
+
 export class ChildState {
-  private readonly messages: string[] = [];
+  private readonly messages: MessageEntry[] = [];
+  private readonly tools: ToolEntry[] = [];
+  private seq = 0;
+  private lastActivityAt = Date.now();
   private writing: string | undefined;
   private progress: string | undefined;
   private omitInitialUserMessage = true;
@@ -60,15 +116,21 @@ export class ChildState {
     cost: 0,
   };
 
-  recentConversation(): readonly string[] {
-    return this.writing
-      ? [...this.messages.slice(-(MAX_CONVERSATION_MESSAGES - 1)), this.writing]
-      : [...this.messages];
+  trail(): readonly string[] {
+    const entries = [
+      ...this.messages,
+      ...this.tools.map((tool) => ({ seq: tool.seq, text: toolLine(tool) })),
+    ]
+      .sort((left, right) => left.seq - right.seq)
+      .map((entry) => entry.text);
+    if (this.writing) entries.push(this.writing);
+    return entries;
   }
 
   state() {
     return {
       progress: this.progress,
+      lastActivityAt: this.lastActivityAt,
       output: this.output,
       outputTruncated: this.outputTruncated,
       fullOutputFile: this.fullOutputFile,
@@ -81,13 +143,29 @@ export class ChildState {
   }
 
   capture(event: AgentSessionEvent) {
+    this.lastActivityAt = Date.now();
     if (event.type === "tool_execution_start") {
       this.toolCalls++;
       this.progress = `tool: ${progressLine(event.toolName)} · running`;
+      this.tools.push({
+        seq: ++this.seq,
+        id: event.toolCallId,
+        name: event.toolName,
+        args: compact(event.args, MAX_TOOL_ARGS_BYTES),
+        status: "running",
+      });
+      if (this.tools.length > MAX_TRAIL_TOOLS) this.tools.shift();
     }
     if (event.type === "tool_execution_end") {
       if (event.isError) this.failedToolCalls++;
       this.progress = `tool: ${progressLine(event.toolName)} · ${event.isError ? "error" : "done"}`;
+      const entry = this.tools.find((tool) => tool.id === event.toolCallId);
+      if (entry) {
+        entry.status = event.isError ? "error" : "done";
+        if (event.isError) {
+          entry.error = compact(resultText(event.result), MAX_TOOL_ERROR_BYTES);
+        }
+      }
     }
     if (
       (event.type === "message_start" || event.type === "message_update") &&
@@ -178,10 +256,8 @@ export class ChildState {
     }
   }
 
-  private append(message: string) {
-    this.messages.push(message);
-    if (this.messages.length > MAX_CONVERSATION_MESSAGES) {
-      this.messages.shift();
-    }
+  private append(text: string) {
+    this.messages.push({ seq: ++this.seq, text });
+    if (this.messages.length > MAX_TRAIL_MESSAGES) this.messages.shift();
   }
 }

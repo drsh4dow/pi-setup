@@ -2,6 +2,7 @@ import {
   COLLAPSED_PREVIEW_CHARS,
   COLLAPSED_PREVIEW_LINES,
   type DelegateDetails,
+  type DelegateSnapshot,
   type DelegateUsageStats,
 } from "./contract.ts";
 
@@ -51,6 +52,32 @@ export function formatStatusParts(details: DelegateDetails): string {
     text += ` • ${details.failedToolCalls} failed`;
   }
   return text;
+}
+
+export function formatProgress(details: DelegateDetails): string {
+  if (!details.progress) return "";
+  return details.idleMs === undefined
+    ? details.progress
+    : `${details.progress} · ${formatDuration(details.idleMs)} ago`;
+}
+
+export function statusSummary(snapshot: DelegateSnapshot): string {
+  return `[${snapshot.status.replace("_", " ")}] ${formatStatusParts(snapshot)}`;
+}
+
+export function summary(snapshot: DelegateSnapshot): string {
+  return `${snapshot.id} ${statusSummary(snapshot)}`;
+}
+
+function taskPreview(task: string): string {
+  const singleLine = task.replace(/\s+/g, " ").trim();
+  return singleLine.length <= 160 ? singleLine : `${singleLine.slice(0, 159)}…`;
+}
+
+export function sessionSummary(snapshot: DelegateSnapshot): string {
+  const line = `${summary(snapshot)} · ${taskPreview(snapshot.assignedTask) || "(empty task)"}`;
+  const progress = formatProgress(snapshot);
+  return progress ? `${line}\n  ${progress}` : line;
 }
 
 export function formatCollapsedPreview(text: string): {

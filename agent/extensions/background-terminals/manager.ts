@@ -1,6 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 
-export const MAX_RUNNING = 8;
+// Capacity is per owner, not shared: a session's terminals are its own, so no wave of
+// delegated children can exhaust the parent's slots. earlyoom bounds the machine.
+export const MAX_RUNNING_PER_OWNER = 8;
 export const MAX_TRACKED = 32;
 export const RETAINED_BYTES = 256 * 1024;
 const TERM_GRACE_MS = 2_000;
@@ -151,12 +153,6 @@ export class BackgroundTerminalManager {
       stderr: entry.stderr.view(),
     };
   }
-  private runningCount() {
-    let count = 0;
-    for (const entry of this.entries.values())
-      if (entry.snapshot.state === "running") count++;
-    return count;
-  }
   private prune(limit = MAX_TRACKED) {
     while (this.entries.size > limit) {
       const oldest = [...this.entries.values()]
@@ -176,10 +172,6 @@ export class BackgroundTerminalManager {
   }): TerminalSnapshot {
     if (this.stopping)
       throw new Error("Background terminal manager is shutting down.");
-    if (this.runningCount() >= MAX_RUNNING)
-      throw new Error(
-        `Max ${MAX_RUNNING} background terminals can run concurrently.`,
-      );
     this.prune(MAX_TRACKED - 1);
     const invocation =
       process.platform === "win32"

@@ -246,8 +246,8 @@ export class DelegateManager {
       .map((job) => this.snapshot(job));
   }
 
-  recentConversation(id: string): readonly string[] {
-    return this.requireJob(id).childState.recentConversation();
+  trail(id: string): readonly string[] {
+    return this.requireJob(id).childState.trail();
   }
 
   async wait(
@@ -569,7 +569,7 @@ export class DelegateManager {
   private finalize(job: Job, status: DelegateStatus, error?: string) {
     if (status !== "done") {
       job.checkpoint = truncateUtf8Tail(
-        job.childState.recentConversation().join("\n\n"),
+        job.childState.trail().join("\n\n"),
         MAX_CHECKPOINT_BYTES,
       );
     }
@@ -618,6 +618,10 @@ export class DelegateManager {
       aborted: job.status === "cancelled",
       error: job.error,
       progress: job.status === "running" ? childState.progress : undefined,
+      idleMs:
+        job.status === "running"
+          ? Date.now() - childState.lastActivityAt
+          : undefined,
       checkpoint: job.checkpoint || undefined,
     };
   }

@@ -9,6 +9,7 @@ import { truncateUtf8Tail } from "../../lib/text.ts";
 import { registerProcessStatusSource } from "../process-status/status.ts";
 import {
   BackgroundTerminalManager,
+  MAX_RUNNING_PER_OWNER,
   MAX_TRACKED,
   type TerminalSnapshot,
 } from "./manager.ts";
@@ -306,6 +307,14 @@ class BackgroundTerminalSession {
     client: symbol,
     options: { command: string; title: string; cwd: string },
   ) {
+    const running = this.list(client).filter(
+      (snapshot) => snapshot.state === "running",
+    ).length;
+    if (running >= MAX_RUNNING_PER_OWNER) {
+      throw new Error(
+        `Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${running}. Kill one with bg_kill or wait for one to settle.`,
+      );
+    }
     const snapshot = this.manager.start(options);
     this.owners.set(snapshot.id, client);
     const tracked = new Set(this.manager.list().map((entry) => entry.id));

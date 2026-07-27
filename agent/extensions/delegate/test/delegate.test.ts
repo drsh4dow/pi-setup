@@ -22,11 +22,13 @@ import delegateExtension, {
   formatDelegateOutput,
   readDelegateModelSetting,
   resolveDelegateModel,
+  resultText,
   selectChildToolNames,
   thinkingForEffort,
 } from "../index.ts";
 import { createChild, shutdownChild } from "../runtime.ts";
 import { eventually } from "./eventually.ts";
+import { snapshot } from "./snapshot.ts";
 
 type ResolveContext = Parameters<typeof resolveDelegateModel>[0];
 type RegistryModel = NonNullable<ResolveContext["model"]>;
@@ -299,7 +301,7 @@ test("background run returns immediately and list recovers a bounded task previe
     const detail = processStatusView({ events }, "delegate-1").expanded;
     assert.match(
       detail,
-      /delegate-1 \[running\][\s\S]*Task\ninspect first line[\s\S]*Conversation\n\nNo conversation messages/,
+      /delegate-1 \[running\][\s\S]*Task\ninspect first line[\s\S]*Activity\n\nNo recorded activity/,
     );
     assert.doesNotMatch(
       detail,
@@ -817,4 +819,34 @@ test("preserves complete output when archival fails", async () => {
     if (originalTmpdir === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = originalTmpdir;
   }
+});
+
+test("a checkpoint replaces the result rather than repeating it", async () => {
+  const spoken = "PLAN MARKER: measuring sixteen files in order.";
+  const contained = await resultText([
+    snapshot({
+      status: "cancelled",
+      error: "Delegation cancelled",
+      output: spoken,
+      checkpoint: `Assistant\n\n${spoken}\n\nTool: bash {"command":"wc -c CONTEXT.md"} · done`,
+    }),
+  ]);
+  assert.equal(contained.match(/PLAN MARKER/g)?.length, 1);
+  assert.match(contained, /Checkpoint \(child's last activity\)/);
+
+  const truncated = await resultText([
+    snapshot({
+      status: "error",
+      error: "Delegation stopped at the hard execution ceiling",
+      output: `${spoken} The tail of this answer outlived the checkpoint window.`,
+      checkpoint: 'Tool: bash {"command":"wc -c CONTEXT.md"} · done',
+    }),
+  ]);
+  assert.match(truncated, /outlived the checkpoint window/);
+
+  const settled = await resultText([
+    snapshot({ status: "done", success: true, output: spoken }),
+  ]);
+  assert.equal(settled.match(/PLAN MARKER/g)?.length, 1);
+  assert.doesNotMatch(settled, /Checkpoint/);
 });

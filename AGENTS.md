@@ -4,6 +4,8 @@ Global Pi configuration: system prompt, vendored TypeScript extensions, skills, 
 
 Run `bun run verify` before reporting a change to `agent/extensions`, `agent/lib`, or `agent/scripts`.
 
+Every decision made in the code/output of this repository should increase the AX (Agent Experience) of the harness.
+
 ## Agent skills
 
 ### Issue tracker

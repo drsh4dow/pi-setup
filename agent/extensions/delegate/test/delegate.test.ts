@@ -687,10 +687,13 @@ test("uses the standalone delegated system prompt", async () => {
 });
 
 test("child sessions expose all parent-owned background terminal tools", async () => {
-  const child = await Effect.runPromise(
-    createChild(settingsDir, undefined, "low"),
+  const originalPaths = process.env.PI_CHILD_EXTENSION_PATHS;
+  process.env.PI_CHILD_EXTENSION_PATHS = fileURLToPath(
+    new URL("../../background-terminals/index.ts", import.meta.url),
   );
+  let child: AgentSession | undefined;
   try {
+    child = await Effect.runPromise(createChild(settingsDir, undefined, "low"));
     assert.deepEqual(
       child
         .getActiveToolNames()
@@ -699,7 +702,10 @@ test("child sessions expose all parent-owned background terminal tools", async (
       ["bg_kill", "bg_list", "bg_start", "bg_status"],
     );
   } finally {
-    await shutdownChild(child);
+    if (child) await shutdownChild(child);
+    if (originalPaths === undefined)
+      delete process.env.PI_CHILD_EXTENSION_PATHS;
+    else process.env.PI_CHILD_EXTENSION_PATHS = originalPaths;
   }
 });
 

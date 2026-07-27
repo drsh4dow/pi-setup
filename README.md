@@ -39,7 +39,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | --- | --- |
 | `questions` | `ask_questions`, an interactive questionnaire with predefined or free-form answers |
 | `delegate` | `delegate_run` creates one blocking or background child; independent calls can run in parallel, while `delegate_session` inspects, steers, waits for, or cancels existing children |
-| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked session-scoped processes |
+| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked processes, each owned by the session that started it |
 | `process-status` | `/ps` shows active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded details, with delegate tasks and their last six plain-text conversation messages |
 | `web-access` | `web_search`, `fetch_content`, and `get_search_content` for Exa search, pages and PDFs, GitHub repositories, and video analysis |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle OpenAI's priority service tier for supported GPT models |
@@ -49,7 +49,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | `tps-tracker` | Live and final output-token throughput |
 | `ui-moto` | A compact model and project header |
 
-Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). Invalid, unavailable, or unauthenticated child models fall back to the parent model. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation, so parallel mutations can conflict.
+Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). Invalid, unavailable, or unauthenticated child models fall back to the parent model. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort; a run that settles abnormally hands back the child's last messages so it can be re-briefed. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation unless `cwd` points them at one the caller prepared, so parallel mutations can otherwise conflict. A child's background terminals are its own: they never appear in the parent's list and are terminated when the child settles.
 
 ## Web access
 

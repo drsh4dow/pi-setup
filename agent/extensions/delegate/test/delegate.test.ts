@@ -238,6 +238,7 @@ test("registers run and session tools", () => {
   assert.deepEqual(Object.keys(runProperties), [
     "task",
     "background",
+    "cwd",
     "effort",
     "output_format",
   ]);
@@ -647,7 +648,7 @@ test("normalizes configured child extension paths", () => {
 
 test("uses the standalone delegated system prompt", async () => {
   const child = await Effect.runPromise(
-    createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
+    createChild(settingsDir, undefined, "low"),
   );
   try {
     assert.match(
@@ -685,7 +686,7 @@ test("uses the standalone delegated system prompt", async () => {
 
 test("child sessions expose all parent-owned background terminal tools", async () => {
   const child = await Effect.runPromise(
-    createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
+    createChild(settingsDir, undefined, "low"),
   );
   try {
     assert.deepEqual(
@@ -707,9 +708,7 @@ test("initializes lifecycle-dependent web tools in child sessions", async () => 
   );
   let child: AgentSession | undefined;
   try {
-    child = await Effect.runPromise(
-      createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
-    );
+    child = await Effect.runPromise(createChild(settingsDir, undefined, "low"));
     const retrieval = child.getToolDefinition("get_search_content");
     assert.ok(retrieval);
     const result = await retrieval.execute(
@@ -746,9 +745,7 @@ test("surfaces delegated child extension startup failures", async () => {
   process.env.PI_CHILD_EXTENSION_PATHS = extension;
   try {
     await assert.rejects(
-      Effect.runPromise(
-        createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
-      ),
+      Effect.runPromise(createChild(settingsDir, undefined, "low")),
       /Child extension .* failed during session_start: fixture startup failed/,
     );
   } finally {

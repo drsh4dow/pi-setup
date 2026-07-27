@@ -734,8 +734,8 @@ test("retains six bounded conversation messages without tool payloads", async ()
     isError: true,
   } as AgentSessionEvent);
   assert.deepEqual(manager.recentConversation(job.id), []);
-  assert.equal(manager.latestProgress(job.id), "tool: read · error");
-  assert.doesNotMatch(manager.latestProgress(job.id) ?? "", /src|source/);
+  assert.equal(manager.list([job.id])[0].progress, "tool: read · error");
+  assert.doesNotMatch(manager.list([job.id])[0].progress ?? "", /src|source/);
   assert.equal(manager.list([job.id])[0].toolCalls, 1);
   assert.equal(manager.list([job.id])[0].failedToolCalls, 1);
 
@@ -750,6 +750,10 @@ test("retains six bounded conversation messages without tool payloads", async ()
   assert.deepEqual(manager.recentConversation(job.id), [
     "Assistant (writing)\n\nreading the source",
   ]);
+  assert.equal(
+    manager.list([job.id])[0].progress,
+    "writing: reading the source",
+  );
 
   sessions[0].emitAssistant("first finding", 10);
   sessions[0].emit({
@@ -1052,5 +1056,64 @@ test("settled sessions and usage remain for the parent session", async () => {
   assert.equal(manager.list().length, 65);
   assert.equal(manager.sessionUsage().tokens, 65 * 16);
   assert.ok(Math.abs(manager.sessionUsage().cost - 65 * 0.011) < 1e-10);
+  await manager.shutdown();
+});
+
+test("an abnormal settle hands back the child's last messages", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "long build", ctx: context });
+  await eventually(() => sessions.length === 1);
+  sessions[0].emitAssistant("inspected the parser", 10);
+  sessions[0].emit({
+    type: "message_update",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "now wiring the lexer into parse()" }],
+    },
+  } as AgentSessionEvent);
+
+  const [cancelled] = await manager.cancel([job.id]);
+  assert.match(cancelled.checkpoint ?? "", /inspected the parser/);
+  assert.match(cancelled.checkpoint ?? "", /wiring the lexer/);
+  assert.equal(cancelled.progress, undefined);
+  await manager.shutdown();
+});
+
+test("a completed run reports no checkpoint", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "quick read", ctx: context });
+  await eventually(() => sessions.length === 1);
+  sessions[0].finish("answer");
+  const [done] = await manager.wait([job.id]);
+  assert.equal(done.checkpoint, undefined);
+  assert.equal(done.progress, undefined);
+  await manager.shutdown();
+});
+
+test("the checkpoint keeps the newest messages within its bound", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "chatty", ctx: context });
+  await eventually(() => sessions.length === 1);
+  for (let index = 0; index < 6; index++) {
+    sessions[0].emitAssistant(`${"padding ".repeat(300)} step ${index}`, 10);
+  }
+  const [cancelled] = await manager.cancel([job.id]);
+  const checkpoint = cancelled.checkpoint ?? "";
+  assert.ok(Buffer.byteLength(checkpoint) <= 4 * 1024);
+  assert.match(checkpoint, /step 5/);
+  assert.doesNotMatch(checkpoint, /step 0/);
+  await manager.shutdown();
+});
+
+test("a child runs in the requested directory and rejects a missing one", async () => {
+  const { manager, requests, sessions } = harness();
+  manager.spawn({ task: "isolated", cwd: "agent/extensions", ctx: context });
+  await eventually(() => sessions.length === 1);
+  assert.equal(requests[0].cwd, `${process.cwd()}/agent/extensions`);
+
+  assert.throws(
+    () => manager.spawn({ task: "nowhere", cwd: "no/such/dir", ctx: context }),
+    /cwd is not a directory/,
+  );
   await manager.shutdown();
 });

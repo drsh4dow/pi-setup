@@ -3,6 +3,8 @@ import type { TruncationResult } from "@earendil-works/pi-coding-agent";
 
 export const RUN_TOOL_NAME = "delegate_run";
 export const SESSION_TOOL_NAME = "delegate_session";
+export const MAX_EXECUTION_MS = 60 * 60_000;
+export const MAX_EXECUTION_TOKENS = 60_000_000;
 export const MAX_CHILD_OUTPUT_BYTES = 256 * 1024;
 export const COLLAPSED_PREVIEW_LINES = 4;
 export const COLLAPSED_PREVIEW_CHARS = 360;
@@ -19,6 +21,13 @@ export const DelegateRunParams = Type.Object({
       description:
         "Return the child id immediately and automatically deliver its result later. Defaults to false, which waits for the final result.",
       default: false,
+    }),
+  ),
+  cwd: Type.Optional(
+    Type.String({
+      maxLength: 4_096,
+      description:
+        "Existing directory the child runs in, absolute or relative to the parent's. Defaults to the parent's. Delegation only points the child at it; preparing and integrating it stays with the caller.",
     }),
   ),
   effort: Type.Optional(
@@ -93,6 +102,8 @@ export interface DelegateDetails {
   childUsage: DelegateUsageStats;
   aborted: boolean;
   error?: string;
+  progress?: string;
+  checkpoint?: string;
   outputTruncated?: boolean;
   fullOutputFile?: string;
 }

@@ -49,7 +49,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | `tps-tracker` | Live and final output-token throughput |
 | `ui-moto` | A compact model and project header |
 
-Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). Invalid, unavailable, or unauthenticated child models fall back to the parent model. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation, so parallel mutations can conflict.
+Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). Invalid, unavailable, or unauthenticated child models fall back to the parent model. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation, so parallel mutations can conflict.
 
 ## Web access
 

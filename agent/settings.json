@@ -1,8 +1,8 @@
 {
   "lastChangelogVersion": "0.82.1",
   "packages": [],
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-5",
   "enabledModels": [
     "openai-codex/gpt-5.6-sol",
     "opencode-go/kimi-k3",

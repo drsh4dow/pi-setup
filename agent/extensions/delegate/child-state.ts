@@ -20,6 +20,14 @@ function messageText(event: AgentSessionEvent & { type: "message_end" }) {
     .join("\n");
 }
 
+function progressLine(text: string) {
+  return truncateUtf8Head(
+    text.replace(/\s+/gu, " ").trim(),
+    MAX_PROGRESS_BYTES,
+    "…",
+  );
+}
+
 function conversationMessage(role: string, text: string) {
   const bounded = truncateUtf8Window(
     text.trim(),
@@ -58,12 +66,9 @@ export class ChildState {
       : [...this.messages];
   }
 
-  latestProgress(): string | undefined {
-    return this.progress;
-  }
-
   state() {
     return {
+      progress: this.progress,
       output: this.output,
       outputTruncated: this.outputTruncated,
       fullOutputFile: this.fullOutputFile,
@@ -78,11 +83,11 @@ export class ChildState {
   capture(event: AgentSessionEvent) {
     if (event.type === "tool_execution_start") {
       this.toolCalls++;
-      this.progress = `tool: ${truncateUtf8Head(event.toolName, MAX_PROGRESS_BYTES, "…")} · running`;
+      this.progress = `tool: ${progressLine(event.toolName)} · running`;
     }
     if (event.type === "tool_execution_end") {
       if (event.isError) this.failedToolCalls++;
-      this.progress = `tool: ${truncateUtf8Head(event.toolName, MAX_PROGRESS_BYTES, "…")} · ${event.isError ? "error" : "done"}`;
+      this.progress = `tool: ${progressLine(event.toolName)} · ${event.isError ? "error" : "done"}`;
     }
     if (
       (event.type === "message_start" || event.type === "message_update") &&
@@ -93,7 +98,7 @@ export class ChildState {
       this.writing = text
         ? conversationMessage("Assistant (writing)", text)
         : undefined;
-      if (this.writing) this.progress = this.writing;
+      if (text) this.progress = `writing: ${progressLine(text)}`;
     }
     if (event.type !== "message_end") return;
 
@@ -102,9 +107,8 @@ export class ChildState {
       if (this.omitInitialUserMessage) {
         this.omitInitialUserMessage = false;
       } else if (text) {
-        const message = conversationMessage("User", text);
-        this.append(message);
-        this.progress = message;
+        this.append(conversationMessage("User", text));
+        this.progress = `steered: ${progressLine(text)}`;
       }
       return;
     }
@@ -115,9 +119,8 @@ export class ChildState {
     const assistantText = extractAssistantText(event.message);
     if (assistantText) {
       this.replaceOutput(assistantText);
-      const message = conversationMessage("Assistant", assistantText);
-      this.append(message);
-      this.progress = message;
+      this.append(conversationMessage("Assistant", assistantText));
+      this.progress = `said: ${progressLine(assistantText)}`;
     }
     if (
       event.message.stopReason === "error" ||

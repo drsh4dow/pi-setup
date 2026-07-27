@@ -260,8 +260,8 @@ interface TerminalClient {
 class BackgroundTerminalSession {
   // Every admitted delegate joins this parent-owned session; aggregate admission is intentionally unbounded and the parent shutdown clears all clients.
   private readonly clients = new Map<symbol, TerminalClient>();
-  private readonly starters = new Map<string, symbol>();
-  readonly manager: BackgroundTerminalManager;
+  private readonly owners = new Map<string, symbol>();
+  private readonly manager: BackgroundTerminalManager;
   private readonly owner: symbol;
   private stopping = false;
 
@@ -270,8 +270,6 @@ class BackgroundTerminalSession {
     this.clients.set(owner, ownerClient);
     this.manager = new BackgroundTerminalManager(
       (snapshot, consumed) => {
-        const starter = this.starters.get(snapshot.id);
-        this.starters.delete(snapshot.id);
         this.updateStatuses();
         if (consumed) {
           this.consume([snapshot.id]);
@@ -284,10 +282,10 @@ class BackgroundTerminalSession {
           !snapshot.error
         )
           return;
-        const target =
-          (starter ? this.clients.get(starter) : undefined) ??
-          this.clients.get(this.owner);
-        target?.delivery.enqueue(snapshot);
+        const holder = this.owners.get(snapshot.id);
+        (holder ? this.clients.get(holder) : undefined)?.delivery.enqueue(
+          snapshot,
+        );
       },
       () => `bt-${++terminalSequence}`,
     );
@@ -309,9 +307,30 @@ class BackgroundTerminalSession {
     options: { command: string; title: string; cwd: string },
   ) {
     const snapshot = this.manager.start(options);
-    this.starters.set(snapshot.id, client);
+    this.owners.set(snapshot.id, client);
+    const tracked = new Set(this.manager.list().map((entry) => entry.id));
+    for (const id of this.owners.keys())
+      if (!tracked.has(id)) this.owners.delete(id);
     this.updateStatuses();
     return snapshot;
+  }
+
+  list(client: symbol) {
+    return this.manager
+      .list()
+      .filter((snapshot) => this.owners.get(snapshot.id) === client);
+  }
+
+  get(client: symbol, id: string) {
+    return this.owners.get(id) === client ? this.manager.get(id) : undefined;
+  }
+
+  async kill(client: symbol, ids: readonly string[]) {
+    for (const id of ids) {
+      if (this.owners.get(id) !== client)
+        throw new Error(`Unknown terminal id "${id}".`);
+    }
+    return this.manager.kill(ids);
   }
 
   consume(ids: readonly string[]) {
@@ -325,11 +344,17 @@ class BackgroundTerminalSession {
   async leave(id: symbol) {
     const client = this.clients.get(id);
     if (!client) return;
-    const pending = client.delivery.clear();
+    client.delivery.clear();
     this.clients.delete(id);
     if (id !== this.owner) {
-      const ownerDelivery = this.clients.get(this.owner)?.delivery;
-      for (const snapshot of pending) ownerDelivery?.enqueue(snapshot);
+      const held = this.list(id);
+      for (const snapshot of held) this.owners.delete(snapshot.id);
+      await this.manager.kill(
+        held
+          .filter((snapshot) => snapshot.state === "running")
+          .map((snapshot) => snapshot.id),
+      );
+      this.updateStatuses();
       return;
     }
 
@@ -337,7 +362,7 @@ class BackgroundTerminalSession {
     if (activeTerminalSession === this) activeTerminalSession = undefined;
     for (const remaining of this.clients.values()) remaining.delivery.clear();
     this.clients.clear();
-    this.starters.clear();
+    this.owners.clear();
     await this.manager.shutdown();
   }
 }
@@ -359,25 +384,31 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     return session;
   };
   const updateStatus = () => {
-    if (!context?.hasUI || !session) return;
-    const running = session.manager
-      .list()
+    if (!session) return;
+    const running = session
+      .list(clientId)
       .filter((snapshot) => snapshot.state === "running").length;
     const status = running ? `${running} bg · /ps` : undefined;
     if (status === lastStatus) return;
-    lastStatus = status;
-    context.ui.setStatus("background-terminals", status);
+    try {
+      if (!context?.hasUI) return;
+      context.ui.setStatus("background-terminals", status);
+      lastStatus = status;
+    } catch {
+      // A client can outlive its context, which rejects every access once stale.
+      lastStatus = null;
+    }
   };
   const client = { delivery, updateStatus };
 
   registerProcessStatusSource(pi, "background-terminals", () =>
-    (session?.manager.list() ?? []).map((snapshot) => ({
+    (session?.list(clientId) ?? []).map((snapshot) => ({
       id: snapshot.id,
       kind: "terminals" as const,
       active: snapshot.state === "running",
       summary: statusSummary(snapshot),
       detail: () => {
-        const current = session?.manager.get(snapshot.id);
+        const current = session?.get(clientId, snapshot.id);
         if (!current) throw new Error(`error=not-tracked id=${snapshot.id}`);
         return formatTerminalDetails(current);
       },
@@ -386,11 +417,10 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
   const leaveSession = async (keepContext: boolean) => {
     const joined = session;
     session = undefined;
-    if (context?.hasUI) {
-      try {
+    try {
+      if (context?.hasUI)
         context.ui.setStatus("background-terminals", undefined);
-      } catch {}
-    }
+    } catch {}
     lastStatus = null;
     if (!keepContext) context = undefined;
     await joined?.leave(clientId);
@@ -493,7 +523,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     executionMode: "parallel",
     async execute(_id, params) {
       const terminalSession = currentSession();
-      const snapshot = terminalSession.manager.get(params.id);
+      const snapshot = terminalSession.get(clientId, params.id);
       if (!snapshot)
         throw new Error(`Unknown terminal id "${sanitizeInline(params.id)}".`);
       if (snapshot.state !== "running") terminalSession.consume([snapshot.id]);
@@ -511,7 +541,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     parameters: Type.Object({}),
     executionMode: "parallel",
     async execute() {
-      const entries = currentSession().manager.list();
+      const entries = currentSession().list(clientId);
       return {
         content: [
           {
@@ -540,7 +570,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
       if (signal?.aborted)
         throw new Error("Kill aborted before termination started.");
       const terminalSession = currentSession();
-      const work = terminalSession.manager.kill(ids).catch((error) => {
+      const work = terminalSession.kill(clientId, ids).catch((error) => {
         throw sanitizeErrorForDisplay(error);
       });
       let abort: (() => void) | undefined;

@@ -12,6 +12,8 @@ import {
   DelegateRunParams,
   DelegateSessionParams,
   type DelegateSnapshot,
+  MAX_EXECUTION_MS,
+  MAX_EXECUTION_TOKENS,
   RUN_TOOL_NAME,
   SESSION_TOOL_NAME,
 } from "./contract.ts";
@@ -55,7 +57,8 @@ function taskPreview(task: string) {
 }
 
 function sessionSummary(snapshot: DelegateSnapshot) {
-  return `${summary(snapshot)} · ${taskPreview(snapshot.assignedTask) || "(empty task)"}`;
+  const line = `${summary(snapshot)} · ${taskPreview(snapshot.assignedTask) || "(empty task)"}`;
+  return snapshot.progress ? `${line}\n  ${snapshot.progress}` : line;
 }
 
 function delegateDetail(manager: DelegateManager, id: string) {
@@ -87,6 +90,9 @@ async function resultText(snapshots: DelegateSnapshot[]) {
   for (const snapshot of snapshots) {
     let text = summary(snapshot);
     if (snapshot.error) text += `\nError: ${snapshot.error}`;
+    if (snapshot.checkpoint) {
+      text += `\n\nCheckpoint (child's last messages):\n${snapshot.checkpoint}`;
+    }
     if (snapshot.fullOutputFile) {
       text += `\nFull output (until parent session ends): ${snapshot.fullOutputFile}`;
     }
@@ -310,8 +316,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
   pi.registerTool<typeof DelegateRunParams, DelegateDetails>({
     name: RUN_TOOL_NAME,
     label: "Delegate Run",
-    description:
-      "Creates one child with fresh context for one self-contained task. State the objective, relevant context and files, mutation permission, constraints, verification, and expected result. Multiple delegate_run calls issued together execute concurrently and settle independently; chain dependent work by using each completed result to compose the next task. By default the call blocks until completion; background=true returns the child id immediately and delivers the result later. Children share one worktree without write isolation. output_format is advisory: correct and complete information takes precedence over exact formatting.",
+    description: `Creates one child with fresh context for one self-contained task. State the objective, relevant context and files, mutation permission, constraints, verification, and expected result. Multiple delegate_run calls issued together execute concurrently and settle independently; chain dependent work by using each completed result to compose the next task. By default the call blocks until completion; background=true returns the child id immediately and delivers the result later. Every run is terminated at ${MAX_EXECUTION_MS / 60_000} minutes of wall time or ${MAX_EXECUTION_TOKENS.toLocaleString("en-US")} tokens whatever its effort, so size a task by the minutes it needs. Children share one worktree without write isolation unless you point them elsewhere with cwd. output_format is advisory: correct and complete information takes precedence over exact formatting.`,
     promptSnippet:
       "Create exactly one fresh child, blocking by default or delivering later in background",
     promptGuidelines: [
@@ -332,6 +337,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
           effort: params.effort,
           outputFormat: params.output_format,
           background: params.background,
+          cwd: params.cwd,
           ctx,
         });
         if (reservation) delivery.attach(reservation, snapshot);
@@ -361,8 +367,11 @@ export default function delegateExtension(pi: ExtensionAPI) {
         const [result] = await manager.wait([snapshot.id], signal);
         if (!result.success) {
           const reason = result.error ?? result.status;
+          const checkpoint = result.checkpoint
+            ? `\n\nCheckpoint (child's last messages):\n${result.checkpoint}`
+            : "";
           throw new Error(
-            `Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Use delegate_session wait with ids=["${result.id}"] to recover retained output.`,
+            `Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Use delegate_session wait with ids=["${result.id}"] to recover retained output.${checkpoint}`,
           );
         }
         const output = await formatDelegateOutput(

@@ -21,33 +21,12 @@ import {
 } from "./runtime.ts";
 
 const MAX_PENDING_SENDS = 8;
-const STEER_TIMEOUT_MS = 5_000;
-const CREATION_TIMEOUT_MS = 30_000;
 const DISPOSAL_TIMEOUT_MS = 16_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
-export const FIRST_RESPONSE_TIMEOUT_MS = 45_000;
 const MINUTE_MS = 60_000;
+const MAX_EXECUTION_MS = 60 * MINUTE_MS;
+const MAX_EXECUTION_TOKENS = 60_000_000;
 export const MAX_CONCURRENT_WAITS_PER_CHILD = 4;
-
-function executionBudget(effort: DelegateEffort) {
-  if (effort === "fast") {
-    return {
-      softMs: 4 * MINUTE_MS,
-      softTokens: 1_500_000,
-      hardMs: 8 * MINUTE_MS,
-      hardTokens: 3_000_000,
-    };
-  }
-  return {
-    softMs: 20 * MINUTE_MS,
-    softTokens: 15_000_000,
-    hardMs: 60 * MINUTE_MS,
-    hardTokens: 60_000_000,
-  };
-}
-
-const CONVERGENCE_MESSAGE =
-  "Execution budget is nearing its limit. Converge now: finish the current coherent operation, run only essential verification, and return the best complete result with any remaining work stated explicitly.";
 
 export interface DelegateRequest {
   task: string;
@@ -90,8 +69,6 @@ interface Job {
   deliveryPending: boolean;
   deliveryWaiters: number;
   waiters: number;
-  softLimitReached: boolean;
-  softTimer?: ReturnType<typeof setTimeout>;
   hardTimer?: ReturnType<typeof setTimeout>;
   hardLimitError?: string;
 }
@@ -128,38 +105,6 @@ function isAssistantResponse(event: AgentSessionEvent) {
       event.type === "message_end") &&
     event.message.role === "assistant"
   );
-}
-
-function firstResponseWatchdog(id: string, model: string | undefined) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let responded = false;
-  const error = new Error(
-    `Delegate ${id} received no assistant response${model ? ` from ${model}` : ""} within ${FIRST_RESPONSE_TIMEOUT_MS / 1_000} seconds; the provider request may be stalled. Retry the delegation.`,
-  );
-  const promise = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      timer = undefined;
-      reject(error);
-    }, FIRST_RESPONSE_TIMEOUT_MS);
-    timer.unref?.();
-  });
-  const cancel = () => {
-    if (timer) clearTimeout(timer);
-    timer = undefined;
-  };
-  return {
-    promise,
-    error,
-    get received() {
-      return responded;
-    },
-    markResponse() {
-      if (responded) return;
-      responded = true;
-      cancel();
-    },
-    cancel,
-  };
 }
 
 async function waitUntil(
@@ -254,7 +199,6 @@ export class DelegateManager {
       deliveryPending: request.background === true,
       deliveryWaiters: 0,
       waiters: 0,
-      softLimitReached: false,
     };
     this.jobs.set(job.id, job);
     this.startExecutionBudget(job);
@@ -425,7 +369,7 @@ export class DelegateManager {
   }
 
   private async run(job: Job) {
-    let markFirstResponse: (() => void) | undefined;
+    let receivedAssistantResponse = false;
     if (!job.child) {
       const request: DelegateRequest = {
         task: job.task,
@@ -440,11 +384,7 @@ export class DelegateManager {
         job.thinking,
         signal,
       );
-      const timeoutError = new Error(
-        `Delegate ${job.id} session creation timed out.`,
-      );
       let onEnded: (() => void) | undefined;
-      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         job.child = await Promise.race([
           creation,
@@ -452,25 +392,12 @@ export class DelegateManager {
             onEnded = () => reject(abortError(signal));
             signal.addEventListener("abort", onEnded, { once: true });
           }),
-          new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(() => reject(timeoutError), CREATION_TIMEOUT_MS);
-            timer.unref?.();
-          }),
         ]);
       } catch (error) {
-        if (error === timeoutError) {
-          this.ownLateCreation(creation, job.id);
-          this.endOwnership(job, timeoutError);
-          if (job.status === "running" && !job.stopping) {
-            this.finalize(job, "error", timeoutError.message);
-          }
-          return;
-        }
         if (!signal.aborted) throw error;
         this.ownLateCreation(creation, job.id);
         return;
       } finally {
-        if (timer) clearTimeout(timer);
         if (onEnded) signal.removeEventListener("abort", onEnded);
       }
       if (job.status !== "running") {
@@ -481,14 +408,12 @@ export class DelegateManager {
       }
       job.model = modelName(job.child.model ?? job.modelChoice);
       job.unsubscribe = job.child.subscribe((event) => {
-        if (isAssistantResponse(event)) markFirstResponse?.();
+        if (isAssistantResponse(event)) receivedAssistantResponse = true;
         this.onEvent(job, event);
       });
     }
 
     const child = job.child;
-    const watchdog = firstResponseWatchdog(job.id, job.model);
-    markFirstResponse = () => watchdog.markResponse();
     try {
       const outputFormat = job.outputFormat?.trim();
       const instruction = outputFormat
@@ -496,15 +421,12 @@ export class DelegateManager {
         : job.task;
       await this.untilOwnershipEnds(
         job,
-        Promise.race([
-          child.prompt(instruction, {
-            expandPromptTemplates: false,
-            source: "extension",
-          }),
-          watchdog.promise,
-        ]),
+        child.prompt(instruction, {
+          expandPromptTemplates: false,
+          source: "extension",
+        }),
       );
-      if (!watchdog.received) {
+      if (!receivedAssistantResponse) {
         throw new Error(
           `Delegate ${job.id} finished without an assistant response. Retry the delegation.`,
         );
@@ -531,67 +453,30 @@ export class DelegateManager {
     } catch (error) {
       if (job.status !== "running" || job.stopping) return;
       this.finalize(job, "error", errorMessage(error));
-    } finally {
-      markFirstResponse = undefined;
-      watchdog.cancel();
     }
   }
 
   private onEvent(job: Job, event: Parameters<ChildState["capture"]>[0]) {
     job.childState.capture(event);
-    const tokens = job.childState.state().usage.totalTokens;
-    const budget = executionBudget(job.effort);
-    if (tokens >= budget.hardTokens) {
+    if (job.childState.state().usage.totalTokens >= MAX_EXECUTION_TOKENS) {
       this.stopAtHardLimit(
         job,
-        `${budget.hardTokens.toLocaleString("en-US")} reported tokens`,
+        `${MAX_EXECUTION_TOKENS.toLocaleString("en-US")} reported tokens`,
       );
-    } else if (
-      tokens >= budget.softTokens &&
-      !(
-        event.type === "message_end" &&
-        event.message.role === "assistant" &&
-        event.message.stopReason === "stop"
-      )
-    ) {
-      this.steerAtSoftLimit(job);
     }
     this.notify(this.snapshot(job));
   }
 
   private startExecutionBudget(job: Job) {
-    const budget = executionBudget(job.effort);
-    job.softTimer = setTimeout(() => this.steerAtSoftLimit(job), budget.softMs);
-    job.softTimer.unref?.();
     job.hardTimer = setTimeout(
       () =>
         this.stopAtHardLimit(
           job,
-          `${budget.hardMs / MINUTE_MS} minutes of wall time`,
+          `${MAX_EXECUTION_MS / MINUTE_MS} minutes of wall time`,
         ),
-      budget.hardMs,
+      MAX_EXECUTION_MS,
     );
     job.hardTimer.unref?.();
-  }
-
-  private steerAtSoftLimit(job: Job) {
-    if (
-      job.status !== "running" ||
-      job.stopping ||
-      job.softLimitReached ||
-      !job.child
-    ) {
-      return;
-    }
-    job.softLimitReached = true;
-    void job.child.steer(CONVERGENCE_MESSAGE).catch((error) => {
-      if (job.status === "running" && !job.stopping) {
-        const evidence = errorMessage(error).replace(/\s+/g, " ").slice(0, 512);
-        console.error(
-          `[delegate] budget steering failed for ${job.id}: ${evidence}`,
-        );
-      }
-    });
   }
 
   private stopAtHardLimit(job: Job, limit: string) {
@@ -601,9 +486,7 @@ export class DelegateManager {
   }
 
   private clearExecutionBudget(job: Job) {
-    if (job.softTimer !== undefined) clearTimeout(job.softTimer);
     if (job.hardTimer !== undefined) clearTimeout(job.hardTimer);
-    job.softTimer = undefined;
     job.hardTimer = undefined;
   }
 
@@ -735,28 +618,7 @@ export class DelegateManager {
   }
 
   private async steerOwned(job: Job, child: ChildSession, text: string) {
-    const signal = job.ownership.signal;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let onEnded: (() => void) | undefined;
-    const ended = new Promise<never>((_resolve, reject) => {
-      onEnded = () => reject(abortError(signal));
-      signal.addEventListener("abort", onEnded, { once: true });
-    });
-    const timedOut = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        const error = new Error(`Delegate ${job.id} steering timed out.`);
-        this.endOwnership(job, error);
-        void this.stopOwned(job);
-        reject(error);
-      }, STEER_TIMEOUT_MS);
-      timer.unref?.();
-    });
-    try {
-      await Promise.race([child.steer(text), ended, timedOut]);
-    } finally {
-      if (timer) clearTimeout(timer);
-      if (onEnded) signal.removeEventListener("abort", onEnded);
-    }
+    await this.untilOwnershipEnds(job, child.steer(text));
   }
 
   private async untilOwnershipEnds(job: Job, operation: Promise<unknown>) {

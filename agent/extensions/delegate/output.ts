@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import {
   truncateHead,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import type { DelegateOutput, DelegateSnapshot } from "./contract.ts";
+import type { DelegateOutput } from "./contract.ts";
 import { delegateError } from "./errors.ts";
 
 export function extractAssistantText(message: {
@@ -35,17 +36,22 @@ export function extractAssistantText(message: {
     .join("\n");
 }
 
-export function formatSnapshotOutput(
-  snapshot: Pick<DelegateSnapshot, "output" | "structured">,
-  indentation?: number,
-): string {
-  return snapshot.structured === undefined
-    ? snapshot.output
-    : JSON.stringify(snapshot.structured, null, indentation);
+function delegateOutputPath() {
+  return join(
+    tmpdir(),
+    `pi-delegate-${process.pid}-${Date.now()}-${randomUUID()}.txt`,
+  );
+}
+
+export function saveDelegateOutput(text: string): string {
+  const path = delegateOutputPath();
+  writeFileSync(path, text, "utf8");
+  return path;
 }
 
 export function formatDelegateOutputEffect(
   text: string,
+  savedOutputFile?: string,
 ): Effect.Effect<DelegateOutput> {
   const truncation = truncateHead(text, {
     maxLines: DEFAULT_MAX_LINES,
@@ -58,21 +64,21 @@ export function formatDelegateOutputEffect(
   const summary = `${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)})`;
 
   return Effect.gen(function* () {
-    const fullOutputFile = yield* Effect.try({
-      try: () =>
-        join(
-          tmpdir(),
-          `pi-delegate-${process.pid}-${Date.now()}-${randomUUID()}.txt`,
-        ),
-      catch: delegateError,
-    });
-    yield* Effect.tryPromise({
-      try: () => writeFile(fullOutputFile, text, "utf8"),
-      catch: delegateError,
-    });
+    const fullOutputFile =
+      savedOutputFile ??
+      (yield* Effect.try({
+        try: delegateOutputPath,
+        catch: delegateError,
+      }));
+    if (!savedOutputFile) {
+      yield* Effect.tryPromise({
+        try: () => writeFile(fullOutputFile, text, "utf8"),
+        catch: delegateError,
+      });
+    }
     return {
       text: withNotice(
-        `[Delegated output truncated: ${summary}. Full output saved to: ${fullOutputFile}]`,
+        `[Delegated output truncated: ${summary}. ${savedOutputFile ? `Full output is available until the parent session ends at: ${fullOutputFile}` : `Full output saved to: ${fullOutputFile}`}]`,
       ),
       truncation,
       fullOutputFile,
@@ -80,10 +86,7 @@ export function formatDelegateOutputEffect(
   }).pipe(
     Effect.catch((error) =>
       Effect.succeed({
-        text: withNotice(
-          `[Delegated output truncated: ${summary}. Full output could not be saved: ${error.message}]`,
-        ),
-        truncation,
+        text: `${text}\n\n[Delegated output exceeded the display limit but could not be saved, so the complete output is shown here: ${error.message}]`,
       }),
     ),
   );
@@ -91,6 +94,7 @@ export function formatDelegateOutputEffect(
 
 export async function formatDelegateOutput(
   text: string,
+  savedOutputFile?: string,
 ): Promise<DelegateOutput> {
-  return Effect.runPromise(formatDelegateOutputEffect(text));
+  return Effect.runPromise(formatDelegateOutputEffect(text, savedOutputFile));
 }

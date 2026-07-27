@@ -2,28 +2,23 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { truncateUtf8Head } from "../../lib/text.ts";
-import { registerProcessStatusSource } from "../process-status/status.ts";
+import { truncateUtf8Window } from "../../lib/text.ts";
+import {
+  MAX_ACTIVITIES_PER_SOURCE,
+  registerProcessStatusSource,
+} from "../process-status/status.ts";
 import {
   type DelegateDetails,
   DelegateRunParams,
   DelegateSessionParams,
   type DelegateSnapshot,
-  DelegateWorkflowParams,
-  MAX_TRACKED_CHILDREN,
   RUN_TOOL_NAME,
   SESSION_TOOL_NAME,
-  WORKFLOW_TOOL_NAME,
 } from "./contract.ts";
 import { formatStatusParts } from "./format.ts";
 import { DelegateManager } from "./manager.ts";
-import { formatDelegateOutput, formatSnapshotOutput } from "./output.ts";
+import { formatDelegateOutput } from "./output.ts";
 import { renderDelegateCall, renderDelegateResult } from "./render.ts";
-import {
-  runWorkflow,
-  type WorkflowResult,
-  type WorkflowTaskResult,
-} from "./workflow.ts";
 
 export {
   CHILD_EXTENSION_PATHS_ENV,
@@ -43,33 +38,11 @@ export {
   thinkingForEffort,
 } from "./runtime.ts";
 
-const MAX_TRACKED_WORKFLOWS = 64;
 const DELIVERY_RETRY_DELAYS_MS = [25, 100] as const;
-
-interface TrackedWorkflowTask {
-  id: string;
-  stage: string;
-  delegateId: string;
-  summary: string;
-}
-
-export interface TrackedWorkflow {
-  id: string;
-  status: "running" | "done" | "error";
-  startedAt: number;
-  settledAt?: number;
-  stage: string;
-  settledTasks: number;
-  totalTasks: number;
-  tasks: TrackedWorkflowTask[];
-  activeTasks: TrackedWorkflowTask[];
-  activity: Array<{ task: string; text: string }>;
-  error?: string;
-}
 
 function statusSummary(snapshot: DelegateSnapshot) {
   const status = snapshot.status.replace("_", " ");
-  return `[${status}] ${snapshot.workspace} · ${formatStatusParts(snapshot)}`;
+  return `[${status}] ${formatStatusParts(snapshot)}`;
 }
 
 function summary(snapshot: DelegateSnapshot) {
@@ -88,95 +61,24 @@ function sessionSummary(snapshot: DelegateSnapshot) {
 function delegateDetail(manager: DelegateManager, id: string) {
   const snapshot = manager.list([id])[0];
   const lines = [
-    `task: ${snapshot.assignedTask}`,
-    `model: ${snapshot.model ?? snapshot.requestedModel}`,
-    `workspace: ${snapshot.workspace}`,
-    `tool-calls: ${snapshot.toolCalls}`,
-    `tool-errors: ${snapshot.failedToolCalls}`,
+    "Task",
+    truncateUtf8Window(
+      snapshot.assignedTask,
+      4 * 1024,
+      2 * 1024,
+      "\n\n[task truncated]\n\n",
+    ),
   ];
-  if (snapshot.error) lines.push(`error: ${snapshot.error}`);
-  const activity = manager.recentActivity(id);
+  if (snapshot.error) lines.push("", "Error", snapshot.error);
+  const conversation = manager.recentConversation(id);
   lines.push(
     "",
-    "activity:",
-    activity.length > 0 ? activity.join("\n\n---\n\n") : "  -",
+    "Conversation",
+    "",
+    conversation.length > 0
+      ? conversation.join("\n\n")
+      : "No conversation messages",
   );
-  return lines.join("\n");
-}
-
-function workflowSummary(workflow: TrackedWorkflow) {
-  const elapsed = Math.max(
-    0,
-    Math.round(
-      ((workflow.settledAt ?? Date.now()) - workflow.startedAt) / 1000,
-    ),
-  );
-  return `[${workflow.status}] stage=${workflow.stage} · tasks=${workflow.settledTasks}/${workflow.totalTasks} · elapsed=${elapsed}s`;
-}
-
-function trackedWorkflowTasks(tasks: readonly WorkflowTaskResult[]) {
-  return tasks.map((task) => ({
-    id: task.id,
-    stage: task.stage,
-    delegateId: task.snapshot.id,
-    summary: statusSummary(task.snapshot),
-  }));
-}
-
-function retainWorkflowActivity(
-  manager: DelegateManager,
-  workflow: TrackedWorkflow,
-  tasks: readonly TrackedWorkflowTask[],
-) {
-  for (const task of tasks) {
-    let items: readonly string[];
-    try {
-      items = manager.recentActivity(task.delegateId);
-    } catch {
-      continue;
-    }
-    if (items.length === 0) continue;
-    const existing = workflow.activity.findIndex(
-      (entry) => entry.task === task.id,
-    );
-    if (existing >= 0) workflow.activity.splice(existing, 1);
-    workflow.activity.push({
-      task: task.id,
-      text: truncateUtf8Head(
-        items.slice(-3).join("\n\n---\n\n"),
-        4 * 1024,
-        "\n[truncated]",
-      ),
-    });
-    if (workflow.activity.length > 8) workflow.activity.shift();
-  }
-}
-
-export function workflowDetail(
-  manager: DelegateManager,
-  workflow: TrackedWorkflow,
-) {
-  const tasks = [...workflow.tasks, ...workflow.activeTasks];
-  const lines = [
-    `stage: ${workflow.stage}`,
-    `progress: ${workflow.settledTasks}/${workflow.totalTasks}`,
-  ];
-  retainWorkflowActivity(manager, workflow, tasks);
-  if (workflow.error) lines.push(`error: ${workflow.error}`);
-  lines.push("", "tasks:");
-  if (tasks.length === 0) lines.push("  -");
-  for (const task of tasks) {
-    let summary = task.summary;
-    try {
-      summary = statusSummary(manager.list([task.delegateId])[0]);
-    } catch {}
-    lines.push(`${task.id} (${task.stage}) · ${task.delegateId} ${summary}`);
-  }
-  lines.push("", "activity:");
-  if (workflow.activity.length === 0) lines.push("  -");
-  for (const activity of [...workflow.activity].reverse()) {
-    lines.push("", `${activity.task}:`, activity.text);
-  }
   return lines.join("\n");
 }
 
@@ -185,34 +87,18 @@ async function resultText(snapshots: DelegateSnapshot[]) {
   for (const snapshot of snapshots) {
     let text = summary(snapshot);
     if (snapshot.error) text += `\nError: ${snapshot.error}`;
-    const output = formatSnapshotOutput(snapshot, 2);
+    if (snapshot.fullOutputFile) {
+      text += `\nFull output (until parent session ends): ${snapshot.fullOutputFile}`;
+    }
+    const output = snapshot.output;
     if (output) text += `\n\n${output}`;
     sections.push(text);
   }
   return (await formatDelegateOutput(sections.join("\n\n---\n\n"))).text;
 }
 
-async function workflowText(result: WorkflowResult) {
-  const lines = [
-    `Workflow ${result.success ? "completed" : "failed"}: ${result.tasks.filter((task) => task.snapshot.success).length}/${result.tasks.length} tasks succeeded.`,
-  ];
-  if (result.error) lines.push(`Error: ${result.error}`);
-  for (const task of result.tasks) {
-    lines.push(
-      `- ${task.id} (${task.stage}): ${task.snapshot.status}${task.snapshot.error ? ` — ${task.snapshot.error}` : ""}`,
-    );
-  }
-  const outputs = result.tasks
-    .filter((task) => task.snapshot.success)
-    .map(
-      (task) =>
-        `## ${task.id}\n${formatSnapshotOutput(task.snapshot, 2) || "(no output)"}`,
-    );
-  if (outputs.length > 0) lines.push("", ...outputs);
-  return (await formatDelegateOutput(lines.join("\n"))).text;
-}
-
 export class BackgroundDelivery {
+  // The product contract accepts unbounded aggregate delivery state so every admitted background run remains recoverable until the parent session clears it.
   private context: ExtensionContext | undefined;
   private readonly pending = new Map<
     string,
@@ -259,11 +145,6 @@ export class BackgroundDelivery {
   }
 
   reserve(): symbol {
-    if (this.reservations.size >= MAX_TRACKED_CHILDREN) {
-      throw new Error(
-        `Delegate registry is full (${MAX_TRACKED_CHILDREN} tracked children).`,
-      );
-    }
     const reservation = Symbol("delegate-delivery");
     this.reservations.set(reservation, undefined);
     this.version++;
@@ -398,32 +279,24 @@ export default function delegateExtension(pi: ExtensionAPI) {
   manager = new DelegateManager({
     onSettled: (snapshot) => delivery.enqueue(snapshot),
   });
-  const workflows = new Map<string, TrackedWorkflow>();
-  let nextWorkflowId = 0;
-
   registerProcessStatusSource(
     pi,
     "delegate",
-    () => [
-      ...manager.list().map((snapshot) => ({
-        id: snapshot.id,
-        kind: "subagents" as const,
-        active: snapshot.status === "queued" || snapshot.status === "running",
-        summary: statusSummary(snapshot),
-        usage: {
-          tokens: snapshot.childUsage.totalTokens,
-          cost: snapshot.childUsage.cost,
-        },
-        detail: () => delegateDetail(manager, snapshot.id),
-      })),
-      ...[...workflows.values()].map((workflow) => ({
-        id: workflow.id,
-        kind: "workflows" as const,
-        active: workflow.status === "running",
-        summary: workflowSummary(workflow),
-        detail: () => workflowDetail(manager, workflow),
-      })),
-    ],
+    () =>
+      manager
+        .list()
+        .slice(0, MAX_ACTIVITIES_PER_SOURCE)
+        .map((snapshot) => ({
+          id: snapshot.id,
+          kind: "subagents" as const,
+          active: snapshot.status === "running",
+          summary: statusSummary(snapshot),
+          usage: {
+            tokens: snapshot.childUsage.totalTokens,
+            cost: snapshot.childUsage.cost,
+          },
+          detail: () => delegateDetail(manager, snapshot.id),
+        })),
     () => manager.sessionUsage(),
   );
 
@@ -438,15 +311,15 @@ export default function delegateExtension(pi: ExtensionAPI) {
     name: RUN_TOOL_NAME,
     label: "Delegate Run",
     description:
-      "One new child: delegate_run. Existing child: delegate_session. Two or more tasks known in advance: delegate_workflow. Creates exactly one child with fresh context that cannot see the parent conversation, so task must be self-contained with the objective, relevant context/files, constraints, permissions, verification, and output contract. By default waits for the final result; background=true returns the child id immediately and automatically delivers completion later. Never start background then immediately wait; use blocking delegate_run. Parent owns implementation and final verification unless explicitly delegated. Children share the working tree; workspace=write runs exclusively.",
+      "Creates one child with fresh context for one self-contained task. State the objective, relevant context and files, mutation permission, constraints, verification, and expected result. Multiple delegate_run calls issued together execute concurrently and settle independently; chain dependent work by using each completed result to compose the next task. By default the call blocks until completion; background=true returns the child id immediately and delivers the result later. Children share one worktree without write isolation. output_format is advisory: correct and complete information takes precedence over exact formatting.",
     promptSnippet:
       "Create exactly one fresh child, blocking by default or delivering later in background",
     promptGuidelines: [
-      "One new child: delegate_run. Existing child: delegate_session. Two or more tasks known in advance: delegate_workflow.",
-      "Child context is fresh and cannot see the parent conversation; every task must be self-contained.",
-      "Never start background then immediately wait; use blocking delegate_run. For background runs, continue useful parent work and wait only when blocked.",
-      "Parent owns implementation and final verification unless explicitly delegated.",
-      "Mark every task that may modify files as workspace=write; shared-write jobs run exclusively without filesystem isolation.",
+      "Use one delegate_run call per child. Issue independent calls together for parallel work; for dependent work, wait and compose a new self-contained task from the earlier result.",
+      "Child context is fresh and cannot see the parent conversation; include every fact and permission it needs in the task.",
+      "Never start background then immediately wait; use a blocking run. For background runs, continue useful parent work and wait only when blocked.",
+      "Concurrent children share the same worktree without isolation or write-conflict protection.",
+      "Parent owns final integration and verification unless the task explicitly delegates them.",
     ],
     parameters: DelegateRunParams,
     executionMode: "parallel",
@@ -457,8 +330,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
         snapshot = manager.spawn({
           task: params.task,
           effort: params.effort,
-          workspace: params.workspace,
-          schema: params.schema,
+          outputFormat: params.output_format,
           background: params.background,
           ctx,
         });
@@ -494,15 +366,16 @@ export default function delegateExtension(pi: ExtensionAPI) {
           );
         }
         const output = await formatDelegateOutput(
-          formatSnapshotOutput(result, 2) ||
-            "Delegated task completed without a final response.",
+          result.output || "Delegated task completed without a final response.",
+          result.fullOutputFile,
         );
         return {
           content: [{ type: "text", text: output.text }],
           details: {
             ...result,
-            outputTruncated: output.truncation?.truncated,
-            fullOutputFile: output.fullOutputFile,
+            outputTruncated:
+              result.outputTruncated || output.truncation?.truncated,
+            fullOutputFile: result.fullOutputFile ?? output.fullOutputFile,
           },
         };
       } catch (error) {
@@ -520,7 +393,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
     name: SESSION_TOOL_NAME,
     label: "Delegate Session",
     description:
-      "Existing child: delegate_session. One new child: delegate_run. Two or more tasks known in advance: delegate_workflow. Manages tracked children only and cannot create or resume one. list recovers all live-session child ids; status inspects without waiting; wait returns outputs; send steers one running child; cancel stops work. Settled children cannot receive more messages; use delegate_run with a new self-contained task instead. Never start background then immediately wait; use blocking delegate_run.",
+      "Manages children created by delegate_run. list recovers all ids retained for the current parent session; status inspects without waiting; wait returns outputs; send steers one running child; cancel stops work. Settled children cannot receive more messages or resume; create a new child for further work. Never start a background run and then immediately wait; use a blocking delegate_run instead.",
     promptSnippet:
       "List, inspect, wait for, steer, or cancel existing child sessions",
     promptGuidelines: [
@@ -546,16 +419,13 @@ export default function delegateExtension(pi: ExtensionAPI) {
       const ids = params.ids ?? [];
       if (params.action === "list") {
         const snapshots = manager.list();
+        const output = await formatDelegateOutput(
+          snapshots.length > 0
+            ? snapshots.map(sessionSummary).join("\n")
+            : "No delegates are tracked.",
+        );
         return {
-          content: [
-            {
-              type: "text",
-              text:
-                snapshots.length > 0
-                  ? snapshots.map(sessionSummary).join("\n")
-                  : "No delegates are tracked.",
-            },
-          ],
+          content: [{ type: "text", text: output.text }],
           details: { results: snapshots },
         };
       }
@@ -584,100 +454,6 @@ export default function delegateExtension(pi: ExtensionAPI) {
         ],
         details: { results: snapshots },
       };
-    },
-  });
-
-  pi.registerTool({
-    name: WORKFLOW_TOOL_NAME,
-    label: "Delegate Workflow",
-    description:
-      "Two or more tasks known in advance: delegate_workflow. One new child: delegate_run. Existing child: delegate_session. Blocks while running staged fan-out/fan-in: stages execute sequentially and tasks within a stage concurrently under the global four-child cap. Children have fresh context and cannot see the parent conversation, so every task must include its objective, relevant context/files, constraints, permissions, verification, and expected output. Earlier workflow inputs provide only declared outputs, not undeclared parent context. Parent owns implementation and final verification unless explicitly delegated. A write task must be alone in its stage.",
-    promptSnippet:
-      "Run sequential stages with bounded parallel child tasks and structured handoffs",
-    promptGuidelines: [
-      "Use delegate_workflow only for two or more predetermined tasks; use delegate_run for one new child and delegate_session for an existing child.",
-      "Use schemas when later tasks branch on results; reference only earlier-stage task ids in inputs.",
-      "Put each workspace-writing task in its own stage.",
-    ],
-    parameters: DelegateWorkflowParams,
-    executionMode: "parallel",
-    async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      if (workflows.size >= MAX_TRACKED_WORKFLOWS) {
-        const settled = [...workflows.values()].find(
-          (workflow) => workflow.status !== "running",
-        );
-        if (!settled) {
-          throw new Error(
-            `error=workflow-registry-full running=${MAX_TRACKED_WORKFLOWS} max=${MAX_TRACKED_WORKFLOWS}`,
-          );
-        }
-        workflows.delete(settled.id);
-      }
-      const id = `workflow-${++nextWorkflowId}`;
-      const workflow: TrackedWorkflow = {
-        id,
-        status: "running",
-        startedAt: Date.now(),
-        stage: params.stages[0]?.name?.trim() || "stage-1",
-        settledTasks: 0,
-        totalTasks: params.stages.reduce(
-          (count, stage) => count + stage.tasks.length,
-          0,
-        ),
-        tasks: [],
-        activeTasks: [],
-        activity: [],
-      };
-      workflows.set(id, workflow);
-      try {
-        const result = await runWorkflow(
-          manager,
-          params,
-          ctx,
-          signal,
-          (progress) => {
-            workflow.settledTasks = progress.tasks.length;
-            workflow.tasks = trackedWorkflowTasks(progress.tasks);
-            workflow.activeTasks = trackedWorkflowTasks(progress.activeTasks);
-            retainWorkflowActivity(manager, workflow, [
-              ...workflow.tasks,
-              ...workflow.activeTasks,
-            ]);
-            if (progress.activeStage) workflow.stage = progress.activeStage;
-            onUpdate?.({
-              content: [
-                {
-                  type: "text",
-                  text: `workflow: running settled=${progress.tasks.length} total=${workflow.totalTasks}`,
-                },
-              ],
-              details: progress,
-            });
-          },
-        );
-        workflow.status = result.success ? "done" : "error";
-        workflow.settledAt = Date.now();
-        workflow.settledTasks = result.tasks.length;
-        workflow.tasks = trackedWorkflowTasks(result.tasks);
-        workflow.activeTasks = [];
-        retainWorkflowActivity(manager, workflow, workflow.tasks);
-        workflow.error = result.error
-          ? truncateUtf8Head(result.error, 4 * 1024, "\n[truncated]")
-          : undefined;
-        return {
-          content: [{ type: "text", text: await workflowText(result) }],
-          details: result,
-        };
-      } catch (error) {
-        workflow.status = "error";
-        workflow.settledAt = Date.now();
-        workflow.error = truncateUtf8Head(
-          error instanceof Error ? error.message : String(error),
-          4 * 1024,
-          "\n[truncated]",
-        );
-        throw error;
-      }
     },
   });
 }

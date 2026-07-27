@@ -244,8 +244,9 @@
         }
       }
     ],
-    "checkedAt": 1784943732588,
-    "lastModified": 1784920533000
+    "checkedAt": 1785157062808,
+    "lastModified": 1784920533000,
+    "etag": "W/\"8c50b40966720784303e46378a0807dc\""
   },
   "huggingface": {
     "models": [
@@ -1428,8 +1429,9 @@
         "maxTokens": 131072
       }
     ],
-    "checkedAt": 1784943732589,
-    "lastModified": 1784920521000
+    "checkedAt": 1785157063176,
+    "lastModified": 1784920521000,
+    "etag": "W/\"6a9026b5f1e2b0c90719a3cb2e39b03f\""
   },
   "opencode": {
     "models": [
@@ -4009,8 +4011,9 @@
         }
       }
     ],
-    "checkedAt": 1784943732792,
-    "lastModified": 1784920532000
+    "checkedAt": 1785157062864,
+    "lastModified": 1784920532000,
+    "etag": "W/\"9c057e7d7707143f029a59a91957d8a5\""
   },
   "anthropic": {
     "models": [
@@ -4782,7 +4785,8 @@
         "maxTokens": 65536
       }
     ],
-    "checkedAt": 1784943732793,
-    "lastModified": 1784920536000
+    "checkedAt": 1785157062864,
+    "lastModified": 1784920536000,
+    "etag": "W/\"59a6b3ee1050eab26eca0c9f9df57659\""
   }
 }

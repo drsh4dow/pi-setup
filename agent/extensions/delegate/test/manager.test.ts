@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type {
   AgentSessionEvent,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import type { DelegateSnapshot } from "../contract.ts";
-import { workflowDetail } from "../index.ts";
+import { type DelegateSnapshot, MAX_CHILD_OUTPUT_BYTES } from "../contract.ts";
 import { DelegateManager, type DelegateRequest } from "../manager.ts";
 import type { ChildSession } from "../runtime.ts";
-import { runWorkflow } from "../workflow.ts";
 import { eventually } from "./eventually.ts";
 
 const context = {
@@ -33,11 +32,6 @@ class FakeChild {
   private listeners = new Set<(event: AgentSessionEvent) => void>();
   private promptResolve?: () => void;
   private promptReject?: (error: Error) => void;
-  private captureStructured: (value: unknown) => void;
-
-  constructor(captureStructured: (value: unknown) => void) {
-    this.captureStructured = captureStructured;
-  }
 
   prompt(text: string) {
     this.prompts.push(text);
@@ -80,6 +74,13 @@ class FakeChild {
     this.promptReject = undefined;
   }
 
+  emitAssistantStart() {
+    this.emit({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    } as unknown as AgentSessionEvent);
+  }
+
   emitAssistant(
     output: string,
     totalTokens: number,
@@ -103,8 +104,14 @@ class FakeChild {
     } as AgentSessionEvent);
   }
 
-  finish(output: string, structured?: unknown, totalTokens = 15) {
-    if (structured !== undefined) this.captureStructured(structured);
+  finishWithoutResponse() {
+    this.isStreaming = false;
+    this.promptResolve?.();
+    this.promptResolve = undefined;
+    this.promptReject = undefined;
+  }
+
+  finish(output: string, totalTokens = 15) {
     this.emitAssistant(output, totalTokens, "stop");
     this.isStreaming = false;
     this.promptResolve?.();
@@ -131,9 +138,9 @@ function harness(
   const requests: DelegateRequest[] = [];
   const manager = new DelegateManager({
     onSettled,
-    async createSession(request, _model, _thinking, captureStructured) {
+    async createSession(request) {
       requests.push(request);
-      const child = new FakeChild(captureStructured);
+      const child = new FakeChild();
       setImmediate(() => sessions.push(child));
       return child as unknown as ChildSession;
     },
@@ -162,37 +169,15 @@ test("wait admission is atomic, bounded per child, and releases capacity", async
   await manager.shutdown();
 });
 
-test("cancelled unresolved creations retain all four run slots", async () => {
-  const resolvers: Array<(child: ChildSession) => void> = [];
-  let creations = 0;
-  const manager = new DelegateManager({
-    createSession(_request, _model, _thinking, _captureStructured) {
-      creations++;
-      return new Promise<ChildSession>((resolve) => {
-        resolvers.push((child) => resolve(child));
-      });
-    },
-  });
-  const first = Array.from({ length: 4 }, (_, index) =>
-    manager.spawn({ task: `hung ${index}`, ctx: context }),
+test("starts every run immediately without aggregate scheduling", async () => {
+  const { manager, sessions } = harness();
+  const jobs = Array.from({ length: 40 }, (_, index) =>
+    manager.spawn({ task: `parallel task ${index}`, ctx: context }),
   );
-  await eventually(() => creations === 4);
-  await manager.cancel(first.map((job) => job.id));
-  for (let index = 0; index < 12; index++) {
-    const queued = manager.spawn({ task: `queued ${index}`, ctx: context });
-    await manager.cancel([queued.id]);
-  }
-  assert.equal(creations, 4);
+  await eventually(() => sessions.length === jobs.length);
+  assert.ok(manager.list().every((snapshot) => snapshot.status === "running"));
 
-  const later = manager.spawn({ task: "later", ctx: context });
-  resolvers[0](new FakeChild(() => {}) as unknown as ChildSession);
-  await eventually(() => creations === 5);
-  for (const resolve of resolvers.slice(1, 4)) {
-    resolve(new FakeChild(() => {}) as unknown as ChildSession);
-  }
-  resolvers[4](new FakeChild(() => {}) as unknown as ChildSession);
-  await eventually(() => manager.list([later.id])[0].status === "running");
-  await manager.cancel([later.id]);
+  await manager.cancel(jobs.map((job) => job.id));
   await manager.shutdown();
 });
 
@@ -217,7 +202,7 @@ test("session creation timeout is inspectable and owns a late child", async (t) 
   assert.equal(failed.status, "error");
   assert.match(failed.error ?? "", /session creation timed out/);
 
-  const child = new FakeChild(() => {});
+  const child = new FakeChild();
   resolveCreation(child as unknown as ChildSession);
   await new Promise<void>((resolve) => setImmediate(resolve));
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -226,11 +211,59 @@ test("session creation timeout is inspectable and owns a late child", async (t) 
   await manager.shutdown();
 });
 
+test("a child with no assistant response fails at the provider-stall deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "provider stalls", ctx: context });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(sessions.length, 1);
+
+  t.mock.timers.tick(45_000);
+  await Promise.resolve();
+  const [failed] = await manager.wait([job.id]);
+  assert.equal(failed.status, "error");
+  assert.match(
+    failed.error ?? "",
+    /no assistant response from test\/child within 45 seconds.*Retry/,
+  );
+  await eventually(() => sessions[0].disposed);
+  await manager.shutdown();
+});
+
+test("prompt completion without an assistant response is an error", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "empty provider response", ctx: context });
+  await eventually(() => sessions.length === 1);
+  sessions[0].finishWithoutResponse();
+
+  const [failed] = await manager.wait([job.id]);
+  assert.equal(failed.status, "error");
+  assert.match(failed.error ?? "", /without an assistant response.*Retry/);
+  await manager.shutdown();
+});
+
+test("the first assistant stream event disarms the provider watchdog", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "slow but responsive", ctx: context });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(sessions.length, 1);
+  sessions[0].emitAssistantStart();
+
+  t.mock.timers.tick(45_000);
+  assert.equal(manager.list([job.id])[0].status, "running");
+  sessions[0].finish("done");
+  const [done] = await manager.wait([job.id]);
+  assert.equal(done.status, "done");
+  await manager.shutdown();
+});
+
 test("fast children converge at four minutes and stop at eight", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 });
   const { manager, sessions } = harness();
   const job = manager.spawn({ task: "bounded fast task", ctx: context });
   await new Promise<void>((resolve) => setImmediate(resolve));
+  sessions[0].emitAssistantStart();
 
   t.mock.timers.tick(4 * 60_000 - 1);
   assert.equal(sessions[0].steeringStarted.length, 0);
@@ -247,38 +280,21 @@ test("fast children converge at four minutes and stop at eight", async (t) => {
   await manager.shutdown();
 });
 
-test("thorough read and write children use distinct wall-time budgets", async (t) => {
+test("thorough children converge at twenty minutes and stop at sixty", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 });
   const { manager, sessions } = harness();
-  const reader = manager.spawn({
-    task: "thorough reader",
+  const job = manager.spawn({
+    task: "bounded thorough task",
     effort: "thorough",
-    ctx: context,
-  });
-  const writer = manager.spawn({
-    task: "thorough writer",
-    effort: "thorough",
-    workspace: "write",
     ctx: context,
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
+  sessions[0].emitAssistantStart();
 
-  t.mock.timers.tick(8 * 60_000);
+  t.mock.timers.tick(20 * 60_000);
   assert.equal(sessions[0].steeringStarted.length, 1);
-  t.mock.timers.tick(7 * 60_000);
-  const [stoppedReader] = await manager.wait([reader.id]);
-  assert.match(stoppedReader.error ?? "", /15 minutes of wall time/);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(sessions.length, 2);
-  assert.equal(sessions[1].steeringStarted.length, 0);
-
-  t.mock.timers.tick(20 * 60_000 - 1);
-  assert.equal(sessions[1].steeringStarted.length, 0);
-  t.mock.timers.tick(1);
-  assert.equal(sessions[1].steeringStarted.length, 1);
-
   t.mock.timers.tick(40 * 60_000);
-  const [stopped] = await manager.wait([writer.id]);
+  const [stopped] = await manager.wait([job.id]);
   assert.match(stopped.error ?? "", /60 minutes of wall time/);
   await manager.shutdown();
 });
@@ -288,7 +304,7 @@ test("a final answer crossing the soft token limit completes without another tur
   const job = manager.spawn({ task: "finish near the limit", ctx: context });
   await eventually(() => sessions.length === 1);
 
-  sessions[0].finish("complete result", undefined, 1_500_000);
+  sessions[0].finish("complete result", 1_500_000);
   const [done] = await manager.wait([job.id]);
   assert.equal(done.status, "done");
   assert.equal(done.output, "complete result");
@@ -305,18 +321,8 @@ test("reported token budgets steer once and preserve hard-stop evidence", async 
     },
     {
       request: {
-        task: "thorough read token-heavy task",
+        task: "thorough token-heavy task",
         effort: "thorough",
-        ctx: context,
-      },
-      softTokens: 4_000_000,
-      hardTokens: 8_000_000,
-    },
-    {
-      request: {
-        task: "thorough write token-heavy task",
-        effort: "thorough",
-        workspace: "write",
         ctx: context,
       },
       softTokens: 15_000_000,
@@ -414,61 +420,6 @@ test("teardown rejection falls back to local disposal and diagnoses", async () =
   await manager.shutdown();
 });
 
-test("pending teardowns retain all four scheduling slots", async () => {
-  const teardownReleases: Array<() => void> = [];
-  const { manager, sessions } = harness(
-    undefined,
-    () =>
-      new Promise<void>((resolve) => {
-        teardownReleases.push(resolve);
-      }),
-  );
-  const jobs = Array.from({ length: 5 }, (_, index) =>
-    manager.spawn({ task: `task ${index}`, ctx: context }),
-  );
-  await eventually(
-    () =>
-      sessions.length === 4 &&
-      sessions.every((child) => child.prompts.length === 1),
-  );
-  for (const session of sessions) session.finish("done");
-  await manager.wait(jobs.slice(0, 4).map((job) => job.id));
-  await eventually(() => teardownReleases.length === 4);
-
-  assert.equal(sessions.length, 4);
-  assert.equal(manager.list([jobs[4].id])[0].status, "queued");
-  teardownReleases[0]();
-  await eventually(() => sessions[4]?.prompts.length === 1);
-  assert.equal(manager.list([jobs[4].id])[0].status, "running");
-
-  sessions[4].finish("done");
-  await manager.wait([jobs[4].id]);
-  for (const release of teardownReleases.slice(1)) release();
-  await manager.shutdown();
-});
-
-test("manager caps read concurrency at four and queues the fifth child", async () => {
-  const { manager, sessions } = harness();
-  const jobs = Array.from({ length: 5 }, (_, index) =>
-    manager.spawn({ task: `task ${index}`, ctx: context }),
-  );
-  await eventually(
-    () =>
-      sessions.length === 4 &&
-      sessions.every((child) => child.prompts.length === 1),
-  );
-  assert.equal(manager.list([jobs[4].id])[0].status, "queued");
-
-  sessions[0].finish("first");
-  await manager.wait([jobs[0].id]);
-  await eventually(() => sessions[4]?.prompts.length === 1);
-  assert.equal(manager.list([jobs[4].id])[0].status, "running");
-
-  for (const session of sessions.slice(1)) session.finish("done");
-  await manager.wait(jobs.slice(1).map((job) => job.id));
-  await manager.shutdown();
-});
-
 test("rejected child prompt settles, remains inspectable, and releases capacity", async () => {
   const { manager, sessions } = harness();
   const failed = manager.spawn({ task: "transport fails", ctx: context });
@@ -503,58 +454,6 @@ test("rejected child prompt settles, remains inspectable, and releases capacity"
   assert.equal(manager.list([next.id])[0].status, "running");
   sessions[1].finish("done");
   await manager.wait([next.id]);
-  await manager.shutdown();
-});
-
-test("concurrent admission never exceeds active and queued capacity", async () => {
-  const { manager, sessions } = harness();
-  const attempts = await Promise.allSettled(
-    Array.from({ length: 40 }, (_, index) =>
-      Promise.resolve().then(() =>
-        manager.spawn({ task: `racing task ${index}`, ctx: context }),
-      ),
-    ),
-  );
-  const accepted = attempts.flatMap((attempt) =>
-    attempt.status === "fulfilled" ? [attempt.value] : [],
-  );
-  assert.equal(accepted.length, 36);
-  assert.equal(
-    attempts.filter((attempt) => attempt.status === "rejected").length,
-    4,
-  );
-  await eventually(() => sessions.length === 4);
-  assert.equal(
-    manager.list().filter((snapshot) => snapshot.status === "queued").length,
-    32,
-  );
-
-  await manager.cancel(accepted.map((snapshot) => snapshot.id));
-  await manager.shutdown();
-});
-
-test("write jobs run alone and preserve FIFO ordering", async () => {
-  const { manager, sessions } = harness();
-  const reader = manager.spawn({ task: "read", ctx: context });
-  const writer = manager.spawn({
-    task: "write",
-    workspace: "write",
-    ctx: context,
-  });
-  const laterReader = manager.spawn({ task: "later read", ctx: context });
-  await eventually(() => sessions.length === 1);
-
-  sessions[0].finish("read done");
-  await manager.wait([reader.id]);
-  await eventually(() => sessions.length === 2);
-  assert.equal(manager.list([writer.id])[0].status, "running");
-  assert.equal(manager.list([laterReader.id])[0].status, "queued");
-
-  sessions[1].finish("write done");
-  await manager.wait([writer.id]);
-  await eventually(() => sessions.length === 3);
-  sessions[2].finish("later done");
-  await manager.wait([laterReader.id]);
   await manager.shutdown();
 });
 
@@ -728,17 +627,8 @@ test("an uncooperative cancelled child is disposed", async () => {
 test("send steers only a running child", async () => {
   const { manager, sessions } = harness();
   const running = manager.spawn({ task: "running", ctx: context });
-  const queued = manager.spawn({
-    task: "queued",
-    workspace: "write",
-    ctx: context,
-  });
   await eventually(() => sessions.length === 1);
 
-  await assert.rejects(
-    manager.send(queued.id, "steer"),
-    /send requires a running child/,
-  );
   await manager.send(running.id, "focus here");
   assert.deepEqual(sessions[0].steering, ["focus here"]);
   sessions[0].finish("done");
@@ -747,8 +637,6 @@ test("send steers only a running child", async () => {
     manager.send(running.id, "late"),
     /send requires a running child/,
   );
-
-  await manager.cancel([queued.id]);
   await manager.shutdown();
 });
 
@@ -844,27 +732,50 @@ test("pending sends are capped", async () => {
   await manager.shutdown();
 });
 
-test("structured output is captured for one child run", async () => {
+test("output format guides without enforcing the final response", async () => {
   const { manager, sessions } = harness();
   const job = manager.spawn({
-    task: "structured",
-    schema: { type: "object" },
+    task: "collect evidence",
+    outputFormat: "Return JSON with a findings array.",
     ctx: context,
   });
   await eventually(() => sessions.length === 1);
-  sessions[0].finish("", { value: 1 });
+  assert.match(sessions[0].prompts[0], /Preferred output format \(advisory\)/);
+  assert.match(sessions[0].prompts[0], /Return JSON with a findings array/);
+  assert.match(sessions[0].prompts[0], /correct and complete information/);
+
+  sessions[0].finish("The useful evidence does not fit that shape.");
   const [result] = await manager.wait([job.id]);
-  assert.deepEqual(result.structured, { value: 1 });
+  assert.equal(result.status, "done");
+  assert.equal(result.output, "The useful evidence does not fit that shape.");
   await manager.shutdown();
 });
 
-test("retains bounded recent messages and tool inputs and outputs", async () => {
+test("archives complete oversized child output until parent shutdown", async () => {
   const { manager, sessions } = harness();
-  const job = manager.spawn({ task: "inspect activity", ctx: context });
+  const job = manager.spawn({ task: "Return a large report.", ctx: context });
+  await eventually(() => sessions.length === 1);
+  const report = "é".repeat(MAX_CHILD_OUTPUT_BYTES);
+  sessions[0].finish(report);
+
+  const [result] = await manager.wait([job.id]);
+  assert.equal(result.outputTruncated, true);
+  assert.ok(result.fullOutputFile);
+  assert.match(result.output, /full output saved to:/);
+  assert.equal(await readFile(result.fullOutputFile, "utf8"), report);
+
+  const savedOutput = result.fullOutputFile;
+  await manager.shutdown();
+  await assert.rejects(readFile(savedOutput, "utf8"), { code: "ENOENT" });
+});
+
+test("retains six bounded conversation messages without tool payloads", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "inspect conversation", ctx: context });
   await eventually(() => sessions.length === 1);
   sessions[0].emit({
     type: "message_end",
-    message: { role: "user", content: "inspect activity" },
+    message: { role: "user", content: "inspect conversation" },
   } as AgentSessionEvent);
   sessions[0].emit({
     type: "tool_execution_start",
@@ -877,85 +788,62 @@ test("retains bounded recent messages and tool inputs and outputs", async () => 
     toolCallId: "call-1",
     toolName: "read",
     result: { content: [{ type: "text", text: "source" }] },
-    isError: false,
-  } as AgentSessionEvent);
-  const toolActivity = manager.recentActivity(job.id).join("\n");
-  assert.match(toolActivity, /role: user\nmessage:\ninspect activity/);
-  assert.match(toolActivity, /path: 'src\/a.ts'/);
-  assert.match(
-    toolActivity,
-    /tool: read[\s\S]*status: running[\s\S]*started: \d{4}-\d{2}-\d{2}T/,
-  );
-  assert.match(
-    toolActivity,
-    /tool: read[\s\S]*status: done[\s\S]*duration: \d+ms[\s\S]*output:[\s\S]*source/,
-  );
-  const workflowActivity = workflowDetail(manager, {
-    id: "workflow-1",
-    status: "running",
-    startedAt: Date.now(),
-    stage: "inspect",
-    settledTasks: 0,
-    totalTasks: 1,
-    tasks: [],
-    activity: [],
-    activeTasks: [
-      {
-        id: "reader",
-        stage: "inspect",
-        delegateId: job.id,
-        summary: "[running] read",
-      },
-    ],
-  });
-  assert.match(
-    workflowActivity,
-    /activity:[\s\S]*reader:[\s\S]*status: done[\s\S]*source/,
-  );
-  sessions[0].emit({
-    type: "tool_execution_end",
-    toolCallId: "wide-result",
-    toolName: "wide",
-    result: Object.fromEntries(
-      Array.from({ length: 1_000 }, (_, index) => [`key-${index}`, index]),
-    ),
-    isError: false,
-  } as AgentSessionEvent);
-  const wide = manager.recentActivity(job.id).at(-1) ?? "";
-  assert.ok(Buffer.byteLength(wide) <= 8 * 1024);
-  assert.match(wide, /properties omitted/);
-  assert.doesNotMatch(wide, /key-999/);
-  const hugeText = "x".repeat(20_000);
-  sessions[0].emit({
-    type: "tool_execution_end",
-    toolCallId: "huge-strings",
-    toolName: "wide",
-    result: { [hugeText]: new Error(hugeText) },
     isError: true,
   } as AgentSessionEvent);
-  const hugeStrings = manager.recentActivity(job.id).at(-1) ?? "";
-  assert.ok(Buffer.byteLength(hugeStrings) <= 8 * 1024);
-  assert.doesNotMatch(hugeStrings, /x{4_001}/);
-  for (let index = 0; index < 30; index++) {
-    sessions[0].emit({
-      type: "tool_execution_start",
-      toolCallId: `extra-${index}`,
-      toolName: "read",
-      args: { index },
-    } as AgentSessionEvent);
+  assert.deepEqual(manager.recentConversation(job.id), []);
+  assert.equal(manager.latestProgress(job.id), "tool: read · error");
+  assert.doesNotMatch(manager.latestProgress(job.id) ?? "", /src|source/);
+  assert.equal(manager.list([job.id])[0].toolCalls, 1);
+  assert.equal(manager.list([job.id])[0].failedToolCalls, 1);
+
+  sessions[0].emit({
+    type: "message_update",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "reading the source" }],
+    },
+    assistantMessageEvent: { type: "text_delta", delta: "source" },
+  } as AgentSessionEvent);
+  assert.deepEqual(manager.recentConversation(job.id), [
+    "Assistant (writing)\n\nreading the source",
+  ]);
+
+  sessions[0].emitAssistant("first finding", 10);
+  sessions[0].emit({
+    type: "message_end",
+    message: { role: "user", content: "focus on the tests" },
+  } as AgentSessionEvent);
+  assert.deepEqual(manager.recentConversation(job.id), [
+    "Assistant\n\nfirst finding",
+    "User\n\nfocus on the tests",
+  ]);
+
+  const longMessage = `begin-${"é".repeat(3_000)}-end`;
+  sessions[0].emitAssistant(longMessage, 20);
+  const bounded = manager.recentConversation(job.id).at(-1) ?? "";
+  assert.ok(Buffer.byteLength(bounded) <= 4 * 1024 + 32);
+  assert.match(bounded, /^Assistant\n\nbegin-/);
+  assert.match(bounded, /\[message truncated\]/);
+  assert.match(bounded, /-end$/);
+  assert.doesNotMatch(bounded, /�/);
+
+  for (let index = 0; index < 5; index++) {
+    sessions[0].emitAssistant(`message ${index}`, 30 + index);
   }
+  const conversation = manager.recentConversation(job.id);
+  assert.equal(conversation.length, 6);
+  assert.match(conversation[0], /^Assistant\n\nbegin-/);
+  assert.equal(conversation.at(-1), "Assistant\n\nmessage 4");
+  assert.doesNotMatch(
+    conversation.join("\n"),
+    /inspect conversation|read|source/,
+  );
 
-  const activity = manager.recentActivity(job.id);
-  assert.ok(activity.length <= 24);
-  assert.ok(Buffer.byteLength(activity.join("")) <= 32 * 1024);
-  assert.doesNotMatch(activity.join("\n"), /inspect activity/);
-  assert.match(activity.join("\n"), /index: 29/);
-
-  sessions[0].finish("done");
+  sessions[0].finish("final answer");
   await manager.wait([job.id]);
-  assert.match(
-    manager.recentActivity(job.id).at(-1) ?? "",
-    /role: assistant\nmessage:\ndone/,
+  assert.equal(
+    manager.recentConversation(job.id).at(-1),
+    "Assistant\n\nfinal answer",
   );
   await manager.shutdown();
 });
@@ -1018,7 +906,6 @@ test("shutdown owns a child created just before its deadline", async (t) => {
     },
   });
   manager.spawn({ task: "late child", ctx: context });
-  manager.spawn({ task: "must never start", workspace: "write", ctx: context });
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   let firstSettled = false;
@@ -1031,7 +918,7 @@ test("shutdown owns a child created just before its deadline", async (t) => {
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
   t.mock.timers.tick(4_999);
-  const child = new FakeChild(() => {});
+  const child = new FakeChild();
   resolveCreation(child as unknown as ChildSession);
   await new Promise<void>((resolve) => setImmediate(resolve));
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1062,9 +949,9 @@ test("shutdown bounds an uncooperative existing child", async (t) => {
   let disposals = 0;
   const sessions: FakeChild[] = [];
   const manager = new DelegateManager({
-    async createSession(_request, _model, _thinking, captureStructured) {
+    async createSession() {
       creations++;
-      const child = new FakeChild(captureStructured);
+      const child = new FakeChild();
       sessions.push(child);
       return child as unknown as ChildSession;
     },
@@ -1075,7 +962,6 @@ test("shutdown bounds an uncooperative existing child", async (t) => {
     },
   });
   manager.spawn({ task: "never settles", ctx: context });
-  manager.spawn({ task: "must never start", workspace: "write", ctx: context });
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(sessions[0].prompts.length, 1);
   sessions[0].abortGate = new Promise<void>(() => {});
@@ -1128,7 +1014,6 @@ test("shutdown returns at its deadline and owns a child arriving later", async (
     },
   });
   manager.spawn({ task: "late child", ctx: context });
-  manager.spawn({ task: "must never start", workspace: "write", ctx: context });
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   let settled = false;
@@ -1145,7 +1030,7 @@ test("shutdown returns at its deadline and owns a child arriving later", async (
   await Promise.all([firstShutdown, joinedShutdown]);
   assert.equal(settled, true);
 
-  const child = new FakeChild(() => {});
+  const child = new FakeChild();
   resolveCreation(child as unknown as ChildSession);
   await new Promise<void>((resolve) => setImmediate(resolve));
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1160,7 +1045,7 @@ test("cancelling during session creation disposes late arrivals", async () => {
   const created = new Promise<ChildSession>((resolve) => {
     resolveCreation = resolve;
   });
-  const child = new FakeChild(() => {});
+  const child = new FakeChild();
   const manager = new DelegateManager({
     createSession: async () => created,
     async shutdownSession(session) {
@@ -1197,7 +1082,7 @@ test("settled sessions are disposed and list keeps active children first", async
   await manager.shutdown();
 });
 
-test("session usage survives pruning settled children", async () => {
+test("settled sessions and usage remain for the parent session", async () => {
   const { manager, sessions } = harness();
   for (let index = 0; index < 65; index++) {
     const job = manager.spawn({ task: `task ${index}`, ctx: context });
@@ -1221,182 +1106,8 @@ test("session usage survives pruning settled children", async () => {
     await manager.wait([job.id]);
   }
 
-  assert.ok(manager.list().length <= 64);
+  assert.equal(manager.list().length, 65);
   assert.equal(manager.sessionUsage().tokens, 65 * 16);
   assert.ok(Math.abs(manager.sessionUsage().cost - 65 * 0.011) < 1e-10);
-  await manager.shutdown();
-});
-
-test("workflow runs stages in order, fans out, and passes structured inputs", async () => {
-  const { manager, sessions } = harness();
-  const activeStages: Array<string | undefined> = [];
-  const activeTasks: string[][] = [];
-  const running = runWorkflow(
-    manager,
-    {
-      stages: [
-        {
-          name: "scan",
-          tasks: [
-            {
-              id: "a",
-              task: "scan a",
-              schema: {
-                type: "object",
-                properties: { value: { type: "number" } },
-                required: ["value"],
-              },
-            },
-            { id: "b", task: "scan b" },
-          ],
-        },
-        {
-          name: "report",
-          tasks: [{ id: "report", task: "combine", inputs: ["a", "b"] }],
-        },
-      ],
-    },
-    context,
-    undefined,
-    (progress) => {
-      activeStages.push(progress.activeStage);
-      activeTasks.push(progress.activeTasks.map((task) => task.snapshot.id));
-    },
-  );
-
-  await eventually(() => sessions.length === 2);
-  sessions[1].finish("result b");
-  sessions[0].finish("", { value: 42 });
-  await eventually(() => sessions.length === 3);
-  assert.match(sessions[2].prompts[0], /## a\n\{"value":42\}/);
-  assert.match(sessions[2].prompts[0], /## b\nresult b/);
-  sessions[2].finish("combined");
-
-  const result = await running;
-  assert.equal(result.success, true);
-  assert.equal(result.activeStage, undefined);
-  assert.deepEqual(activeStages, ["scan", "scan", "report", "report"]);
-  assert.deepEqual(activeTasks, [
-    ["delegate-1", "delegate-2"],
-    [],
-    ["delegate-3"],
-    [],
-  ]);
-  assert.deepEqual(
-    result.tasks.map((task) => task.id),
-    ["a", "b", "report"],
-  );
-  await manager.shutdown();
-});
-
-test("workflow rejects a singleton before spawning a child", async () => {
-  const { manager, sessions } = harness();
-  await assert.rejects(
-    runWorkflow(
-      manager,
-      { stages: [{ tasks: [{ id: "only", task: "one task" }] }] },
-      context,
-    ),
-    (error: Error) => {
-      assert.equal(
-        error.message,
-        "A workflow requires at least two tasks; use delegate_run for one task.",
-      );
-      return true;
-    },
-  );
-  assert.equal(sessions.length, 0);
-  await manager.shutdown();
-});
-
-test("workflow rejects oversized handoffs instead of truncating JSON", async () => {
-  const { manager, sessions } = harness();
-  const running = runWorkflow(
-    manager,
-    {
-      stages: [
-        {
-          tasks: [
-            {
-              id: "source",
-              task: "produce data",
-              schema: { type: "object" },
-            },
-          ],
-        },
-        {
-          tasks: [{ id: "consumer", task: "consume", inputs: ["source"] }],
-        },
-      ],
-    },
-    context,
-  );
-
-  await eventually(() => sessions.length === 1);
-  sessions[0].finish("", { value: "x".repeat(33 * 1024) });
-  await assert.rejects(running, /inputs exceed the 32768-byte handoff limit/);
-  assert.equal(sessions.length, 1);
-  await manager.shutdown();
-});
-
-test("workflow rejects same-stage inputs before spawning a child", async () => {
-  const { manager, sessions } = harness();
-  await assert.rejects(
-    runWorkflow(
-      manager,
-      {
-        stages: [
-          {
-            tasks: [
-              { id: "first", task: "first" },
-              { id: "second", task: "second", inputs: ["first"] },
-            ],
-          },
-        ],
-      },
-      context,
-    ),
-    /must reference an earlier-stage task/,
-  );
-  assert.equal(sessions.length, 0);
-  await manager.shutdown();
-});
-
-test("workflow rejects forward inputs and parallel writes", async () => {
-  const { manager } = harness();
-  await assert.rejects(
-    runWorkflow(
-      manager,
-      {
-        stages: [
-          {
-            tasks: [
-              { id: "a", task: "a", inputs: ["later"] },
-              { id: "b", task: "b" },
-            ],
-          },
-        ],
-      },
-      context,
-    ),
-    /must reference an earlier-stage task/,
-  );
-  await assert.rejects(
-    runWorkflow(
-      manager,
-      {
-        stages: [
-          {
-            tasks: [
-              { id: "write", task: "write", workspace: "write" },
-              { id: "read", task: "read" },
-            ],
-          },
-        ],
-      },
-      context,
-    ),
-    /write task and must contain no other tasks/,
-  );
   await manager.shutdown();
 });

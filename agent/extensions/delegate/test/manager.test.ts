@@ -712,13 +712,13 @@ test("archives complete oversized child output until parent shutdown", async () 
   await assert.rejects(readFile(savedOutput, "utf8"), { code: "ENOENT" });
 });
 
-test("retains six bounded conversation messages without tool payloads", async () => {
+test("trail interleaves bounded messages with tool calls", async () => {
   const { manager, sessions } = harness();
-  const job = manager.spawn({ task: "inspect conversation", ctx: context });
+  const job = manager.spawn({ task: "inspect trail", ctx: context });
   await eventually(() => sessions.length === 1);
   sessions[0].emit({
     type: "message_end",
-    message: { role: "user", content: "inspect conversation" },
+    message: { role: "user", content: "inspect trail" },
   } as AgentSessionEvent);
   sessions[0].emit({
     type: "tool_execution_start",
@@ -726,16 +726,21 @@ test("retains six bounded conversation messages without tool payloads", async ()
     toolName: "read",
     args: { path: "src/a.ts" },
   } as AgentSessionEvent);
+  assert.deepEqual(manager.trail(job.id), [
+    'Tool: read {"path":"src/a.ts"} · running',
+  ]);
   sessions[0].emit({
     type: "tool_execution_end",
     toolCallId: "call-1",
     toolName: "read",
-    result: { content: [{ type: "text", text: "source" }] },
+    result: { content: [{ type: "text", text: "no such file" }] },
     isError: true,
   } as AgentSessionEvent);
-  assert.deepEqual(manager.recentConversation(job.id), []);
+  assert.deepEqual(manager.trail(job.id), [
+    'Tool: read {"path":"src/a.ts"} · error: no such file',
+  ]);
   assert.equal(manager.list([job.id])[0].progress, "tool: read · error");
-  assert.doesNotMatch(manager.list([job.id])[0].progress ?? "", /src|source/);
+  assert.doesNotMatch(manager.list([job.id])[0].progress ?? "", /src|no such/);
   assert.equal(manager.list([job.id])[0].toolCalls, 1);
   assert.equal(manager.list([job.id])[0].failedToolCalls, 1);
 
@@ -747,9 +752,10 @@ test("retains six bounded conversation messages without tool payloads", async ()
     },
     assistantMessageEvent: { type: "text_delta", delta: "source" },
   } as AgentSessionEvent);
-  assert.deepEqual(manager.recentConversation(job.id), [
+  assert.equal(
+    manager.trail(job.id).at(-1),
     "Assistant (writing)\n\nreading the source",
-  ]);
+  );
   assert.equal(
     manager.list([job.id])[0].progress,
     "writing: reading the source",
@@ -760,14 +766,15 @@ test("retains six bounded conversation messages without tool payloads", async ()
     type: "message_end",
     message: { role: "user", content: "focus on the tests" },
   } as AgentSessionEvent);
-  assert.deepEqual(manager.recentConversation(job.id), [
+  assert.deepEqual(manager.trail(job.id), [
+    'Tool: read {"path":"src/a.ts"} · error: no such file',
     "Assistant\n\nfirst finding",
     "User\n\nfocus on the tests",
   ]);
 
   const longMessage = `begin-${"é".repeat(3_000)}-end`;
   sessions[0].emitAssistant(longMessage, 20);
-  const bounded = manager.recentConversation(job.id).at(-1) ?? "";
+  const bounded = manager.trail(job.id).at(-1) ?? "";
   assert.ok(Buffer.byteLength(bounded) <= 4 * 1024 + 32);
   assert.match(bounded, /^Assistant\n\nbegin-/);
   assert.match(bounded, /\[message truncated\]/);
@@ -777,21 +784,66 @@ test("retains six bounded conversation messages without tool payloads", async ()
   for (let index = 0; index < 5; index++) {
     sessions[0].emitAssistant(`message ${index}`, 30 + index);
   }
-  const conversation = manager.recentConversation(job.id);
-  assert.equal(conversation.length, 6);
-  assert.match(conversation[0], /^Assistant\n\nbegin-/);
-  assert.equal(conversation.at(-1), "Assistant\n\nmessage 4");
-  assert.doesNotMatch(
-    conversation.join("\n"),
-    /inspect conversation|read|source/,
-  );
+  const trail = manager.trail(job.id);
+  assert.equal(trail.length, 7);
+  assert.match(trail[0], /^Tool: read/);
+  assert.match(trail[1], /^Assistant\n\nbegin-/);
+  assert.equal(trail.at(-1), "Assistant\n\nmessage 4");
 
   sessions[0].finish("final answer");
   await manager.wait([job.id]);
-  assert.equal(
-    manager.recentConversation(job.id).at(-1),
-    "Assistant\n\nfinal answer",
-  );
+  assert.equal(manager.trail(job.id).at(-1), "Assistant\n\nfinal answer");
+  await manager.shutdown();
+});
+
+test("a tool storm cannot evict the child's last stated intent", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "grind", ctx: context });
+  await eventually(() => sessions.length === 1);
+  sessions[0].emitAssistant("patching the tokenizer now", 10);
+  for (let index = 0; index < 20; index++) {
+    sessions[0].emit({
+      type: "tool_execution_start",
+      toolCallId: `call-${index}`,
+      toolName: "edit",
+      args: { path: `src/${index}.ts` },
+    } as AgentSessionEvent);
+    sessions[0].emit({
+      type: "tool_execution_end",
+      toolCallId: `call-${index}`,
+      toolName: "edit",
+      result: { content: [{ type: "text", text: "ok" }] },
+      isError: false,
+    } as AgentSessionEvent);
+  }
+  const trail = manager.trail(job.id);
+  assert.equal(trail.length, 13);
+  assert.equal(trail[0], "Assistant\n\npatching the tokenizer now");
+  assert.equal(trail[1], 'Tool: edit {"path":"src/8.ts"} · done');
+  assert.equal(trail.at(-1), 'Tool: edit {"path":"src/19.ts"} · done');
+
+  await manager.cancel([job.id]);
+  const [snapshot] = manager.list([job.id]);
+  assert.match(snapshot.checkpoint ?? "", /patching the tokenizer now/);
+  assert.match(snapshot.checkpoint ?? "", /src\/19\.ts/);
+  await manager.shutdown();
+});
+
+test("trail bounds oversized tool arguments", async () => {
+  const { manager, sessions } = harness();
+  const job = manager.spawn({ task: "bound args", ctx: context });
+  await eventually(() => sessions.length === 1);
+  sessions[0].emit({
+    type: "tool_execution_start",
+    toolCallId: "call-1",
+    toolName: "write",
+    args: { path: "src/a.ts", content: "é".repeat(4_000) },
+  } as AgentSessionEvent);
+  const [entry] = manager.trail(job.id);
+  assert.ok(Buffer.byteLength(entry) <= 120 + 32);
+  assert.match(entry, /^Tool: write \{"path":"src\/a\.ts"/);
+  assert.match(entry, /… · running$/);
+  assert.doesNotMatch(entry, /�/);
   await manager.shutdown();
 });
 
@@ -1059,7 +1111,7 @@ test("settled sessions and usage remain for the parent session", async () => {
   await manager.shutdown();
 });
 
-test("an abnormal settle hands back the child's last messages", async () => {
+test("an abnormal settle hands back the child's last activity", async () => {
   const { manager, sessions } = harness();
   const job = manager.spawn({ task: "long build", ctx: context });
   await eventually(() => sessions.length === 1);

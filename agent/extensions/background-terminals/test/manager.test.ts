@@ -85,16 +85,11 @@ test("retains exact newest output after many small writes", async () => {
   await manager.shutdown();
 });
 
-test("enforces running and tracked bounds without pruning running entries", async () => {
+test("prunes to the tracked bound without evicting running entries", async () => {
   const manager = new BackgroundTerminalManager();
-  const runs = Array.from({ length: 8 }, (_, index) =>
+  const running = Array.from({ length: 2 }, (_, index) =>
     manager.start({ command: "sleep 30", title: String(index), cwd }),
   );
-  assert.throws(
-    () => manager.start({ command: "true", title: "ninth", cwd }),
-    /Max 8/,
-  );
-  await manager.kill(runs.map((run) => run.id));
   for (let index = 0; index < MAX_TRACKED + 3; index++) {
     const run = manager.start({
       command: "true",
@@ -104,6 +99,8 @@ test("enforces running and tracked bounds without pruning running entries", asyn
     await settled(manager, run.id);
   }
   assert.equal(manager.list().length, MAX_TRACKED);
+  const tracked = new Set(manager.list().map((entry) => entry.id));
+  assert.ok(running.every((run) => tracked.has(run.id)));
   await manager.shutdown();
 });
 

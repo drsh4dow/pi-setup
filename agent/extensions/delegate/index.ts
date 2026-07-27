@@ -17,7 +17,13 @@ import {
   RUN_TOOL_NAME,
   SESSION_TOOL_NAME,
 } from "./contract.ts";
-import { formatStatusParts } from "./format.ts";
+import {
+  formatProgress,
+  formatStatusParts,
+  sessionSummary,
+  statusSummary,
+  summary,
+} from "./format.ts";
 import { DelegateManager } from "./manager.ts";
 import { formatDelegateOutput } from "./output.ts";
 import { renderDelegateCall, renderDelegateResult } from "./render.ts";
@@ -42,25 +48,6 @@ export {
 
 const DELIVERY_RETRY_DELAYS_MS = [25, 100] as const;
 
-function statusSummary(snapshot: DelegateSnapshot) {
-  const status = snapshot.status.replace("_", " ");
-  return `[${status}] ${formatStatusParts(snapshot)}`;
-}
-
-function summary(snapshot: DelegateSnapshot) {
-  return `${snapshot.id} ${statusSummary(snapshot)}`;
-}
-
-function taskPreview(task: string) {
-  const singleLine = task.replace(/\s+/g, " ").trim();
-  return singleLine.length <= 160 ? singleLine : `${singleLine.slice(0, 159)}…`;
-}
-
-function sessionSummary(snapshot: DelegateSnapshot) {
-  const line = `${summary(snapshot)} · ${taskPreview(snapshot.assignedTask) || "(empty task)"}`;
-  return snapshot.progress ? `${line}\n  ${snapshot.progress}` : line;
-}
-
 function delegateDetail(manager: DelegateManager, id: string) {
   const snapshot = manager.list([id])[0];
   const lines = [
@@ -73,31 +60,31 @@ function delegateDetail(manager: DelegateManager, id: string) {
     ),
   ];
   if (snapshot.error) lines.push("", "Error", snapshot.error);
-  const conversation = manager.recentConversation(id);
+  const trail = manager.trail(id);
   lines.push(
     "",
-    "Conversation",
+    "Activity",
     "",
-    conversation.length > 0
-      ? conversation.join("\n\n")
-      : "No conversation messages",
+    trail.length > 0 ? trail.join("\n\n") : "No recorded activity",
   );
   return lines.join("\n");
 }
 
-async function resultText(snapshots: DelegateSnapshot[]) {
+export async function resultText(snapshots: DelegateSnapshot[]) {
   const sections: string[] = [];
   for (const snapshot of snapshots) {
     let text = summary(snapshot);
     if (snapshot.error) text += `\nError: ${snapshot.error}`;
     if (snapshot.checkpoint) {
-      text += `\n\nCheckpoint (child's last messages):\n${snapshot.checkpoint}`;
+      text += `\n\nCheckpoint (child's last activity):\n${snapshot.checkpoint}`;
     }
     if (snapshot.fullOutputFile) {
       text += `\nFull output (until parent session ends): ${snapshot.fullOutputFile}`;
     }
     const output = snapshot.output;
-    if (output) text += `\n\n${output}`;
+    if (output && !snapshot.checkpoint?.includes(output)) {
+      text += `\n\n${output}`;
+    }
     sections.push(text);
   }
   return (await formatDelegateOutput(sections.join("\n\n---\n\n"))).text;
@@ -296,7 +283,9 @@ export default function delegateExtension(pi: ExtensionAPI) {
           id: snapshot.id,
           kind: "subagents" as const,
           active: snapshot.status === "running",
-          summary: statusSummary(snapshot),
+          summary: [statusSummary(snapshot), formatProgress(snapshot)]
+            .filter(Boolean)
+            .join(" · "),
           usage: {
             tokens: snapshot.childUsage.totalTokens,
             cost: snapshot.childUsage.cost,
@@ -368,7 +357,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
         if (!result.success) {
           const reason = result.error ?? result.status;
           const checkpoint = result.checkpoint
-            ? `\n\nCheckpoint (child's last messages):\n${result.checkpoint}`
+            ? `\n\nCheckpoint (child's last activity):\n${result.checkpoint}`
             : "";
           throw new Error(
             `Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Use delegate_session wait with ids=["${result.id}"] to recover retained output.${checkpoint}`,

@@ -103,6 +103,7 @@ export interface DelegateDetails {
   aborted: boolean;
   error?: string;
   progress?: string;
+  idleMs?: number;
   checkpoint?: string;
   outputTruncated?: boolean;
   fullOutputFile?: string;

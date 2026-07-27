@@ -6,9 +6,9 @@ Opinionated configuration and extensions that define how Pi behaves and exposes 
 
 ### Delegation
 
-**Delegate Conversation**:
-The text messages exchanged through a delegated child session, excluding tool calls and execution diagnostics.
-_Avoid_: Activity, diagnostics, tool history
+**Delegate Trail**:
+The bounded, ordered record of a child's recent activity: the messages it exchanged and the tool calls it made, interleaved. Message history and tool history are bounded separately, so neither can evict the other.
+_Avoid_: Transcript, full history, conversation
 
 **Delegate Task Brief**:
 A self-contained assignment stating a child's objective, scope, mutation authority, constraints, verification, and expected result. It supplies what the child cannot get from the project's own context files.
@@ -55,7 +55,7 @@ The latest bounded activity line for a running Delegate Run: the tool in flight,
 _Avoid_: Tool counts, thrash signal
 
 **Termination Checkpoint**:
-The retained Delegate Conversation tail handed to the parent when a Delegate Run settles abnormally, in place of a result.
+The retained Delegate Trail tail handed to the parent when a Delegate Run settles abnormally, in place of a result.
 _Avoid_: Partial result, crash dump, flush
 
 **Delegate Worktree**:
@@ -69,5 +69,5 @@ A bounded collection of text responses retained for later retrieval within one P
 _Avoid_: Response cache, response storage
 
 **Terminal Ownership**:
-The session that started a background terminal holds it: the terminal, its output, and its completion notice belong to that session and end with it.
-_Avoid_: Shared terminal pool, inherited terminal
+The session that started a background terminal holds it: the terminal, its output, its completion notice, and its share of concurrency capacity belong to that session and end with it. No session's usage can exhaust another's.
+_Avoid_: Shared terminal pool, inherited terminal, global slot budget

@@ -344,7 +344,6 @@ export class BackgroundTerminalManager {
         entry.settled,
         new Promise<void>((resolve) => {
           timer = setTimeout(resolve, timeoutMs);
-          timer.unref();
         }),
       ]);
     } finally {

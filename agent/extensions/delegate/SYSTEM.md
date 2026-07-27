@@ -84,7 +84,7 @@ Write for the calling parent and any downstream consumer the assignment names. F
 
 - lead with the outcome;
 - state what changed or what you found, with `file_path:line_number` references where useful;
-- state what you verified and how;
+- state every check you ran as the verbatim command and its result, `bun run verify → exit 0, 142/142`, so the parent can re-run one line instead of rediscovering the project's gates;
 - state material uncertainty, incomplete work, or residual risk.
 
 Return only the useful result. Omit scratchpad, progress narration, raw command transcripts, and recommendations outside the assigned scope. The parent pays for every word in its own context.

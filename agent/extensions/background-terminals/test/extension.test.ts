@@ -68,7 +68,7 @@ test("registers four parallel tools and lifecycle hooks", () => {
   );
 });
 
-test("child terminals remain parent-visible until the parent session closes", async () => {
+test("child terminals die with the child and stay out of the parent's list", async () => {
   const parentTools: ToolDefinition[] = [];
   const childTools: ToolDefinition[] = [];
   const parentHandlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -119,6 +119,9 @@ test("child terminals remain parent-visible until the parent session closes", as
       details: { terminals: Array<{ id: string; state: string }> };
     }>;
   };
+  const [status, kill] = [parentTools[1], parentTools[3]] as unknown as {
+    execute: (...args: unknown[]) => Promise<unknown>;
+  }[];
   const started = await start.execute(
     "1",
     { command: "sleep 30", title: "child server" },
@@ -127,6 +130,17 @@ test("child terminals remain parent-visible until the parent session closes", as
     childContext,
   );
   try {
+    assert.deepEqual((await list.execute("2", {})).details.terminals, []);
+    await assert.rejects(
+      status.execute("3", { id: started.details.id }),
+      /Unknown terminal id/,
+    );
+    await assert.rejects(
+      kill.execute("4", { ids: [started.details.id] }, undefined),
+      /Unknown terminal id/,
+    );
+    assert.equal(processIsGone(started.details.pid), false);
+
     await childHandlers.get("agent_end")?.(
       { type: "agent_end", messages: [] },
       childContext,
@@ -135,19 +149,15 @@ test("child terminals remain parent-visible until the parent session closes", as
       { type: "session_shutdown", reason: "quit" },
       childContext,
     );
-    assert.equal(processIsGone(started.details.pid), false);
-    const listed = await list.execute("2", {});
-    assert.deepEqual(
-      listed.details.terminals.map(({ id, state }) => ({ id, state })),
-      [{ id: started.details.id, state: "running" }],
-    );
+    assert.ok(processIsGone(started.details.pid));
+    const listed = await list.execute("5", {});
+    assert.deepEqual(listed.details.terminals, []);
   } finally {
     await parentHandlers.get("session_shutdown")?.(
       { type: "session_shutdown", reason: "quit" },
       parentContext,
     );
   }
-  assert.ok(processIsGone(started.details.pid));
 });
 
 test("no-UI runs stop terminals before release and can start another run", async () => {

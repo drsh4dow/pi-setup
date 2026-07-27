@@ -187,7 +187,7 @@ export function childExtensionPaths(
 }
 
 export function createChild(
-  ctx: ExtensionContext,
+  cwd: string,
   model: ExtensionContext["model"],
   thinking: DelegateThinking,
 ) {
@@ -195,7 +195,7 @@ export function createChild(
     const resourceLoader = yield* Effect.try({
       try: () =>
         new DefaultResourceLoader({
-          cwd: ctx.cwd,
+          cwd,
           agentDir: getAgentDir(),
           additionalExtensionPaths: childExtensionPaths(),
           systemPrompt: fileURLToPath(new URL("./SYSTEM.md", import.meta.url)),
@@ -210,10 +210,10 @@ export function createChild(
     const result = yield* Effect.tryPromise({
       try: (signal) =>
         createAgentSession({
-          cwd: ctx.cwd,
+          cwd,
           agentDir: getAgentDir(),
           resourceLoader,
-          sessionManager: SessionManager.inMemory(ctx.cwd),
+          sessionManager: SessionManager.inMemory(cwd),
           model,
           thinkingLevel: thinking,
           excludeTools: [...DELEGATION_TOOL_DENYLIST],

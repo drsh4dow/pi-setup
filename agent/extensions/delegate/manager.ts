@@ -1,14 +1,19 @@
+import { statSync } from "node:fs";
+import { resolve } from "node:path";
 import type {
   AgentSessionEvent,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
+import { truncateUtf8Tail } from "../../lib/text.ts";
 import { ChildState } from "./child-state.ts";
-import type {
-  DelegateEffort,
-  DelegateSnapshot,
-  DelegateStatus,
-  DelegateThinking,
+import {
+  type DelegateEffort,
+  type DelegateSnapshot,
+  type DelegateStatus,
+  type DelegateThinking,
+  MAX_EXECUTION_MS,
+  MAX_EXECUTION_TOKENS,
 } from "./contract.ts";
 import { errorMessage } from "./errors.ts";
 import {
@@ -24,8 +29,7 @@ const MAX_PENDING_SENDS = 8;
 const DISPOSAL_TIMEOUT_MS = 16_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 const MINUTE_MS = 60_000;
-const MAX_EXECUTION_MS = 60 * MINUTE_MS;
-const MAX_EXECUTION_TOKENS = 60_000_000;
+const MAX_CHECKPOINT_BYTES = 4 * 1024;
 export const MAX_CONCURRENT_WAITS_PER_CHILD = 4;
 
 export interface DelegateRequest {
@@ -33,6 +37,7 @@ export interface DelegateRequest {
   effort?: string;
   outputFormat?: string;
   background?: boolean;
+  cwd?: string;
   ctx: ExtensionContext;
 }
 
@@ -44,6 +49,7 @@ interface Deferred {
 interface Job {
   id: string;
   task: string;
+  cwd: string;
   effort: DelegateEffort;
   thinking: DelegateThinking;
   outputFormat?: string;
@@ -71,11 +77,12 @@ interface Job {
   waiters: number;
   hardTimer?: ReturnType<typeof setTimeout>;
   hardLimitError?: string;
+  checkpoint?: string;
 }
 
 export interface DelegateManagerOptions {
   createSession?: (
-    request: DelegateRequest,
+    request: DelegateRequest & { cwd: string },
     model: ExtensionContext["model"],
     thinking: DelegateThinking,
     signal: AbortSignal,
@@ -90,6 +97,14 @@ function deferred(): Deferred {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+function isDirectory(path: string) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -147,7 +162,7 @@ export class DelegateManager {
     this.createSession =
       options.createSession ??
       ((request, model, thinking, signal) =>
-        Effect.runPromise(createChild(request.ctx, model, thinking), {
+        Effect.runPromise(createChild(request.cwd, model, thinking), {
           signal,
         }));
     this.shutdownSession = options.shutdownSession ?? shutdownChild;
@@ -174,12 +189,17 @@ export class DelegateManager {
     if (this.disposed) throw new Error("Delegate manager is shutting down.");
     if (!request.task.trim())
       throw new Error("Delegated task must not be empty.");
+    const cwd = resolve(request.ctx.cwd, request.cwd ?? ".");
+    if (request.cwd !== undefined && !isDirectory(cwd)) {
+      throw new Error(`Delegate cwd is not a directory: ${cwd}`);
+    }
 
     const modelChoice = resolveDelegateModel(request.ctx);
     const effort = request.effort === "thorough" ? "thorough" : "fast";
     const job: Job = {
       id: `delegate-${++this.nextId}`,
       task: request.task,
+      cwd,
       effort,
       thinking: thinkingForEffort(effort),
       outputFormat: request.outputFormat,
@@ -228,10 +248,6 @@ export class DelegateManager {
 
   recentConversation(id: string): readonly string[] {
     return this.requireJob(id).childState.recentConversation();
-  }
-
-  latestProgress(id: string): string | undefined {
-    return this.requireJob(id).childState.latestProgress();
   }
 
   async wait(
@@ -371,8 +387,9 @@ export class DelegateManager {
   private async run(job: Job) {
     let receivedAssistantResponse = false;
     if (!job.child) {
-      const request: DelegateRequest = {
+      const request = {
         task: job.task,
+        cwd: job.cwd,
         effort: job.effort,
         outputFormat: job.outputFormat,
         ctx: job.ctx,
@@ -550,6 +567,12 @@ export class DelegateManager {
   }
 
   private finalize(job: Job, status: DelegateStatus, error?: string) {
+    if (status !== "done") {
+      job.checkpoint = truncateUtf8Tail(
+        job.childState.recentConversation().join("\n\n"),
+        MAX_CHECKPOINT_BYTES,
+      );
+    }
     this.clearExecutionBudget(job);
     this.endOwnership(job, new Error(`Delegate ${job.id} ownership ended.`));
     job.status = status;
@@ -594,6 +617,8 @@ export class DelegateManager {
       childUsage: childState.usage,
       aborted: job.status === "cancelled",
       error: job.error,
+      progress: job.status === "running" ? childState.progress : undefined,
+      checkpoint: job.checkpoint || undefined,
     };
   }
 

@@ -239,26 +239,128 @@ export class BackgroundTerminalDelivery {
       this.flushing = false;
     }
   }
-  clear() {
+  clear(): TerminalSnapshot[] {
     this.closed = true;
     this.context = undefined;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
+    const pending = [...this.pending.values()];
     this.pending.clear();
     this.attempts.clear();
     this.failed.clear();
+    return pending;
   }
 }
 
+interface TerminalClient {
+  delivery: BackgroundTerminalDelivery;
+  updateStatus: () => void;
+}
+
+class BackgroundTerminalSession {
+  // Every admitted delegate joins this parent-owned session; aggregate admission is intentionally unbounded and the parent shutdown clears all clients.
+  private readonly clients = new Map<symbol, TerminalClient>();
+  private readonly starters = new Map<string, symbol>();
+  readonly manager: BackgroundTerminalManager;
+  private readonly owner: symbol;
+  private stopping = false;
+
+  constructor(owner: symbol, ownerClient: TerminalClient) {
+    this.owner = owner;
+    this.clients.set(owner, ownerClient);
+    this.manager = new BackgroundTerminalManager(
+      (snapshot, consumed) => {
+        const starter = this.starters.get(snapshot.id);
+        this.starters.delete(snapshot.id);
+        this.updateStatuses();
+        if (consumed) {
+          this.consume([snapshot.id]);
+          return;
+        }
+        if (
+          snapshot.state === "done" &&
+          snapshot.stdout.totalBytes === 0 &&
+          snapshot.stderr.totalBytes === 0 &&
+          !snapshot.error
+        )
+          return;
+        const target =
+          (starter ? this.clients.get(starter) : undefined) ??
+          this.clients.get(this.owner);
+        target?.delivery.enqueue(snapshot);
+      },
+      () => `bt-${++terminalSequence}`,
+    );
+  }
+
+  join(id: symbol, client: TerminalClient) {
+    if (this.stopping)
+      throw new Error("Background terminal session is shutting down.");
+    this.clients.set(id, client);
+    client.updateStatus();
+  }
+
+  isOwner(id: symbol) {
+    return id === this.owner;
+  }
+
+  start(
+    client: symbol,
+    options: { command: string; title: string; cwd: string },
+  ) {
+    const snapshot = this.manager.start(options);
+    this.starters.set(snapshot.id, client);
+    this.updateStatuses();
+    return snapshot;
+  }
+
+  consume(ids: readonly string[]) {
+    for (const client of this.clients.values()) client.delivery.consume(ids);
+  }
+
+  private updateStatuses() {
+    for (const client of this.clients.values()) client.updateStatus();
+  }
+
+  async leave(id: symbol) {
+    const client = this.clients.get(id);
+    if (!client) return;
+    const pending = client.delivery.clear();
+    this.clients.delete(id);
+    if (id !== this.owner) {
+      const ownerDelivery = this.clients.get(this.owner)?.delivery;
+      for (const snapshot of pending) ownerDelivery?.enqueue(snapshot);
+      return;
+    }
+
+    this.stopping = true;
+    if (activeTerminalSession === this) activeTerminalSession = undefined;
+    for (const remaining of this.clients.values()) remaining.delivery.clear();
+    this.clients.clear();
+    this.starters.clear();
+    await this.manager.shutdown();
+  }
+}
+
+let activeTerminalSession: BackgroundTerminalSession | undefined;
+let terminalSequence = 0;
+
 export default function backgroundTerminals(pi: ExtensionAPI) {
   const delivery = new BackgroundTerminalDelivery(pi);
+  const clientId = Symbol("background-terminal-client");
   let context: ExtensionContext | undefined;
+  let session: BackgroundTerminalSession | undefined;
   let lastStatus: string | undefined | null = null;
-  let manager: BackgroundTerminalManager;
-  let terminalSequence = 0;
+  const currentSession = () => {
+    if (!session)
+      throw new Error(
+        "Background terminals are unavailable before session start.",
+      );
+    return session;
+  };
   const updateStatus = () => {
-    if (!context?.hasUI) return;
-    const running = manager
+    if (!context?.hasUI || !session) return;
+    const running = session.manager
       .list()
       .filter((snapshot) => snapshot.state === "running").length;
     const status = running ? `${running} bg · /ps` : undefined;
@@ -266,60 +368,61 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     lastStatus = status;
     context.ui.setStatus("background-terminals", status);
   };
-  const createManager = () =>
-    new BackgroundTerminalManager(
-      (snapshot, consumed) => {
-        updateStatus();
-        if (consumed) delivery.consume([snapshot.id]);
-        else if (
-          snapshot.state !== "done" ||
-          snapshot.stdout.totalBytes > 0 ||
-          snapshot.stderr.totalBytes > 0 ||
-          snapshot.error
-        )
-          delivery.enqueue(snapshot);
-      },
-      () => `bt-${++terminalSequence}`,
-    );
-  manager = createManager();
+  const client = { delivery, updateStatus };
+
   registerProcessStatusSource(pi, "background-terminals", () =>
-    manager.list().map((snapshot) => ({
+    (session?.manager.list() ?? []).map((snapshot) => ({
       id: snapshot.id,
       kind: "terminals" as const,
       active: snapshot.state === "running",
       summary: statusSummary(snapshot),
       detail: () => {
-        const current = manager.get(snapshot.id);
+        const current = session?.manager.get(snapshot.id);
         if (!current) throw new Error(`error=not-tracked id=${snapshot.id}`);
         return formatTerminalDetails(current);
       },
     })),
   );
-  const stopSession = async (keepContext: boolean) => {
-    delivery.clear();
+  const leaveSession = async (keepContext: boolean) => {
+    const joined = session;
+    session = undefined;
     if (context?.hasUI) {
       try {
         context.ui.setStatus("background-terminals", undefined);
       } catch {}
     }
-    const stopped = manager;
-    manager = createManager();
     lastStatus = null;
     if (!keepContext) context = undefined;
-    await stopped.shutdown();
-    if (context) delivery.setContext(context);
+    await joined?.leave(clientId);
+    if (keepContext && context) {
+      delivery.setContext(context);
+      if (!activeTerminalSession)
+        activeTerminalSession = new BackgroundTerminalSession(clientId, client);
+      else activeTerminalSession.join(clientId, client);
+      session = activeTerminalSession;
+      updateStatus();
+    }
   };
 
   pi.on("session_start", (_event, ctx) => {
     context = ctx;
     delivery.setContext(ctx);
+    if (!session) {
+      // The enclosing session binds extensions before its in-process delegates,
+      // so the first client owns the shared process lifetime.
+      if (!activeTerminalSession)
+        activeTerminalSession = new BackgroundTerminalSession(clientId, client);
+      else activeTerminalSession.join(clientId, client);
+      session = activeTerminalSession;
+    }
     updateStatus();
   });
   pi.on("agent_end", async () => {
-    if (context && !context.hasUI) await stopSession(true);
+    if (context && !context.hasUI && session?.isOwner(clientId))
+      await leaveSession(true);
   });
   pi.on("agent_settled", () => delivery.flush());
-  pi.on("session_shutdown", () => stopSession(false));
+  pi.on("session_shutdown", () => leaveSession(false));
 
   const listText = (entries: TerminalSnapshot[]) => {
     const terminals = entries.length
@@ -337,7 +440,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
       "Start a long-running non-interactive command and continue useful work instead of polling",
     promptGuidelines: [
       "Use meaningful titles and avoid duplicate servers or watchers.",
-      "Never use for interactive commands. Do not overlap workspace-mutating commands with workspace=write delegates.",
+      "Never use for interactive commands. Background commands and delegated children share the worktree without write isolation; avoid overlapping mutations.",
     ],
     parameters: Type.Object({
       command: Type.String({ maxLength: 100_000 }),
@@ -359,7 +462,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
         );
       let snapshot: TerminalSnapshot;
       try {
-        snapshot = manager.start({
+        snapshot = currentSession().start(clientId, {
           command,
           title:
             [...sanitizeInline(params.title).trim()].slice(0, 80).join("") ||
@@ -389,10 +492,11 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
     executionMode: "parallel",
     async execute(_id, params) {
-      const snapshot = manager.get(params.id);
+      const terminalSession = currentSession();
+      const snapshot = terminalSession.manager.get(params.id);
       if (!snapshot)
         throw new Error(`Unknown terminal id "${sanitizeInline(params.id)}".`);
-      if (snapshot.state !== "running") delivery.consume([snapshot.id]);
+      if (snapshot.state !== "running") terminalSession.consume([snapshot.id]);
       return {
         content: [{ type: "text", text: formatTerminalReport(snapshot) }],
         details: terminalMetadata(snapshot),
@@ -407,7 +511,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     parameters: Type.Object({}),
     executionMode: "parallel",
     async execute() {
-      const entries = manager.list();
+      const entries = currentSession().manager.list();
       return {
         content: [
           {
@@ -435,7 +539,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
       const ids = [...new Set(params.ids)];
       if (signal?.aborted)
         throw new Error("Kill aborted before termination started.");
-      const work = manager.kill(ids).catch((error) => {
+      const terminalSession = currentSession();
+      const work = terminalSession.manager.kill(ids).catch((error) => {
         throw sanitizeErrorForDisplay(error);
       });
       let abort: (() => void) | undefined;
@@ -458,7 +563,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
         }
       }
       const results = await work;
-      delivery.consume(ids);
+      terminalSession.consume(ids);
       return {
         content: [
           {

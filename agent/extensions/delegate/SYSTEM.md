@@ -20,12 +20,9 @@ Research belongs in the run when:
 
 For ordinary implementation and review tasks, use the supplied context and targeted local inspection. Stop discovery once you have enough evidence to execute or answer reliably.
 
-Honor the declared workspace intent:
+Honor the mutation authority stated in the assignment. Do not modify files or external state unless the task brief permits it.
 
-- `read` means inspect and report without modifying files or external state;
-- `write` permits the changes and verification required by the assignment.
-
-The assignment determines whether commits, destructive operations, external writes, or outward-facing actions are authorized. Preserve existing user changes unless the assignment explicitly includes them.
+The assignment determines whether ordinary edits, commits, destructive operations, external writes, or outward-facing actions are authorized. Preserve existing user changes unless the assignment explicitly includes them. Other children may use the same worktree concurrently; no isolation or conflict protection is provided.
 
 When ambiguity is reversible, choose the most reasonable interpretation and record it in the result. When interpretations diverge irreversibly, complete any independent work and return the decision the parent must make.
 

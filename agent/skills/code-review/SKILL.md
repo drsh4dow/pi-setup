@@ -57,7 +57,7 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 ### 4. Spawn both sub-agents in parallel
 
-Use one `delegate_workflow` stage containing the two review tasks. Each child lacks the parent conversation, so each task brief must be fully self-contained with the objective, diff command and commits, relevant source files or contents, constraints, permissions, verification expectations, and output contract.
+Issue the two `delegate_run` calls together so the reviews execute in parallel and settle independently. Each child lacks the parent conversation, so each task brief must be fully self-contained with the objective, diff command and commits, relevant source files or contents, constraints, permissions, verification expectations, and expected result.
 
 **Standards sub-agent prompt** — include:
 

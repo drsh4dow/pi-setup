@@ -18,9 +18,9 @@ Show this to the user, then immediately proceed to Step 2. The user reads and th
 
 ### 2. Spawn sub-agents
 
-Use one `delegate_workflow` stage to run the 3+ known design tasks in parallel. Each child must produce a **radically different** interface for the deepened module.
+Issue 3+ `delegate_run` calls together so the design tasks execute in parallel. Each child must produce a **radically different** interface for the deepened module.
 
-Each child lacks the parent conversation, so give it a separate, fully self-contained technical brief: objective, relevant file paths and coupling details, dependency category from [DEEPENING.md](DEEPENING.md), what sits behind the seam, constraints, permissions, verification expectations, and output contract. The brief is independent of the user-facing problem-space explanation in Step 1. Give each child a different design constraint:
+Each child lacks the parent conversation, so give it a separate, fully self-contained technical brief: objective, relevant file paths and coupling details, dependency category from [DEEPENING.md](DEEPENING.md), what sits behind the seam, constraints, permissions, verification expectations, and expected result. The brief is independent of the user-facing problem-space explanation in Step 1. Give each child a different design constraint:
 
 - Agent 1: "Minimize the interface — aim for 1–3 entry points max. Maximise leverage per entry point."
 - Agent 2: "Maximise flexibility — support many use cases and extension."

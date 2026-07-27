@@ -29,6 +29,8 @@ pi
 
 Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exists, move or merge it before cloning.
 
+`bun install` also applies the repository's bounded stdout recovery patch to the local dependency and the active `pi` executable on `PATH`. Rerun it after updating Pi; installation fails rather than silently skipping the patch if Pi changes the affected code.
+
 Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
 
 ## Included tools and extensions
@@ -36,9 +38,9 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | Extension | What it adds |
 | --- | --- |
 | `questions` | `ask_questions`, an interactive questionnaire with predefined or free-form answers |
-| `delegate` | `delegate_run` for one new child, `delegate_session` for existing children, and `delegate_workflow` for two or more predetermined tasks |
+| `delegate` | `delegate_run` creates one blocking or background child; independent calls can run in parallel, while `delegate_session` inspects, steers, waits for, or cancels existing children |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked session-scoped processes |
-| `process-status` | `/ps` shows a compact list of active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded diagnostics and recent activity |
+| `process-status` | `/ps` shows active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded details, with delegate tasks and their last six plain-text conversation messages |
 | `web-access` | `web_search`, `fetch_content`, and `get_search_content` for Exa search, pages and PDFs, GitHub repositories, and video analysis |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle OpenAI's priority service tier for supported GPT models |
 | `shake-images` | `/shake-images` to retain only the newest two images in model context for the current session |
@@ -47,7 +49,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | `tps-tracker` | Live and final output-token throughput |
 | `ui-moto` | A compact model and project header |
 
-Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). Invalid, unavailable, or unauthenticated child models fall back to the parent model.
+Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). Invalid, unavailable, or unauthenticated child models fall back to the parent model. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation, so parallel mutations can conflict.
 
 ## Web access
 

@@ -29,7 +29,7 @@ function eventBus() {
 
 function activity(
   id: string,
-  kind: "subagents" | "workflows" | "terminals",
+  kind: "subagents" | "terminals",
   active: boolean,
   summary: string,
   tokens = 0,
@@ -54,7 +54,7 @@ test("lists each activity on its own line with aggregate usage", () => {
     () => [
       activity("d1", "subagents", true, "[running] read · model", 1200, 0.1),
       activity("d2", "subagents", false, "[done] read · model", 800, 0.2),
-      activity("w1", "workflows", false, "[done] tasks=2/2"),
+      activity("d3", "subagents", false, "[done] report"),
     ],
     () => ({ tokens: 2000, cost: 0.3 }),
   );
@@ -73,7 +73,7 @@ test("lists each activity on its own line with aggregate usage", () => {
     "2,000 tokens · $0.3000",
     "d1 [running] read · model",
     "d2 [done] read · model",
-    "w1 [done] tasks=2/2",
+    "d3 [done] report",
     "t1 [running] test watcher",
     "t2 [failed] build",
   ]);
@@ -168,9 +168,9 @@ test("keeps active entries when a group reaches its display bound", () => {
   const events = eventBus();
   registerProcessStatusSource({ events }, "history", () => [
     ...Array.from({ length: 64 }, (_, index) =>
-      activity(`old-${index}`, "workflows", false, "[done] old workflow"),
+      activity(`old-${index}`, "subagents", false, "[done] old delegate"),
     ),
-    activity("current", "workflows", true, "[running] current workflow"),
+    activity("current", "subagents", true, "[running] current delegate"),
   ]);
 
   const view = processStatusView({ events });

@@ -18,14 +18,25 @@ const noEvents = {
 
 function registeredTools() {
   const tools: ToolDefinition[] = [];
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
   extension({
     events: noEvents,
-    on() {},
+    on(name: string, handler: (...args: unknown[]) => unknown) {
+      handlers.set(name, handler);
+    },
     registerCommand() {},
     registerTool(tool: ToolDefinition) {
       tools.push(tool);
     },
   } as unknown as ExtensionAPI);
+  handlers.get("session_start")?.(
+    { type: "session_start", reason: "startup" },
+    {
+      cwd: process.cwd(),
+      hasUI: false,
+      isIdle: () => false,
+    } as ExtensionContext,
+  );
   return tools as unknown as Array<{
     execute: (...args: unknown[]) => Promise<unknown>;
   }>;
@@ -55,6 +66,88 @@ test("registers four parallel tools and lifecycle hooks", () => {
       events.has("agent_settled") &&
       events.has("session_shutdown"),
   );
+});
+
+test("child terminals remain parent-visible until the parent session closes", async () => {
+  const parentTools: ToolDefinition[] = [];
+  const childTools: ToolDefinition[] = [];
+  const parentHandlers = new Map<string, (...args: unknown[]) => unknown>();
+  const childHandlers = new Map<string, (...args: unknown[]) => unknown>();
+  const api = (
+    tools: ToolDefinition[],
+    handlers: Map<string, (...args: unknown[]) => unknown>,
+  ) =>
+    ({
+      events: noEvents,
+      on(name: string, handler: (...args: unknown[]) => unknown) {
+        handlers.set(name, handler);
+      },
+      registerCommand() {},
+      registerTool(tool: ToolDefinition) {
+        tools.push(tool);
+      },
+      sendMessage() {},
+    }) as unknown as ExtensionAPI;
+  extension(api(parentTools, parentHandlers));
+  extension(api(childTools, childHandlers));
+  const parentContext = {
+    cwd: process.cwd(),
+    hasUI: true,
+    isIdle: () => false,
+    ui: { setStatus() {} },
+  } as unknown as ExtensionContext;
+  const childContext = {
+    cwd: process.cwd(),
+    hasUI: false,
+    isIdle: () => false,
+  } as ExtensionContext;
+  await parentHandlers.get("session_start")?.(
+    { type: "session_start", reason: "startup" },
+    parentContext,
+  );
+  await childHandlers.get("session_start")?.(
+    { type: "session_start", reason: "startup" },
+    childContext,
+  );
+  const start = childTools[0] as unknown as {
+    execute: (...args: unknown[]) => Promise<{
+      details: { id: string; pid: number };
+    }>;
+  };
+  const list = parentTools[2] as unknown as {
+    execute: (...args: unknown[]) => Promise<{
+      details: { terminals: Array<{ id: string; state: string }> };
+    }>;
+  };
+  const started = await start.execute(
+    "1",
+    { command: "sleep 30", title: "child server" },
+    undefined,
+    undefined,
+    childContext,
+  );
+  try {
+    await childHandlers.get("agent_end")?.(
+      { type: "agent_end", messages: [] },
+      childContext,
+    );
+    await childHandlers.get("session_shutdown")?.(
+      { type: "session_shutdown", reason: "quit" },
+      childContext,
+    );
+    assert.equal(processIsGone(started.details.pid), false);
+    const listed = await list.execute("2", {});
+    assert.deepEqual(
+      listed.details.terminals.map(({ id, state }) => ({ id, state })),
+      [{ id: started.details.id, state: "running" }],
+    );
+  } finally {
+    await parentHandlers.get("session_shutdown")?.(
+      { type: "session_shutdown", reason: "quit" },
+      parentContext,
+    );
+  }
+  assert.ok(processIsGone(started.details.pid));
 });
 
 test("no-UI runs stop terminals before release and can start another run", async () => {

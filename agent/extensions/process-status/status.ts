@@ -3,12 +3,12 @@ import { truncateUtf8Window } from "../../lib/text.ts";
 
 const COLLECT_CHANNEL = "process-status:collect";
 const MAX_SOURCES = 16;
-const MAX_ACTIVITIES_PER_SOURCE = 192;
+export const MAX_ACTIVITIES_PER_SOURCE = 192;
 const MAX_ACTIVITIES_PER_KIND = 64;
 const MAX_SUMMARY_CHARACTERS = 240;
 const MAX_DETAIL_BYTES = 64 * 1024;
 
-export type ProcessStatusKind = "subagents" | "workflows" | "terminals";
+export type ProcessStatusKind = "subagents" | "terminals";
 
 export interface ProcessStatusUsage {
   tokens: number;
@@ -95,12 +95,10 @@ export function registerProcessStatusSource(
 function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
   const groups: Record<ProcessStatusKind, ProcessStatusActivity[]> = {
     subagents: [],
-    workflows: [],
     terminals: [],
   };
   const omitted: Record<ProcessStatusKind, number> = {
     subagents: 0,
-    workflows: 0,
     terminals: 0,
   };
   const usage: ProcessStatusUsage = { tokens: 0, cost: 0 };

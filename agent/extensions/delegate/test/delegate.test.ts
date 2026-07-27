@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { Type } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
   DEFAULT_MAX_LINES,
@@ -14,7 +15,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { processStatusView } from "../../process-status/status.ts";
-import { processIsGone } from "../../test/process.ts";
 import type { DelegateSnapshot } from "../contract.ts";
 import delegateExtension, {
   BackgroundDelivery,
@@ -26,7 +26,14 @@ import delegateExtension, {
   selectChildToolNames,
   thinkingForEffort,
 } from "../index.ts";
-import { createChild, shutdownChild } from "../runtime.ts";
+import {
+  CHILD_TOOL_CALL_TIMEOUT_MS,
+  createChild,
+  createToolCallTimeoutGuard,
+  runWithToolCallTimeout,
+  shutdownChild,
+  ToolCallTimeoutError,
+} from "../runtime.ts";
 import { eventually } from "./eventually.ts";
 
 type ResolveContext = Parameters<typeof resolveDelegateModel>[0];
@@ -87,7 +94,6 @@ function delegateSnapshot(
   return {
     id: "delegate-1",
     status: "done",
-    workspace: "read",
     output: "background result",
     success: true,
     assignedTask: "fixture",
@@ -207,7 +213,7 @@ test("defaults to the parent model without a configured delegate model", () => {
   );
 });
 
-test("registers run, session, and workflow tools", () => {
+test("registers run and session tools", () => {
   const tools: Array<{
     name: string;
     executionMode?: "sequential" | "parallel";
@@ -225,7 +231,7 @@ test("registers run, session, and workflow tools", () => {
 
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ["delegate_run", "delegate_session", "delegate_workflow"],
+    ["delegate_run", "delegate_session"],
   );
   assert.ok(tools.every((tool) => tool.executionMode === "parallel"));
   assert.equal(typeof tools[0].execute, "function");
@@ -241,8 +247,7 @@ test("registers run, session, and workflow tools", () => {
     "task",
     "background",
     "effort",
-    "workspace",
-    "schema",
+    "output_format",
   ]);
   assert.deepEqual(Object.keys(sessionProperties), [
     "action",
@@ -257,6 +262,10 @@ test("registers run, session, and workflow tools", () => {
       }
     ).action.enum,
     ["list", "status", "wait", "send", "cancel"],
+  );
+  assert.equal(
+    (sessionProperties as { ids: { maxItems?: number } }).ids.maxItems,
+    undefined,
   );
 });
 
@@ -294,6 +303,15 @@ test("background run returns immediately and list recovers a bounded task previe
     assert.match(processStatus, /delegate-1 \[running\]/);
     assert.doesNotMatch(processStatus, /inspect first line|x{10}/);
     assert.equal(processStatus.split("\n").length, 2);
+    const detail = processStatusView({ events }, "delegate-1").expanded;
+    assert.match(
+      detail,
+      /delegate-1 \[running\][\s\S]*Task\ninspect first line[\s\S]*Conversation\n\nNo conversation messages/,
+    );
+    assert.doesNotMatch(
+      detail,
+      /model:|workspace:|tool-calls:|tool-errors:|activity:/,
+    );
     const listed = await session.execute(
       "list-1",
       { action: "list" },
@@ -310,54 +328,6 @@ test("background run returns immediately and list recovers a bounded task previe
   } finally {
     await shutdown?.();
   }
-});
-
-test("retains at most 64 settled workflows for process status", async () => {
-  const events = eventBus();
-  const tools: ToolDefinition[] = [];
-  delegateExtension({
-    events,
-    on() {},
-    registerTool(tool: ToolDefinition) {
-      tools.push(tool);
-    },
-  } as unknown as ExtensionAPI);
-  const workflow = tools.find((tool) => tool.name === "delegate_workflow");
-  assert.ok(workflow);
-  const params = {
-    stages: [
-      {
-        tasks: [
-          {
-            id: "blocked",
-            task: "never starts",
-            inputs: ["missing"],
-          },
-          { id: "also-blocked", task: "also never starts" },
-        ],
-      },
-    ],
-  };
-  for (let index = 0; index < 65; index++) {
-    await assert.rejects(
-      workflow.execute(
-        `workflow-${index}`,
-        params,
-        undefined,
-        undefined,
-        fakeContext() as ExtensionContext,
-      ),
-      /must reference an earlier-stage task/,
-    );
-  }
-
-  const list = processStatusView({ events }).expanded;
-  assert.equal(list.match(/workflow-\d+ /g)?.length, 64);
-  assert.doesNotMatch(list, /workflow-1 /);
-  assert.match(list, /workflow-65 \[error\]/);
-  const status = processStatusView({ events }, "workflow-65").expanded;
-  assert.match(status, /workflow-65 \[error\]/);
-  assert.match(status, /must reference an earlier-stage task/);
 });
 
 test("background delivery retries once and delivers at most once", async (t) => {
@@ -411,7 +381,13 @@ test("background delivery batches distinct completed children", async () => {
   const firstReservation = delivery.reserve();
   const secondReservation = delivery.reserve();
   delivery.attach(firstReservation, base);
-  const second = { ...base, id: "delegate-2", output: "second child" };
+  const second = {
+    ...base,
+    id: "delegate-2",
+    output: "second child",
+    outputTruncated: true,
+    fullOutputFile: "/tmp/complete-second-child.txt",
+  };
   delivery.attach(secondReservation, second);
   delivery.enqueue(base);
   delivery.enqueue(second);
@@ -420,6 +396,10 @@ test("background delivery batches distinct completed children", async () => {
   const content = (messages[0] as { content: string }).content;
   assert.match(content, /first child/);
   assert.match(content, /second child/);
+  assert.match(
+    content,
+    /Full output \(until parent session ends\): \/tmp\/complete-second-child\.txt/,
+  );
   await delivery.flush();
   assert.equal(messages.length, 1);
   assert.doesNotThrow(() => {
@@ -632,14 +612,98 @@ test("background delivery clear cancels a scheduled retry", async (t) => {
   assert.equal(attempts, 1);
 });
 
-test("background delivery reservations are bounded and released", () => {
+test("background delivery reservations have no aggregate cap", () => {
   const delivery = new BackgroundDelivery({
     sendMessage() {},
   } as unknown as ExtensionAPI);
-  const reservations = Array.from({ length: 64 }, () => delivery.reserve());
-  assert.throws(() => delivery.reserve(), /64 tracked children/);
-  delivery.release(reservations[0]);
-  assert.doesNotThrow(() => delivery.reserve());
+  const reservations = Array.from({ length: 100 }, () => delivery.reserve());
+  assert.equal(new Set(reservations).size, 100);
+  for (const reservation of reservations) delivery.release(reservation);
+});
+
+test("a hung child tool fails at the per-call deadline and receives its abort", async () => {
+  let executionSignal: AbortSignal | undefined;
+  await assert.rejects(
+    runWithToolCallTimeout("fixture", 10, undefined, (signal) => {
+      executionSignal = signal;
+      return new Promise(() => {});
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ToolCallTimeoutError);
+      assert.equal(error.message, 'Tool call "fixture" timed out after 10 ms.');
+      return true;
+    },
+  );
+  assert.equal(executionSignal?.aborted, true);
+  assert.ok(executionSignal?.reason instanceof ToolCallTimeoutError);
+  assert.equal(
+    new ToolCallTimeoutError("fixture", CHILD_TOOL_CALL_TIMEOUT_MS).message,
+    'Tool call "fixture" timed out after 3 minutes.',
+  );
+});
+
+test("child tool timeout preserves caller cancellation and successful results", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancelled fixture");
+  const pending = runWithToolCallTimeout(
+    "fixture",
+    60_000,
+    controller.signal,
+    () => new Promise(() => {}),
+  );
+  controller.abort(reason);
+  await assert.rejects(pending, (error: unknown) => error === reason);
+
+  const result = {
+    content: [{ type: "text" as const, text: "recorded" }],
+    details: { value: 1 },
+    terminate: true,
+  };
+  assert.equal(
+    await runWithToolCallTimeout(
+      "fixture_output",
+      10,
+      undefined,
+      async () => result,
+    ),
+    result,
+  );
+});
+
+test("child tool timeout guard wraps each definition once and discovers new tools", async () => {
+  const definitions = new Map<string, ToolDefinition>();
+  const definition = (name: string): ToolDefinition => ({
+    name,
+    label: name,
+    description: name,
+    parameters: Type.Object({}),
+    async execute() {
+      return { content: [{ type: "text", text: "done" }], details: {} };
+    },
+  });
+  const first = definition("first");
+  definitions.set(first.name, first);
+  const registry = {
+    getAllTools: () => [...definitions.keys()].map((name) => ({ name })),
+    getToolDefinition: (name: string) => definitions.get(name),
+  };
+  const guard = createToolCallTimeoutGuard(10);
+  const originalFirst = first.execute;
+  guard.apply(registry);
+  const wrappedFirst = first.execute;
+  assert.notEqual(wrappedFirst, originalFirst);
+
+  const second = definition("second");
+  second.execute = async () => new Promise(() => {});
+  const originalSecond = second.execute;
+  definitions.set(second.name, second);
+  guard.apply(registry);
+  assert.equal(first.execute, wrappedFirst);
+  assert.notEqual(second.execute, originalSecond);
+  await assert.rejects(
+    second.execute("call-1", {}, undefined, undefined, {} as ExtensionContext),
+    ToolCallTimeoutError,
+  );
 });
 
 test("maps effort to the child thinking level", () => {
@@ -686,7 +750,7 @@ test("uses the standalone delegated system prompt", async () => {
     assert.match(child.systemPrompt, /The assignment is your briefing packet/);
     assert.match(
       child.systemPrompt,
-      /The assignment determines whether commits, destructive operations/,
+      /The assignment determines whether ordinary edits, commits, destructive operations/,
     );
     assert.match(child.systemPrompt, /# Engineering standard/);
     assert.match(child.systemPrompt, /# Execution budget/);
@@ -709,39 +773,18 @@ test("uses the standalone delegated system prompt", async () => {
   }
 });
 
-test("child runs release owned background terminals before returning", async () => {
+test("child sessions expose all parent-owned background terminal tools", async () => {
   const child = await Effect.runPromise(
     createChild({ cwd: settingsDir } as ExtensionContext, undefined, "low"),
   );
   try {
-    assert.ok(child.getActiveToolNames().includes("bg_start"));
-    const start = child.getToolDefinition("bg_start");
-    assert.ok(start);
-    const first = await start.execute(
-      "call-1",
-      { command: "sleep 30", title: "child terminal" },
-      undefined,
-      undefined,
-      { cwd: settingsDir } as ExtensionContext,
+    assert.deepEqual(
+      child
+        .getActiveToolNames()
+        .filter((name) => name.startsWith("bg_"))
+        .sort(),
+      ["bg_kill", "bg_list", "bg_start", "bg_status"],
     );
-    const pid = (first.details as { pid: number }).pid;
-    assert.ok(pid);
-    const originalError = console.error;
-    console.error = () => {};
-    try {
-      await child.extensionRunner.emit({ type: "agent_end", messages: [] });
-    } finally {
-      console.error = originalError;
-    }
-    assert.ok(processIsGone(pid));
-    const second = await start.execute(
-      "call-2",
-      { command: "true", title: "next run" },
-      undefined,
-      undefined,
-      { cwd: settingsDir } as ExtensionContext,
-    );
-    assert.ok((second.details as { pid?: number }).pid);
   } finally {
     await shutdownChild(child);
   }
@@ -839,5 +882,32 @@ test("saves the complete report when output is truncated", async () => {
     assert.equal(await readFile(output.fullOutputFile, "utf8"), report);
   } finally {
     await unlink(output.fullOutputFile);
+  }
+});
+
+test("uses an existing complete output archive for a bounded result", async () => {
+  const fullOutputFile = join(settingsDir, "complete-child-output.txt");
+  writeFileSync(fullOutputFile, "complete report", "utf8");
+  const preview = "x".repeat(60_000);
+  const output = await formatDelegateOutput(preview, fullOutputFile);
+
+  assert.equal(output.fullOutputFile, fullOutputFile);
+  assert.match(output.text, /available until the parent session ends/);
+  assert.equal(await readFile(fullOutputFile, "utf8"), "complete report");
+});
+
+test("preserves complete output when archival fails", async () => {
+  const originalTmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = join(settingsDir, "missing-output-directory");
+  const report = `start\n${"x".repeat(60_000)}\nend`;
+  try {
+    const output = await formatDelegateOutput(report);
+    assert.equal(output.fullOutputFile, undefined);
+    assert.equal(output.truncation, undefined);
+    assert.ok(output.text.startsWith(report));
+    assert.match(output.text, /complete output is shown here/);
+  } finally {
+    if (originalTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = originalTmpdir;
   }
 });

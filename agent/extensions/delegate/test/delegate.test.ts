@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { Type } from "@earendil-works/pi-ai";
 import {
   type AgentSession,
   DEFAULT_MAX_LINES,
@@ -26,14 +25,7 @@ import delegateExtension, {
   selectChildToolNames,
   thinkingForEffort,
 } from "../index.ts";
-import {
-  CHILD_TOOL_CALL_TIMEOUT_MS,
-  createChild,
-  createToolCallTimeoutGuard,
-  runWithToolCallTimeout,
-  shutdownChild,
-  ToolCallTimeoutError,
-} from "../runtime.ts";
+import { createChild, shutdownChild } from "../runtime.ts";
 import { eventually } from "./eventually.ts";
 
 type ResolveContext = Parameters<typeof resolveDelegateModel>[0];
@@ -621,91 +613,6 @@ test("background delivery reservations have no aggregate cap", () => {
   for (const reservation of reservations) delivery.release(reservation);
 });
 
-test("a hung child tool fails at the per-call deadline and receives its abort", async () => {
-  let executionSignal: AbortSignal | undefined;
-  await assert.rejects(
-    runWithToolCallTimeout("fixture", 10, undefined, (signal) => {
-      executionSignal = signal;
-      return new Promise(() => {});
-    }),
-    (error: unknown) => {
-      assert.ok(error instanceof ToolCallTimeoutError);
-      assert.equal(error.message, 'Tool call "fixture" timed out after 10 ms.');
-      return true;
-    },
-  );
-  assert.equal(executionSignal?.aborted, true);
-  assert.ok(executionSignal?.reason instanceof ToolCallTimeoutError);
-  assert.equal(
-    new ToolCallTimeoutError("fixture", CHILD_TOOL_CALL_TIMEOUT_MS).message,
-    'Tool call "fixture" timed out after 3 minutes.',
-  );
-});
-
-test("child tool timeout preserves caller cancellation and successful results", async () => {
-  const controller = new AbortController();
-  const reason = new Error("cancelled fixture");
-  const pending = runWithToolCallTimeout(
-    "fixture",
-    60_000,
-    controller.signal,
-    () => new Promise(() => {}),
-  );
-  controller.abort(reason);
-  await assert.rejects(pending, (error: unknown) => error === reason);
-
-  const result = {
-    content: [{ type: "text" as const, text: "recorded" }],
-    details: { value: 1 },
-    terminate: true,
-  };
-  assert.equal(
-    await runWithToolCallTimeout(
-      "fixture_output",
-      10,
-      undefined,
-      async () => result,
-    ),
-    result,
-  );
-});
-
-test("child tool timeout guard wraps each definition once and discovers new tools", async () => {
-  const definitions = new Map<string, ToolDefinition>();
-  const definition = (name: string): ToolDefinition => ({
-    name,
-    label: name,
-    description: name,
-    parameters: Type.Object({}),
-    async execute() {
-      return { content: [{ type: "text", text: "done" }], details: {} };
-    },
-  });
-  const first = definition("first");
-  definitions.set(first.name, first);
-  const registry = {
-    getAllTools: () => [...definitions.keys()].map((name) => ({ name })),
-    getToolDefinition: (name: string) => definitions.get(name),
-  };
-  const guard = createToolCallTimeoutGuard(10);
-  const originalFirst = first.execute;
-  guard.apply(registry);
-  const wrappedFirst = first.execute;
-  assert.notEqual(wrappedFirst, originalFirst);
-
-  const second = definition("second");
-  second.execute = async () => new Promise(() => {});
-  const originalSecond = second.execute;
-  definitions.set(second.name, second);
-  guard.apply(registry);
-  assert.equal(first.execute, wrappedFirst);
-  assert.notEqual(second.execute, originalSecond);
-  await assert.rejects(
-    second.execute("call-1", {}, undefined, undefined, {} as ExtensionContext),
-    ToolCallTimeoutError,
-  );
-});
-
 test("maps effort to the child thinking level", () => {
   assert.equal(thinkingForEffort("fast"), "low");
   assert.equal(thinkingForEffort("thorough"), "high");
@@ -745,15 +652,18 @@ test("uses the standalone delegated system prompt", async () => {
   try {
     assert.match(
       child.systemPrompt,
-      /^You are Pi running as a delegated child agent in a fresh context\./,
+      /^You are Pi, running as a delegated child in a fresh context\./,
     );
     assert.match(child.systemPrompt, /The assignment is your briefing packet/);
     assert.match(
       child.systemPrompt,
-      /The assignment determines whether ordinary edits, commits, destructive operations/,
+      /Honor the mutation authority the assignment states/,
     );
-    assert.match(child.systemPrompt, /# Engineering standard/);
-    assert.match(child.systemPrompt, /# Execution budget/);
+    assert.match(child.systemPrompt, /# Code economy/);
+    assert.match(
+      child.systemPrompt,
+      /one hard execution ceiling: 60 minutes of wall time or 60,000,000 reported tokens/,
+    );
     assert.doesNotMatch(
       child.systemPrompt,
       /exhaust safe in-scope alternatives/,

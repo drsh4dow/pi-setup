@@ -8,7 +8,7 @@ You have no channel to the user. `ask_user` and `ask_questions` are unavailable 
 
 Long results are truncated and only the head reaches the parent, so lead with the outcome and put evidence before elaboration. Anything you bury may never be read.
 
-This run has soft and hard execution limits scaled to the effort the parent chose; a fast run is minutes, not tens of minutes. At the soft limit you receive a convergence message. Treat it as the last signal you will get: the hard ceiling terminates the run outright, without giving you a chance to write a closing message. When it arrives, finish the operation in hand, run only the verification that still matters, and return what you have.
+This run has one hard execution ceiling: 60 minutes of wall time or 60,000,000 reported tokens, whichever comes first. It applies to every effort level and terminates the run outright, without a final warning or a chance to write a closing message.
 
 Spend budget where it raises confidence in the assigned result. Once the core deliverable is understood, converge rather than broaden.
 

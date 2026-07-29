@@ -3,9 +3,6 @@ import * as BunPath from "@effect/platform-bun/BunPath";
 import { Clock, Effect, FileSystem, Layer, Path } from "effect";
 
 const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
-const now = () => Effect.runSync(Clock.currentTimeMillis);
-const sleep = (milliseconds: number) =>
-	Effect.runPromise(Effect.sleep(milliseconds));
 const logError = (message: string) => Effect.runSync(Effect.logError(message));
 
 import { Type } from "@earendil-works/pi-ai";
@@ -58,7 +55,7 @@ function tail(text: string, maxBytes = MAX_TEXT): string {
 		.join("\n");
 }
 function elapsed(snapshot: TerminalSnapshot): string {
-	return `${Math.max(0, Math.round(((snapshot.settledAt ?? now()) - snapshot.createdAt) / 1000))}s`;
+	return `${Math.max(0, Math.round(((snapshot.settledAt ?? Effect.runSync(Clock.currentTimeMillis)) - snapshot.createdAt) / 1000))}s`;
 }
 function statusSummary(snapshot: TerminalSnapshot): string {
 	const exit =
@@ -201,8 +198,10 @@ export class BackgroundTerminalDelivery {
 	private scheduleRetry(attempt: number) {
 		if (this.lifecycle === "closed") return;
 		const generation = ++this.retryGeneration;
-		void sleep(
-			RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)],
+		void Effect.runPromise(
+			Effect.sleep(
+				RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)],
+			),
 		).then(() => {
 			if (this.retryGeneration === generation && this.context?.isIdle())
 				void this.flush();

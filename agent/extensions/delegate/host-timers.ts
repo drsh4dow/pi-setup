@@ -1,3 +1,4 @@
+// Delegate callbacks store timer handles for synchronous cancellation; Effect.sleep exposes no equivalent host handle.
 export const scheduleTimer = (
 	callback: () => void,
 	delay: number,

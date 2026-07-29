@@ -2,9 +2,6 @@ import { Clock, Effect } from "effect";
 
 const { spawn } = process.getBuiltinModule("node:child_process");
 type ChildProcess = ReturnType<typeof spawn>;
-const now = () => Effect.runSync(Clock.currentTimeMillis);
-const sleep = (milliseconds: number) =>
-	Effect.runPromise(Effect.sleep(milliseconds));
 
 // Capacity is per owner, not shared: a session's terminals are its own, so no wave of
 // delegated children can exhaust the parent's slots. earlyoom bounds the machine.
@@ -206,7 +203,7 @@ export class BackgroundTerminalManager {
 				cwd: options.cwd,
 				pid: child.pid,
 				state: "running",
-				createdAt: now(),
+				createdAt: Effect.runSync(Clock.currentTimeMillis),
 			},
 			child,
 			stdout: new Tail(),
@@ -230,7 +227,7 @@ export class BackgroundTerminalManager {
 			entry.snapshot.exitCode = code ?? undefined;
 			entry.snapshot.signal = signal ?? undefined;
 			const generation = ++entry.pipeGeneration;
-			void sleep(PIPE_GRACE_MS).then(() => {
+			void Effect.runPromise(Effect.sleep(PIPE_GRACE_MS)).then(() => {
 				if (
 					entry.pipeGeneration === generation &&
 					!entry.closed &&
@@ -266,7 +263,7 @@ export class BackgroundTerminalManager {
 			return;
 		}
 		const generation = ++entry.groupGeneration;
-		void sleep(GROUP_CHECK_MS).then(() => {
+		void Effect.runPromise(Effect.sleep(GROUP_CHECK_MS)).then(() => {
 			if (entry.groupGeneration === generation)
 				this.settleWhenProcessGroupExits(entry);
 		});
@@ -281,7 +278,7 @@ export class BackgroundTerminalManager {
 			: entry.snapshot.error || entry.snapshot.exitCode !== 0
 				? "failed"
 				: "done";
-		entry.snapshot.settledAt = now();
+		entry.snapshot.settledAt = Effect.runSync(Clock.currentTimeMillis);
 		entry.resolveSettled();
 		const snapshot = this.snapshot(entry);
 		try {
@@ -310,7 +307,9 @@ export class BackgroundTerminalManager {
 				}),
 				new Promise<undefined>(
 					(resolve) =>
-						void sleep(TASKKILL_GRACE_MS).then(() => resolve(undefined)),
+						void Effect.runPromise(Effect.sleep(TASKKILL_GRACE_MS)).then(() =>
+							resolve(undefined),
+						),
 				),
 			]);
 			if (result === 0) return;
@@ -335,7 +334,10 @@ export class BackgroundTerminalManager {
 	}
 
 	private async waitForSettlement(entry: Entry, timeoutMs: number) {
-		await Promise.race([entry.settled, sleep(timeoutMs)]);
+		await Promise.race([
+			entry.settled,
+			Effect.runPromise(Effect.sleep(timeoutMs)),
+		]);
 	}
 
 	private terminate(entry: Entry, owned: boolean): Promise<void> {

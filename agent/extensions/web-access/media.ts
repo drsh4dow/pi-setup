@@ -104,20 +104,22 @@ function localVideoPath(
 	return mimeType ? { filePath, mimeType } : null;
 }
 
-const target = Effect.fn("target")(function* (input: string) {
+const resolveMediaTarget = Effect.fn("resolveMediaTarget")(function* (
+	input: string,
+) {
 	const videoId = youtubeVideoId(input);
 	if (videoId) return { kind: "youtube", input, videoId } satisfies MediaTarget;
-	const local = localVideoPath(input);
-	if (!local || "error" in local) return local;
+	const localVideo = localVideoPath(input);
+	if (!localVideo || "error" in localVideo) return localVideo;
 
 	const fs = yield* FileSystem.FileSystem;
-	const absolutePath = path.resolve(local.filePath);
+	const absolutePath = path.resolve(localVideo.filePath);
 	const exists = yield* fs.exists(absolutePath);
 	let resolvedPath = absolutePath;
 	if (!exists) {
 		const parent = path.dirname(absolutePath);
 		if (!(yield* fs.exists(parent))) {
-			return { error: `Video file not found: ${local.filePath}` };
+			return { error: `Video file not found: ${localVideo.filePath}` };
 		}
 		const normalized = normalizeSpaces(path.basename(absolutePath));
 		const entries = yield* fs
@@ -126,7 +128,8 @@ const target = Effect.fn("target")(function* (input: string) {
 		const match = entries.find(
 			(entry) => normalizeSpaces(entry) === normalized,
 		);
-		if (!match) return { error: `Video file not found: ${local.filePath}` };
+		if (!match)
+			return { error: `Video file not found: ${localVideo.filePath}` };
 		resolvedPath = path.join(parent, match);
 	}
 
@@ -140,7 +143,8 @@ const target = Effect.fn("target")(function* (input: string) {
 				),
 			),
 		);
-	if (stats.type !== "File") return { error: `Not a file: ${local.filePath}` };
+	if (stats.type !== "File")
+		return { error: `Not a file: ${localVideo.filePath}` };
 	if (stats.size > BigInt(MAX_VIDEO_BYTES)) {
 		return { error: "Local video exceeds the 50 MB limit" };
 	}
@@ -149,7 +153,7 @@ const target = Effect.fn("target")(function* (input: string) {
 		input,
 		local: {
 			absolutePath: resolvedPath,
-			mimeType: local.mimeType,
+			mimeType: localVideo.mimeType,
 			sizeBytes: Number(stats.size),
 		},
 	} satisfies MediaTarget;
@@ -433,7 +437,7 @@ export const extractMedia = Effect.fn("extractMedia")(function* (
 	input: string,
 	options: FetchOptions,
 ) {
-	const media = yield* target(input).pipe(
+	const media = yield* resolveMediaTarget(input).pipe(
 		Effect.catch((error) => Effect.succeed({ error: errorMessage(error) })),
 	);
 	if (!media) return null;

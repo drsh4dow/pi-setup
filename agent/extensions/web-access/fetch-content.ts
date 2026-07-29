@@ -131,79 +131,71 @@ function specializedContent(
 	);
 }
 
-export function fetchContent(
+export const fetchContent = Effect.fn("fetchContent")(function* (
 	urls: string[],
 	options: FetchOptions,
-): Effect.Effect<ExtractedContent[]> {
-	return Effect.gen(function* () {
-		const results = Array<ExtractedContent>(urls.length);
-		const ordinary: Array<{ url: string; index: number }> = [];
-		const specialized: Array<{ url: string; index: number }> = [];
+) {
+	const results = Array<ExtractedContent>(urls.length);
+	const ordinary: Array<{ url: string; index: number }> = [];
+	const specialized: Array<{ url: string; index: number }> = [];
 
-		for (const [index, url] of urls.entries()) {
-			if (parseGitHubUrl(url) || isMediaInput(url)) {
-				specialized.push({ url, index });
-				continue;
-			}
-			if (options.timestamp || options.frames) {
-				results[index] = itemError(
-					url,
-					"Frame extraction only supports YouTube URLs and local video files",
-				);
-				continue;
-			}
-			const parsed = yield* Effect.try({
-				try: () => new URL(url),
-				catch: asError,
-			}).pipe(Effect.orElseSucceed(() => null));
-			if (!parsed) {
-				results[index] = itemError(
-					url,
-					"Invalid URL or unsupported local file",
-				);
-			} else if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-				results[index] = itemError(
-					url,
-					"Only HTTP and HTTPS URLs are supported",
-				);
-			} else {
-				ordinary.push({ url, index });
-			}
+	for (const [index, url] of urls.entries()) {
+		if (parseGitHubUrl(url) || isMediaInput(url)) {
+			specialized.push({ url, index });
+			continue;
 		}
+		if (options.timestamp || options.frames) {
+			results[index] = itemError(
+				url,
+				"Frame extraction only supports YouTube URLs and local video files",
+			);
+			continue;
+		}
+		const parsed = yield* Effect.try({
+			try: () => new URL(url),
+			catch: asError,
+		}).pipe(Effect.orElseSucceed(() => null));
+		if (!parsed) {
+			results[index] = itemError(url, "Invalid URL or unsupported local file");
+		} else if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+			results[index] = itemError(url, "Only HTTP and HTTPS URLs are supported");
+		} else {
+			ordinary.push({ url, index });
+		}
+	}
 
-		const ordinaryEffect = ordinary.length
-			? fetchExaContents(ordinary.map((item) => item.url)).pipe(
-					Effect.map((items) =>
-						items.map((content, position) => ({
-							index: ordinary[position].index,
-							content,
+	const ordinaryEffect = ordinary.length
+		? fetchExaContents(ordinary.map((item) => item.url)).pipe(
+				Effect.map((items) =>
+					items.map((content, position) => ({
+						index: ordinary[position].index,
+						content,
+					})),
+				),
+				Effect.catch((error) =>
+					Effect.succeed(
+						ordinary.map((item) => ({
+							index: item.index,
+							content: itemError(item.url, errorMessage(error)),
 						})),
 					),
-					Effect.catch((error) =>
-						Effect.succeed(
-							ordinary.map((item) => ({
-								index: item.index,
-								content: itemError(item.url, errorMessage(error)),
-							})),
-						),
-					),
-				)
-			: Effect.succeed([]);
-		const specializedEffect = Effect.forEach(
-			specialized,
-			(item) =>
-				specializedContent(item.url, options).pipe(
-					Effect.map((content) => ({ index: item.index, content })),
 				),
-			{ concurrency: 2 },
-		);
+			)
+		: Effect.succeed([]);
+	const specializedEffect = Effect.forEach(
+		specialized,
+		(item) =>
+			specializedContent(item.url, options).pipe(
+				Effect.map((content) => ({ index: item.index, content })),
+			),
+		{ concurrency: 2 },
+	);
 
-		const groups = yield* Effect.all([ordinaryEffect, specializedEffect], {
-			concurrency: 2,
-		});
-		for (const group of groups) {
-			for (const item of group) results[item.index] = item.content;
-		}
-		return results;
+	const groups = yield* Effect.all([ordinaryEffect, specializedEffect], {
+		concurrency: 2,
 	});
-}
+	for (const group of groups) {
+		for (const item of group) results[item.index] = item.content;
+	}
+	return results;
+});

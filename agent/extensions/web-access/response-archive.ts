@@ -15,6 +15,7 @@ import {
 import { asError, type WebAccessError, webAccessError } from "./errors.ts";
 
 const MAX_ARCHIVED_RESPONSES = 20;
+const MAX_FUTURE_SKEW_MILLIS = 20;
 const MAX_ARCHIVE_DIRECTORY_ENTRIES = MAX_ARCHIVED_RESPONSES * 2;
 const MAX_ARCHIVED_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_ITEMS_PER_RESPONSE = 10;
@@ -137,8 +138,7 @@ const openArchive = Effect.fn("openSessionResponseArchive")(function* (
 			if (
 				response._tag === "Some" &&
 				response.value.id === expectedId &&
-				Number.isFinite(response.value.createdAt) &&
-				response.value.createdAt - now <= MAX_ARCHIVED_RESPONSES &&
+				response.value.createdAt - now <= MAX_FUTURE_SKEW_MILLIS &&
 				now - response.value.createdAt <= ARCHIVE_TTL_MILLIS
 			) {
 				return response.value;

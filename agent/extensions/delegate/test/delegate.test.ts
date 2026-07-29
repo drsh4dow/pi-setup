@@ -430,8 +430,9 @@ test("consuming a failing render prevents stale retries and diagnostics", async 
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const diagnostics: string[] = [];
 	const messages: unknown[] = [];
-	const originalError = console.error;
-	console.error = (message?: unknown) => diagnostics.push(String(message));
+	const originalLog = console.log;
+	console.log = (...values: unknown[]) =>
+		diagnostics.push(values.map(String).join(" "));
 	let rejectThird!: (error: Error) => void;
 	const thirdRender = new Promise<never>((_resolve, reject) => {
 		rejectThird = reject;
@@ -477,15 +478,16 @@ test("consuming a failing render prevents stale retries and diagnostics", async 
 		);
 	} finally {
 		delivery.clear();
-		console.error = originalError;
+		console.log = originalLog;
 	}
 });
 
 test("background delivery retains exhausted failures for explicit recovery", async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const diagnostics: string[] = [];
-	const originalError = console.error;
-	console.error = (message?: unknown) => diagnostics.push(String(message));
+	const originalLog = console.log;
+	console.log = (...values: unknown[]) =>
+		diagnostics.push(values.map(String).join(" "));
 	const delivery = new BackgroundDelivery(
 		{
 			sendMessage() {
@@ -516,7 +518,7 @@ test("background delivery retains exhausted failures for explicit recovery", asy
 		assert.equal(diagnostics.length, 1);
 	} finally {
 		delivery.clear();
-		console.error = originalError;
+		console.log = originalLog;
 	}
 });
 

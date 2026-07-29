@@ -5,6 +5,7 @@ import type {
 	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { Effect } from "effect";
 import { processIsGone } from "../../test/process.ts";
 import extension, { BackgroundTerminalDelivery } from "../index.ts";
 import {
@@ -407,7 +408,7 @@ test("successful completions are passive while failures trigger a turn", async (
 			undefined,
 			context,
 		);
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await Effect.runPromise(Effect.sleep(50));
 		assert.equal(deliveries.length, 0);
 		await start.execute(
 			"2",
@@ -416,7 +417,7 @@ test("successful completions are passive while failures trigger a turn", async (
 			undefined,
 			context,
 		);
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await Effect.runPromise(Effect.sleep(50));
 		assert.equal(deliveries.at(-1)?.options.triggerTurn, false);
 		await start.execute(
 			"3",
@@ -425,7 +426,7 @@ test("successful completions are passive while failures trigger a turn", async (
 			undefined,
 			context,
 		);
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		await Effect.runPromise(Effect.sleep(50));
 		assert.equal(deliveries.at(-1)?.options.triggerTurn, true);
 	} finally {
 		await handlers.get("session_shutdown")?.(
@@ -514,14 +515,15 @@ test("retries completion delivery three times and exposes final failure", async 
 	let attempts = 0;
 	let idle = false;
 	const diagnostics: string[] = [];
-	const originalError = console.error;
-	console.error = (message?: unknown) => diagnostics.push(String(message));
-	const delivery = new BackgroundTerminalDelivery({
-		sendMessage() {
-			attempts++;
-			throw new Error("\u001b[31m\nunavailable\u202e");
-		},
-	} as unknown as ExtensionAPI);
+	const delivery = new BackgroundTerminalDelivery(
+		{
+			sendMessage() {
+				attempts++;
+				throw new Error("\u001b[31m\nunavailable\u202e");
+			},
+		} as unknown as ExtensionAPI,
+		(message) => diagnostics.push(message),
+	);
 	try {
 		delivery.setContext({ isIdle: () => idle } as ExtensionContext);
 		delivery.enqueue({
@@ -537,7 +539,7 @@ test("retries completion delivery three times and exposes final failure", async 
 		});
 		idle = true;
 		await delivery.flush();
-		await new Promise((resolve) => setTimeout(resolve, 700));
+		await Effect.runPromise(Effect.sleep(700));
 		assert.equal(attempts, 3);
 		assert.match(delivery.problem ?? "", /bt-retry/);
 		assert.equal(diagnostics.length, 1);
@@ -546,7 +548,6 @@ test("retries completion delivery three times and exposes final failure", async 
 		assert.ok(!diagnostics[0].includes("\n"));
 	} finally {
 		delivery.clear();
-		console.error = originalError;
 	}
 });
 
@@ -577,7 +578,7 @@ test("sanitizes displayed data and list details omit process output", async () =
 			id: started.details.id,
 		})) as typeof result;
 		if (/\[done\]/.test(result.content[0].text)) break;
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		await Effect.runPromise(Effect.sleep(25));
 	}
 	assert.doesNotMatch(result.content[0].text, /[\u0080-\u009f]/u);
 	assert.match(
@@ -657,7 +658,7 @@ test("aborted bg_kill wait does not cancel termination", async () => {
 	const waiting = kill.execute("2", { ids: [id] }, controller.signal);
 	controller.abort();
 	await assert.rejects(waiting, /termination continues/);
-	await new Promise((resolve) => setTimeout(resolve, 300));
+	await Effect.runPromise(Effect.sleep(300));
 	const result = (await status.execute("3", { id })) as {
 		content: [{ text: string }];
 	};

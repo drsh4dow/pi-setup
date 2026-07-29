@@ -1,8 +1,9 @@
-import path from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Effect, Path } from "effect";
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
@@ -50,14 +51,17 @@ function gradient(text: string, phase: number): string {
 		.join("");
 }
 
-function projectName(): string {
-	return path.basename(process.cwd()) || "session";
-}
+const projectName = Effect.runSync(
+	Path.Path.pipe(
+		Effect.map((path) => path.basename(process.cwd()) || "session"),
+		Effect.provide(BunPath.layer),
+	),
+);
 
 function headerLine(width: number, modelId: string): string {
 	if (width <= 0) return "";
 
-	const label = ` PI / ${modelId} / ${projectName()} `;
+	const label = ` PI / ${modelId} / ${projectName} `;
 	const labelChars = [...label];
 	if (labelChars.length >= width) return labelChars.slice(0, width).join("");
 

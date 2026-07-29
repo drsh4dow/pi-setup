@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { Effect } from "effect";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import { queryGeminiVideo } from "../gemini-video.ts";
 import { extractMedia, parseTimestamp } from "../media.ts";
+import { runCommand } from "../subprocess.ts";
 
+const fs = Effect.runSync(
+	FileSystem.FileSystem.pipe(Effect.provide(BunFileSystem.layer)),
+);
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.GEMINI_API_KEY;
+
+const GeminiRequest = Schema.Struct({
+	contents: Schema.Array(
+		Schema.Struct({ parts: Schema.Array(Schema.Unknown) }),
+	),
+});
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
@@ -54,38 +63,49 @@ test("Gemini video request uses API-key auth and fileData", async () => {
 	if (typeof request.init.body !== "string") {
 		throw new Error("Expected a JSON request body");
 	}
-	const body = JSON.parse(request.init.body) as {
-		contents: Array<{ parts: Array<unknown> }>;
-	};
+	const body = Schema.decodeUnknownSync(Schema.fromJsonString(GeminiRequest))(
+		request.init.body,
+	);
 	assert.deepEqual(body.contents[0].parts[0], {
 		fileData: { fileUri: "https://video.test", mimeType: "video/mp4" },
 	});
 });
 
-const ffmpegAvailable = spawnSync("ffmpeg", ["-version"]).status === 0;
+const ffmpegAvailable = await Effect.runPromise(
+	runCommand("ffmpeg", ["-version"], {
+		timeoutMs: 5_000,
+		maxBuffer: 1024 * 1024,
+	}).pipe(
+		Effect.as(true),
+		Effect.orElseSucceed(() => false),
+	),
+);
 
 test("local frame extraction works with ffmpeg", {
 	skip: !ffmpegAvailable,
 }, async () => {
-	const root = await mkdtemp(join(tmpdir(), "pi-web-access-media-test-"));
-	const video = join(root, "sample.mp4");
+	const root = await Effect.runPromise(
+		fs.makeTempDirectory({ prefix: "pi-web-access-media-test-" }),
+	);
+	const video = path.join(root, "sample.mp4");
 	try {
-		const generated = spawnSync(
-			"ffmpeg",
-			[
-				"-v",
-				"error",
-				"-f",
-				"lavfi",
-				"-i",
-				"color=c=blue:s=160x90:d=1",
-				"-pix_fmt",
-				"yuv420p",
-				video,
-			],
-			{ encoding: "utf8" },
+		await Effect.runPromise(
+			runCommand(
+				"ffmpeg",
+				[
+					"-v",
+					"error",
+					"-f",
+					"lavfi",
+					"-i",
+					"color=c=blue:s=160x90:d=1",
+					"-pix_fmt",
+					"yuv420p",
+					video,
+				],
+				{ timeoutMs: 10_000, maxBuffer: 1024 * 1024 },
+			),
 		);
-		assert.equal(generated.status, 0, generated.stderr);
 
 		const result = await Effect.runPromise(
 			extractMedia(video, { timestamp: "0" }),
@@ -96,6 +116,6 @@ test("local frame extraction works with ffmpeg", {
 		assert.deepEqual(frame.subarray(0, 3), Buffer.from([0xff, 0xd8, 0xff]));
 		assert.deepEqual(frame.subarray(-2), Buffer.from([0xff, 0xd9]));
 	} finally {
-		await rm(root, { recursive: true, force: true });
+		await Effect.runPromise(fs.remove(root, { recursive: true, force: true }));
 	}
 });

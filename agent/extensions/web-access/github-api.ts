@@ -1,4 +1,10 @@
-import { Effect } from "effect";
+import * as BunHttpClient from "@effect/platform-bun/BunHttpClient";
+import { Effect, Schema } from "effect";
+import {
+	HttpClient,
+	HttpClientRequest,
+	HttpClientResponse,
+} from "effect/unstable/http";
 import { asError } from "./errors.ts";
 import type { GitHubUrlInfo } from "./github.ts";
 import { runCommand } from "./subprocess.ts";
@@ -6,6 +12,9 @@ import type { ExtractedContent } from "./types.ts";
 
 const MAX_TREE_ENTRIES = 200;
 const MAX_CONTENT_CHARS = 100_000;
+const GitHubRepositoryResponse = Schema.Struct({
+	size: Schema.optionalKey(Schema.Finite),
+});
 let ghAvailable: boolean | null = null;
 let ghHintShown = false;
 
@@ -35,50 +44,51 @@ export const checkGhAvailable: Effect.Effect<boolean> = Effect.suspend(() => {
 export function showGhHint(): void {
 	if (ghHintShown) return;
 	ghHintShown = true;
-	console.error(
-		"[pi-web-access] Install gh for private repositories and GitHub API fallback.",
+	Effect.runSync(
+		Effect.logWarning(
+			"[pi-web-access] Install gh for private repositories and GitHub API fallback.",
+		),
 	);
 }
 
-export function checkRepoSize(
+export const checkRepoSize: (
 	owner: string,
 	repo: string,
-): Effect.Effect<number | null> {
-	return Effect.gen(function* () {
-		if (yield* checkGhAvailable) {
-			const output = yield* runGh(
-				["api", `repos/${owner}/${repo}`, "--jq", ".size"],
-				{ timeoutMs: 10_000 },
-			);
-			if (output) {
-				const size = Number.parseInt(output.trim(), 10);
-				if (!Number.isNaN(size)) return size;
-			}
+) => Effect.Effect<number | null> = Effect.fn("checkRepoSize")(function* (
+	owner: string,
+	repo: string,
+) {
+	if (yield* checkGhAvailable) {
+		const output = yield* runGh(
+			["api", `repos/${owner}/${repo}`, "--jq", ".size"],
+			{ timeoutMs: 10_000 },
+		);
+		if (output) {
+			const size = Number.parseInt(output.trim(), 10);
+			if (!Number.isNaN(size)) return size;
 		}
+	}
 
-		return yield* Effect.gen(function* () {
-			const response = yield* Effect.tryPromise({
-				try: (signal) =>
-					fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-						headers: {
-							Accept: "application/vnd.github+json",
-							"User-Agent": "pi-web-access",
-						},
-						signal,
-					}),
-				catch: asError,
-			}).pipe(Effect.timeout(10_000), Effect.mapError(asError));
-			if (!response.ok) return null;
-			const data = yield* Effect.tryPromise({
-				try: () => response.json() as Promise<{ size?: unknown }>,
-				catch: asError,
-			});
-			return typeof data.size === "number" && Number.isFinite(data.size)
-				? data.size
-				: null;
-		}).pipe(Effect.orElseSucceed(() => null));
-	});
-}
+	return yield* Effect.gen(function* () {
+		const client = yield* HttpClient.HttpClient;
+		const request = HttpClientRequest.get(
+			`https://api.github.com/repos/${owner}/${repo}`,
+		).pipe(
+			HttpClientRequest.setHeaders({
+				Accept: "application/vnd.github+json",
+				"User-Agent": "pi-web-access",
+			}),
+		);
+		const response = yield* client
+			.execute(request)
+			.pipe(Effect.timeout(10_000), Effect.mapError(asError));
+		if (response.status < 200 || response.status >= 300) return null;
+		const data = yield* HttpClientResponse.schemaBodyJson(
+			GitHubRepositoryResponse,
+		)(response).pipe(Effect.mapError(asError));
+		return data.size ?? null;
+	}).pipe(Effect.orElseSucceed(() => null));
+}, Effect.provide(BunHttpClient.layer));
 
 function defaultBranch(
 	owner: string,

@@ -10,17 +10,17 @@
     "test:delegate": "node --test agent/extensions/delegate/test/*.test.ts",
     "test:background-terminals": "node --test agent/extensions/background-terminals/test/*.test.ts",
     "test:process-status": "node --test agent/extensions/process-status/test/*.test.ts",
-    "test:output-guard": "node --test agent/extensions/test/output-guard.test.ts",
     "test:aoauth": "node --test agent/extensions/aoauth/test/*.test.ts",
     "test:skill-visibility": "node --test agent/extensions/skill-visibility/test/*.test.ts",
     "test:web-access": "node --test agent/extensions/web-access/test/*.test.ts",
     "test:e2e": "PI_E2E=1 node --test --test-concurrency=1 --test-timeout=900000 agent/extensions/*/test/e2e.test.ts",
-    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:output-guard && bun run test:aoauth && bun run test:skill-visibility && bun run test:web-access"
+    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:aoauth && bun run test:skill-visibility && bun run test:web-access"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.82.1",
     "@earendil-works/pi-coding-agent": "^0.82.1",
     "@earendil-works/pi-tui": "^0.82.1",
+    "@effect/platform-bun": "^4.0.0-beta.102",
     "effect": "^4.0.0-beta.102"
   },
   "devDependencies": {

@@ -20,7 +20,7 @@ import {
 
 const skip = e2eUnavailable();
 
-function persistedEnabled(session: PiSession): boolean {
+function persistedEnabled(session: PiSession): Promise<boolean> {
 	return loadEnabled({
 		env: { PI_CODING_AGENT_DIR: session.agentDir },
 	});
@@ -50,7 +50,7 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 
 	before(async () => {
 		session = await startPi();
-		initialEnabled = persistedEnabled(session);
+		initialEnabled = await persistedEnabled(session);
 		expected = initialEnabled;
 		model = footerModel(capture(session));
 	});
@@ -75,9 +75,9 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 		expected = next;
 		assert.doesNotMatch(pane, noticeFor(!next, model));
 		assert.equal(
-			persistedEnabled(session),
+			await persistedEnabled(session),
 			next,
-			`${resolveFastModeSettingsPath({ env: { PI_CODING_AGENT_DIR: session.agentDir } })} does not reflect the announced state`,
+			`${await resolveFastModeSettingsPath({ env: { PI_CODING_AGENT_DIR: session.agentDir } })} does not reflect the announced state`,
 		);
 		assert.equal(isDead(session), false);
 	}
@@ -96,7 +96,7 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 	test("/fast flips the announced state and persists it", async () => {
 		await toggle(() => prompt(session, "/fast"), "first /fast notice");
 		assert.notEqual(
-			persistedEnabled(session),
+			await persistedEnabled(session),
 			initialEnabled,
 			"/fast did not change the persisted setting",
 		);
@@ -104,13 +104,13 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 
 	test("/fast again flips back to the original state", async () => {
 		await toggle(() => prompt(session, "/fast"), "second /fast notice");
-		assert.equal(persistedEnabled(session), initialEnabled);
+		assert.equal(await persistedEnabled(session), initialEnabled);
 	});
 
 	test("the ctrl+alt+m shortcut toggles the same state", async () => {
 		await toggle(() => sendKeys(session, "C-M-m"), "shortcut notice (off)");
 		await toggle(() => sendKeys(session, "C-M-m"), "shortcut notice (back on)");
-		assert.equal(persistedEnabled(session), initialEnabled);
+		assert.equal(await persistedEnabled(session), initialEnabled);
 	});
 
 	test("survives the toggles cleanly", () => {

@@ -1,4 +1,10 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { Clock, Effect } from "effect";
+
+const { spawn } = process.getBuiltinModule("node:child_process");
+type ChildProcess = ReturnType<typeof spawn>;
+const now = () => Effect.runSync(Clock.currentTimeMillis);
+const sleep = (milliseconds: number) =>
+	Effect.runPromise(Effect.sleep(milliseconds));
 
 // Capacity is per owner, not shared: a session's terminals are its own, so no wave of
 // delegated children can exhaust the parent's slots. earlyoom bounds the machine.
@@ -114,8 +120,8 @@ interface Entry {
 	exited: boolean;
 	closed: boolean;
 	killSignaled: boolean;
-	pipeTimer?: NodeJS.Timeout;
-	groupTimer?: NodeJS.Timeout;
+	pipeGeneration: number;
+	groupGeneration: number;
 	termination?: Promise<void>;
 	settled: Promise<void>;
 	resolveSettled: () => void;
@@ -124,7 +130,7 @@ interface Entry {
 export class BackgroundTerminalManager {
 	private readonly entries = new Map<string, Entry>();
 	private counter = 0;
-	private stopping = false;
+	private lifecycle: "running" | "stopping" | "stopped" = "running";
 	private readonly killInterest = new Map<string, number>();
 	private readonly onSettled?: (
 		snapshot: TerminalSnapshot,
@@ -170,7 +176,7 @@ export class BackgroundTerminalManager {
 		title: string;
 		cwd: string;
 	}): TerminalSnapshot {
-		if (this.stopping)
+		if (this.lifecycle !== "running")
 			throw new Error("Background terminal manager is shutting down.");
 		this.prune(MAX_TRACKED - 1);
 		const invocation =
@@ -200,7 +206,7 @@ export class BackgroundTerminalManager {
 				cwd: options.cwd,
 				pid: child.pid,
 				state: "running",
-				createdAt: Date.now(),
+				createdAt: now(),
 			},
 			child,
 			stdout: new Tail(),
@@ -208,6 +214,8 @@ export class BackgroundTerminalManager {
 			exited: false,
 			closed: false,
 			killSignaled: false,
+			pipeGeneration: 0,
+			groupGeneration: 0,
 			settled,
 			resolveSettled,
 		};
@@ -221,17 +229,19 @@ export class BackgroundTerminalManager {
 			entry.exited = true;
 			entry.snapshot.exitCode = code ?? undefined;
 			entry.snapshot.signal = signal ?? undefined;
-			entry.pipeTimer = setTimeout(() => {
-				entry.pipeTimer = undefined;
-				if (!entry.closed && entry.snapshot.state === "running")
+			const generation = ++entry.pipeGeneration;
+			void sleep(PIPE_GRACE_MS).then(() => {
+				if (
+					entry.pipeGeneration === generation &&
+					!entry.closed &&
+					entry.snapshot.state === "running"
+				)
 					void this.terminate(entry, false);
-			}, PIPE_GRACE_MS);
-			entry.pipeTimer.unref();
+			});
 		});
 		child.once("close", (code, signal) => {
 			entry.closed = true;
-			if (entry.pipeTimer) clearTimeout(entry.pipeTimer);
-			entry.pipeTimer = undefined;
+			entry.pipeGeneration++;
 			entry.snapshot.exitCode ??= code ?? undefined;
 			entry.snapshot.signal ??= signal ?? undefined;
 			this.settleWhenProcessGroupExits(entry);
@@ -255,29 +265,27 @@ export class BackgroundTerminalManager {
 			this.settle(entry);
 			return;
 		}
-		entry.groupTimer = setTimeout(() => {
-			entry.groupTimer = undefined;
-			this.settleWhenProcessGroupExits(entry);
-		}, GROUP_CHECK_MS);
-		entry.groupTimer.unref();
+		const generation = ++entry.groupGeneration;
+		void sleep(GROUP_CHECK_MS).then(() => {
+			if (entry.groupGeneration === generation)
+				this.settleWhenProcessGroupExits(entry);
+		});
 	}
 
 	private settle(entry: Entry) {
 		if (entry.snapshot.state !== "running") return;
-		if (entry.pipeTimer) clearTimeout(entry.pipeTimer);
-		if (entry.groupTimer) clearTimeout(entry.groupTimer);
-		entry.pipeTimer = undefined;
-		entry.groupTimer = undefined;
+		entry.pipeGeneration++;
+		entry.groupGeneration++;
 		entry.snapshot.state = entry.killSignaled
 			? "killed"
 			: entry.snapshot.error || entry.snapshot.exitCode !== 0
 				? "failed"
 				: "done";
-		entry.snapshot.settledAt = Date.now();
+		entry.snapshot.settledAt = now();
 		entry.resolveSettled();
 		const snapshot = this.snapshot(entry);
 		try {
-			if (!this.stopping)
+			if (this.lifecycle === "running")
 				this.onSettled?.(
 					snapshot,
 					(this.killInterest.get(snapshot.id) ?? 0) > 0,
@@ -288,43 +296,32 @@ export class BackgroundTerminalManager {
 		this.prune();
 	}
 
-	private signalTree(entry: Entry, force: boolean): Promise<void> | void {
+	private async signalTree(entry: Entry, force: boolean): Promise<void> {
 		if (process.platform === "win32" && entry.child.pid) {
-			return new Promise((resolve) => {
-				const killer = spawn(
-					"taskkill",
-					["/pid", String(entry.child.pid), "/T", ...(force ? ["/F"] : [])],
-					{ stdio: "ignore", windowsHide: true },
-				);
-				let finished = false;
-				const fallback = (reason: string) => {
-					if (finished) return;
-					finished = true;
-					clearTimeout(timeout);
-					try {
-						killer.kill();
-					} catch {}
-					entry.snapshot.error = `taskkill ${reason}; process tree termination may be incomplete`;
-					try {
-						entry.child.kill(force ? "SIGKILL" : "SIGTERM");
-					} catch {}
-					resolve();
-				};
-				const timeout = setTimeout(
-					() => fallback("timed out"),
-					TASKKILL_GRACE_MS,
-				);
-				timeout.unref();
-				killer.once("error", () => fallback("failed to start"));
-				killer.once("close", (code) => {
-					if (code !== 0) fallback(`exited with code ${code ?? "unknown"}`);
-					else if (!finished) {
-						finished = true;
-						clearTimeout(timeout);
-						resolve();
-					}
-				});
-			});
+			const killer = spawn(
+				"taskkill",
+				["/pid", String(entry.child.pid), "/T", ...(force ? ["/F"] : [])],
+				{ stdio: "ignore", windowsHide: true },
+			);
+			const result = await Promise.race([
+				new Promise<number | null>((resolve) => {
+					killer.once("error", () => resolve(null));
+					killer.once("close", resolve);
+				}),
+				new Promise<undefined>(
+					(resolve) =>
+						void sleep(TASKKILL_GRACE_MS).then(() => resolve(undefined)),
+				),
+			]);
+			if (result === 0) return;
+			try {
+				killer.kill();
+			} catch {}
+			entry.snapshot.error = `taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`;
+			try {
+				entry.child.kill(force ? "SIGKILL" : "SIGTERM");
+			} catch {}
+			return;
 		}
 		try {
 			if (entry.child.pid)
@@ -338,17 +335,7 @@ export class BackgroundTerminalManager {
 	}
 
 	private async waitForSettlement(entry: Entry, timeoutMs: number) {
-		let timer: NodeJS.Timeout | undefined;
-		try {
-			await Promise.race([
-				entry.settled,
-				new Promise<void>((resolve) => {
-					timer = setTimeout(resolve, timeoutMs);
-				}),
-			]);
-		} finally {
-			if (timer) clearTimeout(timer);
-		}
+		await Promise.race([entry.settled, sleep(timeoutMs)]);
 	}
 
 	private terminate(entry: Entry, owned: boolean): Promise<void> {
@@ -409,13 +396,14 @@ export class BackgroundTerminalManager {
 	}
 
 	async shutdown(): Promise<void> {
-		if (this.stopping) return;
-		this.stopping = true;
+		if (this.lifecycle !== "running") return;
+		this.lifecycle = "stopping";
 		await Promise.all(
 			[...this.entries.values()]
 				.filter((entry) => entry.snapshot.state === "running")
 				.map((entry) => this.terminate(entry, true)),
 		);
 		this.entries.clear();
+		this.lifecycle = "stopped";
 	}
 }

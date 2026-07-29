@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
-import type { ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { Clock, Effect } from "effect";
+
+const { mkdtempSync, rmSync } = process.getBuiltinModule("node:fs");
+type ChildProcess = ReturnType<
+	ReturnType<typeof process.getBuiltinModule<"node:child_process">>["spawn"]
+>;
+
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+
+const { join } = process.getBuiltinModule("node:path");
+
 import test from "node:test";
 import { processIsGone } from "../../test/process.ts";
 import {
@@ -14,14 +21,15 @@ import {
 
 const cwd = mkdtempSync(join(tmpdir(), "pi-bg-test-"));
 test.after(() => rmSync(cwd, { recursive: true, force: true }));
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait = (ms: number) => Effect.runPromise(Effect.sleep(ms));
+const now = () => Effect.runSync(Clock.currentTimeMillis);
 async function settled(
 	manager: BackgroundTerminalManager,
 	id: string,
 	timeout = 6_000,
 ): Promise<TerminalSnapshot> {
-	const deadline = Date.now() + timeout;
-	while (Date.now() < deadline) {
+	const deadline = now() + timeout;
+	while (now() < deadline) {
 		const snapshot = manager.get(id);
 		if (snapshot && snapshot.state !== "running") return snapshot;
 		await wait(20);
@@ -45,8 +53,10 @@ test("captures stdout and stderr and classifies success and nonzero", async () =
 	const failed = await settled(manager, bad.id);
 	assert.equal(failed.state, "failed");
 	assert.equal(failed.exitCode, 7);
-	assert.equal(manager.get(ok.id)?.stdout.text, "out");
-	assert.equal(manager.get(ok.id)?.stderr.text, "err");
+	const completed = manager.get(ok.id);
+	assert.ok(completed);
+	assert.equal(completed.stdout.text, "out");
+	assert.equal(completed.stderr.text, "err");
 	await manager.shutdown();
 });
 
@@ -128,16 +138,16 @@ test("escalates SIGTERM and cleans the POSIX process group", {
 		cwd,
 	});
 	await wait(100);
-	const childPid = Number(
-		/child:(\d+)/.exec(manager.get(run.id)?.stdout.text ?? "")?.[1],
-	);
+	const running = manager.get(run.id);
+	assert.ok(running);
+	const childPid = Number(/child:(\d+)/.exec(running.stdout.text)?.[1]);
 	assert.ok(childPid);
-	const started = Date.now();
+	const started = now();
 	await manager.kill([run.id]);
 	const snapshot = manager.get(run.id);
 	assert.equal(snapshot?.state, "killed");
-	assert.ok(Date.now() - started >= 1_800);
-	assert.ok(Date.now() - started < 5_000);
+	assert.ok(now() - started >= 1_800);
+	assert.ok(now() - started < 5_000);
 	for (let attempt = 0; attempt < 50 && !processIsGone(childPid); attempt++)
 		await wait(20);
 	assert.ok(processIsGone(childPid));
@@ -155,10 +165,11 @@ test("shutdown kills a process group after its shell exits", {
 	});
 	let childPid = 0;
 	try {
-		const deadline = Date.now() + 2_000;
-		while (Date.now() < deadline) {
+		const deadline = now() + 2_000;
+		while (now() < deadline) {
 			const snapshot = manager.get(run.id);
-			childPid = Number(/child:(\d+)/.exec(snapshot?.stdout.text ?? "")?.[1]);
+			assert.ok(snapshot);
+			childPid = Number(/child:(\d+)/.exec(snapshot.stdout.text)?.[1]);
 			if (childPid && run.pid && processIsGone(run.pid)) break;
 			await wait(20);
 		}

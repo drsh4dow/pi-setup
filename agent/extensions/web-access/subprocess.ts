@@ -1,34 +1,47 @@
-import { execFile } from "node:child_process";
-import { Effect } from "effect";
-import { asError, type WebAccessError } from "./errors.ts";
+import * as BunServices from "@effect/platform-bun/BunServices";
+import { Effect, type PlatformError, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { asError } from "./errors.ts";
 
-export function runCommand(
-	command: string,
-	args: string[],
-	options: { timeoutMs: number; maxBuffer: number },
-): Effect.Effect<Buffer, WebAccessError> {
-	return Effect.tryPromise({
-		try: (signal) =>
-			new Promise<Buffer>((resolve, reject) => {
-				execFile(
-					command,
-					args,
-					{
-						timeout: options.timeoutMs,
-						maxBuffer: options.maxBuffer,
-						signal,
-						encoding: "buffer",
-					},
-					(error, stdout, stderr) => {
-						if (error) {
-							Object.assign(error, { stderr });
-							reject(error);
-							return;
+export const runCommand = Effect.fn("runCommand")(
+	function* (
+		command: string,
+		args: string[],
+		options: { timeoutMs: number; maxBuffer: number },
+	) {
+		return yield* Effect.gen(function* () {
+			const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+			const handle = yield* spawner.spawn(ChildProcess.make(command, args));
+			const collect = (
+				stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
+			) =>
+				Stream.runFold(
+					stream,
+					() => Buffer.alloc(0),
+					(output, chunk) => {
+						if (output.length + chunk.length > options.maxBuffer) {
+							throw new Error(
+								`Command output exceeded ${options.maxBuffer} bytes`,
+							);
 						}
-						resolve(stdout);
+						return Buffer.concat([output, chunk]);
 					},
 				);
-			}),
-		catch: asError,
-	});
-}
+			const [stdout, stderr, exitCode] = yield* Effect.all(
+				[collect(handle.stdout), collect(handle.stderr), handle.exitCode],
+				{ concurrency: "unbounded" },
+			);
+			if (exitCode !== ChildProcessSpawner.ExitCode(0)) {
+				return yield* Effect.fail(
+					Object.assign(new Error(`${command} exited with code ${exitCode}`), {
+						code: String(exitCode),
+						stderr,
+					}),
+				);
+			}
+			return stdout;
+		}).pipe(Effect.scoped, Effect.timeout(options.timeoutMs));
+	},
+	Effect.provide(BunServices.layer),
+	Effect.mapError(asError),
+);

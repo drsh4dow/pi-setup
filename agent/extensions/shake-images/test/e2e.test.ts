@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import test, { after, before, describe } from "node:test";
+import * as BunCrypto from "@effect/platform-bun/BunCrypto";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import {
+	Encoding,
+	FileSystem,
+	Layer,
+	ManagedRuntime,
+	Path,
+	Result,
+} from "effect";
 import {
 	capture,
 	e2eUnavailable,
@@ -18,6 +27,11 @@ import {
 } from "../../test/tmux.ts";
 
 const skip = e2eUnavailable();
+const runtime = ManagedRuntime.make(
+	Layer.mergeAll(BunFileSystem.layer, BunPath.layer, BunCrypto.layer),
+);
+const fs = runtime.runSync(FileSystem.FileSystem);
+const path = runtime.runSync(Path.Path);
 
 /** 1x1 PNGs (red, green, blue) — three distinct real images, no fixture files. */
 const PNG_FIXTURES: ReadonlyArray<readonly [string, string]> = [
@@ -40,17 +54,17 @@ const PNG_FIXTURES: ReadonlyArray<readonly [string, string]> = [
  * throwaway session log next to the workspace, and the log keeps the original
  * (unpruned) messages, which is exactly what the context hook receives.
  */
-function imageBlocksInTranscript(session: PiSession): number {
-	const directory = join(session.cwd, "..", "sessions");
-	return readdirSync(directory)
-		.filter((name) => name.endsWith(".jsonl"))
-		.reduce(
-			(total, name) =>
-				total +
-				(readFileSync(join(directory, name), "utf8").match(/"type":"image"/g)
-					?.length ?? 0),
-			0,
+async function imageBlocksInTranscript(session: PiSession): Promise<number> {
+	const directory = path.join(session.cwd, "..", "sessions");
+	const names = await runtime.runPromise(fs.readDirectory(directory));
+	let total = 0;
+	for (const name of names.filter((entry) => entry.endsWith(".jsonl"))) {
+		const content = await runtime.runPromise(
+			fs.readFileString(path.join(directory, name)),
 		);
+		total += content.match(/"type":"image"/g)?.length ?? 0;
+	}
+	return total;
 }
 
 describe("shake-images (real pi in tmux)", { skip }, () => {
@@ -61,7 +75,12 @@ describe("shake-images (real pi in tmux)", { skip }, () => {
 		// Written as bytes: the harness `files` option pipes strings, which would
 		// corrupt PNG data.
 		for (const [name, base64] of PNG_FIXTURES) {
-			writeFileSync(join(session.cwd, name), Buffer.from(base64, "base64"));
+			await runtime.runPromise(
+				fs.writeFile(
+					path.join(session.cwd, name),
+					Result.getOrThrow(Encoding.decodeBase64(base64)),
+				),
+			);
 		}
 	});
 
@@ -140,7 +159,7 @@ describe("shake-images (real pi in tmux)", { skip }, () => {
 		// The prune path only engages once a third image block is in context, so
 		// the assertion above is only meaningful if `read` really produced images.
 		assert.ok(
-			imageBlocksInTranscript(session) >= 3,
+			(await imageBlocksInTranscript(session)) >= 3,
 			"expected at least three image blocks in the session transcript; " +
 				"without them the context hook never had anything to prune",
 		);

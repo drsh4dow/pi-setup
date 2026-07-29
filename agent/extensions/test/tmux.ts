@@ -6,32 +6,34 @@
  * that only crashes under a live TTY (a bad footer component, a broken entry
  * renderer) fails here and nowhere else.
  */
-import { execFile, execFileSync } from "node:child_process";
-import {
-	copyFileSync,
-	cpSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import * as BunChildProcessSpawner from "@effect/platform-bun/BunChildProcessSpawner";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Clock, Effect, FileSystem, Layer, Path } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const execFileAsync = promisify(execFile);
+const { execFileSync } = process.getBuiltinModule("child_process");
+const bunTestServices = BunChildProcessSpawner.layer.pipe(
+	Layer.provideMerge(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+);
+const { fs, path: pathService } = Effect.runSync(
+	Effect.gen(function* () {
+		return { fs: yield* FileSystem.FileSystem, path: yield* Path.Path };
+	}).pipe(Effect.provide(bunTestServices)),
+);
 
+function runFileSystem<A, E>(effect: Effect.Effect<A, E>) {
+	return Effect.runSync(effect);
+}
 const PANE_WIDTH = 200;
 const PANE_HEIGHT = 50;
 const POLL_INTERVAL_MS = 250;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const READY_TIMEOUT_MS = 60_000;
-const REPOSITORY_AGENT_DIR = fileURLToPath(new URL("../..", import.meta.url));
+const REPOSITORY_AGENT_DIR = Effect.runSync(
+	pathService.fromFileUrl(new URL("../..", import.meta.url)),
+);
 
 export interface StartPiOptions {
 	/** Extra CLI arguments appended after the harness defaults. */
@@ -67,13 +69,17 @@ function tmux(...args: string[]): string {
 	return execFileSync("tmux", args, { encoding: "utf8" });
 }
 
-async function tmuxAsync(...args: string[]): Promise<string> {
-	const { stdout } = await execFileAsync("tmux", args, { encoding: "utf8" });
-	return stdout;
+function tmuxAsync(...args: string[]): Promise<string> {
+	return Effect.runPromise(
+		Effect.gen(function* () {
+			const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+			return yield* spawner.string(ChildProcess.make("tmux", args));
+		}).pipe(Effect.provide(bunTestServices)),
+	);
 }
 
 function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+	return Effect.runPromise(Effect.sleep(ms));
 }
 
 /** tmux runs the pane command through a shell, so paths must be quoted. */
@@ -86,7 +92,7 @@ let sessionCounter = 0;
 
 export function readStderr(session: PiSession): string {
 	try {
-		return readFileSync(session.stderrPath, "utf8");
+		return runFileSystem(fs.readFileString(session.stderrPath));
 	} catch {
 		return "";
 	}
@@ -117,13 +123,13 @@ export function capture(session: PiSession, scrollback = false): string {
 export async function startPi(
 	options: StartPiOptions = {},
 ): Promise<PiSession> {
-	const root = mkdtempSync(join(tmpdir(), "pi-e2e-"));
-	const cwd = join(root, "workspace");
-	const agentDir = join(root, "agent");
-	const sessionDir = join(root, "sessions");
-	mkdirSync(cwd, { recursive: true });
-	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
-	mkdirSync(sessionDir, { recursive: true });
+	const root = runFileSystem(fs.makeTempDirectory({ prefix: "pi-e2e-" }));
+	const cwd = pathService.join(root, "workspace");
+	const agentDir = pathService.join(root, "agent");
+	const sessionDir = pathService.join(root, "sessions");
+	runFileSystem(fs.makeDirectory(cwd, { recursive: true }));
+	runFileSystem(fs.makeDirectory(agentDir, { recursive: true, mode: 0o700 }));
+	runFileSystem(fs.makeDirectory(sessionDir, { recursive: true }));
 
 	const sourceAgentDir = getAgentDir();
 	for (const name of [
@@ -133,33 +139,38 @@ export async function startPi(
 		"models.json",
 		"gpt-fast-mode.json",
 	]) {
-		const source = join(sourceAgentDir, name);
-		if (existsSync(source)) copyFileSync(source, join(agentDir, name));
+		const source = pathService.join(sourceAgentDir, name);
+		if (runFileSystem(fs.exists(source)))
+			runFileSystem(fs.copyFile(source, pathService.join(agentDir, name)));
 	}
-	cpSync(join(REPOSITORY_AGENT_DIR, "themes"), join(agentDir, "themes"), {
-		recursive: true,
-	});
+	runFileSystem(
+		fs.copy(
+			pathService.join(REPOSITORY_AGENT_DIR, "themes"),
+			pathService.join(agentDir, "themes"),
+		),
+	);
 
 	for (const [relative, contents] of Object.entries(options.files ?? {})) {
-		const path = join(cwd, relative);
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, contents);
+		const path = pathService.join(cwd, relative);
+		runFileSystem(
+			fs.makeDirectory(pathService.dirname(path), { recursive: true }),
+		);
+		runFileSystem(fs.writeFileString(path, contents));
 	}
 
 	const name = `pi-e2e-${process.pid}-${sessionCounter++}`;
-	const stderrPath = join(root, "pi.stderr.log");
+	const stderrPath = pathService.join(root, "pi.stderr.log");
 	const piArgs = ["pi", "--session-dir", sessionDir, "--no-extensions"];
-	for (const entry of readdirSync(join(REPOSITORY_AGENT_DIR, "extensions"), {
-		withFileTypes: true,
-	})) {
-		if (!entry.isDirectory()) continue;
-		const path = join(
+	for (const entry of runFileSystem(
+		fs.readDirectory(pathService.join(REPOSITORY_AGENT_DIR, "extensions")),
+	)) {
+		const path = pathService.join(
 			REPOSITORY_AGENT_DIR,
 			"extensions",
-			entry.name,
+			entry,
 			"index.ts",
 		);
-		if (existsSync(path)) piArgs.push("--extension", path);
+		if (runFileSystem(fs.exists(path))) piArgs.push("--extension", path);
 	}
 	piArgs.push(...(options.args ?? []));
 	const command = piArgs.map(shellQuote).join(" ");
@@ -215,12 +226,12 @@ export async function waitFor(
 	options: WaitOptions = {},
 ): Promise<string> {
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const deadline = Date.now() + timeoutMs;
+	const deadline = Effect.runSync(Clock.currentTimeMillis) + timeoutMs;
 	const matches = (text: string) =>
 		typeof match === "function" ? match(text) : match.test(text);
 
 	let text = "";
-	while (Date.now() < deadline) {
+	while (Effect.runSync(Clock.currentTimeMillis) < deadline) {
 		text = capture(session, options.scrollback);
 		if (matches(text)) return text;
 		if (isDead(session)) {
@@ -291,11 +302,11 @@ export async function waitForFile(
 	relative: string,
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<string> {
-	const path = join(session.cwd, relative);
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
+	const path = pathService.join(session.cwd, relative);
+	const deadline = Effect.runSync(Clock.currentTimeMillis) + timeoutMs;
+	while (Effect.runSync(Clock.currentTimeMillis) < deadline) {
 		try {
-			return readFileSync(path, "utf8");
+			return runFileSystem(fs.readFileString(path));
 		} catch {
 			// Not written yet.
 		}
@@ -312,7 +323,9 @@ export async function waitForFile(
 }
 
 export function workspaceFile(session: PiSession, relative: string): string {
-	return readFileSync(join(session.cwd, relative), "utf8");
+	return runFileSystem(
+		fs.readFileString(pathService.join(session.cwd, relative)),
+	);
 }
 
 export async function stop(session: PiSession): Promise<void> {
@@ -322,7 +335,12 @@ export async function stop(session: PiSession): Promise<void> {
 		// Session already gone.
 	}
 	try {
-		rmSync(join(session.cwd, ".."), { recursive: true, force: true });
+		runFileSystem(
+			fs.remove(pathService.join(session.cwd, ".."), {
+				recursive: true,
+				force: true,
+			}),
+		);
 	} catch {
 		// Best effort: a leftover tmp dir must not fail a passing test.
 	}

@@ -314,12 +314,11 @@ export default function webAccessExtension(pi: ExtensionAPI) {
 						responseArchive = archive;
 					}),
 				),
-				Effect.catch((error) => {
-					console.error(
+				Effect.catch((error) =>
+					Effect.logError(
 						`[pi-web-access] Could not open Session Response Archive: ${errorMessage(error)}`,
-					);
-					return Effect.void;
-				}),
+					),
+				),
 				Effect.asVoid,
 			),
 		);

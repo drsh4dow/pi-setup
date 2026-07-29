@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createServer } from "node:http";
 import { connect } from "node:net";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -9,11 +8,31 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai/compat";
 import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
+import { Clock, Effect } from "effect";
+import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { anthropicOAuth } from "../oauth.ts";
+
+const nodeHttp = process.getBuiltinModule("node:http");
+const createServer = nodeHttp.createServer;
+const currentTimeMillis = () => Effect.runPromise(Clock.currentTimeMillis);
+const httpStatus = (url: string, fetch: typeof globalThis.fetch) =>
+	Effect.runPromise(
+		HttpClient.get(url).pipe(
+			Effect.map((response) => response.status),
+			Effect.provideService(FetchHttpClient.Fetch, fetch),
+			Effect.provide(FetchHttpClient.layer),
+		),
+	);
 
 const TOKEN_URL = "https://api.anthropic.com/v1/oauth/token";
 const SCOPES =
 	"org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+
+function requestBodyText(body: RequestInit["body"]): string {
+	return typeof body === "string"
+		? body
+		: new TextDecoder().decode(body as Uint8Array);
+}
 
 function callbacks(
 	overrides: Partial<OAuthLoginCallbacks>,
@@ -52,7 +71,7 @@ test("logs in with the OMP authorization contract and a manually pasted code", a
 		);
 	};
 
-	const before = Date.now();
+	const before = await currentTimeMillis();
 	const credentials = await anthropicOAuth.login(
 		callbacks({
 			onAuth(info) {
@@ -64,7 +83,7 @@ test("logs in with the OMP authorization contract and a manually pasted code", a
 			},
 		}),
 	);
-	const after = Date.now();
+	const after = await currentTimeMillis();
 
 	assert.ok(authorizationUrl);
 	assert.equal(
@@ -82,7 +101,7 @@ test("logs in with the OMP authorization contract and a manually pasted code", a
 		/^http:\/\/localhost:\d+\/callback$/,
 	);
 
-	const payload = JSON.parse(String(tokenRequest?.body)) as Record<
+	const payload = JSON.parse(requestBodyText(tokenRequest?.body)) as Record<
 		string,
 		string
 	>;
@@ -97,9 +116,10 @@ test("logs in with the OMP authorization contract and a manually pasted code", a
 		createHash("sha256").update(payload.code_verifier).digest("base64url"),
 		authorizationUrl.searchParams.get("code_challenge"),
 	);
-	assert.deepEqual(tokenRequest?.headers, {
-		"Content-Type": "application/json",
-	});
+	assert.equal(
+		new Headers(tokenRequest?.headers).get("content-type"),
+		"application/json",
+	);
 	assert.equal(credentials.access, "sk-ant-oat-access");
 	assert.equal(credentials.refresh, "refresh-token");
 	assert.ok(credentials.expires >= before + 55 * 60_000);
@@ -134,12 +154,14 @@ test("refreshes with OMP headers while preserving the credential and refresh tok
 	} satisfies OAuthCredentials;
 	const refreshed = await anthropicOAuth.refreshToken(existing);
 
-	assert.deepEqual(tokenRequest?.headers, {
-		"anthropic-beta": "oauth-2025-04-20",
-		"User-Agent": "anthropic-sdk-typescript/0.94.0 userOAuthProvider",
-		"Content-Type": "application/json",
-	});
-	assert.deepEqual(JSON.parse(String(tokenRequest?.body)), {
+	const headers = new Headers(tokenRequest?.headers);
+	assert.equal(headers.get("anthropic-beta"), "oauth-2025-04-20");
+	assert.equal(
+		headers.get("user-agent"),
+		"anthropic-sdk-typescript/0.94.0 userOAuthProvider",
+	);
+	assert.equal(headers.get("content-type"), "application/json");
+	assert.deepEqual(JSON.parse(requestBodyText(tokenRequest?.body)), {
 		grant_type: "refresh_token",
 		client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
 		refresh_token: "refresh-old",
@@ -195,7 +217,7 @@ test("keeps short-lived refreshed credentials usable", async (t) => {
 			{ status: 200 },
 		);
 
-	const before = Date.now();
+	const before = await currentTimeMillis();
 	const refreshed = await anthropicOAuth.refreshToken({
 		access: "sk-ant-oat-old",
 		refresh: "refresh-old",
@@ -203,7 +225,7 @@ test("keeps short-lived refreshed credentials usable", async (t) => {
 	});
 
 	assert.ok(refreshed.expires >= before + 30_000);
-	assert.ok(refreshed.expires <= Date.now() + 30_000);
+	assert.ok(refreshed.expires <= (await currentTimeMillis()) + 30_000);
 });
 
 test("rejects invalid token responses without exposing their body", async (t) => {
@@ -247,7 +269,7 @@ test("accepts raw, query-string, and redirect-URL manual input", async (t) => {
 	const exchangedCodes: string[] = [];
 	globalThis.fetch = async (_input, init) => {
 		exchangedCodes.push(
-			(JSON.parse(String(init?.body)) as { code: string }).code,
+			(JSON.parse(requestBodyText(init?.body)) as { code: string }).code,
 		);
 		return new Response(
 			JSON.stringify({
@@ -295,7 +317,8 @@ test("accepts the browser callback only after an exact state match", async (t) =
 	});
 
 	globalThis.fetch = async (input, init) => {
-		if (String(input) !== TOKEN_URL) return nativeFetch(input, init);
+		if (String(input) !== TOKEN_URL)
+			return Reflect.apply(nativeFetch, globalThis, [input, init]);
 		return new Response(
 			JSON.stringify({
 				access_token: "sk-ant-oat-browser",
@@ -318,14 +341,14 @@ test("accepts the browser callback only after an exact state match", async (t) =
 				assert.ok(redirectUri);
 				assert.ok(state);
 				callbackRequests = (async () => {
-					wrongStatus = (
-						await nativeFetch(
-							`${redirectUri}?code=wrong-code&state=wrong-state`,
-						)
-					).status;
-					rightStatus = (
-						await nativeFetch(`${redirectUri}?code=browser-code&state=${state}`)
-					).status;
+					wrongStatus = await httpStatus(
+						`${redirectUri}?code=wrong-code&state=wrong-state`,
+						nativeFetch,
+					);
+					rightStatus = await httpStatus(
+						`${redirectUri}?code=browser-code&state=${state}`,
+						nativeFetch,
+					);
 				})();
 			},
 			onManualCodeInput: () => new Promise(() => {}),
@@ -340,7 +363,7 @@ test("accepts the browser callback only after an exact state match", async (t) =
 
 test("surfaces a genuine provider denial without waiting for timeout", async () => {
 	const nativeFetch = globalThis.fetch;
-	let denialRequest: Promise<Response> | undefined;
+	let denialRequest: Promise<number> | undefined;
 
 	await assert.rejects(
 		anthropicOAuth.login(
@@ -351,8 +374,9 @@ test("surfaces a genuine provider denial without waiting for timeout", async () 
 					const state = authorizationUrl.searchParams.get("state");
 					assert.ok(redirectUri);
 					assert.ok(state);
-					denialRequest = nativeFetch(
+					denialRequest = httpStatus(
 						`${redirectUri}?error=access_denied&error_description=Consent+was+denied&state=${state}`,
+						nativeFetch,
 					);
 				},
 				onManualCodeInput: () => new Promise(() => {}),
@@ -360,7 +384,7 @@ test("surfaces a genuine provider denial without waiting for timeout", async () 
 		),
 		/Anthropic authorization failed: Consent was denied/,
 	);
-	assert.equal((await denialRequest)?.status, 400);
+	assert.equal(await denialRequest, 400);
 });
 
 test("cancellation closes the callback server", async () => {
@@ -425,7 +449,7 @@ test("cancellation is observed when manual input aborts synchronously", async ()
 	]);
 	if (outcome === "still waiting") {
 		assert.ok(denialUrl);
-		await fetch(denialUrl);
+		await httpStatus(denialUrl, globalThis.fetch);
 		await assert.rejects(login);
 	}
 
@@ -521,7 +545,10 @@ test("feeds subscription credentials into Pi's built-in Anthropic OAuth transpor
 	let requestBody: Record<string, unknown> | undefined;
 	globalThis.fetch = async (_input, init) => {
 		requestHeaders = new Headers(init?.headers);
-		requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+		requestBody = JSON.parse(requestBodyText(init?.body)) as Record<
+			string,
+			unknown
+		>;
 		const events = [
 			"event: message_start",
 			'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-6","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}',
@@ -557,13 +584,19 @@ test("feeds subscription credentials into Pi's built-in Anthropic OAuth transpor
 		model,
 		{
 			systemPrompt: "System instructions",
-			messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+			messages: [
+				{
+					role: "user",
+					content: "hello",
+					timestamp: await currentTimeMillis(),
+				},
+			],
 		},
 		{
 			apiKey: anthropicOAuth.getApiKey({
 				access: "sk-ant-oat-subscription",
 				refresh: "refresh-token",
-				expires: Date.now() + 60_000,
+				expires: (await currentTimeMillis()) + 60_000,
 			}),
 			maxTokens: 10,
 		},

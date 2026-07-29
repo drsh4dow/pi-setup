@@ -1,7 +1,6 @@
-import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Effect } from "effect";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Effect, FileSystem, Path } from "effect";
 import { asError, type WebAccessError } from "./errors.ts";
 import {
 	checkGhAvailable,
@@ -13,10 +12,16 @@ import { renderCloneContent } from "./github-content.ts";
 import { runCommand } from "./subprocess.ts";
 import type { ExtractedContent } from "./types.ts";
 
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+
 const MAX_REPO_SIZE_MB = 350;
 const MAX_CACHED_CLONES = 10;
 const CLONE_TIMEOUT_MS = 30_000;
-const CLONE_ROOT = join(tmpdir(), "pi-web-access-repos", String(process.pid));
+const CLONE_ROOT = path.join(
+	process.env.TMPDIR ?? "/tmp",
+	"pi-web-access-repos",
+	String(process.pid),
+);
 
 export interface GitHubUrlInfo {
 	owner: string;
@@ -123,17 +128,16 @@ function cacheKey(owner: string, repo: string, ref?: string): string {
 
 function cloneDir(owner: string, repo: string, ref?: string): string {
 	const dirName = ref ? `${repo}@${ref}` : repo;
-	return join(CLONE_ROOT, owner, dirName);
+	return path.join(CLONE_ROOT, owner, dirName);
 }
 
-function removeClone(localPath: string): boolean {
-	try {
-		rmSync(localPath, { recursive: true, force: true });
-		return true;
-	} catch {
-		return false;
-	}
-}
+const removeClone = Effect.fn("removeClone")(function* (localPath: string) {
+	const fs = yield* FileSystem.FileSystem;
+	return yield* fs.remove(localPath, { recursive: true, force: true }).pipe(
+		Effect.as(true),
+		Effect.orElseSucceed(() => false),
+	);
+}, Effect.provide(BunFileSystem.layer));
 
 function cloneRepo(
 	owner: string,
@@ -142,7 +146,7 @@ function cloneRepo(
 ): Effect.Effect<string | null> {
 	return Effect.gen(function* () {
 		const localPath = cloneDir(owner, repo, ref);
-		if (!removeClone(localPath)) return null;
+		if (!(yield* removeClone(localPath))) return null;
 		const hasGh = yield* checkGhAvailable;
 		const args = hasGh
 			? [
@@ -168,10 +172,7 @@ function cloneRepo(
 			maxBuffer: 2 * 1024 * 1024,
 		}).pipe(
 			Effect.as(localPath),
-			Effect.catch(() => {
-				removeClone(localPath);
-				return Effect.succeed(null);
-			}),
+			Effect.catch(() => removeClone(localPath).pipe(Effect.as(null))),
 		);
 	});
 }
@@ -184,16 +185,16 @@ function cloneResult(
 	info: GitHubUrlInfo,
 ): Effect.Effect<ExtractedContent | null, WebAccessError> {
 	if (!result) return Effect.succeed(null);
-	return Effect.try({
-		try: () => {
-			const content = renderCloneContent(result, info).slice(0, 100_000);
+	return renderCloneContent(result, info).pipe(
+		Effect.map((rendered) => {
+			const content = rendered.slice(0, 100_000);
 			const title = info.path
 				? `${owner}/${repo} - ${info.path}`
 				: `${owner}/${repo}`;
 			return { url, title, content, error: null };
-		},
-		catch: asError,
-	});
+		}),
+		Effect.mapError(asError),
+	);
 }
 
 function awaitCachedClone(
@@ -284,7 +285,7 @@ export function extractGitHub(
 			const oldestKey = cloneCache.keys().next().value;
 			if (!oldestKey) break;
 			const oldest = cloneCache.get(oldestKey);
-			if (oldest) removeClone(oldest.localPath);
+			if (oldest) yield* removeClone(oldest.localPath);
 			cloneCache.delete(oldestKey);
 		}
 
@@ -303,7 +304,7 @@ export function extractGitHub(
 	});
 }
 
-export const clearCloneCache: Effect.Effect<void> = Effect.sync(() => {
-	for (const entry of cloneCache.values()) removeClone(entry.localPath);
+export const clearCloneCache: Effect.Effect<void> = Effect.gen(function* () {
+	for (const entry of cloneCache.values()) yield* removeClone(entry.localPath);
 	cloneCache.clear();
 });

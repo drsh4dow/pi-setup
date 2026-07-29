@@ -106,15 +106,14 @@ function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 	const ids = new Set<string>();
 	let sourceCount = 0;
 	let omittedSources = 0;
-	let accepting = true;
-
-	pi.events.emit(COLLECT_CHANNEL, {
+	const activeRequests = new WeakSet<CollectionRequest>();
+	const request: CollectionRequest = {
 		add(
 			name: string,
 			load: ProcessStatusSource,
 			loadUsage?: ProcessStatusUsageSource,
 		) {
-			if (!accepting) return;
+			if (!activeRequests.has(request)) return;
 			sourceCount += 1;
 			if (sourceCount > MAX_SOURCES) {
 				omittedSources += 1;
@@ -171,8 +170,10 @@ function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 				);
 			}
 		},
-	} satisfies CollectionRequest);
-	accepting = false;
+	};
+	activeRequests.add(request);
+	pi.events.emit(COLLECT_CHANNEL, request);
+	activeRequests.delete(request);
 
 	return { groups, omitted, usage, errors, omittedSources };
 }

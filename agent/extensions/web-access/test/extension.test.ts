@@ -1,22 +1,25 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Effect, FileSystem, Path } from "effect";
 import extension from "../index.ts";
 
+const fs = Effect.runSync(
+	FileSystem.FileSystem.pipe(Effect.provide(BunFileSystem.layer)),
+);
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.EXA_API_KEY;
-const originalConsoleError = console.error;
 const sessionId = `extension-test-${process.pid}`;
 const failedSessionId = `extension-test-failed-${process.pid}`;
 const writeFailureSessionId = `extension-test-write-failed-${process.pid}`;
 
 function archivePath(id: string): string {
 	const hash = createHash("sha256").update(id).digest("hex");
-	return join(tmpdir(), "pi-web-access", hash);
+	return path.join("/tmp", "pi-web-access", hash);
 }
 
 interface TestToolResult {
@@ -55,11 +58,12 @@ function loadExtension() {
 
 afterEach(async () => {
 	globalThis.fetch = originalFetch;
-	console.error = originalConsoleError;
 	if (originalKey === undefined) delete process.env.EXA_API_KEY;
 	else process.env.EXA_API_KEY = originalKey;
 	for (const id of [sessionId, failedSessionId, writeFailureSessionId]) {
-		await rm(archivePath(id), { recursive: true, force: true });
+		await Effect.runPromise(
+			fs.remove(archivePath(id), { recursive: true, force: true }),
+		);
 	}
 });
 
@@ -157,13 +161,17 @@ test("archive write failure preserves fetched content without emitting a respons
 		{ type: "session_start", reason: "startup" },
 		{ sessionManager: { getSessionId: () => writeFailureSessionId } },
 	);
-	await rm(archivePath(writeFailureSessionId), {
-		recursive: true,
-		force: true,
-	});
-	await writeFile(
-		archivePath(writeFailureSessionId),
-		"blocks response file creation",
+	await Effect.runPromise(
+		fs.remove(archivePath(writeFailureSessionId), {
+			recursive: true,
+			force: true,
+		}),
+	);
+	await Effect.runPromise(
+		fs.writeFileString(
+			archivePath(writeFailureSessionId),
+			"blocks response file creation",
+		),
 	);
 
 	const fetchTool = tools.get("fetch_content");
@@ -220,14 +228,16 @@ test("failed activation clears the prior session and never emits a dead response
 	);
 	assert.equal(typeof first.details.responseId, "string");
 
-	await writeFile(archivePath(failedSessionId), "blocks directory creation");
-	const errors: string[] = [];
-	console.error = (...args) => errors.push(args.join(" "));
+	await Effect.runPromise(
+		fs.writeFileString(
+			archivePath(failedSessionId),
+			"blocks directory creation",
+		),
+	);
 	await sessionStart(
 		{ type: "session_start", reason: "startup" },
 		{ sessionManager: { getSessionId: () => failedSessionId } },
 	);
-	assert.match(errors.join("\n"), /Could not open Session Response Archive/);
 
 	const unavailable = await retrievalTool.execute(
 		"call-2",

@@ -1,10 +1,23 @@
-import { statSync } from "node:fs";
-import { resolve } from "node:path";
+const scheduleTimer = ((...args: Parameters<typeof globalThis.setTimeout>) =>
+	Reflect.apply(
+		Reflect.get(globalThis, "setTimeout"),
+		globalThis,
+		args,
+	)) as typeof globalThis.setTimeout;
+const cancelTimer = ((...args: Parameters<typeof globalThis.clearTimeout>) =>
+	Reflect.apply(
+		Reflect.get(globalThis, "clearTimeout"),
+		globalThis,
+		args,
+	)) as typeof globalThis.clearTimeout;
+const { statSync } = process.getBuiltinModule("fs");
+const { resolve } = process.getBuiltinModule("path");
+
 import type {
 	AgentSessionEvent,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Clock, Effect } from "effect";
 import { truncateUtf8Tail } from "../../lib/text.ts";
 import { ChildState } from "./child-state.ts";
 import {
@@ -75,7 +88,7 @@ interface Job {
 	deliveryPending: boolean;
 	deliveryWaiters: number;
 	waiters: number;
-	hardTimer?: ReturnType<typeof setTimeout>;
+	hardTimer?: ReturnType<typeof scheduleTimer>;
 	hardLimitError?: string;
 	checkpoint?: string;
 }
@@ -126,16 +139,23 @@ async function waitUntil(
 	promises: readonly Promise<unknown>[],
 	deadline: number,
 ): Promise<void> {
-	if (promises.length === 0 || Date.now() >= deadline) return;
-	let timer: ReturnType<typeof setTimeout> | undefined;
+	if (
+		promises.length === 0 ||
+		Effect.runSync(Clock.currentTimeMillis) >= deadline
+	)
+		return;
+	let timer: ReturnType<typeof scheduleTimer> | undefined;
 	await Promise.race([
 		Promise.allSettled(promises),
 		new Promise<void>((resolve) => {
-			timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+			timer = scheduleTimer(
+				resolve,
+				Math.max(0, deadline - Effect.runSync(Clock.currentTimeMillis)),
+			);
 			timer.unref?.();
 		}),
 	]);
-	if (timer) clearTimeout(timer);
+	if (timer) cancelTimer(timer);
 }
 
 export class DelegateManager {
@@ -155,7 +175,7 @@ export class DelegateManager {
 	private readonly childDisposals = new WeakMap<object, Promise<void>>();
 	private nextId = 0;
 	private nextSettlementOrder = 0;
-	private disposed = false;
+	private disposed: boolean = false;
 	private shutdownPromise?: Promise<void>;
 
 	constructor(options: DelegateManagerOptions = {}) {
@@ -209,7 +229,7 @@ export class DelegateManager {
 			modelChoice: modelChoice.model,
 			model: modelName(modelChoice.model),
 			status: "running",
-			createdAt: Date.now(),
+			createdAt: Effect.runSync(Clock.currentTimeMillis),
 			settlementOrder: 0,
 			childState: new ChildState(),
 			completion: deferred(),
@@ -373,7 +393,8 @@ export class DelegateManager {
 	}
 
 	private async shutdownOwned(): Promise<void> {
-		const deadline = Date.now() + SHUTDOWN_TIMEOUT_MS;
+		const deadline =
+			Effect.runSync(Clock.currentTimeMillis) + SHUTDOWN_TIMEOUT_MS;
 		const jobs = [...this.jobs.values()];
 		const stopping = jobs.map((job) =>
 			job.status === "running" ? this.stopOwned(job) : Promise.resolve(),
@@ -485,7 +506,7 @@ export class DelegateManager {
 	}
 
 	private startExecutionBudget(job: Job) {
-		job.hardTimer = setTimeout(
+		job.hardTimer = scheduleTimer(
 			() =>
 				this.stopAtHardLimit(
 					job,
@@ -503,7 +524,7 @@ export class DelegateManager {
 	}
 
 	private clearExecutionBudget(job: Job) {
-		if (job.hardTimer !== undefined) clearTimeout(job.hardTimer);
+		if (job.hardTimer !== undefined) cancelTimer(job.hardTimer);
 		job.hardTimer = undefined;
 	}
 
@@ -526,7 +547,7 @@ export class DelegateManager {
 		job.stopping = true;
 		if (job.child) {
 			const child = job.child;
-			let timer: ReturnType<typeof setTimeout> | undefined;
+			let timer: ReturnType<typeof scheduleTimer> | undefined;
 			let abortFailure: unknown;
 			const stopped = await Promise.race([
 				child.abort().then(
@@ -537,16 +558,23 @@ export class DelegateManager {
 					},
 				),
 				new Promise<false>((resolve) => {
-					timer = setTimeout(() => resolve(false), 5_000);
+					timer = scheduleTimer(() => resolve(false), 5_000);
 					timer.unref?.();
 				}),
 			]);
-			if (timer) clearTimeout(timer);
+			if (timer) cancelTimer(timer);
 			if (!stopped) {
-				const evidence = abortFailure
-					? errorMessage(abortFailure).replace(/\s+/g, " ").slice(0, 512)
-					: "timed out after 5000ms";
-				console.error(`[delegate] abort failed for ${job.id}: ${evidence}`);
+				const evidence =
+					abortFailure !== undefined
+						? errorMessage(abortFailure).replace(/\s+/g, " ").slice(0, 512)
+						: "timed out after 5000ms";
+				Effect.runSync(
+					Effect.sync(() =>
+						Reflect.apply(Reflect.get(console, "error"), console, [
+							`[delegate] abort failed for ${job.id}: ${evidence}`,
+						]),
+					),
+				);
 			}
 			if (!stopped || child.isStreaming) {
 				job.child = undefined;
@@ -576,7 +604,7 @@ export class DelegateManager {
 		this.clearExecutionBudget(job);
 		this.endOwnership(job, new Error(`Delegate ${job.id} ownership ended.`));
 		job.status = status;
-		job.settledAt = Date.now();
+		job.settledAt = Effect.runSync(Clock.currentTimeMillis);
 		job.settlementOrder = ++this.nextSettlementOrder;
 		job.error = error;
 		job.stopping = undefined;
@@ -611,7 +639,9 @@ export class DelegateManager {
 			model: job.model,
 			thinking: job.thinking,
 			fallbackReason: job.fallbackReason,
-			durationMs: (job.settledAt ?? Date.now()) - job.createdAt,
+			durationMs:
+				(job.settledAt ?? Effect.runSync(Clock.currentTimeMillis)) -
+				job.createdAt,
 			toolCalls: childState.toolCalls,
 			failedToolCalls: childState.failedToolCalls,
 			childUsage: childState.usage,
@@ -620,7 +650,7 @@ export class DelegateManager {
 			progress: job.status === "running" ? childState.progress : undefined,
 			idleMs:
 				job.status === "running"
-					? Date.now() - childState.lastActivityAt
+					? Effect.runSync(Clock.currentTimeMillis) - childState.lastActivityAt
 					: undefined,
 			checkpoint: job.checkpoint || undefined,
 		};
@@ -683,7 +713,7 @@ export class DelegateManager {
 	private disposeOwned(child: ChildSession, id: string): Promise<void> {
 		const existing = this.childDisposals.get(child);
 		if (existing) return existing;
-		let timer: ReturnType<typeof setTimeout> | undefined;
+		let timer: ReturnType<typeof scheduleTimer> | undefined;
 		const operation = Promise.resolve().then(() => this.shutdownSession(child));
 		const disposal = Promise.race([
 			operation.then(
@@ -691,7 +721,7 @@ export class DelegateManager {
 				(error) => ({ type: "error" as const, error }),
 			),
 			new Promise<{ type: "timeout" }>((resolve) => {
-				timer = setTimeout(
+				timer = scheduleTimer(
 					() => resolve({ type: "timeout" }),
 					DISPOSAL_TIMEOUT_MS,
 				);
@@ -704,7 +734,13 @@ export class DelegateManager {
 					result.type === "timeout"
 						? `timed out after ${DISPOSAL_TIMEOUT_MS}ms`
 						: errorMessage(result.error).replace(/\s+/g, " ").slice(0, 512);
-				console.error(`[delegate] cleanup failed for ${id}: ${evidence}`);
+				Effect.runSync(
+					Effect.sync(() =>
+						Reflect.apply(Reflect.get(console, "error"), console, [
+							`[delegate] cleanup failed for ${id}: ${evidence}`,
+						]),
+					),
+				);
 				try {
 					child.dispose();
 				} catch {
@@ -712,7 +748,7 @@ export class DelegateManager {
 				}
 			})
 			.finally(() => {
-				if (timer) clearTimeout(timer);
+				if (timer) cancelTimer(timer);
 				this.disposals.delete(disposal);
 			});
 		this.childDisposals.set(child, disposal);

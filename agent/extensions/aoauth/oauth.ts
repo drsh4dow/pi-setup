@@ -1,15 +1,26 @@
-import {
-	createServer,
-	type IncomingMessage,
-	type RequestListener,
-	type Server,
-	type ServerResponse,
-} from "node:http";
 import type {
 	OAuthCredentials,
 	OAuthLoginCallbacks,
-	OAuthProviderInterface,
 } from "@earendil-works/pi-ai/compat";
+import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
+import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
+import {
+	Clock,
+	Effect,
+	Fiber,
+	Layer,
+	ManagedRuntime,
+	Schema,
+	Stream,
+} from "effect";
+import {
+	FetchHttpClient,
+	HttpClient,
+	HttpClientRequest,
+	HttpServer,
+	HttpServerRequest,
+	HttpServerResponse,
+} from "effect/unstable/http";
 
 const CLIENT_ID = atob("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl");
 const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
@@ -26,6 +37,20 @@ const SERVER_CLOSE_GRACE_MS = 250;
 const MAX_CALLBACK_CONNECTIONS = 16;
 
 type AuthorizationCode = { code: string; state: string };
+const TokenResponseJson = Schema.Struct({
+	access_token: Schema.NonEmptyString,
+	refresh_token: Schema.optional(Schema.NonEmptyString),
+	expires_in: Schema.Finite.check(Schema.isGreaterThan(0)),
+});
+
+class OAuthRequestError extends Schema.TaggedErrorClass<OAuthRequestError>()(
+	"OAuthRequestError",
+	{
+		message: Schema.String,
+		cause: Schema.optional(Schema.Defect()),
+	},
+) {}
+
 type TokenResponse = {
 	accessToken: string;
 	refreshToken?: string;
@@ -88,23 +113,109 @@ function parseAuthorizationInput(input: string): Partial<AuthorizationCode> {
 	return { code: value };
 }
 
-function writeCallbackResponse(
-	response: ServerResponse<IncomingMessage>,
-	status: number,
-	message: string,
-) {
-	response.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
-	response.end(message);
+function handleCallback(
+	method: string,
+	requestUrl: string,
+	expectedState: string,
+	settle: (result: AuthorizationCode | Error) => void,
+): { status: number; message: string } {
+	if (method !== "GET") return { status: 405, message: "Method not allowed" };
+
+	const url = new URL(requestUrl, "http://localhost");
+	if (url.pathname !== CALLBACK_PATH) {
+		return { status: 404, message: "Callback route not found" };
+	}
+
+	const state = url.searchParams.get("state") ?? "";
+	const providerError = url.searchParams.get("error");
+	if (providerError) {
+		const description =
+			url.searchParams.get("error_description") ?? providerError;
+		if (state === expectedState) {
+			settle(new Error(`Anthropic authorization failed: ${description}`));
+		}
+		return { status: 400, message: `Authorization failed: ${description}` };
+	}
+
+	const code = url.searchParams.get("code");
+	if (!code) return { status: 400, message: "Missing authorization code" };
+	if (state !== expectedState) {
+		return { status: 400, message: "OAuth state mismatch" };
+	}
+
+	settle({ code, state });
+	return {
+		status: 200,
+		message: "Anthropic authentication completed. You can close this window.",
+	};
 }
 
-function createCallbackServer(handler: RequestListener): Server {
-	const server = createServer(handler);
+async function startBunCallbackServer(
+	expectedState: string,
+	port: number,
+	settle: (result: AuthorizationCode | Error) => void,
+): Promise<Omit<CallbackServer, "result">> {
+	const app = Effect.gen(function* () {
+		const request = yield* HttpServerRequest.HttpServerRequest;
+		const response = handleCallback(
+			request.method,
+			request.url,
+			expectedState,
+			settle,
+		);
+		return HttpServerResponse.text(response.message, {
+			status: response.status,
+			headers: { Connection: "close" },
+		});
+	});
+	const serverLayer = BunHttpServer.layer({
+		hostname: "127.0.0.1",
+		port,
+		gracefulShutdownTimeout: SERVER_CLOSE_GRACE_MS,
+	});
+	const runtime = ManagedRuntime.make(
+		Layer.merge(
+			serverLayer,
+			HttpServer.serve(app).pipe(Layer.provide(serverLayer)),
+		),
+	);
+	try {
+		const server = await runtime.runPromise(HttpServer.HttpServer);
+		if (server.address._tag !== "TcpAddress") {
+			throw new Error("Anthropic OAuth callback server did not bind to TCP");
+		}
+		return {
+			redirectUri: `http://localhost:${server.address.port}${CALLBACK_PATH}`,
+			close: () => runtime.dispose(),
+		};
+	} catch (error) {
+		await runtime.dispose();
+		throw error;
+	}
+}
+
+async function startNodeCallbackServer(
+	expectedState: string,
+	port: number,
+	settle: (result: AuthorizationCode | Error) => void,
+): Promise<Omit<CallbackServer, "result">> {
+	// Node-based extension tests cannot instantiate BunHttpServer because Bun.serve
+	// is not present. Keep this host boundary local; production Bun uses Effect above.
+	const nodeHttp = process.getBuiltinModule("node:http");
+	const server = nodeHttp.createServer((request, response) => {
+		const result = handleCallback(
+			request.method ?? "",
+			request.url ?? "",
+			expectedState,
+			settle,
+		);
+		response.writeHead(result.status, {
+			"Content-Type": "text/plain; charset=utf-8",
+		});
+		response.end(result.message);
+	});
 	server.maxConnections = MAX_CALLBACK_CONNECTIONS;
-	return server;
-}
-
-function listen(server: Server, port: number): Promise<void> {
-	return new Promise((resolve, reject) => {
+	await new Promise<void>((resolve, reject) => {
 		const onError = (error: Error) => reject(error);
 		server.once("error", onError);
 		server.listen(port, "127.0.0.1", () => {
@@ -112,6 +223,29 @@ function listen(server: Server, port: number): Promise<void> {
 			resolve();
 		});
 	});
+	server.on("error", settle);
+	const address = server.address();
+	if (!address || typeof address === "string") {
+		server.close();
+		throw new Error("Anthropic OAuth callback server did not bind to TCP");
+	}
+	return {
+		redirectUri: `http://localhost:${address.port}${CALLBACK_PATH}`,
+		close: () =>
+			new Promise((resolve, reject) => {
+				if (!server.listening) return resolve();
+				const forceClose = Effect.runFork(
+					Effect.sleep(SERVER_CLOSE_GRACE_MS).pipe(
+						Effect.andThen(Effect.sync(() => server.closeAllConnections())),
+					),
+				);
+				server.close((error) => {
+					Effect.runFork(Fiber.interrupt(forceClose));
+					if (error) reject(error);
+					else resolve();
+				});
+			}),
+	};
 }
 
 async function startCallbackServer(
@@ -124,104 +258,23 @@ async function startCallbackServer(
 		resolveResult = resolve;
 		rejectResult = reject;
 	});
-
-	const handler = (
-		request: IncomingMessage,
-		response: ServerResponse<IncomingMessage>,
-	) => {
-		if (request.method !== "GET") {
-			writeCallbackResponse(response, 405, "Method not allowed");
-			return;
-		}
-
-		const url = new URL(request.url ?? "", "http://localhost");
-		if (url.pathname !== CALLBACK_PATH) {
-			writeCallbackResponse(response, 404, "Callback route not found");
-			return;
-		}
-
-		const state = url.searchParams.get("state") ?? "";
-		const providerError = url.searchParams.get("error");
-		if (providerError) {
-			const description =
-				url.searchParams.get("error_description") ?? providerError;
-			writeCallbackResponse(
-				response,
-				400,
-				`Authorization failed: ${description}`,
-			);
-			if (state === expectedState && !settled) {
-				settled = true;
-				rejectResult(
-					new Error(`Anthropic authorization failed: ${description}`),
-				);
-			}
-			return;
-		}
-
-		const code = url.searchParams.get("code");
-		if (!code) {
-			writeCallbackResponse(response, 400, "Missing authorization code");
-			return;
-		}
-		if (state !== expectedState) {
-			writeCallbackResponse(response, 400, "OAuth state mismatch");
-			return;
-		}
-
-		writeCallbackResponse(
-			response,
-			200,
-			"Anthropic authentication completed. You can close this window.",
-		);
-		if (!settled) {
-			settled = true;
-			resolveResult({ code, state });
-		}
+	const settle = (outcome: AuthorizationCode | Error) => {
+		if (settled) return;
+		settled = true;
+		if (outcome instanceof Error) rejectResult(outcome);
+		else resolveResult(outcome);
 	};
+	const start =
+		"Bun" in globalThis ? startBunCallbackServer : startNodeCallbackServer;
 
-	let server = createCallbackServer(handler);
+	let server: Omit<CallbackServer, "result">;
 	try {
-		await listen(server, CALLBACK_PORT);
+		server = await start(expectedState, CALLBACK_PORT, settle);
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
-		server = createCallbackServer(handler);
-		await listen(server, 0);
+		if ((error as { code?: string }).code !== "EADDRINUSE") throw error;
+		server = await start(expectedState, 0, settle);
 	}
-
-	server.on("error", (error) => {
-		if (!settled) {
-			settled = true;
-			rejectResult(error);
-		}
-	});
-
-	const address = server.address();
-	if (!address || typeof address === "string") {
-		server.close();
-		throw new Error("Anthropic OAuth callback server did not bind to TCP");
-	}
-
-	return {
-		redirectUri: `http://localhost:${address.port}${CALLBACK_PATH}`,
-		result,
-		close: () =>
-			new Promise((resolve, reject) => {
-				if (!server.listening) {
-					resolve();
-					return;
-				}
-				const forceClose = setTimeout(() => {
-					server.closeAllConnections();
-				}, SERVER_CLOSE_GRACE_MS);
-				forceClose.unref();
-				server.close((error) => {
-					clearTimeout(forceClose);
-					if (error) reject(error);
-					else resolve();
-				});
-			}),
-	};
+	return { ...server, result };
 }
 
 function cancellationError(signal: AbortSignal): Error {
@@ -270,109 +323,103 @@ async function waitForAuthorization(
 	}
 }
 
-async function readBoundedBody(response: Response): Promise<string> {
-	if (!response.body) return "";
-
-	const reader = response.body.getReader();
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	while (size <= MAX_RESPONSE_BYTES) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		size += value.byteLength;
-		if (size > MAX_RESPONSE_BYTES) {
-			await reader.cancel();
-			throw new Error("Anthropic OAuth response exceeded 64 KiB");
-		}
-		chunks.push(value);
-	}
-
-	const body = new Uint8Array(size);
-	let offset = 0;
-	for (const chunk of chunks) {
-		body.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return new TextDecoder().decode(body);
-}
-
-function credentialExpiry(expiresInSeconds: number): number {
-	const lifetime = expiresInSeconds * 1000;
-	return Date.now() + lifetime - Math.min(EXPIRY_SKEW_MS, lifetime / 2);
-}
-
-function parseTokenResponse(body: string, operation: string): TokenResponse {
-	let value: unknown;
-	try {
-		value = JSON.parse(body);
-	} catch (error) {
-		throw new Error(`Anthropic ${operation} returned invalid JSON`, {
-			cause: error,
-		});
-	}
-
-	if (!value || typeof value !== "object") {
-		throw new Error(
-			`Anthropic ${operation} returned an invalid token response`,
-		);
-	}
-	const token = value as Record<string, unknown>;
-	if (typeof token.access_token !== "string" || token.access_token === "") {
-		throw new Error(`Anthropic ${operation} response omitted access_token`);
-	}
-	if (
-		typeof token.expires_in !== "number" ||
-		!Number.isFinite(token.expires_in) ||
-		token.expires_in <= 0
-	) {
-		throw new Error(`Anthropic ${operation} response had invalid expires_in`);
-	}
-	if (
-		token.refresh_token !== undefined &&
-		(typeof token.refresh_token !== "string" || token.refresh_token === "")
-	) {
-		throw new Error(
-			`Anthropic ${operation} response had invalid refresh_token`,
-		);
-	}
-
-	return {
-		accessToken: token.access_token,
-		refreshToken: token.refresh_token as string | undefined,
-		expiresIn: token.expires_in,
-	};
-}
-
-async function requestToken(
+const requestToken = Effect.fn("requestToken")(function* (
 	operation: string,
 	body: Record<string, string>,
-	signal?: AbortSignal,
 	headers?: Record<string, string>,
-): Promise<TokenResponse> {
-	const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-	const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
-	let response: Response;
-	try {
-		response = await fetch(TOKEN_URL, {
-			method: "POST",
-			headers: { ...headers, "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-			signal: requestSignal,
-		});
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Anthropic ${operation} request failed: ${message}`, {
-			cause: error,
+): Effect.fn.Return<TokenResponse, OAuthRequestError, HttpClient.HttpClient> {
+	const client = yield* HttpClient.HttpClient;
+	const encodedBody = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(
+		body,
+	).pipe(
+		Effect.mapError(
+			(cause) =>
+				new OAuthRequestError({
+					message: `Anthropic ${operation} request encoding failed`,
+					cause,
+				}),
+		),
+	);
+	const request = HttpClientRequest.post(TOKEN_URL).pipe(
+		HttpClientRequest.bodyText(encodedBody),
+		HttpClientRequest.setHeaders({
+			...headers,
+			"Content-Type": "application/json",
+		}),
+	);
+	const response = yield* client.execute(request).pipe(
+		Effect.timeout(REQUEST_TIMEOUT_MS),
+		Effect.mapError(
+			(cause) =>
+				new OAuthRequestError({
+					message: `Anthropic ${operation} request failed`,
+					cause,
+				}),
+		),
+	);
+	if (response.status < 200 || response.status >= 300) {
+		return yield* new OAuthRequestError({
+			message: `Anthropic ${operation} failed with HTTP ${response.status}`,
 		});
 	}
+	const contentLength = Number(response.headers["content-length"]);
+	if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+		return yield* new OAuthRequestError({
+			message: "Anthropic OAuth response exceeded 64 KiB",
+		});
+	}
+	const bytes = yield* response.stream.pipe(
+		Stream.flattenIterable,
+		Stream.take(MAX_RESPONSE_BYTES + 1),
+		Stream.runCollect,
+		Effect.map((bytes) => Uint8Array.from(bytes)),
+		Effect.mapError(
+			(cause) =>
+				new OAuthRequestError({
+					message: `Anthropic ${operation} response read failed`,
+					cause,
+				}),
+		),
+	);
+	if (bytes.byteLength > MAX_RESPONSE_BYTES) {
+		return yield* new OAuthRequestError({
+			message: "Anthropic OAuth response exceeded 64 KiB",
+		});
+	}
+	const token = yield* Schema.decodeEffect(
+		Schema.fromJsonString(TokenResponseJson),
+	)(new TextDecoder().decode(bytes)).pipe(
+		Effect.mapError(
+			(cause) =>
+				new OAuthRequestError({
+					message: `Anthropic ${operation} returned invalid JSON`,
+					cause,
+				}),
+		),
+	);
+	return {
+		accessToken: token.access_token,
+		refreshToken: token.refresh_token,
+		expiresIn: token.expires_in,
+	};
+});
 
-	const responseBody = await readBoundedBody(response);
-	if (!response.ok) {
-		throw new Error(
-			`Anthropic ${operation} failed with HTTP ${response.status}`,
-		);
-	}
-	return parseTokenResponse(responseBody, operation);
+const runTokenRequest = <A>(
+	effect: Effect.Effect<A, OAuthRequestError, HttpClient.HttpClient>,
+	options?: { signal?: AbortSignal },
+) =>
+	Effect.runPromise(
+		effect.pipe(
+			Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+			Effect.provide(Layer.fresh(FetchHttpClient.layer)),
+		),
+		options,
+	);
+
+async function credentialExpiry(expiresInSeconds: number): Promise<number> {
+	const lifetime = expiresInSeconds * 1000;
+	const now = await Effect.runPromise(Clock.currentTimeMillis);
+	return now + lifetime - Math.min(EXPIRY_SKEW_MS, lifetime / 2);
 }
 
 async function loginAnthropic(
@@ -411,17 +458,20 @@ async function loginAnthropic(
 	}
 
 	callbacks.onProgress?.("Exchanging authorization code for tokens...");
-	const token = await requestToken(
-		"token exchange",
-		{
-			grant_type: "authorization_code",
-			client_id: CLIENT_ID,
-			code: authorization.code,
-			state: authorization.state,
-			redirect_uri: server.redirectUri,
-			code_verifier: verifier,
-		},
-		callbacks.signal,
+	const token = await runTokenRequest(
+		requestToken(
+			"token exchange",
+			{
+				grant_type: "authorization_code",
+				client_id: CLIENT_ID,
+				code: authorization.code,
+				state: authorization.state,
+				redirect_uri: server.redirectUri,
+				code_verifier: verifier,
+			},
+			undefined,
+		),
+		{ signal: callbacks.signal },
 	);
 	if (!token.refreshToken) {
 		throw new Error("Anthropic token exchange response omitted refresh_token");
@@ -430,7 +480,7 @@ async function loginAnthropic(
 	return {
 		access: token.accessToken,
 		refresh: token.refreshToken,
-		expires: credentialExpiry(token.expiresIn),
+		expires: await credentialExpiry(token.expiresIn),
 	};
 }
 
@@ -439,27 +489,28 @@ export const anthropicOAuth = {
 	usesCallbackServer: true,
 	login: loginAnthropic,
 	async refreshToken(credentials) {
-		const token = await requestToken(
-			"token refresh",
-			{
-				grant_type: "refresh_token",
-				client_id: CLIENT_ID,
-				refresh_token: credentials.refresh,
-			},
-			undefined,
-			{
-				"anthropic-beta": "oauth-2025-04-20",
-				"User-Agent": "anthropic-sdk-typescript/0.94.0 userOAuthProvider",
-			},
+		const token = await runTokenRequest(
+			requestToken(
+				"token refresh",
+				{
+					grant_type: "refresh_token",
+					client_id: CLIENT_ID,
+					refresh_token: credentials.refresh,
+				},
+				{
+					"anthropic-beta": "oauth-2025-04-20",
+					"User-Agent": "anthropic-sdk-typescript/0.94.0 userOAuthProvider",
+				},
+			),
 		);
 		return {
 			...credentials,
 			access: token.accessToken,
 			refresh: token.refreshToken ?? credentials.refresh,
-			expires: credentialExpiry(token.expiresIn),
+			expires: await credentialExpiry(token.expiresIn),
 		};
 	},
 	getApiKey(credentials) {
 		return credentials.access;
 	},
-} satisfies Omit<OAuthProviderInterface, "id">;
+} satisfies NonNullable<ProviderConfig["oauth"]>;

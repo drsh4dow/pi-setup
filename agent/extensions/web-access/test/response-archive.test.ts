@@ -1,14 +1,39 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
-import { Effect } from "effect";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import { Effect, FileSystem } from "effect";
 import { openSessionResponseArchive } from "../response-archive.ts";
 
-test("archives text, retrieves selections, and evicts beyond twenty responses", async () => {
-	const root = await mkdtemp(join(tmpdir(), "pi-web-access-archive-test-"));
-	try {
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+	Effect.runPromise(effect.pipe(Effect.provide(BunFileSystem.layer)));
+
+const withRoot = <A>(
+	use: (root: string, fs: FileSystem.FileSystem) => Promise<A>,
+): Promise<A> =>
+	run(
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const root = yield* fs.makeTempDirectory({
+				prefix: "pi-web-access-archive-test-",
+			});
+			return yield* Effect.tryPromise(() => use(root, fs)).pipe(
+				Effect.ensuring(
+					fs.remove(root, { recursive: true, force: true }).pipe(Effect.ignore),
+				),
+			);
+		}),
+	);
+
+const sessionArchivePath = async (root: string, fs: FileSystem.FileSystem) => {
+	const [sessionDirectory] = await Effect.runPromise(
+		fs.readDirectory(`${root}/pi-web-access`),
+	);
+	assert.ok(sessionDirectory);
+	return `${root}/pi-web-access/${sessionDirectory}`;
+};
+
+test("archives text, retrieves selections, and evicts beyond twenty responses", () =>
+	withRoot(async (root, fs) => {
 		const archive = await Effect.runPromise(
 			openSessionResponseArchive("session-a", root),
 		);
@@ -40,12 +65,18 @@ test("archives text, retrieves selections, and evicts beyond twenty responses", 
 			status: "not-found",
 		});
 
-		const [sessionDirectory] = await readdir(join(root, "pi-web-access"));
-		const archivePath = join(root, "pi-web-access", sessionDirectory);
-		const files = await readdir(archivePath);
+		const archivePath = await sessionArchivePath(root, fs);
+		const files = await Effect.runPromise(fs.readDirectory(archivePath));
 		assert.equal(files.length, 20);
-		assert.equal((await stat(archivePath)).mode & 0o777, 0o700);
-		assert.equal((await stat(join(archivePath, files[0]))).mode & 0o777, 0o600);
+		assert.equal(
+			(await Effect.runPromise(fs.stat(archivePath))).mode & 0o777,
+			0o700,
+		);
+		assert.equal(
+			(await Effect.runPromise(fs.stat(`${archivePath}/${files[0]}`))).mode &
+				0o777,
+			0o600,
+		);
 
 		const reopened = await Effect.runPromise(
 			openSessionResponseArchive("session-a", root),
@@ -60,26 +91,27 @@ test("archives text, retrieves selections, and evicts beyond twenty responses", 
 				itemCount: 1,
 			});
 		}
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
-});
+	}));
 
-test("activation removes invalid entries and isolates sessions", async () => {
-	const root = await mkdtemp(join(tmpdir(), "pi-web-access-archive-test-"));
-	try {
+test("activation removes invalid entries and isolates sessions", () =>
+	withRoot(async (root, fs) => {
 		const archive = await Effect.runPromise(
 			openSessionResponseArchive("session-a", root),
 		);
 		const responseId = await Effect.runPromise(archive.archive(["kept"]));
-		const [sessionDirectory] = await readdir(join(root, "pi-web-access"));
-		const archivePath = join(root, "pi-web-access", sessionDirectory);
-		await writeFile(join(archivePath, "invalid.json"), "not json\n");
-		await writeFile(
-			join(archivePath, "legacy.json"),
-			`${JSON.stringify({ id: "legacy", type: "fetch", timestamp: 1, items: [] })}\n`,
+		const archivePath = await sessionArchivePath(root, fs);
+		await Effect.runPromise(
+			fs.writeFileString(`${archivePath}/invalid.json`, "not json\n"),
 		);
-		await writeFile(join(archivePath, ".orphan.tmp"), "partial");
+		await Effect.runPromise(
+			fs.writeFileString(
+				`${archivePath}/legacy.json`,
+				'{"id":"legacy","type":"fetch","timestamp":1,"items":[]}\n',
+			),
+		);
+		await Effect.runPromise(
+			fs.writeFileString(`${archivePath}/.orphan.tmp`, "partial"),
+		);
 
 		const reopened = await Effect.runPromise(
 			openSessionResponseArchive("session-a", root),
@@ -88,7 +120,9 @@ test("activation removes invalid entries and isolates sessions", async () => {
 			(await Effect.runPromise(reopened.retrieve(responseId))).status,
 			"found",
 		);
-		assert.deepEqual(await readdir(archivePath), [`${responseId}.json`]);
+		assert.deepEqual(await Effect.runPromise(fs.readDirectory(archivePath)), [
+			`${responseId}.json`,
+		]);
 
 		const otherSession = await Effect.runPromise(
 			openSessionResponseArchive("session-b", root),
@@ -97,32 +131,25 @@ test("activation removes invalid entries and isolates sessions", async () => {
 			await Effect.runPromise(otherSession.retrieve(responseId)),
 			{ status: "not-found" },
 		);
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
-});
+	}));
 
-test("activation rejects a polluted archive directory before reading responses", async () => {
-	const root = await mkdtemp(join(tmpdir(), "pi-web-access-archive-test-"));
-	try {
+test("activation rejects a polluted archive directory before reading responses", () =>
+	withRoot(async (root, fs) => {
 		await Effect.runPromise(openSessionResponseArchive("session-a", root));
-		const [sessionDirectory] = await readdir(join(root, "pi-web-access"));
-		const archivePath = join(root, "pi-web-access", sessionDirectory);
+		const archivePath = await sessionArchivePath(root, fs);
 		for (let index = 0; index < 41; index += 1) {
-			await writeFile(join(archivePath, `pollution-${index}`), "ignored");
+			await Effect.runPromise(
+				fs.writeFileString(`${archivePath}/pollution-${index}`, "ignored"),
+			);
 		}
 		await assert.rejects(
 			Effect.runPromise(openSessionResponseArchive("session-a", root)),
 			/exceeds 40 directory entries/,
 		);
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
-});
+	}));
 
-test("archive rejects empty responses and responses with too many items", async () => {
-	const root = await mkdtemp(join(tmpdir(), "pi-web-access-archive-test-"));
-	try {
+test("archive rejects empty responses and responses with too many items", () =>
+	withRoot(async (root) => {
 		const archive = await Effect.runPromise(
 			openSessionResponseArchive("session-a", root),
 		);
@@ -131,7 +158,4 @@ test("archive rejects empty responses and responses with too many items", async 
 			Effect.runPromise(archive.archive(Array(11).fill("item"))),
 			/1-10/,
 		);
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
-});
+	}));

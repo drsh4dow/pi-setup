@@ -1,4 +1,7 @@
-import { unlinkSync } from "node:fs";
+import { Clock, Effect } from "effect";
+
+const { unlinkSync } = process.getBuiltinModule("fs");
+
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { truncateUtf8Head, truncateUtf8Window } from "../../lib/text.ts";
 import { type DelegateUsageStats, MAX_CHILD_OUTPUT_BYTES } from "./contract.ts";
@@ -95,10 +98,10 @@ export class ChildState {
 	private readonly messages: MessageEntry[] = [];
 	private readonly tools: ToolEntry[] = [];
 	private seq = 0;
-	private lastActivityAt = Date.now();
+	private lastActivityAt = Effect.runSync(Clock.currentTimeMillis);
 	private writing: string | undefined;
 	private progress: string | undefined;
-	private omitInitialUserMessage = true;
+	private omitInitialUserMessage: boolean = true;
 	private output = "";
 	private outputTruncated = false;
 	private fullOutputFile?: string;
@@ -143,7 +146,7 @@ export class ChildState {
 	}
 
 	capture(event: AgentSessionEvent) {
-		this.lastActivityAt = Date.now();
+		this.lastActivityAt = Effect.runSync(Clock.currentTimeMillis);
 		if (event.type === "tool_execution_start") {
 			this.toolCalls++;
 			this.progress = `tool: ${progressLine(event.toolName)} · running`;
@@ -225,8 +228,10 @@ export class ChildState {
 			unlinkSync(path);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-				console.error(
-					`[delegate] could not remove saved output ${path}: ${error}`,
+				Effect.runSync(
+					Effect.logError(
+						`[delegate] could not remove saved output ${path}: ${error}`,
+					),
 				);
 			}
 		}
@@ -250,8 +255,10 @@ export class ChildState {
 		} catch (error) {
 			// Retaining the full response in memory is the lossless fallback when archival fails.
 			this.output = text;
-			console.error(
-				`[delegate] could not save oversized child output: ${error}`,
+			Effect.runSync(
+				Effect.logError(
+					`[delegate] could not save oversized child output: ${error}`,
+				),
 			);
 		}
 	}

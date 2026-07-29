@@ -1,16 +1,24 @@
-import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type {
 	ContextEvent,
 	ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
+import * as BunCrypto from "@effect/platform-bun/BunCrypto";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import {
+	Crypto,
+	Effect,
+	Encoding,
+	FileSystem,
+	Layer,
+	ManagedRuntime,
+	Path,
+	Result,
+} from "effect";
 
 type AgentMessage = ContextEvent["messages"][number];
 type ImageBlock = { type: "image"; data: string; mimeType: string };
 type MaterializeImage = (image: ImageBlock) => Promise<string>;
-
 interface ContentBlock {
 	type: string;
 	text?: string;
@@ -24,7 +32,6 @@ function contentOf(message: AgentMessage): unknown[] | undefined {
 		? message.content
 		: undefined;
 }
-
 function isContentBlock(block: unknown): block is ContentBlock {
 	return (
 		typeof block === "object" &&
@@ -33,12 +40,8 @@ function isContentBlock(block: unknown): block is ContentBlock {
 		typeof block.type === "string"
 	);
 }
-
 function imagePathsInText(text: string): string[] {
-	const matches = [
-		...text.matchAll(/<file name="([^"]+)">([\s\S]*?)<\/file>/g),
-	];
-	return matches
+	return [...text.matchAll(/<file name="([^"]+)">([\s\S]*?)<\/file>/g)]
 		.filter(
 			(match) =>
 				/\.(?:avif|bmp|gif|jpe?g|png|webp)$/i.test(match[1] ?? "") ||
@@ -47,12 +50,11 @@ function imagePathsInText(text: string): string[] {
 		.map((match) => match[1])
 		.filter((path): path is string => path !== undefined);
 }
-
 function readToolPaths(
 	messages: ContextEvent["messages"],
 ): Map<string, string> {
 	const paths = new Map<string, string>();
-	for (const message of messages) {
+	for (const message of messages)
 		for (const block of contentOf(message) ?? []) {
 			if (
 				!isContentBlock(block) ||
@@ -68,14 +70,11 @@ function readToolPaths(
 					: "file_path" in args
 						? args.file_path
 						: undefined;
-			if (typeof block.id === "string" && typeof path === "string") {
+			if (typeof block.id === "string" && typeof path === "string")
 				paths.set(block.id, path);
-			}
 		}
-	}
 	return paths;
 }
-
 function sourcePathsForMessage(
 	message: AgentMessage,
 	toolPaths: Map<string, string>,
@@ -88,7 +87,6 @@ function sourcePathsForMessage(
 				.filter((block) => isContentBlock(block) && block.type === "image")
 				.map(() => path);
 	}
-
 	return content.flatMap((block) =>
 		isContentBlock(block) &&
 		block.type === "text" &&
@@ -103,30 +101,23 @@ export async function pruneImages(
 	materializeImage: MaterializeImage,
 ): Promise<ContextEvent["messages"]> {
 	let imageCount = 0;
-	for (const message of messages) {
-		for (const block of contentOf(message) ?? []) {
+	for (const message of messages)
+		for (const block of contentOf(message) ?? [])
 			if (isContentBlock(block) && block.type === "image") imageCount++;
-		}
-	}
-
 	let imagesToPrune = imageCount - 2;
 	if (imagesToPrune <= 0) return messages;
-
 	const toolPaths = readToolPaths(messages);
 	const transformed: ContextEvent["messages"] = [];
-
 	for (const message of messages) {
 		const content = contentOf(message);
 		if (!content) {
 			transformed.push(message);
 			continue;
 		}
-
 		const sourcePaths = sourcePathsForMessage(message, toolPaths);
 		let imageIndex = 0;
 		let changed = false;
 		const nextContent: unknown[] = [];
-
 		for (const block of content) {
 			if (
 				!isContentBlock(block) ||
@@ -136,7 +127,6 @@ export async function pruneImages(
 				nextContent.push(block);
 				continue;
 			}
-
 			const image = block as ImageBlock;
 			const path = sourcePaths[imageIndex] ?? (await materializeImage(image));
 			imageIndex++;
@@ -144,55 +134,61 @@ export async function pruneImages(
 			changed = true;
 			nextContent.push({ type: "text", text: `Image: ${path}` });
 		}
-
 		transformed.push(
 			changed
 				? ({ ...message, content: nextContent } as unknown as AgentMessage)
 				: message,
 		);
 	}
-
 	return transformed;
 }
 
 export default function shakeImagesExtension(pi: ExtensionAPI): void {
+	const runtime = ManagedRuntime.make(
+		Layer.mergeAll(BunFileSystem.layer, BunPath.layer, BunCrypto.layer),
+	);
 	let enabled = false;
 	let tempImagesDir: Promise<string> | undefined;
-
-	const materializeImage: MaterializeImage = async (image) => {
-		tempImagesDir ??= mkdtemp(join(tmpdir(), "pi-shake-images-"));
-		let directory: string;
-		try {
-			directory = await tempImagesDir;
-		} catch (error) {
-			tempImagesDir = undefined;
-			throw error;
-		}
-
-		const extension =
-			{
-				"image/avif": "avif",
-				"image/bmp": "bmp",
-				"image/gif": "gif",
-				"image/jpeg": "jpg",
-				"image/png": "png",
-				"image/webp": "webp",
-			}[image.mimeType] ?? "img";
-		const path = join(
-			directory,
-			`${createHash("sha256").update(image.data).digest("hex")}.${extension}`,
+	const materializeImage: MaterializeImage = (image) =>
+		runtime.runPromise(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const path = yield* Path.Path;
+				const crypto = yield* Crypto.Crypto;
+				tempImagesDir ??= runtime.runPromise(
+					fs.makeTempDirectory({ prefix: "pi-shake-images-" }),
+				);
+				const directory = yield* Effect.promise(
+					() => tempImagesDir as Promise<string>,
+				).pipe(
+					Effect.tapError(() =>
+						Effect.sync(() => {
+							tempImagesDir = undefined;
+						}),
+					),
+				);
+				const extension =
+					(
+						{
+							"image/avif": "avif",
+							"image/bmp": "bmp",
+							"image/gif": "gif",
+							"image/jpeg": "jpg",
+							"image/png": "png",
+							"image/webp": "webp",
+						} as Record<string, string>
+					)[image.mimeType] ?? "img";
+				const bytes = Result.getOrThrow(Encoding.decodeBase64(image.data));
+				const digest = yield* crypto.digest("SHA-256", bytes);
+				const file = path.join(
+					directory,
+					`${Encoding.encodeHex(digest)}.${extension}`,
+				);
+				if (!(yield* fs.exists(file)))
+					yield* fs.writeFile(file, bytes, { flag: "wx" });
+				return file;
+			}),
 		);
-		try {
-			await writeFile(path, Buffer.from(image.data, "base64"), { flag: "wx" });
-		} catch (error) {
-			if (
-				!(error instanceof Error && "code" in error && error.code === "EEXIST")
-			)
-				throw error;
-		}
-		return path;
-	};
-
 	pi.registerCommand("shake-images", {
 		description: "Keep only the latest two images in model context",
 		handler: async (_args, ctx) => {
@@ -200,16 +196,21 @@ export default function shakeImagesExtension(pi: ExtensionAPI): void {
 			ctx.ui.notify("Image context pruned to the latest two images", "info");
 		},
 	});
-
-	pi.on("context", async (event) => {
-		if (!enabled) return undefined;
-		return { messages: await pruneImages(event.messages, materializeImage) };
-	});
-
+	pi.on("context", async (event) =>
+		enabled
+			? { messages: await pruneImages(event.messages, materializeImage) }
+			: undefined,
+	);
 	pi.on("session_shutdown", async () => {
-		if (!tempImagesDir) return;
-		const directory = await tempImagesDir;
-		tempImagesDir = undefined;
-		await rm(directory, { force: true, recursive: true });
+		if (tempImagesDir) {
+			const directory = await tempImagesDir;
+			tempImagesDir = undefined;
+			await runtime.runPromise(
+				FileSystem.FileSystem.use((fs) =>
+					fs.remove(directory, { force: true, recursive: true }),
+				),
+			);
+		}
+		await runtime.dispose();
 	});
 }

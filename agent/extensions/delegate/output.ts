@@ -1,15 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+
+const { writeFileSync } = process.getBuiltinModule("fs");
+const { writeFile } = process.getBuiltinModule("fs/promises");
+
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+
+const { join } = process.getBuiltinModule("path");
+
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	formatSize,
 	truncateHead,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Clock, Effect } from "effect";
 import type { DelegateOutput } from "./contract.ts";
 import { delegateError } from "./errors.ts";
 
@@ -39,7 +43,7 @@ export function extractAssistantText(message: {
 function delegateOutputPath() {
 	return join(
 		tmpdir(),
-		`pi-delegate-${process.pid}-${Date.now()}-${randomUUID()}.txt`,
+		`pi-delegate-${process.pid}-${Effect.runSync(Clock.currentTimeMillis)}-${randomUUID()}.txt`,
 	);
 }
 

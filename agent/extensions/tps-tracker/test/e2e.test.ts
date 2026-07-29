@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after, before, describe } from "node:test";
+import { Clock, Effect } from "effect";
 import {
 	capture,
 	e2eUnavailable,
@@ -47,8 +48,8 @@ async function runTaskSamplingStatus(
 
 	await prompt(session, text);
 
-	const deadline = Date.now() + TURN_TIMEOUT_MS;
-	while (Date.now() < deadline) {
+	const deadline = Effect.runSync(Clock.currentTimeMillis) + TURN_TIMEOUT_MS;
+	while (Effect.runSync(Clock.currentTimeMillis) < deadline) {
 		const pane = capture(session);
 		const line = statusLine(pane);
 		if (
@@ -68,7 +69,7 @@ async function runTaskSamplingStatus(
 				`pi exited during the tps turn\n--- stderr ---\n${readStderr(session)}\n--- pane ---\n${pane}`,
 			);
 		}
-		await new Promise((resolve) => setTimeout(resolve, FRAME_POLL_MS));
+		await Effect.runPromise(Effect.sleep(FRAME_POLL_MS));
 	}
 
 	throw new Error(

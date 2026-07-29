@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import type {
 	ExtensionAPI,
@@ -9,11 +7,30 @@ import type {
 	RegisteredCommand,
 	Skill,
 } from "@earendil-works/pi-coding-agent";
+import * as BunCrypto from "@effect/platform-bun/BunCrypto";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { FileSystem, Layer, ManagedRuntime, Path } from "effect";
 import extension from "../index.ts";
 
 test("omits skills that users cannot invoke from the visibility picker", async (t) => {
-	const directory = await mkdtemp(join(tmpdir(), "skill-visibility-test-"));
-	t.after(() => rm(directory, { recursive: true, force: true }));
+	const runtime = ManagedRuntime.make(
+		Layer.mergeAll(BunFileSystem.layer, BunPath.layer, BunCrypto.layer),
+	);
+	const fs = runtime.runSync(FileSystem.FileSystem);
+	const path = runtime.runSync(Path.Path);
+	const directory = await runtime.runPromise(
+		fs.makeTempDirectory({
+			directory: tmpdir(),
+			prefix: "skill-visibility-test-",
+		}),
+	);
+	t.after(async () => {
+		await runtime.runPromise(
+			fs.remove(directory, { recursive: true, force: true }),
+		);
+		await runtime.dispose();
+	});
 
 	const skills = [
 		["automatic-only", "user-invokable: false\n"],
@@ -22,10 +39,12 @@ test("omits skills that users cannot invoke from the visibility picker", async (
 	] as const;
 	await Promise.all(
 		skills.map(async ([name, visibility]) => {
-			const filePath = join(directory, `${name}.md`);
-			await writeFile(
-				filePath,
-				`---\nname: ${name}\ndescription: Test skill.\n${visibility}---\n`,
+			const filePath = path.join(directory, `${name}.md`);
+			await runtime.runPromise(
+				fs.writeFileString(
+					filePath,
+					`---\nname: ${name}\ndescription: Test skill.\n${visibility}---\n`,
+				),
 			);
 		}),
 	);
@@ -42,7 +61,7 @@ test("omits skills that users cannot invoke from the visibility picker", async (
 	let choices: string[] = [];
 	const loadedSkills = skills.map(([name]) => ({
 		name,
-		filePath: join(directory, `${name}.md`),
+		filePath: path.join(directory, `${name}.md`),
 		disableModelInvocation: false,
 	})) as Skill[];
 	await handler("", {

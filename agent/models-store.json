@@ -244,7 +244,7 @@
         }
       }
     ],
-    "checkedAt": 1785157062808,
+    "checkedAt": 1785325649199,
     "lastModified": 1784920533000,
     "etag": "W/\"8c50b40966720784303e46378a0807dc\""
   },
@@ -1114,6 +1114,38 @@
         "maxTokens": 262144
       },
       {
+        "id": "moonshotai/Kimi-K3",
+        "name": "Kimi K3",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "input": [
+          "text",
+          "image"
+        ],
+        "cost": {
+          "input": 3,
+          "output": 15,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "compat": {
+          "supportsDeveloperRole": false
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 131072,
+        "thinkingLevelMap": {
+          "off": null,
+          "minimal": null,
+          "low": "low",
+          "medium": null,
+          "high": "high",
+          "xhigh": null,
+          "max": "max"
+        }
+      },
+      {
         "id": "openai/gpt-oss-120b",
         "name": "GPT OSS 120B",
         "api": "openai-completions",
@@ -1429,9 +1461,9 @@
         "maxTokens": 131072
       }
     ],
-    "checkedAt": 1785157063176,
-    "lastModified": 1784920521000,
-    "etag": "W/\"6a9026b5f1e2b0c90719a3cb2e39b03f\""
+    "checkedAt": 1785325649507,
+    "lastModified": 1785237850000,
+    "etag": "W/\"5f47d6268ef48cc72b02d0cec3811013\""
   },
   "opencode": {
     "models": [
@@ -4011,7 +4043,7 @@
         }
       }
     ],
-    "checkedAt": 1785157062864,
+    "checkedAt": 1785325649507,
     "lastModified": 1784920532000,
     "etag": "W/\"9c057e7d7707143f029a59a91957d8a5\""
   },
@@ -4400,7 +4432,7 @@
         }
       }
     ],
-    "checkedAt": 1785161181054,
+    "checkedAt": 1785325649589,
     "lastModified": 1785146159000,
     "etag": "W/\"2955a0a2593d701973abef2d80e4a8e0\""
   },
@@ -4845,7 +4877,7 @@
         "maxTokens": 65536
       }
     ],
-    "checkedAt": 1785157062864,
+    "checkedAt": 1785325649577,
     "lastModified": 1784920536000,
     "etag": "W/\"59a6b3ee1050eab26eca0c9f9df57659\""
   }

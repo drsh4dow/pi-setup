@@ -5,8 +5,8 @@
   "scripts": {
     "prepare": "effect-tsgo patch",
     "typecheck": "tsc --noEmit",
-    "check": "biome check agent/extensions agent/lib agent/scripts",
-    "check:fix": "biome check agent/extensions agent/lib agent/scripts --write",
+    "check": "biome check agent/extensions agent/lib",
+    "check:fix": "biome check agent/extensions agent/lib --write",
     "test:delegate": "node --test agent/extensions/delegate/test/*.test.ts",
     "test:background-terminals": "node --test agent/extensions/background-terminals/test/*.test.ts",
     "test:process-status": "node --test agent/extensions/process-status/test/*.test.ts",

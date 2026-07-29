@@ -4,20 +4,20 @@ import { join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const SUPPORTED_MODELS = new Set([
-  "openai/gpt-5.4",
-  "openai/gpt-5.4-mini",
-  "openai/gpt-5.5",
-  "openai/gpt-5.6",
-  "openai/gpt-5.6-sol",
-  "openai/gpt-5.6-terra",
-  "openai/gpt-5.6-luna",
-  "openai-codex/gpt-5.4",
-  "openai-codex/gpt-5.4-mini",
-  "openai-codex/gpt-5.5",
-  "openai-codex/gpt-5.6",
-  "openai-codex/gpt-5.6-sol",
-  "openai-codex/gpt-5.6-terra",
-  "openai-codex/gpt-5.6-luna",
+	"openai/gpt-5.4",
+	"openai/gpt-5.4-mini",
+	"openai/gpt-5.5",
+	"openai/gpt-5.6",
+	"openai/gpt-5.6-sol",
+	"openai/gpt-5.6-terra",
+	"openai/gpt-5.6-luna",
+	"openai-codex/gpt-5.4",
+	"openai-codex/gpt-5.4-mini",
+	"openai-codex/gpt-5.5",
+	"openai-codex/gpt-5.6",
+	"openai-codex/gpt-5.6-sol",
+	"openai-codex/gpt-5.6-terra",
+	"openai-codex/gpt-5.6-luna",
 ]);
 export const TARGET_PROVIDER = "openai-codex";
 export const TARGET_MODEL = "gpt-5.6";
@@ -31,17 +31,17 @@ type ProviderPayload = Record<string, unknown>;
 type PiConfig = Record<string, unknown>;
 type ReadTextFile = (path: string, encoding: "utf8") => string;
 type WriteTextFile = (
-  path: string,
-  data: string,
-  options: { encoding: "utf8"; mode: number },
+	path: string,
+	data: string,
+	options: { encoding: "utf8"; mode: number },
 ) => void;
 
 type PiFileOptions = {
-  env?: Record<string, string | undefined>;
-  home?: string;
-  exists?: (path: string) => boolean;
-  readFile?: ReadTextFile;
-  writeFile?: WriteTextFile;
+	env?: Record<string, string | undefined>;
+	home?: string;
+	exists?: (path: string) => boolean;
+	readFile?: ReadTextFile;
+	writeFile?: WriteTextFile;
 };
 
 /**
@@ -49,36 +49,36 @@ type PiFileOptions = {
  * The payload check makes tests and future provider edge-cases less dependent on ctx.model.
  */
 export function modelKey(model: PiModel): string {
-  return `${model.provider}/${model.id}`;
+	return `${model.provider}/${model.id}`;
 }
 
 export function isSupportedModel(model: PiModel | undefined): boolean {
-  if (!model?.provider || !model.id) return false;
-  return SUPPORTED_MODELS.has(modelKey(model));
+	if (!model?.provider || !model.id) return false;
+	return SUPPORTED_MODELS.has(modelKey(model));
 }
 
 export function shouldApplyFastMode(
-  model: PiModel | undefined,
-  payload: unknown,
+	model: PiModel | undefined,
+	payload: unknown,
 ): boolean {
-  if (!payload || typeof payload !== "object") return false;
-  const requestModel = (payload as ProviderPayload).model;
-  return isSupportedModel(model) && requestModel === model?.id;
+	if (!payload || typeof payload !== "object") return false;
+	const requestModel = (payload as ProviderPayload).model;
+	return isSupportedModel(model) && requestModel === model?.id;
 }
 
 /** Return a patched provider payload that asks Codex for the Fast service tier. */
 export function withFastServiceTier(payload: unknown): unknown {
-  if (!payload || typeof payload !== "object") return payload;
-  return {
-    ...(payload as ProviderPayload),
-    service_tier: FAST_SERVICE_TIER,
-  };
+	if (!payload || typeof payload !== "object") return payload;
+	return {
+		...(payload as ProviderPayload),
+		service_tier: FAST_SERVICE_TIER,
+	};
 }
 
 function expandHome(input: string, home: string): string {
-  if (input === "~") return home;
-  if (input.startsWith("~/")) return join(home, input.slice(2));
-  return input;
+	if (input === "~") return home;
+	if (input.startsWith("~/")) return join(home, input.slice(2));
+	return input;
 }
 
 /**
@@ -86,72 +86,72 @@ function expandHome(input: string, home: string): string {
  * Order: PI_CODING_AGENT_DIR, then XDG config locations if present, then Pi's default.
  */
 export function resolvePiFilePath(
-  fileName: string,
-  options: PiFileOptions = {},
+	fileName: string,
+	options: PiFileOptions = {},
 ): string {
-  const env = options.env ?? process.env;
-  const home = options.home ?? homedir();
-  const exists = options.exists ?? existsSync;
+	const env = options.env ?? process.env;
+	const home = options.home ?? homedir();
+	const exists = options.exists ?? existsSync;
 
-  const piDir = env.PI_CODING_AGENT_DIR?.trim();
-  if (piDir) return join(resolve(expandHome(piDir, home)), fileName);
+	const piDir = env.PI_CODING_AGENT_DIR?.trim();
+	if (piDir) return join(resolve(expandHome(piDir, home)), fileName);
 
-  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
-    ? resolve(expandHome(env.XDG_CONFIG_HOME, home))
-    : join(home, ".config");
+	const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
+		? resolve(expandHome(env.XDG_CONFIG_HOME, home))
+		: join(home, ".config");
 
-  const xdgCandidates = [
-    join(xdgConfigHome, "pi", "agent", fileName),
-    join(xdgConfigHome, "pi", fileName),
-  ];
+	const xdgCandidates = [
+		join(xdgConfigHome, "pi", "agent", fileName),
+		join(xdgConfigHome, "pi", fileName),
+	];
 
-  for (const candidate of xdgCandidates) {
-    if (exists(candidate)) return candidate;
-  }
+	for (const candidate of xdgCandidates) {
+		if (exists(candidate)) return candidate;
+	}
 
-  return join(home, ".pi", "agent", fileName);
+	return join(home, ".pi", "agent", fileName);
 }
 
 /** Resolve the global Pi keybindings file this extension should read. */
 export function resolveKeybindingsPath(options: PiFileOptions = {}): string {
-  return resolvePiFilePath("keybindings.json", options);
+	return resolvePiFilePath("keybindings.json", options);
 }
 
 export function resolveFastModeSettingsPath(
-  options: PiFileOptions = {},
+	options: PiFileOptions = {},
 ): string {
-  return resolvePiFilePath("gpt-fast-mode.json", options);
+	return resolvePiFilePath("gpt-fast-mode.json", options);
 }
 
 function normalizeShortcutList(values: unknown[]): string[] {
-  return values
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .filter((shortcut) => !RESERVED_SHORTCUTS.has(shortcut.toLowerCase()));
+	return values
+		.filter((item): item is string => typeof item === "string")
+		.map((item) => item.trim())
+		.filter(Boolean)
+		.filter((shortcut) => !RESERVED_SHORTCUTS.has(shortcut.toLowerCase()));
 }
 
 export function normalizeShortcutSetting(value: unknown): string[] {
-  if (value === false || value === null) return [];
-  if (Array.isArray(value)) return normalizeShortcutList(value);
+	if (value === false || value === null) return [];
+	if (Array.isArray(value)) return normalizeShortcutList(value);
 
-  const shortcuts = normalizeShortcutList([value]);
-  return shortcuts.length > 0 ? shortcuts : [DEFAULT_SHORTCUT];
+	const shortcuts = normalizeShortcutList([value]);
+	return shortcuts.length > 0 ? shortcuts : [DEFAULT_SHORTCUT];
 }
 
 function readPiJson(
-  path: string,
-  readFile: ReadTextFile,
+	path: string,
+	readFile: ReadTextFile,
 ): PiConfig | undefined {
-  try {
-    const raw = readFile(path, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as PiConfig)
-      : undefined;
-  } catch {
-    return undefined;
-  }
+	try {
+		const raw = readFile(path, "utf8");
+		const parsed = JSON.parse(raw) as unknown;
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+			? (parsed as PiConfig)
+			: undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -160,116 +160,116 @@ function readPiJson(
  * Set the field to false or null to disable the shortcut entirely.
  */
 export function loadShortcuts(options: PiFileOptions = {}): string[] {
-  const readFile: ReadTextFile =
-    options.readFile ?? ((path, encoding) => readFileSync(path, encoding));
-  const parsed = readPiJson(resolveKeybindingsPath(options), readFile);
-  return parsed
-    ? normalizeShortcutSetting(parsed[KEYBINDING_FIELD])
-    : [DEFAULT_SHORTCUT];
+	const readFile: ReadTextFile =
+		options.readFile ?? ((path, encoding) => readFileSync(path, encoding));
+	const parsed = readPiJson(resolveKeybindingsPath(options), readFile);
+	return parsed
+		? normalizeShortcutSetting(parsed[KEYBINDING_FIELD])
+		: [DEFAULT_SHORTCUT];
 }
 
 export function loadEnabled(options: PiFileOptions = {}): boolean {
-  const readFile: ReadTextFile =
-    options.readFile ?? ((path, encoding) => readFileSync(path, encoding));
-  const settings = readPiJson(resolveFastModeSettingsPath(options), readFile);
-  return settings?.enabled === true;
+	const readFile: ReadTextFile =
+		options.readFile ?? ((path, encoding) => readFileSync(path, encoding));
+	const settings = readPiJson(resolveFastModeSettingsPath(options), readFile);
+	return settings?.enabled === true;
 }
 
 export function saveEnabled(
-  enabled: boolean,
-  options: PiFileOptions = {},
+	enabled: boolean,
+	options: PiFileOptions = {},
 ): void {
-  const writeFile: WriteTextFile =
-    options.writeFile ??
-    ((path, data, writeOptions) => writeFileSync(path, data, writeOptions));
-  writeFile(
-    resolveFastModeSettingsPath(options),
-    `${JSON.stringify({ enabled }, null, 2)}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
+	const writeFile: WriteTextFile =
+		options.writeFile ??
+		((path, data, writeOptions) => writeFileSync(path, data, writeOptions));
+	writeFile(
+		resolveFastModeSettingsPath(options),
+		`${JSON.stringify({ enabled }, null, 2)}\n`,
+		{ encoding: "utf8", mode: 0o600 },
+	);
 }
 
 function isSupportedModelContext(ctx: unknown): boolean {
-  const model = (ctx as { model?: PiModel } | undefined)?.model;
-  return isSupportedModel(model);
+	const model = (ctx as { model?: PiModel } | undefined)?.model;
+	return isSupportedModel(model);
 }
 
 function currentModelLabel(ctx: unknown): string {
-  const model = (ctx as { model?: PiModel } | undefined)?.model;
-  return model?.provider && model.id ? modelKey(model) : "unknown model";
+	const model = (ctx as { model?: PiModel } | undefined)?.model;
+	return model?.provider && model.id ? modelKey(model) : "unknown model";
 }
 
 function notify(
-  ctx: unknown,
-  message: string,
-  level: "info" | "warning" | "error" = "info",
+	ctx: unknown,
+	message: string,
+	level: "info" | "warning" | "error" = "info",
 ): void {
-  const ui = (
-    ctx as
-      | { ui?: { notify?: (message: string, level?: string) => void } }
-      | undefined
-  )?.ui;
-  ui?.notify?.(message, level);
+	const ui = (
+		ctx as
+			| { ui?: { notify?: (message: string, level?: string) => void } }
+			| undefined
+	)?.ui;
+	ui?.notify?.(message, level);
 }
 
 function announceState(ctx: unknown, enabled: boolean): void {
-  if (!enabled) {
-    notify(ctx, "GPT Fast mode disabled.");
-    return;
-  }
+	if (!enabled) {
+		notify(ctx, "GPT Fast mode disabled.");
+		return;
+	}
 
-  if (isSupportedModelContext(ctx)) {
-    notify(ctx, `GPT Fast mode enabled (service_tier: ${FAST_SERVICE_TIER}).`);
-    return;
-  }
+	if (isSupportedModelContext(ctx)) {
+		notify(ctx, `GPT Fast mode enabled (service_tier: ${FAST_SERVICE_TIER}).`);
+		return;
+	}
 
-  notify(
-    ctx,
-    `GPT Fast mode enabled, but ${currentModelLabel(ctx)} is not supported.`,
-    "warning",
-  );
+	notify(
+		ctx,
+		`GPT Fast mode enabled, but ${currentModelLabel(ctx)} is not supported.`,
+		"warning",
+	);
 }
 
 export default function fastModeExtension(pi: ExtensionAPI): void {
-  let enabled = loadEnabled();
+	let enabled = loadEnabled();
 
-  function toggle(ctx: unknown): void {
-    const nextEnabled = !enabled;
-    try {
-      saveEnabled(nextEnabled);
-      enabled = nextEnabled;
-      announceState(ctx, enabled);
-    } catch {
-      notify(ctx, "Could not save GPT Fast mode setting.", "error");
-    }
-  }
+	function toggle(ctx: unknown): void {
+		const nextEnabled = !enabled;
+		try {
+			saveEnabled(nextEnabled);
+			enabled = nextEnabled;
+			announceState(ctx, enabled);
+		} catch {
+			notify(ctx, "Could not save GPT Fast mode setting.", "error");
+		}
+	}
 
-  pi.registerCommand("fast", {
-    description: "Toggle GPT Fast mode (service_tier: priority)",
-    handler: async (_args, ctx) => {
-      toggle(ctx);
-    },
-  });
+	pi.registerCommand("fast", {
+		description: "Toggle GPT Fast mode (service_tier: priority)",
+		handler: async (_args, ctx) => {
+			toggle(ctx);
+		},
+	});
 
-  for (const shortcut of loadShortcuts()) {
-    pi.registerShortcut(
-      shortcut as Parameters<ExtensionAPI["registerShortcut"]>[0],
-      {
-        description: "Toggle GPT Fast mode",
-        handler: (ctx) => {
-          toggle(ctx);
-        },
-      },
-    );
-  }
+	for (const shortcut of loadShortcuts()) {
+		pi.registerShortcut(
+			shortcut as Parameters<ExtensionAPI["registerShortcut"]>[0],
+			{
+				description: "Toggle GPT Fast mode",
+				handler: (ctx) => {
+					toggle(ctx);
+				},
+			},
+		);
+	}
 
-  pi.on("session_start", () => {
-    enabled = loadEnabled();
-  });
+	pi.on("session_start", () => {
+		enabled = loadEnabled();
+	});
 
-  pi.on("before_provider_request", (event, ctx) => {
-    if (!enabled) return undefined;
-    if (!shouldApplyFastMode(ctx.model, event.payload)) return undefined;
-    return withFastServiceTier(event.payload);
-  });
+	pi.on("before_provider_request", (event, ctx) => {
+		if (!enabled) return undefined;
+		if (!shouldApplyFastMode(ctx.model, event.payload)) return undefined;
+		return withFastServiceTier(event.payload);
+	});
 }

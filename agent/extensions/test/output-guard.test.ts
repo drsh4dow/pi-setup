@@ -5,13 +5,13 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 function runOutputGuard(failures: number, emitError = false) {
-  const outputGuard = pathToFileURL(
-    resolve(
-      process.env.PI_OUTPUT_GUARD_PATH ??
-        "node_modules/@earendil-works/pi-coding-agent/dist/core/output-guard.js",
-    ),
-  ).href;
-  const script = `
+	const outputGuard = pathToFileURL(
+		resolve(
+			process.env.PI_OUTPUT_GUARD_PATH ??
+				"node_modules/@earendil-works/pi-coding-agent/dist/core/output-guard.js",
+		),
+	).href;
+	const script = `
     import {
       restoreStdout,
       takeOverStdout,
@@ -53,25 +53,25 @@ function runOutputGuard(failures: number, emitError = false) {
     }
     process.stdout.write("attempts=" + attempts + "\\n");
   `;
-  return spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    timeout: 5_000,
-  });
+	return spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+		cwd: process.cwd(),
+		encoding: "utf8",
+		timeout: 5_000,
+	});
 }
 
 test("transient stdout quota errors do not terminate the Pi process", () => {
-  const result = runOutputGuard(2, true);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, "attempts=3\n");
+	const result = runOutputGuard(2, true);
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout, "attempts=3\n");
 });
 
 test("persistent stdout pressure reports the dropped frame and recovery", () => {
-  const result = runOutputGuard(1_000);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, "attempts=100\n");
-  assert.equal(
-    result.stderr,
-    "[pi] stdout remained unavailable after 100 attempts; one display frame was dropped. Restart Pi if the interface appears incomplete.\n",
-  );
+	const result = runOutputGuard(1_000);
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.stdout, "attempts=100\n");
+	assert.equal(
+		result.stderr,
+		"[pi] stdout remained unavailable after 100 attempts; one display frame was dropped. Restart Pi if the interface appears incomplete.\n",
+	);
 });

@@ -1,6 +1,8 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
-import { Effect } from "effect";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunHttpClient from "@effect/platform-bun/BunHttpClient";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Effect, FileSystem, Path } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import {
 	asError,
 	errorMessage,
@@ -26,6 +28,8 @@ import {
 	getLocalDuration,
 	getYouTubeStream,
 } from "./video-frames.ts";
+
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 const MAX_FRAMES = 12;
@@ -78,32 +82,17 @@ function normalizeSpaces(value: string): string {
 	return value.replace(/[\u00A0\u2000-\u200B\u202F\u205F\u3000\uFEFF]/g, " ");
 }
 
-function resolveLocalPath(filePath: string): string | null {
-	const absolutePath = resolve(filePath);
-	if (existsSync(absolutePath)) return absolutePath;
-	const parent = dirname(absolutePath);
-	if (!existsSync(parent)) return null;
-	const normalized = normalizeSpaces(basename(absolutePath));
-	try {
-		const match = readdirSync(parent).find(
-			(entry) => normalizeSpaces(entry) === normalized,
-		);
-		return match ? join(parent, match) : null;
-	} catch {
+function localVideoPath(
+	input: string,
+): { filePath: string; mimeType: string } | { error: string } | null {
+	if (
+		!input.startsWith("/") &&
+		!input.startsWith("./") &&
+		!input.startsWith("../") &&
+		!input.startsWith("file://")
+	) {
 		return null;
 	}
-}
-
-function inspectLocalVideo(
-	input: string,
-): { video?: VideoFile; error?: string } | null {
-	const looksLocal =
-		input.startsWith("/") ||
-		input.startsWith("./") ||
-		input.startsWith("../") ||
-		input.startsWith("file://");
-	if (!looksLocal) return null;
-
 	let filePath = input;
 	if (input.startsWith("file://")) {
 		try {
@@ -112,35 +101,60 @@ function inspectLocalVideo(
 			return { error: "Invalid file URL" };
 		}
 	}
-
-	const mimeType = VIDEO_TYPES[extname(filePath).toLowerCase()];
-	if (!mimeType) return null;
-	const absolutePath = resolveLocalPath(filePath);
-	if (!absolutePath) return { error: `Video file not found: ${filePath}` };
-
-	try {
-		const stats = statSync(absolutePath);
-		if (!stats.isFile()) return { error: `Not a file: ${filePath}` };
-		if (stats.size > MAX_VIDEO_BYTES) {
-			return { error: "Local video exceeds the 50 MB limit" };
-		}
-		return {
-			video: { absolutePath, mimeType, sizeBytes: stats.size },
-		};
-	} catch (error) {
-		return { error: `Could not inspect video: ${errorMessage(error)}` };
-	}
+	const mimeType = VIDEO_TYPES[path.extname(filePath).toLowerCase()];
+	return mimeType ? { filePath, mimeType } : null;
 }
 
-function target(input: string): MediaTarget | { error: string } | null {
+const target = Effect.fn("target")(function* (input: string) {
 	const videoId = youtubeVideoId(input);
-	if (videoId) return { kind: "youtube", input, videoId };
-	const local = inspectLocalVideo(input);
-	if (!local) return null;
-	if (local.error) return { error: local.error };
-	if (!local.video) return null;
-	return { kind: "local", input, local: local.video };
-}
+	if (videoId) return { kind: "youtube", input, videoId } satisfies MediaTarget;
+	const local = localVideoPath(input);
+	if (!local || "error" in local) return local;
+
+	const fs = yield* FileSystem.FileSystem;
+	const absolutePath = path.resolve(local.filePath);
+	const exists = yield* fs.exists(absolutePath);
+	let resolvedPath = absolutePath;
+	if (!exists) {
+		const parent = path.dirname(absolutePath);
+		if (!(yield* fs.exists(parent))) {
+			return { error: `Video file not found: ${local.filePath}` };
+		}
+		const normalized = normalizeSpaces(path.basename(absolutePath));
+		const entries = yield* fs
+			.readDirectory(parent)
+			.pipe(Effect.orElseSucceed(() => []));
+		const match = entries.find(
+			(entry) => normalizeSpaces(entry) === normalized,
+		);
+		if (!match) return { error: `Video file not found: ${local.filePath}` };
+		resolvedPath = path.join(parent, match);
+	}
+
+	const stats = yield* fs
+		.stat(resolvedPath)
+		.pipe(
+			Effect.mapError((error) =>
+				webAccessError(
+					`Could not inspect video: ${errorMessage(error)}`,
+					error,
+				),
+			),
+		);
+	if (stats.type !== "File") return { error: `Not a file: ${local.filePath}` };
+	if (stats.size > BigInt(MAX_VIDEO_BYTES)) {
+		return { error: "Local video exceeds the 50 MB limit" };
+	}
+	return {
+		kind: "local",
+		input,
+		local: {
+			absolutePath: resolvedPath,
+			mimeType: local.mimeType,
+			sizeBytes: Number(stats.size),
+		},
+	} satisfies MediaTarget;
+}, Effect.provide(BunFileSystem.layer));
 
 function parseSeconds(value: string): number | null {
 	const numeric = Number(value);
@@ -377,20 +391,15 @@ function youtubeThumbnail(
 	videoId: string,
 ): Effect.Effect<FrameData | undefined> {
 	return Effect.gen(function* () {
-		const response = yield* Effect.tryPromise({
-			try: (signal) =>
-				fetch(`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, {
-					signal,
-				}),
-			catch: asError,
-		}).pipe(Effect.timeout(5_000), Effect.mapError(asError));
-		if (!response.ok) return undefined;
-		const data = Buffer.from(
-			yield* Effect.tryPromise({
-				try: () => response.arrayBuffer(),
-				catch: asError,
-			}),
+		const response = yield* HttpClient.get(
+			`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+		).pipe(
+			Effect.timeout(5_000),
+			Effect.provide(BunHttpClient.layer),
+			Effect.mapError(asError),
 		);
+		if (response.status < 200 || response.status >= 300) return undefined;
+		const data = Buffer.from(yield* response.arrayBuffer);
 		return data.length > 0
 			? { data: data.toString("base64"), mimeType: "image/jpeg" }
 			: undefined;
@@ -425,38 +434,33 @@ function analyze(
 }
 
 export function isMediaInput(input: string): boolean {
-	return target(input) !== null;
+	return youtubeVideoId(input) !== null || localVideoPath(input) !== null;
 }
 
-export function extractMedia(
+export const extractMedia = Effect.fn("extractMedia")(function* (
 	input: string,
 	options: FetchOptions,
-): Effect.Effect<ExtractedContent | null> {
-	return Effect.suspend(() => {
-		const media = target(input);
-		if (!media) return Effect.succeed(null);
-		if ("error" in media) {
-			return Effect.succeed({
+) {
+	const media = yield* target(input).pipe(
+		Effect.catch((error) => Effect.succeed({ error: errorMessage(error) })),
+	);
+	if (!media) return null;
+	if ("error" in media) {
+		return { url: input, title: "", content: "", error: media.error };
+	}
+
+	return yield* (
+		options.timestamp || options.frames
+			? extractRequestedFrames(media, options)
+			: analyze(media, options)
+	).pipe(
+		Effect.catch((error) =>
+			Effect.succeed({
 				url: input,
 				title: "",
 				content: "",
-				error: media.error,
-			});
-		}
-
-		const extraction =
-			options.timestamp || options.frames
-				? extractRequestedFrames(media, options)
-				: analyze(media, options);
-		return extraction.pipe(
-			Effect.catch((error) =>
-				Effect.succeed({
-					url: input,
-					title: "",
-					content: "",
-					error: errorMessage(error),
-				}),
-			),
-		);
-	});
-}
+				error: errorMessage(error),
+			}),
+		),
+	);
+});

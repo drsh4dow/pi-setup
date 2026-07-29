@@ -1,5 +1,13 @@
-import { statSync } from "node:fs";
-import { resolve } from "node:path";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Clock, Effect, FileSystem, Layer, Path } from "effect";
+
+const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
+const now = () => Effect.runSync(Clock.currentTimeMillis);
+const sleep = (milliseconds: number) =>
+	Effect.runPromise(Effect.sleep(milliseconds));
+const logError = (message: string) => Effect.runSync(Effect.logError(message));
+
 import { Type } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
@@ -50,7 +58,7 @@ function tail(text: string, maxBytes = MAX_TEXT): string {
 		.join("\n");
 }
 function elapsed(snapshot: TerminalSnapshot): string {
-	return `${Math.max(0, Math.round(((snapshot.settledAt ?? Date.now()) - snapshot.createdAt) / 1000))}s`;
+	return `${Math.max(0, Math.round(((snapshot.settledAt ?? now()) - snapshot.createdAt) / 1000))}s`;
 }
 function statusSummary(snapshot: TerminalSnapshot): string {
 	const exit =
@@ -115,12 +123,17 @@ export class BackgroundTerminalDelivery {
 	private readonly pending = new Map<string, TerminalSnapshot>();
 	private readonly attempts = new Map<string, number>();
 	private readonly failed = new Set<string>();
-	private retryTimer?: NodeJS.Timeout;
-	private flushing = false;
-	private closed = false;
+	private retryGeneration = 0;
+	private flushState: "idle" | "flushing" = "idle";
+	private lifecycle: "open" | "closed" = "closed";
 	private readonly pi: Pick<ExtensionAPI, "sendMessage">;
-	constructor(pi: Pick<ExtensionAPI, "sendMessage">) {
+	private readonly reportError: (message: string) => void;
+	constructor(
+		pi: Pick<ExtensionAPI, "sendMessage">,
+		reportError: (message: string) => void = logError,
+	) {
 		this.pi = pi;
+		this.reportError = reportError;
 	}
 	get problem(): string | undefined {
 		if (this.failed.size === 0) return undefined;
@@ -128,7 +141,7 @@ export class BackgroundTerminalDelivery {
 	}
 	setContext(context: ExtensionContext) {
 		this.context = context;
-		this.closed = false;
+		this.lifecycle = "open";
 	}
 	private markFailed(id: string) {
 		this.failed.add(id);
@@ -136,13 +149,13 @@ export class BackgroundTerminalDelivery {
 			this.failed.delete(this.failed.values().next().value as string);
 	}
 	enqueue(snapshot: TerminalSnapshot) {
-		if (this.closed || !this.context) return;
+		if (this.lifecycle === "closed" || !this.context) return;
 		if (!this.pending.has(snapshot.id) && this.pending.size === MAX_TRACKED) {
 			const evicted = this.pending.keys().next().value as string;
 			this.pending.delete(evicted);
 			this.attempts.delete(evicted);
 			this.markFailed(evicted);
-			console.error(
+			this.reportError(
 				`[background-terminals] completion queue evicted ${evicted}; use bg_status to inspect it.`,
 			);
 		}
@@ -186,21 +199,24 @@ export class BackgroundTerminalDelivery {
 			: undefined;
 	}
 	private scheduleRetry(attempt: number) {
-		if (this.retryTimer || this.closed) return;
-		this.retryTimer = setTimeout(
-			() => {
-				this.retryTimer = undefined;
-				if (this.context?.isIdle()) void this.flush();
-			},
+		if (this.lifecycle === "closed") return;
+		const generation = ++this.retryGeneration;
+		void sleep(
 			RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)],
-		);
-		this.retryTimer.unref();
+		).then(() => {
+			if (this.retryGeneration === generation && this.context?.isIdle())
+				void this.flush();
+		});
 	}
 	async flush() {
-		if (this.flushing || this.closed || !this.context) return;
-		if (this.retryTimer) clearTimeout(this.retryTimer);
-		this.retryTimer = undefined;
-		this.flushing = true;
+		if (
+			this.flushState === "flushing" ||
+			this.lifecycle === "closed" ||
+			!this.context
+		)
+			return;
+		this.retryGeneration++;
+		this.flushState = "flushing";
 		try {
 			for (let sent = 0; sent < MAX_TRACKED; sent++) {
 				const batch = this.batch();
@@ -230,21 +246,20 @@ export class BackgroundTerminalDelivery {
 					}
 					if (attempt < MAX_DELIVERY_ATTEMPTS) this.scheduleRetry(attempt);
 					else
-						console.error(
+						this.reportError(
 							`[background-terminals] completion delivery failed for ${batch.snapshots.map((snapshot) => snapshot.id).join(", ")}; use bg_status to inspect retained results: ${sanitizeInline(String(error).slice(0, 512))}`,
 						);
 					return;
 				}
 			}
 		} finally {
-			this.flushing = false;
+			this.flushState = "idle";
 		}
 	}
 	clear(): TerminalSnapshot[] {
-		this.closed = true;
+		this.lifecycle = "closed";
 		this.context = undefined;
-		if (this.retryTimer) clearTimeout(this.retryTimer);
-		this.retryTimer = undefined;
+		this.retryGeneration++;
 		const pending = [...this.pending.values()];
 		this.pending.clear();
 		this.attempts.clear();
@@ -264,7 +279,7 @@ class BackgroundTerminalSession {
 	private readonly owners = new Map<string, symbol>();
 	private readonly manager: BackgroundTerminalManager;
 	private readonly owner: symbol;
-	private stopping = false;
+	private lifecycle: "running" | "stopping" = "running";
 
 	constructor(owner: symbol, ownerClient: TerminalClient) {
 		this.owner = owner;
@@ -293,7 +308,7 @@ class BackgroundTerminalSession {
 	}
 
 	join(id: symbol, client: TerminalClient) {
-		if (this.stopping)
+		if (this.lifecycle === "stopping")
 			throw new Error("Background terminal session is shutting down.");
 		this.clients.set(id, client);
 		client.updateStatus();
@@ -367,7 +382,7 @@ class BackgroundTerminalSession {
 			return;
 		}
 
-		this.stopping = true;
+		this.lifecycle = "stopping";
 		if (activeTerminalSession === this) activeTerminalSession = undefined;
 		for (const remaining of this.clients.values()) remaining.delivery.clear();
 		this.clients.clear();
@@ -410,8 +425,9 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 	};
 	const client = { delivery, updateStatus };
 
-	registerProcessStatusSource(pi, "background-terminals", () =>
-		(session?.list(clientId) ?? []).map((snapshot) => ({
+	registerProcessStatusSource(pi, "background-terminals", () => {
+		if (!session) return [];
+		return session.list(clientId).map((snapshot) => ({
 			id: snapshot.id,
 			kind: "terminals" as const,
 			active: snapshot.state === "running",
@@ -421,8 +437,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 				if (!current) throw new Error(`error=not-tracked id=${snapshot.id}`);
 				return formatTerminalDetails(current);
 			},
-		})),
-	);
+		}));
+	});
 	const leaveSession = async (keepContext: boolean) => {
 		const joined = session;
 		session = undefined;
@@ -490,11 +506,18 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		async execute(_id, params, _signal, _update, ctx) {
 			const command = params.command.trim();
 			if (!command) throw new Error("command must not be empty.");
-			const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
-			let cwdIsDirectory = false;
-			try {
-				cwdIsDirectory = statSync(cwd).isDirectory();
-			} catch {}
+			const { cwd, cwdIsDirectory } = await Effect.runPromise(
+				Effect.gen(function* () {
+					const fs = yield* FileSystem.FileSystem;
+					const path = yield* Path.Path;
+					const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
+					const cwdIsDirectory = yield* fs.stat(cwd).pipe(
+						Effect.map((info) => info.type === "Directory"),
+						Effect.orElseSucceed(() => false),
+					);
+					return { cwd, cwdIsDirectory };
+				}).pipe(Effect.provide(platformLayer)),
+			);
 			if (!cwdIsDirectory)
 				throw new Error(
 					`working_dir is not a directory: ${sanitizeInline(cwd)}`,

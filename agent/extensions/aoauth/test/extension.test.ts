@@ -18,11 +18,7 @@ test("overrides only Anthropic OAuth and preserves the built-in provider", () =>
 	assert.equal(registration?.name, "anthropic");
 	assert.deepEqual(Object.keys(registration?.config ?? {}), ["oauth"]);
 	assert.equal(registration?.config.oauth?.name, "Anthropic (Claude Pro/Max)");
-	assert.equal(
-		(registration?.config.oauth as { usesCallbackServer?: boolean })
-			?.usesCallbackServer,
-		true,
-	);
+	assert.equal(registration?.config.oauth?.usesCallbackServer, true);
 	assert.equal(typeof registration?.config.oauth?.login, "function");
 	assert.equal(typeof registration?.config.oauth?.refreshToken, "function");
 	assert.equal(typeof registration?.config.oauth?.getApiKey, "function");

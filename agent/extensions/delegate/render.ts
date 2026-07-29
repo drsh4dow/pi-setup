@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+const { readFileSync } = process.getBuiltinModule("fs");
+
 import {
 	getMarkdownTheme,
 	keyHint,

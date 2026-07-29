@@ -1,29 +1,36 @@
-import { createHash, randomUUID } from "node:crypto";
+import * as BunCrypto from "@effect/platform-bun/BunCrypto";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
 import {
-	chmod,
-	mkdir,
-	open,
-	opendir,
-	rename,
-	rm,
-	writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Effect, SynchronizedRef } from "effect";
+	Clock,
+	Crypto,
+	Effect,
+	FileSystem,
+	Layer,
+	Path,
+	PlatformError,
+	Schema,
+	SynchronizedRef,
+} from "effect";
 import { asError, type WebAccessError, webAccessError } from "./errors.ts";
 
 const MAX_ARCHIVED_RESPONSES = 20;
 const MAX_ARCHIVE_DIRECTORY_ENTRIES = MAX_ARCHIVED_RESPONSES * 2;
 const MAX_ARCHIVED_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_ITEMS_PER_RESPONSE = 10;
+const ARCHIVE_TTL_MILLIS = 24 * 60 * 60 * 1000;
 const ITEM_SEPARATOR = "\n\n---\n\n";
 
-interface ArchivedResponse {
-	id: string;
-	createdAt: number;
-	items: string[];
-}
+const ArchivedResponse = Schema.Struct({
+	id: Schema.String,
+	createdAt: Schema.Finite,
+	items: Schema.Array(Schema.String).check(
+		Schema.isMinLength(1),
+		Schema.isMaxLength(MAX_ITEMS_PER_RESPONSE),
+	),
+});
+type ArchivedResponse = typeof ArchivedResponse.Type;
+const ArchivedResponseJson = Schema.fromJsonString(ArchivedResponse);
 
 export type ArchiveLookup =
 	| { status: "found"; text: string; itemCount: number }
@@ -35,83 +42,24 @@ export interface SessionResponseArchive {
 	retrieve(id: string, itemIndex?: number): Effect.Effect<ArchiveLookup>;
 }
 
-function io<A>(operation: () => Promise<A>): Effect.Effect<A, WebAccessError> {
-	return Effect.tryPromise({ try: operation, catch: asError });
-}
+const runtimeLayer = Layer.mergeAll(
+	BunFileSystem.layer,
+	BunPath.layer,
+	BunCrypto.layer,
+);
 
-function directoryFor(sessionId: string, root: string): string {
-	const id = createHash("sha256").update(sessionId).digest("hex");
-	return join(root, "pi-web-access", id);
-}
-
-function isArchivedResponse(
-	value: unknown,
-	expectedId: string,
-): value is ArchivedResponse {
-	if (!value || typeof value !== "object") return false;
-	const response = value as Record<string, unknown>;
-	return (
-		response.id === expectedId &&
-		typeof response.createdAt === "number" &&
-		Number.isFinite(response.createdAt) &&
-		Array.isArray(response.items) &&
-		response.items.length > 0 &&
-		response.items.length <= MAX_ITEMS_PER_RESPONSE &&
-		response.items.every((item) => typeof item === "string")
+function platformError<A, E, R>(
+	effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, WebAccessError, R> {
+	return Effect.mapError(effect, (error) =>
+		error instanceof PlatformError.PlatformError && "cause" in error.reason
+			? asError(error.reason.cause)
+			: asError(error),
 	);
 }
 
-function discard(path: string): Effect.Effect<void> {
-	return io(() => rm(path, { force: true })).pipe(Effect.ignore);
-}
-
-async function listDirectory(directory: string): Promise<string[]> {
-	const filenames: string[] = [];
-	const entries = await opendir(directory);
-	for await (const entry of entries) {
-		if (filenames.length === MAX_ARCHIVE_DIRECTORY_ENTRIES) {
-			throw webAccessError(
-				`Session Response Archive exceeds ${MAX_ARCHIVE_DIRECTORY_ENTRIES} directory entries`,
-			);
-		}
-		filenames.push(entry.name);
-	}
-	return filenames;
-}
-
-async function readResponseFile(path: string): Promise<string> {
-	const file = await open(path, "r");
-	try {
-		const metadata = await file.stat();
-		if (metadata.size > MAX_ARCHIVED_RESPONSE_BYTES) {
-			throw webAccessError("Archived response exceeds the file-size limit");
-		}
-		return await file.readFile("utf8");
-	} finally {
-		await file.close();
-	}
-}
-
-function loadResponse(
-	directory: string,
-	filename: string,
-): Effect.Effect<ArchivedResponse | null> {
-	const path = join(directory, filename);
-	const expectedId = filename.slice(0, -".json".length);
-	return Effect.gen(function* () {
-		const value = yield* io(() => readResponseFile(path)).pipe(
-			Effect.flatMap((content) =>
-				Effect.try({
-					try: () => JSON.parse(content) as unknown,
-					catch: asError,
-				}),
-			),
-			Effect.orElseSucceed(() => null),
-		);
-		if (isArchivedResponse(value, expectedId)) return value;
-		yield* discard(path);
-		return null;
-	});
+function discard(fs: FileSystem.FileSystem, path: string): Effect.Effect<void> {
+	return fs.remove(path, { force: true }).pipe(Effect.ignore);
 }
 
 function evictOldest(responses: Map<string, ArchivedResponse>): {
@@ -131,139 +79,194 @@ function evictOldest(responses: Map<string, ArchivedResponse>): {
 	return { responses: next, evicted };
 }
 
-function removeResponses(
-	directory: string,
-	responses: ArchivedResponse[],
-): Effect.Effect<void, WebAccessError> {
-	return Effect.forEach(
-		responses,
-		(response) =>
-			io(() => rm(join(directory, `${response.id}.json`), { force: true })),
+const openArchive = Effect.fn("openSessionResponseArchive")(function* (
+	sessionId: string,
+	root: string,
+): Effect.fn.Return<
+	SessionResponseArchive,
+	WebAccessError,
+	FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> {
+	const fs = yield* FileSystem.FileSystem;
+	const path = yield* Path.Path;
+	const crypto = yield* Crypto.Crypto;
+	const digest = yield* platformError(
+		crypto.digest("SHA-256", new TextEncoder().encode(sessionId)),
+	);
+	const directory = path.join(
+		root,
+		"pi-web-access",
+		[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
+	);
+	yield* platformError(
+		fs.makeDirectory(directory, { recursive: true, mode: 0o700 }),
+	);
+	yield* platformError(fs.chmod(directory, 0o700));
+
+	const files = yield* platformError(fs.readDirectory(directory));
+	if (files.length > MAX_ARCHIVE_DIRECTORY_ENTRIES) {
+		return yield* webAccessError(
+			`Session Response Archive exceeds ${MAX_ARCHIVE_DIRECTORY_ENTRIES} directory entries`,
+		);
+	}
+	yield* Effect.forEach(
+		files.filter((filename) => filename.endsWith(".tmp")),
+		(filename) => discard(fs, path.join(directory, filename)),
 		{ discard: true },
 	);
-}
+	const now = yield* Clock.currentTimeMillis;
+	const loadedResponses = yield* Effect.forEach(
+		files.filter((filename) => filename.endsWith(".json")),
+		Effect.fn("loadArchivedResponse")(function* (filename) {
+			const filePath = path.join(directory, filename);
+			const expectedId = filename.slice(0, -".json".length);
+			const metadata = yield* fs.stat(filePath).pipe(Effect.option);
+			if (
+				metadata._tag === "None" ||
+				metadata.value.size > BigInt(MAX_ARCHIVED_RESPONSE_BYTES)
+			) {
+				yield* discard(fs, filePath);
+				return null;
+			}
+			const response = yield* fs
+				.readFileString(filePath)
+				.pipe(
+					Effect.flatMap(Schema.decodeUnknownEffect(ArchivedResponseJson)),
+					Effect.option,
+				);
+			if (
+				response._tag === "Some" &&
+				response.value.id === expectedId &&
+				Number.isFinite(response.value.createdAt) &&
+				response.value.createdAt - now <= MAX_ARCHIVED_RESPONSES &&
+				now - response.value.createdAt <= ARCHIVE_TTL_MILLIS
+			) {
+				return response.value;
+			}
+			yield* discard(fs, filePath);
+			return null;
+		}),
+	);
+	const loaded = new Map<string, ArchivedResponse>();
+	for (const response of loadedResponses) {
+		if (response) loaded.set(response.id, response);
+	}
+	const initial = evictOldest(loaded);
+	yield* Effect.forEach(
+		initial.evicted,
+		(response) =>
+			platformError(
+				fs.remove(path.join(directory, `${response.id}.json`), { force: true }),
+			),
+		{ discard: true },
+	);
+	const responses = SynchronizedRef.makeUnsafe(initial.responses);
 
-function persistResponse(
-	directory: string,
-	response: ArchivedResponse,
-): Effect.Effect<void, WebAccessError> {
-	return Effect.gen(function* () {
-		const target = join(directory, `${response.id}.json`);
-		const temporary = join(directory, `.${response.id}.${randomUUID()}.tmp`);
-		const content = yield* Effect.try({
-			try: () => `${JSON.stringify(response)}\n`,
-			catch: asError,
-		});
-		if (Buffer.byteLength(content) > MAX_ARCHIVED_RESPONSE_BYTES) {
-			return yield* webAccessError(
-				"Archived response exceeds the file-size limit",
+	return {
+		archive: Effect.fn("SessionResponseArchive.archive")(function* (items) {
+			if (items.length === 0 || items.length > MAX_ITEMS_PER_RESPONSE) {
+				return yield* webAccessError(
+					`A response must contain 1-${MAX_ITEMS_PER_RESPONSE} text items`,
+				);
+			}
+			const responseId = yield* platformError(crypto.randomUUIDv4);
+			const target = path.join(directory, `${responseId}.json`);
+			return yield* SynchronizedRef.updateEffect(responses, (current) =>
+				Effect.gen(function* () {
+					const newestCreatedAt = Math.max(
+						0,
+						...[...current.values()].map((response) => response.createdAt),
+					);
+					const currentTime = yield* Clock.currentTimeMillis;
+					const response: ArchivedResponse = {
+						id: responseId,
+						createdAt: Math.max(currentTime, newestCreatedAt + 1),
+						items: [...items],
+					};
+					const content = yield* Schema.encodeEffect(ArchivedResponseJson)(
+						response,
+					).pipe(
+						Effect.mapError(asError),
+						Effect.map((json) => `${json}\n`),
+					);
+					if (
+						new TextEncoder().encode(content).byteLength >
+						MAX_ARCHIVED_RESPONSE_BYTES
+					) {
+						return yield* webAccessError(
+							"Archived response exceeds the file-size limit",
+						);
+					}
+					const temporary = path.join(
+						directory,
+						`.${responseId}.${yield* platformError(crypto.randomUUIDv4)}.tmp`,
+					);
+					yield* Effect.gen(function* () {
+						yield* platformError(
+							fs.writeFileString(temporary, content, {
+								flag: "wx",
+								mode: 0o600,
+							}),
+						);
+						yield* platformError(fs.rename(temporary, target));
+						yield* platformError(fs.chmod(target, 0o600));
+					}).pipe(Effect.ensuring(discard(fs, temporary)));
+					const withResponse = new Map(current);
+					withResponse.set(response.id, response);
+					const next = evictOldest(withResponse);
+					yield* Effect.forEach(
+						next.evicted,
+						(evicted) =>
+							platformError(
+								fs.remove(path.join(directory, `${evicted.id}.json`), {
+									force: true,
+								}),
+							),
+						{ discard: true },
+					);
+					return next.responses;
+				}),
+			).pipe(
+				Effect.as(responseId),
+				Effect.catch((error) =>
+					discard(fs, target).pipe(Effect.andThen(Effect.fail(asError(error)))),
+				),
 			);
-		}
-		yield* Effect.gen(function* () {
-			yield* io(() =>
-				writeFile(temporary, content, {
-					encoding: "utf8",
-					mode: 0o600,
-					flag: "wx",
+		}),
+		retrieve(id, itemIndex) {
+			return SynchronizedRef.get(responses).pipe(
+				Effect.map((current): ArchiveLookup => {
+					const response = current.get(id);
+					if (!response) return { status: "not-found" };
+					if (
+						itemIndex !== undefined &&
+						(!Number.isInteger(itemIndex) ||
+							itemIndex < 0 ||
+							itemIndex >= response.items.length)
+					) {
+						return {
+							status: "item-index-out-of-range",
+							itemCount: response.items.length,
+						};
+					}
+					const items =
+						itemIndex === undefined
+							? response.items
+							: [response.items[itemIndex]];
+					return {
+						status: "found",
+						text: items.join(ITEM_SEPARATOR),
+						itemCount: items.length,
+					};
 				}),
 			);
-			yield* io(() => rename(temporary, target));
-			yield* io(() => chmod(target, 0o600));
-		}).pipe(Effect.ensuring(discard(temporary)));
-	});
-}
+		},
+	};
+});
 
 export function openSessionResponseArchive(
 	sessionId: string,
-	root = tmpdir(),
+	root = "/tmp",
 ): Effect.Effect<SessionResponseArchive, WebAccessError> {
-	return Effect.gen(function* () {
-		const directory = directoryFor(sessionId, root);
-		yield* io(() => mkdir(directory, { recursive: true, mode: 0o700 }));
-		yield* io(() => chmod(directory, 0o700));
-
-		const files = yield* io(() => listDirectory(directory));
-		yield* Effect.forEach(
-			files.filter((filename) => filename.endsWith(".tmp")),
-			(filename) => discard(join(directory, filename)),
-			{ discard: true },
-		);
-		const loadedResponses = yield* Effect.forEach(
-			files.filter((filename) => filename.endsWith(".json")),
-			(filename) => loadResponse(directory, filename),
-		);
-		const loaded = new Map<string, ArchivedResponse>();
-		for (const response of loadedResponses) {
-			if (response) loaded.set(response.id, response);
-		}
-		const initial = evictOldest(loaded);
-		yield* removeResponses(directory, initial.evicted);
-		const responses = SynchronizedRef.makeUnsafe(initial.responses);
-
-		return {
-			archive(items) {
-				if (items.length === 0 || items.length > MAX_ITEMS_PER_RESPONSE) {
-					return Effect.fail(
-						webAccessError(
-							`A response must contain 1-${MAX_ITEMS_PER_RESPONSE} text items`,
-						),
-					);
-				}
-				const responseId = randomUUID();
-				const target = join(directory, `${responseId}.json`);
-				return SynchronizedRef.updateEffect(responses, (current) =>
-					Effect.gen(function* () {
-						const newestCreatedAt = Math.max(
-							0,
-							...[...current.values()].map((response) => response.createdAt),
-						);
-						const response: ArchivedResponse = {
-							id: responseId,
-							createdAt: Math.max(Date.now(), newestCreatedAt + 1),
-							items: [...items],
-						};
-						yield* persistResponse(directory, response);
-						const withResponse = new Map(current);
-						withResponse.set(response.id, response);
-						const next = evictOldest(withResponse);
-						yield* removeResponses(directory, next.evicted);
-						return next.responses;
-					}),
-				).pipe(
-					Effect.as(responseId),
-					Effect.catch((error) =>
-						discard(target).pipe(Effect.andThen(Effect.fail(asError(error)))),
-					),
-				);
-			},
-			retrieve(id, itemIndex) {
-				return SynchronizedRef.get(responses).pipe(
-					Effect.map((current): ArchiveLookup => {
-						const response = current.get(id);
-						if (!response) return { status: "not-found" };
-						if (
-							itemIndex !== undefined &&
-							(!Number.isInteger(itemIndex) ||
-								itemIndex < 0 ||
-								itemIndex >= response.items.length)
-						) {
-							return {
-								status: "item-index-out-of-range",
-								itemCount: response.items.length,
-							};
-						}
-						const items =
-							itemIndex === undefined
-								? response.items
-								: [response.items[itemIndex]];
-						return {
-							status: "found",
-							text: items.join(ITEM_SEPARATOR),
-							itemCount: items.length,
-						};
-					}),
-				);
-			},
-		};
-	});
+	return openArchive(sessionId, root).pipe(Effect.provide(runtimeLayer));
 }

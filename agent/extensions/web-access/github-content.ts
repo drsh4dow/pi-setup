@@ -1,14 +1,6 @@
-import {
-	closeSync,
-	existsSync,
-	openSync,
-	readdirSync,
-	readFileSync,
-	readSync,
-	realpathSync,
-	statSync,
-} from "node:fs";
-import { extname, join, sep as pathSeparator, resolve } from "node:path";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Effect, FileSystem, Path } from "effect";
 import type { GitHubUrlInfo } from "./github.ts";
 
 const BINARY_EXTENSIONS = new Set([
@@ -74,7 +66,6 @@ const BINARY_EXTENSIONS = new Set([
 	".img",
 	".dmg",
 ]);
-
 const NOISE_DIRS = new Set([
 	"node_modules",
 	"vendor",
@@ -95,307 +86,189 @@ const NOISE_DIRS = new Set([
 const MAX_INLINE_FILE_CHARS = 100_000;
 const MAX_TREE_ENTRIES = 200;
 
-function isBinaryFile(filePath: string): boolean {
-	const ext = extname(filePath).toLowerCase();
-	if (BINARY_EXTENSIONS.has(ext)) return true;
-
-	let fd: number;
-	try {
-		fd = openSync(filePath, "r");
-	} catch {
-		return false;
-	}
-	try {
-		const buf = Buffer.alloc(512);
-		const bytesRead = readSync(fd, buf, 0, 512, 0);
-		for (let i = 0; i < bytesRead; i++) {
-			if (buf[i] === 0) return true;
-		}
-	} catch {
-		return false;
-	} finally {
-		closeSync(fd);
-	}
-
-	return false;
+function formatFileSize(bytes: bigint): string {
+	const size = Number(bytes);
+	if (size < 1024) return `${size} B`;
+	if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+	return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatFileSize(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function resolveWithinRepo(
-	rootPath: string,
-	relativePath: string,
-): string | null {
-	const normalizedRoot = resolve(rootPath);
-	const candidate = resolve(normalizedRoot, relativePath);
-	if (candidate !== normalizedRoot) {
-		const rootPrefix = normalizedRoot.endsWith(pathSeparator)
-			? normalizedRoot
-			: normalizedRoot + pathSeparator;
-		if (!candidate.startsWith(rootPrefix)) return null;
-	}
-
-	if (!existsSync(candidate)) return candidate;
-
-	try {
-		const realRoot = realpathSync(normalizedRoot);
-		const realCandidate = realpathSync(candidate);
-		if (realCandidate === realRoot) return candidate;
-		const realRootPrefix = realRoot.endsWith(pathSeparator)
-			? realRoot
-			: realRoot + pathSeparator;
-		return realCandidate.startsWith(realRootPrefix) ? candidate : null;
-	} catch {
-		return null;
-	}
-}
-
-function readTextFile(path: string): string | null {
-	try {
-		return readFileSync(path, "utf-8");
-	} catch {
-		return null;
-	}
-}
-
-function buildTree(rootPath: string): string {
-	const entries: string[] = [];
-
-	function walk(dir: string, relPath: string): void {
-		if (entries.length >= MAX_TREE_ENTRIES) return;
-
-		let items: string[];
-		try {
-			items = readdirSync(dir).sort();
-		} catch {
-			return;
-		}
-
-		for (const item of items) {
-			if (entries.length >= MAX_TREE_ENTRIES) return;
-			if (item === ".git") continue;
-
-			const rel = relPath ? `${relPath}/${item}` : item;
-			const safePath = resolveWithinRepo(rootPath, rel);
-			if (!safePath) {
-				entries.push(`${rel}  [outside repo skipped]`);
-				continue;
-			}
-
-			let stat: ReturnType<typeof statSync>;
-			try {
-				stat = statSync(safePath);
-			} catch {
-				continue;
-			}
-
-			if (stat.isDirectory()) {
-				if (NOISE_DIRS.has(item)) {
-					entries.push(`${rel}/  [skipped]`);
+export const renderCloneContent = Effect.fn("renderCloneContent")(
+	function* (localPath: string, info: GitHubUrlInfo) {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const root = path.resolve(localPath);
+		const realRoot = yield* fs.realPath(root);
+		const resolveWithinRepo = Effect.fn("resolveWithinRepo")(function* (
+			relativePath: string,
+		) {
+			const candidate = path.resolve(root, relativePath);
+			if (
+				candidate !== root &&
+				!candidate.startsWith(
+					root.endsWith(path.sep) ? root : `${root}${path.sep}`,
+				)
+			)
+				return null;
+			if (!(yield* fs.exists(candidate))) return candidate;
+			const realCandidate = yield* fs
+				.realPath(candidate)
+				.pipe(Effect.orElseSucceed(() => ""));
+			return realCandidate === realRoot ||
+				realCandidate.startsWith(
+					realRoot.endsWith(path.sep) ? realRoot : `${realRoot}${path.sep}`,
+				)
+				? candidate
+				: null;
+		});
+		const buildListing = Effect.fn("buildListing")(function* (subPath: string) {
+			const target = yield* resolveWithinRepo(subPath);
+			if (!target) return "(path escapes repository root)";
+			const items = yield* fs.readDirectory(target).pipe(
+				Effect.map((items) => items.sort()),
+				Effect.orElseSucceed(() => null),
+			);
+			if (!items) return "(directory not readable)";
+			const lines: string[] = [];
+			for (const item of items) {
+				if (item === ".git") continue;
+				const rel = subPath ? `${subPath}/${item}` : item;
+				const safe = yield* resolveWithinRepo(rel);
+				if (!safe) {
+					lines.push(`  ${item}  (outside repo)`);
 					continue;
 				}
-				entries.push(`${rel}/`);
-				walk(safePath, rel);
-			} else {
-				entries.push(rel);
+				const stat = yield* fs
+					.stat(safe)
+					.pipe(Effect.orElseSucceed(() => null));
+				if (!stat) lines.push(`  ${item}  (unreadable)`);
+				else if (stat.type === "Directory") lines.push(`  ${item}/`);
+				else lines.push(`  ${item}  (${formatFileSize(stat.size)})`);
 			}
-		}
-	}
-
-	walk(rootPath, "");
-
-	if (entries.length >= MAX_TREE_ENTRIES) {
-		entries.push(`... (truncated at ${MAX_TREE_ENTRIES} entries)`);
-	}
-
-	return entries.join("\n");
-}
-
-function buildDirListing(rootPath: string, subPath: string): string {
-	const targetPath = resolveWithinRepo(rootPath, subPath);
-	if (!targetPath) return "(path escapes repository root)";
-	const lines: string[] = [];
-
-	let items: string[];
-	try {
-		items = readdirSync(targetPath).sort();
-	} catch {
-		return "(directory not readable)";
-	}
-
-	for (const item of items) {
-		if (item === ".git") continue;
-		const rel = subPath ? `${subPath}/${item}` : item;
-		const safePath = resolveWithinRepo(rootPath, rel);
-		if (!safePath) {
-			lines.push(`  ${item}  (outside repo)`);
-			continue;
-		}
-		try {
-			const stat = statSync(safePath);
-			if (stat.isDirectory()) {
-				lines.push(`  ${item}/`);
-			} else {
-				lines.push(`  ${item}  (${formatFileSize(stat.size)})`);
+			return lines.join("\n");
+		});
+		const buildTree = Effect.fn("buildTree")(function* () {
+			const entries: string[] = [];
+			const pending: Array<{ dir: string; rel: string }> = [
+				{ dir: root, rel: "" },
+			];
+			while (pending.length > 0 && entries.length < MAX_TREE_ENTRIES) {
+				const current = pending.pop();
+				if (!current) break;
+				const items = yield* fs.readDirectory(current.dir).pipe(
+					Effect.map((items) => items.sort().reverse()),
+					Effect.orElseSucceed(() => []),
+				);
+				for (const item of items.reverse()) {
+					if (entries.length >= MAX_TREE_ENTRIES) break;
+					if (item === ".git") continue;
+					const rel = current.rel ? `${current.rel}/${item}` : item;
+					const safe = yield* resolveWithinRepo(rel);
+					if (!safe) {
+						entries.push(`${rel}  [outside repo skipped]`);
+						continue;
+					}
+					const stat = yield* fs
+						.stat(safe)
+						.pipe(Effect.orElseSucceed(() => null));
+					if (!stat) continue;
+					if (stat.type === "Directory") {
+						if (NOISE_DIRS.has(item)) entries.push(`${rel}/  [skipped]`);
+						else {
+							entries.push(`${rel}/`);
+							pending.push({ dir: safe, rel });
+						}
+					} else entries.push(rel);
+				}
 			}
-		} catch {
-			lines.push(`  ${item}  (unreadable)`);
+			if (entries.length >= MAX_TREE_ENTRIES)
+				entries.push(`... (truncated at ${MAX_TREE_ENTRIES} entries)`);
+			return entries.join("\n");
+		});
+
+		const lines = [`Repository cloned to: ${localPath}`, ""];
+		const explorationHint =
+			"Use `read` and `bash` tools at the path above to explore further.";
+		if (info.type === "root") {
+			lines.push("## Structure", yield* buildTree(), "");
+			for (const name of [
+				"README.md",
+				"readme.md",
+				"README",
+				"README.txt",
+				"README.rst",
+			]) {
+				const readme = path.join(root, name);
+				if (!(yield* fs.exists(readme))) continue;
+				const content = yield* fs
+					.readFileString(readme)
+					.pipe(Effect.orElseSucceed(() => ""));
+				if (content)
+					lines.push(
+						"## README.md",
+						content.length > 8192
+							? `${content.slice(0, 8192)}\n\n[README truncated at 8K chars]`
+							: content,
+						"",
+					);
+				break;
+			}
+			lines.push(explorationHint);
+			return lines.join("\n");
 		}
-	}
-
-	return lines.join("\n");
-}
-
-function readReadme(localPath: string): string | null {
-	const candidates = [
-		"README.md",
-		"readme.md",
-		"README",
-		"README.txt",
-		"README.rst",
-	];
-	for (const name of candidates) {
-		const readmePath = join(localPath, name);
-		if (existsSync(readmePath)) {
-			try {
-				const content = readFileSync(readmePath, "utf-8");
-				return content.length > 8192
-					? `${content.slice(0, 8192)}\n\n[README truncated at 8K chars]`
-					: content;
-			} catch {}
+		const relative = info.path || "";
+		const target = yield* resolveWithinRepo(relative);
+		if (!target || !(yield* fs.exists(target))) {
+			lines.push(
+				`Path \`${relative}\` not found in clone. Showing repository root instead.`,
+				"",
+				"## Structure",
+				yield* buildTree(),
+				"",
+				explorationHint,
+			);
+			return lines.join("\n");
 		}
-	}
-	return null;
-}
-
-export function renderCloneContent(
-	localPath: string,
-	info: GitHubUrlInfo,
-): string {
-	const lines: string[] = [];
-	lines.push(`Repository cloned to: ${localPath}`);
-	lines.push("");
-
-	if (info.type === "root") {
-		lines.push("## Structure");
-		lines.push(buildTree(localPath));
-		lines.push("");
-
-		const readme = readReadme(localPath);
-		if (readme) {
-			lines.push("## README.md");
-			lines.push(readme);
-			lines.push("");
+		const stat = yield* fs.stat(target);
+		if (info.type === "tree" || stat.type === "Directory") {
+			lines.push(
+				`## ${relative || "/"}`,
+				yield* buildListing(relative),
+				"",
+				explorationHint,
+			);
+			return lines.join("\n");
 		}
-
+		const bytes = yield* fs
+			.readFile(target)
+			.pipe(Effect.orElseSucceed(() => null));
+		if (!bytes) {
+			lines.push(
+				`Could not read \`${relative}\` as UTF-8 text.`,
+				"",
+				explorationHint,
+			);
+			return lines.join("\n");
+		}
+		const binary =
+			BINARY_EXTENSIONS.has(path.extname(relative).toLowerCase()) ||
+			bytes.subarray(0, 512).some((byte) => byte === 0);
+		lines.push(`## ${relative}`);
+		if (binary) {
+			lines.push(
+				`Binary file (${path.extname(relative).replace(".", "")}, ${formatFileSize(stat.size)}). Use \`read\` or \`bash\` tools at the path above to inspect.`,
+			);
+			return lines.join("\n");
+		}
+		const content = new TextDecoder().decode(bytes);
 		lines.push(
-			"Use `read` and `bash` tools at the path above to explore further.",
+			content.length > MAX_INLINE_FILE_CHARS
+				? `${content.slice(0, MAX_INLINE_FILE_CHARS)}\n\n[File truncated at 100K chars. Full file: ${target}]`
+				: content,
+			"",
+			explorationHint,
 		);
 		return lines.join("\n");
-	}
-
-	if (info.type === "tree") {
-		const dirPath = info.path || "";
-		const fullDirPath = resolveWithinRepo(localPath, dirPath);
-
-		if (!fullDirPath || !existsSync(fullDirPath)) {
-			lines.push(
-				`Path \`${dirPath}\` not found in clone. Showing repository root instead.`,
-			);
-			lines.push("");
-			lines.push("## Structure");
-			lines.push(buildTree(localPath));
-		} else {
-			lines.push(`## ${dirPath || "/"}`);
-			lines.push(buildDirListing(localPath, dirPath));
-		}
-
-		lines.push("");
-		lines.push(
-			"Use `read` and `bash` tools at the path above to explore further.",
-		);
-		return lines.join("\n");
-	}
-
-	if (info.type === "blob") {
-		const filePath = info.path || "";
-		const fullFilePath = resolveWithinRepo(localPath, filePath);
-
-		if (!fullFilePath || !existsSync(fullFilePath)) {
-			lines.push(
-				`Path \`${filePath}\` not found in clone. Showing repository root instead.`,
-			);
-			lines.push("");
-			lines.push("## Structure");
-			lines.push(buildTree(localPath));
-			lines.push("");
-			lines.push(
-				"Use `read` and `bash` tools at the path above to explore further.",
-			);
-			return lines.join("\n");
-		}
-
-		let stat: ReturnType<typeof statSync>;
-		try {
-			stat = statSync(fullFilePath);
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			lines.push(`Could not inspect \`${filePath}\`: ${message}`);
-			lines.push("");
-			lines.push(
-				"Use `read` and `bash` tools at the path above to explore further.",
-			);
-			return lines.join("\n");
-		}
-
-		if (stat.isDirectory()) {
-			lines.push(`## ${filePath || "/"}`);
-			lines.push(buildDirListing(localPath, filePath));
-			lines.push("");
-			lines.push(
-				"Use `read` and `bash` tools at the path above to explore further.",
-			);
-			return lines.join("\n");
-		}
-
-		if (isBinaryFile(fullFilePath)) {
-			const ext = extname(filePath).replace(".", "");
-			lines.push(`## ${filePath}`);
-			lines.push(
-				`Binary file (${ext}, ${formatFileSize(stat.size)}). Use \`read\` or \`bash\` tools at the path above to inspect.`,
-			);
-			return lines.join("\n");
-		}
-
-		const content = readTextFile(fullFilePath);
-		if (content === null) {
-			lines.push(`Could not read \`${filePath}\` as UTF-8 text.`);
-			lines.push("");
-			lines.push(
-				"Use `read` and `bash` tools at the path above to explore further.",
-			);
-			return lines.join("\n");
-		}
-		lines.push(`## ${filePath}`);
-
-		if (content.length > MAX_INLINE_FILE_CHARS) {
-			lines.push(content.slice(0, MAX_INLINE_FILE_CHARS));
-			lines.push("");
-			lines.push(`[File truncated at 100K chars. Full file: ${fullFilePath}]`);
-		} else {
-			lines.push(content);
-		}
-
-		lines.push("");
-		lines.push(
-			"Use `read` and `bash` tools at the path above to explore further.",
-		);
-		return lines.join("\n");
-	}
-
-	return lines.join("\n");
-}
+	},
+	Effect.provide([BunFileSystem.layer, BunPath.layer]),
+);

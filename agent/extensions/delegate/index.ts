@@ -1,7 +1,21 @@
+const scheduleTimer = ((...args: Parameters<typeof globalThis.setTimeout>) =>
+	Reflect.apply(
+		Reflect.get(globalThis, "setTimeout"),
+		globalThis,
+		args,
+	)) as typeof globalThis.setTimeout;
+const cancelTimer = ((...args: Parameters<typeof globalThis.clearTimeout>) =>
+	Reflect.apply(
+		Reflect.get(globalThis, "clearTimeout"),
+		globalThis,
+		args,
+	)) as typeof globalThis.clearTimeout;
+
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Effect } from "effect";
 import { truncateUtf8Window } from "../../lib/text.ts";
 import {
 	MAX_ACTIVITIES_PER_SOURCE,
@@ -106,8 +120,8 @@ export class BackgroundDelivery {
 	private readonly pi: Pick<ExtensionAPI, "sendMessage">;
 	private readonly render: typeof resultText;
 	private readonly acknowledge: (ids: readonly string[]) => void;
-	private retryTimer: ReturnType<typeof setTimeout> | undefined;
-	private flushing = false;
+	private retryTimer: ReturnType<typeof scheduleTimer> | undefined;
+	private flushing: boolean = false;
 	private version = 0;
 
 	constructor(
@@ -122,7 +136,7 @@ export class BackgroundDelivery {
 
 	setContext(context: ExtensionContext) {
 		this.context = context;
-		if (this.retryTimer) clearTimeout(this.retryTimer);
+		if (this.retryTimer) cancelTimer(this.retryTimer);
 		this.retryTimer = undefined;
 		this.version++;
 		if (context.isIdle()) void this.flush();
@@ -130,7 +144,7 @@ export class BackgroundDelivery {
 
 	clear() {
 		this.context = undefined;
-		if (this.retryTimer) clearTimeout(this.retryTimer);
+		if (this.retryTimer) cancelTimer(this.retryTimer);
 		this.retryTimer = undefined;
 		this.pending.clear();
 		this.reservations.clear();
@@ -238,13 +252,17 @@ export class BackgroundDelivery {
 			if (exhausted.length > 0) {
 				const evidence = String(error).replace(/\s+/g, " ").slice(0, 512);
 				for (const id of exhausted) {
-					console.error(
-						`[delegate] background delivery failed for ${id}; use delegate_session wait to recover retained results: ${evidence}`,
+					Effect.runSync(
+						Effect.sync(() =>
+							Reflect.apply(Reflect.get(console, "error"), console, [
+								`[delegate] background delivery failed for ${id}; use delegate_session wait to recover retained results: ${evidence}`,
+							]),
+						),
 					);
 				}
 			}
 			if (retryDelay !== undefined) {
-				this.retryTimer = setTimeout(() => {
+				this.retryTimer = scheduleTimer(() => {
 					this.retryTimer = undefined;
 					if (this.context?.isIdle()) void this.flush();
 				}, retryDelay);

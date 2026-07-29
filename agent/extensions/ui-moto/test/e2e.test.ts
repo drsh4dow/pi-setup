@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
 import test, { after, before, describe } from "node:test";
+import * as BunCrypto from "@effect/platform-bun/BunCrypto";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { FileSystem, Layer, ManagedRuntime, Path, Schema } from "effect";
 import {
 	capture,
 	e2eUnavailable,
@@ -17,6 +19,14 @@ import {
 } from "../../test/tmux.ts";
 
 const skip = e2eUnavailable();
+const runtime = ManagedRuntime.make(
+	Layer.mergeAll(BunFileSystem.layer, BunPath.layer, BunCrypto.layer),
+);
+const fs = runtime.runSync(FileSystem.FileSystem);
+const path = runtime.runSync(Path.Path);
+const Settings = Schema.fromJsonString(
+	Schema.Struct({ defaultModel: Schema.String }),
+);
 
 const BAR_FILL = "─";
 
@@ -78,7 +88,7 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 			footerModelId(pane),
 			`header model id disagrees with the footer:\n${pane}`,
 		);
-		assert.equal(bar.project, basename(session.cwd));
+		assert.equal(bar.project, path.basename(session.cwd));
 
 		// headerLine() centres ` PI / … ` in the available width, biasing the
 		// remainder to the right.
@@ -135,11 +145,12 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 		assert.notEqual(second.modelId, first.modelId);
 		assert.equal(second.project, first.project);
 		assert.equal(second.line.length, first.line.length);
-		assert.equal(
-			JSON.parse(readFileSync(join(session.agentDir, "settings.json"), "utf8"))
-				.defaultModel,
-			second.modelId,
+		const settings = Schema.decodeUnknownSync(Settings)(
+			await runtime.runPromise(
+				fs.readFileString(path.join(session.agentDir, "settings.json")),
+			),
 		);
+		assert.equal(settings.defaultModel, second.modelId);
 
 		// Put the session back on the model the rest of the file expects.
 		await sendKeys(session, "M-p");

@@ -3,32 +3,32 @@ import { Effect } from "effect";
 import { asError, type WebAccessError } from "./errors.ts";
 
 export function runCommand(
-  command: string,
-  args: string[],
-  options: { timeoutMs: number; maxBuffer: number },
+	command: string,
+	args: string[],
+	options: { timeoutMs: number; maxBuffer: number },
 ): Effect.Effect<Buffer, WebAccessError> {
-  return Effect.tryPromise({
-    try: (signal) =>
-      new Promise<Buffer>((resolve, reject) => {
-        execFile(
-          command,
-          args,
-          {
-            timeout: options.timeoutMs,
-            maxBuffer: options.maxBuffer,
-            signal,
-            encoding: "buffer",
-          },
-          (error, stdout, stderr) => {
-            if (error) {
-              Object.assign(error, { stderr });
-              reject(error);
-              return;
-            }
-            resolve(stdout);
-          },
-        );
-      }),
-    catch: asError,
-  });
+	return Effect.tryPromise({
+		try: (signal) =>
+			new Promise<Buffer>((resolve, reject) => {
+				execFile(
+					command,
+					args,
+					{
+						timeout: options.timeoutMs,
+						maxBuffer: options.maxBuffer,
+						signal,
+						encoding: "buffer",
+					},
+					(error, stdout, stderr) => {
+						if (error) {
+							Object.assign(error, { stderr });
+							reject(error);
+							return;
+						}
+						resolve(stdout);
+					},
+				);
+			}),
+		catch: asError,
+	});
 }

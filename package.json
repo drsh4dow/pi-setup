@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "effect-tsgo patch && node agent/scripts/patch-pi-output-guard.mjs",
+    "prepare": "effect-tsgo patch",
     "typecheck": "tsc --noEmit",
     "check": "biome check agent/extensions agent/lib agent/scripts",
     "check:fix": "biome check agent/extensions agent/lib agent/scripts --write",

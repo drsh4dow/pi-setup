@@ -3,12 +3,9 @@ export const scheduleTimer = (
 	callback: () => void,
 	delay: number,
 ): ReturnType<typeof globalThis.setTimeout> =>
-	Reflect.apply(Reflect.get(globalThis, "setTimeout"), globalThis, [
-		callback,
-		delay,
-	]);
+	// @effect-diagnostics-next-line globalTimers:off
+	globalThis.setTimeout(callback, delay);
 
 export const cancelTimer = (
 	timer: ReturnType<typeof globalThis.setTimeout>,
-): void =>
-	Reflect.apply(Reflect.get(globalThis, "clearTimeout"), globalThis, [timer]);
+): void => globalThis.clearTimeout(timer);

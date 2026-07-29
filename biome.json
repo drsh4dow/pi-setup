@@ -20,23 +20,14 @@
 			}
 		}
 	},
-	"css": {
-		"parser": {
-			"tailwindDirectives": true
-		}
-	},
 	"linter": {
 		"enabled": true,
 		"domains": {
 			"types": "all"
 		},
 		"rules": {
-			"performance": {
-				"noJsxPropsBind": "off"
-			},
 			"preset": "recommended",
 			"style": {
-				"useComponentExportOnlyModules": "off",
 				"noExcessiveLinesPerFile": {
 					"level": "warn",
 					"options": {

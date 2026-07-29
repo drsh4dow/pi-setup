@@ -334,10 +334,12 @@ export class BackgroundTerminalManager {
 	}
 
 	private async waitForSettlement(entry: Entry, timeoutMs: number) {
-		await Promise.race([
-			entry.settled,
-			Effect.runPromise(Effect.sleep(timeoutMs)),
-		]);
+		await Effect.runPromise(
+			Effect.race(
+				Effect.promise(() => entry.settled),
+				Effect.sleep(timeoutMs),
+			),
+		);
 	}
 
 	private terminate(entry: Entry, owned: boolean): Promise<void> {

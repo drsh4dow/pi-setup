@@ -21,6 +21,14 @@ const noEvents = {
 	},
 };
 
+async function eventually(condition: () => boolean | Promise<boolean>) {
+	for (let attempt = 0; attempt < 200; attempt += 1) {
+		if (await condition()) return;
+		await Effect.runPromise(Effect.sleep(25));
+	}
+	throw new Error("condition not met within 5 seconds");
+}
+
 function registeredTools() {
 	const tools: ToolDefinition[] = [];
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -397,18 +405,25 @@ test("successful completions are passive while failures trigger a turn", async (
 		{ type: "session_start", reason: "startup" },
 		context,
 	);
-	const start = tools[0] as unknown as {
+	const [start, status] = tools as unknown as Array<{
 		execute: (...args: unknown[]) => Promise<unknown>;
-	};
+	}>;
+	assert.ok(start);
+	assert.ok(status);
 	try {
-		await start.execute(
+		const silent = (await start.execute(
 			"1",
 			{ command: "true", title: "silent success" },
 			undefined,
 			undefined,
 			context,
-		);
-		await Effect.runPromise(Effect.sleep(50));
+		)) as { details: { id: string } };
+		await eventually(async () => {
+			const result = (await status.execute("status-1", {
+				id: silent.details.id,
+			})) as { content: [{ text: string }] };
+			return result.content[0].text.includes("[done]");
+		});
 		assert.equal(deliveries.length, 0);
 		await start.execute(
 			"2",
@@ -417,8 +432,8 @@ test("successful completions are passive while failures trigger a turn", async (
 			undefined,
 			context,
 		);
-		await Effect.runPromise(Effect.sleep(50));
-		assert.equal(deliveries.at(-1)?.options.triggerTurn, false);
+		await eventually(() => deliveries.length === 1);
+		assert.equal(deliveries[0].options.triggerTurn, false);
 		await start.execute(
 			"3",
 			{ command: "false", title: "failure" },
@@ -426,8 +441,8 @@ test("successful completions are passive while failures trigger a turn", async (
 			undefined,
 			context,
 		);
-		await Effect.runPromise(Effect.sleep(50));
-		assert.equal(deliveries.at(-1)?.options.triggerTurn, true);
+		await eventually(() => deliveries.length === 2);
+		assert.equal(deliveries[1].options.triggerTurn, true);
 	} finally {
 		await handlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },

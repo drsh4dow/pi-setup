@@ -156,10 +156,10 @@ export const renderCloneContent = Effect.fn("renderCloneContent")(
 				const current = pending.pop();
 				if (!current) break;
 				const items = yield* fs.readDirectory(current.dir).pipe(
-					Effect.map((items) => items.sort().reverse()),
+					Effect.map((items) => items.sort()),
 					Effect.orElseSucceed(() => []),
 				);
-				for (const item of items.reverse()) {
+				for (const item of items) {
 					if (entries.length >= MAX_TREE_ENTRIES) break;
 					if (item === ".git") continue;
 					const rel = current.rel ? `${current.rel}/${item}` : item;

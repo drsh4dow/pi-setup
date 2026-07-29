@@ -1,15 +1,3 @@
-const scheduleTimer = ((...args: Parameters<typeof globalThis.setTimeout>) =>
-	Reflect.apply(
-		Reflect.get(globalThis, "setTimeout"),
-		globalThis,
-		args,
-	)) as typeof globalThis.setTimeout;
-const cancelTimer = ((...args: Parameters<typeof globalThis.clearTimeout>) =>
-	Reflect.apply(
-		Reflect.get(globalThis, "clearTimeout"),
-		globalThis,
-		args,
-	)) as typeof globalThis.clearTimeout;
 const { statSync } = process.getBuiltinModule("fs");
 const { resolve } = process.getBuiltinModule("path");
 
@@ -29,6 +17,7 @@ import {
 	MAX_EXECUTION_TOKENS,
 } from "./contract.ts";
 import { errorMessage } from "./errors.ts";
+import { cancelTimer, scheduleTimer } from "./host-timers.ts";
 import {
 	type ChildSession,
 	createChild,

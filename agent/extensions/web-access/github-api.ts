@@ -8,7 +8,6 @@ import {
 import { asError } from "./errors.ts";
 import type { GitHubUrlInfo } from "./github.ts";
 import { runCommand } from "./subprocess.ts";
-import type { ExtractedContent } from "./types.ts";
 
 const MAX_TREE_ENTRIES = 200;
 const MAX_CONTENT_CHARS = 100_000;
@@ -90,19 +89,17 @@ export const checkRepoSize: (
 	}).pipe(Effect.orElseSucceed(() => null));
 }, Effect.provide(BunHttpClient.layer));
 
-function defaultBranch(
+const defaultBranch = Effect.fn("defaultBranch")(function* (
 	owner: string,
 	repo: string,
-): Effect.Effect<string | null> {
-	return Effect.gen(function* () {
-		if (!(yield* checkGhAvailable)) return null;
-		const output = yield* runGh(
-			["api", `repos/${owner}/${repo}`, "--jq", ".default_branch"],
-			{ timeoutMs: 10_000 },
-		);
-		return output?.trim() || null;
-	});
-}
+) {
+	if (!(yield* checkGhAvailable)) return null;
+	const output = yield* runGh(
+		["api", `repos/${owner}/${repo}`, "--jq", ".default_branch"],
+		{ timeoutMs: 10_000 },
+	);
+	return output?.trim() || null;
+});
 
 function tree(
 	owner: string,
@@ -167,46 +164,44 @@ function file(
 	);
 }
 
-export function fetchViaApi(
+export const fetchViaApi = Effect.fn("fetchViaApi")(function* (
 	url: string,
 	owner: string,
 	repo: string,
 	info: GitHubUrlInfo,
 	sizeNote?: string,
-): Effect.Effect<ExtractedContent | null> {
-	return Effect.gen(function* () {
-		if (!(yield* checkGhAvailable)) return null;
-		const ref = info.ref || (yield* defaultBranch(owner, repo));
-		if (!ref) return null;
+) {
+	if (!(yield* checkGhAvailable)) return null;
+	const ref = info.ref || (yield* defaultBranch(owner, repo));
+	if (!ref) return null;
 
-		const lines = sizeNote ? [sizeNote, ""] : [];
-		if (info.type === "blob" && info.path) {
-			const content = yield* file(owner, repo, info.path, ref);
-			if (!content) return null;
-			lines.push(`## ${info.path}`, content.slice(0, MAX_CONTENT_CHARS));
-			return {
-				url,
-				title: `${owner}/${repo} - ${info.path}`,
-				content: lines.join("\n").slice(0, MAX_CONTENT_CHARS),
-				error: null,
-			};
-		}
-
-		const [structure, repositoryReadme] = yield* Effect.all(
-			[tree(owner, repo, ref), readme(owner, repo, ref)],
-			{ concurrency: 2 },
-		);
-		if (!structure && !repositoryReadme) return null;
-		if (structure) lines.push("## Structure", structure, "");
-		if (repositoryReadme) lines.push("## README.md", repositoryReadme, "");
-		lines.push(
-			"This is an API-only view. Use forceClone for a local repository checkout.",
-		);
+	const lines = sizeNote ? [sizeNote, ""] : [];
+	if (info.type === "blob" && info.path) {
+		const content = yield* file(owner, repo, info.path, ref);
+		if (!content) return null;
+		lines.push(`## ${info.path}`, content.slice(0, MAX_CONTENT_CHARS));
 		return {
 			url,
-			title: info.path ? `${owner}/${repo} - ${info.path}` : `${owner}/${repo}`,
+			title: `${owner}/${repo} - ${info.path}`,
 			content: lines.join("\n").slice(0, MAX_CONTENT_CHARS),
 			error: null,
 		};
-	});
-}
+	}
+
+	const [structure, repositoryReadme] = yield* Effect.all(
+		[tree(owner, repo, ref), readme(owner, repo, ref)],
+		{ concurrency: 2 },
+	);
+	if (!structure && !repositoryReadme) return null;
+	if (structure) lines.push("## Structure", structure, "");
+	if (repositoryReadme) lines.push("## README.md", repositoryReadme, "");
+	lines.push(
+		"This is an API-only view. Use forceClone for a local repository checkout.",
+	);
+	return {
+		url,
+		title: info.path ? `${owner}/${repo} - ${info.path}` : `${owner}/${repo}`,
+		content: lines.join("\n").slice(0, MAX_CONTENT_CHARS),
+		error: null,
+	};
+});

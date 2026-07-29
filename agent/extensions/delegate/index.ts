@@ -1,16 +1,3 @@
-const scheduleTimer = ((...args: Parameters<typeof globalThis.setTimeout>) =>
-	Reflect.apply(
-		Reflect.get(globalThis, "setTimeout"),
-		globalThis,
-		args,
-	)) as typeof globalThis.setTimeout;
-const cancelTimer = ((...args: Parameters<typeof globalThis.clearTimeout>) =>
-	Reflect.apply(
-		Reflect.get(globalThis, "clearTimeout"),
-		globalThis,
-		args,
-	)) as typeof globalThis.clearTimeout;
-
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -38,6 +25,7 @@ import {
 	statusSummary,
 	summary,
 } from "./format.ts";
+import { cancelTimer, scheduleTimer } from "./host-timers.ts";
 import { DelegateManager } from "./manager.ts";
 import { formatDelegateOutput } from "./output.ts";
 import { renderDelegateCall, renderDelegateResult } from "./render.ts";

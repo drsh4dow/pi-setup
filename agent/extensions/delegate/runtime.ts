@@ -1,15 +1,3 @@
-const scheduleTimer = ((...args: Parameters<typeof globalThis.setTimeout>) =>
-	Reflect.apply(
-		Reflect.get(globalThis, "setTimeout"),
-		globalThis,
-		args,
-	)) as typeof globalThis.setTimeout;
-const cancelTimer = ((...args: Parameters<typeof globalThis.clearTimeout>) =>
-	Reflect.apply(
-		Reflect.get(globalThis, "clearTimeout"),
-		globalThis,
-		args,
-	)) as typeof globalThis.clearTimeout;
 const { readFileSync } = process.getBuiltinModule("fs");
 const { delimiter, join } = process.getBuiltinModule("path");
 
@@ -32,6 +20,7 @@ import {
 	SESSION_TOOL_NAME,
 } from "./contract.ts";
 import { delegateError, errorMessage } from "./errors.ts";
+import { cancelTimer, scheduleTimer } from "./host-timers.ts";
 
 export const DELEGATION_TOOL_DENYLIST = [
 	RUN_TOOL_NAME,
@@ -199,78 +188,74 @@ export function childExtensionPaths(
 	return paths;
 }
 
-export function createChild(
+export const createChild = Effect.fn("createChild")(function* (
 	cwd: string,
 	model: ExtensionContext["model"],
 	thinking: DelegateThinking,
 ) {
-	return Effect.gen(function* () {
-		const services = yield* Effect.context<never>();
-		const resourceLoader = yield* Effect.try({
-			try: () =>
-				new DefaultResourceLoader({
-					cwd,
-					agentDir: getAgentDir(),
-					additionalExtensionPaths: childExtensionPaths(),
-					systemPrompt: fileURLToPath(new URL("./SYSTEM.md", import.meta.url)),
-					appendSystemPromptOverride: () => [],
-				}),
-			catch: delegateError,
-		});
-		yield* Effect.tryPromise({
-			try: () => resourceLoader.reload(),
-			catch: delegateError,
-		});
-		const result = yield* Effect.tryPromise({
-			try: (signal) =>
-				createAgentSession({
-					cwd,
-					agentDir: getAgentDir(),
-					resourceLoader,
-					sessionManager: SessionManager.inMemory(cwd),
-					model,
-					thinkingLevel: thinking,
-					excludeTools: [...DELEGATION_TOOL_DENYLIST],
-				}).then(async (created) => {
-					if (!signal.aborted) return created;
-					await shutdownChild(created.session);
-					throw signal.reason ?? new Error("Child session creation aborted.");
-				}),
-			catch: delegateError,
-		});
-		yield* Effect.tryPromise({
-			try: (signal) => {
-				const onAbort = () => void shutdownChild(result.session);
-				signal.addEventListener("abort", onAbort, { once: true });
-				return result.session
-					.bindExtensions({
-						mode: "print",
-						onError: ({ extensionPath, event, error }) => {
-							const failure = `Child extension ${extensionPath} failed during ${event}: ${error}`;
-							if (event === "agent_end" || event === "session_shutdown") {
-								Effect.runSyncWith(services)(
-									Effect.logError(`[delegate] ${failure.slice(0, 4_096)}`),
-								);
-								return;
-							}
-							throw new Error(failure);
-						},
-					})
-					.finally(() => signal.removeEventListener("abort", onAbort));
-			},
-			catch: delegateError,
-		}).pipe(
-			Effect.tapError(() =>
-				Effect.promise(() => shutdownChild(result.session)),
-			),
-		);
-
-		result.session.setActiveToolsByName(
-			selectChildToolNames(result.session.getAllTools()),
-		);
-		return result.session;
+	const services = yield* Effect.context<never>();
+	const resourceLoader = yield* Effect.try({
+		try: () =>
+			new DefaultResourceLoader({
+				cwd,
+				agentDir: getAgentDir(),
+				additionalExtensionPaths: childExtensionPaths(),
+				systemPrompt: fileURLToPath(new URL("./SYSTEM.md", import.meta.url)),
+				appendSystemPromptOverride: () => [],
+			}),
+		catch: delegateError,
 	});
-}
+	yield* Effect.tryPromise({
+		try: () => resourceLoader.reload(),
+		catch: delegateError,
+	});
+	const result = yield* Effect.tryPromise({
+		try: (signal) =>
+			createAgentSession({
+				cwd,
+				agentDir: getAgentDir(),
+				resourceLoader,
+				sessionManager: SessionManager.inMemory(cwd),
+				model,
+				thinkingLevel: thinking,
+				excludeTools: [...DELEGATION_TOOL_DENYLIST],
+			}).then(async (created) => {
+				if (!signal.aborted) return created;
+				await shutdownChild(created.session);
+				throw signal.reason ?? new Error("Child session creation aborted.");
+			}),
+		catch: delegateError,
+	});
+	yield* Effect.tryPromise({
+		try: (signal) => {
+			const onAbort = () => void shutdownChild(result.session);
+			signal.addEventListener("abort", onAbort, { once: true });
+			return result.session
+				.bindExtensions({
+					mode: "print",
+					onError: ({ extensionPath, event, error }) => {
+						const failure = `Child extension ${extensionPath} failed during ${event}: ${error}`;
+						if (event === "agent_end" || event === "session_shutdown") {
+							Effect.runSyncWith(services)(
+								Effect.logError(`[delegate] ${failure.slice(0, 4_096)}`),
+							);
+							return;
+						}
+						throw new Error(failure);
+					},
+				})
+				.finally(() => signal.removeEventListener("abort", onAbort));
+		},
+		catch: delegateError,
+	}).pipe(
+		Effect.tapError(() => Effect.promise(() => shutdownChild(result.session))),
+	);
+
+	result.session.setActiveToolsByName(
+		selectChildToolNames(result.session.getAllTools()),
+	);
+	return result.session;
+});
 
 const CHILD_SHUTDOWN_MS = 7_500;
 const childShutdowns = new WeakMap<object, Promise<void>>();

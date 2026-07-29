@@ -18,7 +18,6 @@ import {
 import type {
 	ExtractedContent,
 	FetchOptions,
-	FrameData,
 	FrameResult,
 	VideoFrame,
 } from "./types.ts";
@@ -224,50 +223,45 @@ function timestamps(
 	);
 }
 
-function extractFrames(
+const extractFrames = Effect.fn("extractFrames")(function* (
 	media: MediaTarget,
 	values: number[],
-): Effect.Effect<
-	{ frames: VideoFrame[]; error: string | null; duration?: number },
-	WebAccessError
-> {
-	return Effect.gen(function* () {
-		const stream =
-			media.kind === "youtube"
-				? yield* getYouTubeStream(media.videoId as string)
-				: undefined;
-		const results = yield* Effect.forEach(
-			values,
-			(seconds): Effect.Effect<VideoFrame | { error: string }> => {
-				const frame = stream
-					? extractYouTubeFrame(stream.streamUrl, seconds)
-					: extractLocalFrame(media.local?.absolutePath as string, seconds);
-				return frame.pipe(
-					Effect.map((result) =>
-						"error" in result
-							? result
-							: { ...result, timestamp: formatSeconds(seconds) },
-					),
-				);
-			},
-			{ concurrency: FRAME_CONCURRENCY },
-		);
-		const frames = results.filter(
-			(frame): frame is VideoFrame => "data" in frame,
-		);
-		const firstError = results.find(
-			(frame): frame is { error: string } => "error" in frame,
-		);
-		return {
-			frames,
-			error:
-				frames.length === 0
-					? (firstError?.error ?? "Frame extraction failed")
-					: null,
-			duration: stream?.duration ?? undefined,
-		};
-	});
-}
+) {
+	const stream =
+		media.kind === "youtube"
+			? yield* getYouTubeStream(media.videoId as string)
+			: undefined;
+	const results = yield* Effect.forEach(
+		values,
+		(seconds): Effect.Effect<VideoFrame | { error: string }> => {
+			const frame = stream
+				? extractYouTubeFrame(stream.streamUrl, seconds)
+				: extractLocalFrame(media.local?.absolutePath as string, seconds);
+			return frame.pipe(
+				Effect.map((result) =>
+					"error" in result
+						? result
+						: { ...result, timestamp: formatSeconds(seconds) },
+				),
+			);
+		},
+		{ concurrency: FRAME_CONCURRENCY },
+	);
+	const frames = results.filter(
+		(frame): frame is VideoFrame => "data" in frame,
+	);
+	const firstError = results.find(
+		(frame): frame is { error: string } => "error" in frame,
+	);
+	return {
+		frames,
+		error:
+			frames.length === 0
+				? (firstError?.error ?? "Frame extraction failed")
+				: null,
+		duration: stream?.duration ?? undefined,
+	};
+});
 
 function frameResult(
 	input: string,
@@ -317,80 +311,76 @@ function mediaDuration(
 	);
 }
 
-function extractRequestedFrames(
+const extractRequestedFrames = Effect.fn("extractRequestedFrames")(function* (
 	media: MediaTarget,
 	options: FetchOptions,
-): Effect.Effect<ExtractedContent, WebAccessError> {
-	return Effect.gen(function* () {
-		if (options.frames && !options.timestamp) {
-			const duration = yield* mediaDuration(media);
-			const values = timestamps(0, Math.floor(duration), options.frames);
-			const label = `0:00-${formatSeconds(Math.floor(duration))}`;
-			return frameResult(
-				media.input,
-				label,
-				values.length,
-				yield* extractFrames(media, values),
-			);
-		}
+) {
+	if (options.frames && !options.timestamp) {
+		const duration = yield* mediaDuration(media);
+		const values = timestamps(0, Math.floor(duration), options.frames);
+		const label = `0:00-${formatSeconds(Math.floor(duration))}`;
+		return frameResult(
+			media.input,
+			label,
+			values.length,
+			yield* extractFrames(media, values),
+		);
+	}
 
-		const spec = parseTimestamp(options.timestamp as string);
-		if (!spec) {
-			return yield* webAccessError(`Invalid timestamp: ${options.timestamp}`);
-		}
+	const spec = parseTimestamp(options.timestamp as string);
+	if (!spec) {
+		return yield* webAccessError(`Invalid timestamp: ${options.timestamp}`);
+	}
 
-		if (spec.type === "range") {
-			const values = timestamps(spec.start, spec.end, options.frames);
-			const label = `${formatSeconds(spec.start)}-${formatSeconds(spec.end)}`;
-			return frameResult(
-				media.input,
-				label,
-				values.length,
-				yield* extractFrames(media, values),
-			);
-		}
+	if (spec.type === "range") {
+		const values = timestamps(spec.start, spec.end, options.frames);
+		const label = `${formatSeconds(spec.start)}-${formatSeconds(spec.end)}`;
+		return frameResult(
+			media.input,
+			label,
+			values.length,
+			yield* extractFrames(media, values),
+		);
+	}
 
-		if (options.frames) {
-			const end =
-				spec.seconds + (options.frames - 1) * MIN_FRAME_INTERVAL_SECONDS;
-			const values = timestamps(spec.seconds, end, options.frames);
-			const label = `${formatSeconds(spec.seconds)}-${formatSeconds(end)}`;
-			return frameResult(
-				media.input,
-				label,
-				values.length,
-				yield* extractFrames(media, values),
-			);
-		}
+	if (options.frames) {
+		const end =
+			spec.seconds + (options.frames - 1) * MIN_FRAME_INTERVAL_SECONDS;
+		const values = timestamps(spec.seconds, end, options.frames);
+		const label = `${formatSeconds(spec.seconds)}-${formatSeconds(end)}`;
+		return frameResult(
+			media.input,
+			label,
+			values.length,
+			yield* extractFrames(media, values),
+		);
+	}
 
-		const frame: FrameResult =
-			media.kind === "youtube"
-				? yield* getYouTubeStream(media.videoId as string).pipe(
-						Effect.flatMap((stream) =>
-							extractYouTubeFrame(stream.streamUrl, spec.seconds),
-						),
-					)
-				: yield* extractLocalFrame(
-						media.local?.absolutePath as string,
-						spec.seconds,
-					);
-		if ("error" in frame) {
-			return yield* webAccessError(frame.error);
-		}
-		return {
-			url: media.input,
-			title: `Frame at ${formatSeconds(spec.seconds)}`,
-			content: `Video frame at ${formatSeconds(spec.seconds)}`,
-			error: null,
-			thumbnail: frame,
-		};
-	});
-}
+	const frame: FrameResult =
+		media.kind === "youtube"
+			? yield* getYouTubeStream(media.videoId as string).pipe(
+					Effect.flatMap((stream) =>
+						extractYouTubeFrame(stream.streamUrl, spec.seconds),
+					),
+				)
+			: yield* extractLocalFrame(
+					media.local?.absolutePath as string,
+					spec.seconds,
+				);
+	if ("error" in frame) {
+		return yield* webAccessError(frame.error);
+	}
+	return {
+		url: media.input,
+		title: `Frame at ${formatSeconds(spec.seconds)}`,
+		content: `Video frame at ${formatSeconds(spec.seconds)}`,
+		error: null,
+		thumbnail: frame,
+	};
+});
 
-function youtubeThumbnail(
-	videoId: string,
-): Effect.Effect<FrameData | undefined> {
-	return Effect.gen(function* () {
+const youtubeThumbnail = Effect.fn("youtubeThumbnail")(
+	function* (videoId: string) {
 		const response = yield* HttpClient.get(
 			`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
 		).pipe(
@@ -403,35 +393,37 @@ function youtubeThumbnail(
 		return data.length > 0
 			? { data: data.toString("base64"), mimeType: "image/jpeg" }
 			: undefined;
-	}).pipe(Effect.orElseSucceed(() => undefined));
-}
+	},
+	Effect.orElseSucceed(() => undefined),
+);
 
-function analyze(
+const analyze = Effect.fn("analyze")(function* (
 	media: MediaTarget,
 	options: FetchOptions,
-): Effect.Effect<ExtractedContent, WebAccessError> {
+) {
 	const prompt = options.prompt ?? DEFAULT_VIDEO_PROMPT;
 	const model = options.model ?? DEFAULT_GEMINI_MODEL;
 	if (media.kind === "youtube") {
-		return Effect.gen(function* () {
-			const result = yield* analyzeYouTube(
-				media.input,
-				media.videoId as string,
-				prompt,
-				model,
-			);
-			const thumbnail = yield* youtubeThumbnail(media.videoId as string);
-			return thumbnail ? { ...result, thumbnail } : result;
-		});
+		const result = yield* analyzeYouTube(
+			media.input,
+			media.videoId as string,
+			prompt,
+			model,
+		);
+		const thumbnail = yield* youtubeThumbnail(media.videoId as string);
+		return thumbnail ? { ...result, thumbnail } : result;
 	}
 
-	const local = media.local as VideoFile;
-	return Effect.gen(function* () {
-		const result = yield* analyzeLocalVideo(media.input, local, prompt, model);
-		const thumbnail = yield* extractLocalFrame(local.absolutePath, 1);
-		return "error" in thumbnail ? result : { ...result, thumbnail };
-	});
-}
+	const localVideo = media.local as VideoFile;
+	const result = yield* analyzeLocalVideo(
+		media.input,
+		localVideo,
+		prompt,
+		model,
+	);
+	const thumbnail = yield* extractLocalFrame(localVideo.absolutePath, 1);
+	return "error" in thumbnail ? result : { ...result, thumbnail };
+});
 
 export function isMediaInput(input: string): boolean {
 	return youtubeVideoId(input) !== null || localVideoPath(input) !== null;

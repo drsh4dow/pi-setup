@@ -53,48 +53,39 @@ export function saveDelegateOutput(text: string): string {
 	return path;
 }
 
-export function formatDelegateOutputEffect(
-	text: string,
-	savedOutputFile?: string,
-): Effect.Effect<DelegateOutput> {
+export const formatDelegateOutputEffect = Effect.fn(
+	"formatDelegateOutputEffect",
+)(function* (text: string, savedOutputFile?: string) {
 	const truncation = truncateHead(text, {
 		maxLines: DEFAULT_MAX_LINES,
 		maxBytes: DEFAULT_MAX_BYTES,
 	});
-	if (!truncation.truncated) return Effect.succeed({ text });
+	if (!truncation.truncated) return { text };
 
-	const withNotice = (notice: string): string =>
-		truncation.content ? `${truncation.content}\n\n${notice}` : notice;
-	const summary = `${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)})`;
-
-	return Effect.gen(function* () {
-		const fullOutputFile =
-			savedOutputFile ??
-			(yield* Effect.try({
-				try: delegateOutputPath,
-				catch: delegateError,
-			}));
-		if (!savedOutputFile) {
-			yield* Effect.tryPromise({
-				try: () => writeFile(fullOutputFile, text, "utf8"),
-				catch: delegateError,
-			});
-		}
-		return {
-			text: withNotice(
-				`[Delegated output truncated: ${summary}. ${savedOutputFile ? `Full output is available until the parent session ends at: ${fullOutputFile}` : `Full output saved to: ${fullOutputFile}`}]`,
-			),
-			truncation,
-			fullOutputFile,
-		};
+	const archive = yield* Effect.tryPromise({
+		try: async () => {
+			const fullOutputFile = savedOutputFile ?? delegateOutputPath();
+			if (!savedOutputFile) await writeFile(fullOutputFile, text, "utf8");
+			return fullOutputFile;
+		},
+		catch: delegateError,
 	}).pipe(
-		Effect.catch((error) =>
-			Effect.succeed({
-				text: `${text}\n\n[Delegated output exceeded the display limit but could not be saved, so the complete output is shown here: ${error.message}]`,
-			}),
-		),
+		Effect.map((fullOutputFile) => ({ fullOutputFile })),
+		Effect.catch((error) => Effect.succeed({ error })),
 	);
-}
+	if ("error" in archive) {
+		return {
+			text: `${text}\n\n[Delegated output exceeded the display limit but could not be saved, so the complete output is shown here: ${archive.error.message}]`,
+		};
+	}
+	const summary = `${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)})`;
+	const notice = `[Delegated output truncated: ${summary}. ${savedOutputFile ? `Full output is available until the parent session ends at: ${archive.fullOutputFile}` : `Full output saved to: ${archive.fullOutputFile}`}]`;
+	return {
+		text: truncation.content ? `${truncation.content}\n\n${notice}` : notice,
+		truncation,
+		fullOutputFile: archive.fullOutputFile,
+	};
+});
 
 export async function formatDelegateOutput(
 	text: string,

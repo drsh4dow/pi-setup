@@ -1,11 +1,67 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
-  "formatter": {
-    "indentStyle": "space"
-  },
-  "linter": {
-    "rules": {
-      "preset": "recommended"
-    }
-  }
+	"$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"ignoreUnknown": true,
+		"includes": [
+			"**/src/**/*",
+			"**/.vscode/**/*",
+			"**/index.html",
+			"**/vite.config.ts",
+			"!**/src/routeTree.gen.ts",
+			"!**/src/styles.css",
+			"!**/.claude",
+			"!**/.repos"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab"
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on",
+				"noDuplicateClasses": "on",
+				"useSortedAttributes": "on",
+				"useSortedEnumMembers": "on",
+				"useSortedProperties": "on"
+			}
+		}
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"domains": {
+			"types": "all"
+		},
+		"rules": {
+			"performance": {
+				"noJsxPropsBind": "off"
+			},
+			"preset": "recommended",
+			"style": {
+				"useComponentExportOnlyModules": "off",
+				"noExcessiveLinesPerFile": {
+					"level": "warn",
+					"options": {
+						"maxLines": 800
+					}
+				}
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	}
 }

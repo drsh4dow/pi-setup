@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { errorMessage, type WebAccessError, webAccessError } from "./errors.ts";
+import { errorMessage, webAccessError } from "./errors.ts";
 import { runCommand } from "./subprocess.ts";
 import type { FrameResult } from "./types.ts";
 
@@ -41,33 +41,25 @@ function processError(
 	return detail ? `${tool} failed: ${detail}` : `${tool} failed`;
 }
 
-export function getYouTubeStream(
+export const getYouTubeStream = Effect.fn("getYouTubeStream")(function* (
 	videoId: string,
-): Effect.Effect<YouTubeStream, WebAccessError> {
-	return Effect.gen(function* () {
-		const output = yield* runCommand(
-			"yt-dlp",
-			[
-				"--print",
-				"duration",
-				"-g",
-				`https://www.youtube.com/watch?v=${videoId}`,
-			],
-			{ timeoutMs: 15_000, maxBuffer: 5 * 1024 * 1024 },
-		).pipe(
-			Effect.mapError((error) => webAccessError(processError("yt-dlp", error))),
-		);
-		const lines = output.toString("utf8").trim().split(/\r?\n/);
-		const streamUrl = lines[1]?.trim();
-		if (!streamUrl)
-			return yield* webAccessError("yt-dlp returned no stream URL");
-		const duration = Number.parseFloat(lines[0] ?? "");
-		return {
-			streamUrl,
-			duration: Number.isFinite(duration) ? duration : null,
-		};
-	});
-}
+) {
+	const output = yield* runCommand(
+		"yt-dlp",
+		["--print", "duration", "-g", `https://www.youtube.com/watch?v=${videoId}`],
+		{ timeoutMs: 15_000, maxBuffer: 5 * 1024 * 1024 },
+	).pipe(
+		Effect.mapError((error) => webAccessError(processError("yt-dlp", error))),
+	);
+	const lines = output.toString("utf8").trim().split(/\r?\n/);
+	const streamUrl = lines[1]?.trim();
+	if (!streamUrl) return yield* webAccessError("yt-dlp returned no stream URL");
+	const duration = Number.parseFloat(lines[0] ?? "");
+	return {
+		streamUrl,
+		duration: Number.isFinite(duration) ? duration : null,
+	};
+});
 
 function extractFrame(
 	input: string,
@@ -119,30 +111,18 @@ export function extractLocalFrame(
 	return extractFrame(path, seconds, 10_000);
 }
 
-export function getLocalDuration(
+export const getLocalDuration = Effect.fn("getLocalDuration")(function* (
 	path: string,
-): Effect.Effect<number, WebAccessError> {
-	return Effect.gen(function* () {
-		const output = yield* runCommand(
-			"ffprobe",
-			[
-				"-v",
-				"quiet",
-				"-show_entries",
-				"format=duration",
-				"-of",
-				"csv=p=0",
-				path,
-			],
-			{ timeoutMs: 10_000, maxBuffer: 1024 * 1024 },
-		).pipe(
-			Effect.mapError((error) =>
-				webAccessError(processError("ffprobe", error)),
-			),
-		);
-		const duration = Number.parseFloat(output.toString("utf8").trim());
-		return Number.isFinite(duration)
-			? duration
-			: yield* webAccessError("ffprobe failed: invalid duration output");
-	});
-}
+) {
+	const output = yield* runCommand(
+		"ffprobe",
+		["-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+		{ timeoutMs: 10_000, maxBuffer: 1024 * 1024 },
+	).pipe(
+		Effect.mapError((error) => webAccessError(processError("ffprobe", error))),
+	);
+	const duration = Number.parseFloat(output.toString("utf8").trim());
+	return Number.isFinite(duration)
+		? duration
+		: yield* webAccessError("ffprobe failed: invalid duration output");
+});

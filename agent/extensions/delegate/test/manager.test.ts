@@ -330,8 +330,9 @@ test("cancellation releases prompts that ignore child abort", async () => {
 test("teardown timeout falls back to local disposal and diagnoses", async (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const diagnostics: string[] = [];
-	const originalError = console.error;
-	console.error = (message?: unknown) => diagnostics.push(String(message));
+	const originalLog = console.log;
+	console.log = (...values: unknown[]) =>
+		diagnostics.push(values.map(String).join(" "));
 	const { manager, sessions } = harness(
 		undefined,
 		() => new Promise<void>(() => {}),
@@ -350,15 +351,16 @@ test("teardown timeout falls back to local disposal and diagnoses", async (t) =>
 		assert.equal(diagnostics.length, 1);
 		assert.match(diagnostics[0], /delegate-1.*timed out after 16000ms/);
 	} finally {
-		console.error = originalError;
+		console.log = originalLog;
 	}
 	await manager.shutdown();
 });
 
 test("teardown rejection falls back to local disposal and diagnoses", async () => {
 	const diagnostics: string[] = [];
-	const originalError = console.error;
-	console.error = (message?: unknown) => diagnostics.push(String(message));
+	const originalLog = console.log;
+	console.log = (...values: unknown[]) =>
+		diagnostics.push(values.map(String).join(" "));
 	const { manager, sessions } = harness(undefined, async () => {
 		throw new Error("shutdown transport failed");
 	});
@@ -372,7 +374,7 @@ test("teardown rejection falls back to local disposal and diagnoses", async () =
 		assert.equal(diagnostics.length, 1);
 		assert.match(diagnostics[0], /delegate-1.*shutdown transport failed/);
 	} finally {
-		console.error = originalError;
+		console.log = originalLog;
 	}
 	await manager.shutdown();
 });

@@ -20,8 +20,8 @@
     "@earendil-works/pi-ai": "^0.82.1",
     "@earendil-works/pi-coding-agent": "^0.82.1",
     "@earendil-works/pi-tui": "^0.82.1",
-    "@effect/platform-bun": "^4.0.0-beta.102",
-    "effect": "^4.0.0-beta.102"
+    "@effect/platform-bun": "4.0.0-beta.102",
+    "effect": "4.0.0-beta.102"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",

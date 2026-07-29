@@ -240,7 +240,4 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
 			? withFastServiceTier(event.payload)
 			: undefined,
 	);
-	pi.on("session_shutdown", async () => {
-		await runtime.dispose();
-	});
 }

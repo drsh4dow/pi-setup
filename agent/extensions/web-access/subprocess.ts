@@ -1,7 +1,7 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { Effect, type PlatformError, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { asError } from "./errors.ts";
+import { asError, webAccessError } from "./errors.ts";
 
 export const runCommand = Effect.fn("runCommand")(
 	function* (
@@ -15,17 +15,17 @@ export const runCommand = Effect.fn("runCommand")(
 			const collect = (
 				stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
 			) =>
-				Stream.runFold(
+				Stream.runFoldEffect(
 					stream,
 					() => Buffer.alloc(0),
-					(output, chunk) => {
-						if (output.length + chunk.length > options.maxBuffer) {
-							throw new Error(
-								`Command output exceeded ${options.maxBuffer} bytes`,
-							);
-						}
-						return Buffer.concat([output, chunk]);
-					},
+					(output, chunk) =>
+						output.length + chunk.length > options.maxBuffer
+							? Effect.fail(
+									webAccessError(
+										`Command output exceeded ${options.maxBuffer} bytes`,
+									),
+								)
+							: Effect.succeed(Buffer.concat([output, chunk])),
 				);
 			const [stdout, stderr, exitCode] = yield* Effect.all(
 				[collect(handle.stdout), collect(handle.stderr), handle.exitCode],

@@ -81,6 +81,22 @@ const ffmpegAvailable = await Effect.runPromise(
 	),
 );
 
+test("command output overflow remains a typed failure", async () => {
+	await assert.rejects(
+		Effect.runPromise(
+			runCommand(
+				process.execPath,
+				["-e", 'process.stdout.write("x".repeat(32))'],
+				{
+					timeoutMs: 5_000,
+					maxBuffer: 16,
+				},
+			),
+		),
+		/Command output exceeded 16 bytes/,
+	);
+});
+
 test("local frame extraction works with ffmpeg", {
 	skip: !ffmpegAvailable,
 }, async () => {

@@ -348,7 +348,6 @@ const requestToken = Effect.fn("requestToken")(function* (
 		}),
 	);
 	const response = yield* client.execute(request).pipe(
-		Effect.timeout(REQUEST_TIMEOUT_MS),
 		Effect.mapError(
 			(cause) =>
 				new OAuthRequestError({
@@ -390,10 +389,9 @@ const requestToken = Effect.fn("requestToken")(function* (
 		Schema.fromJsonString(TokenResponseJson),
 	)(new TextDecoder().decode(bytes)).pipe(
 		Effect.mapError(
-			(cause) =>
+			() =>
 				new OAuthRequestError({
 					message: `Anthropic ${operation} returned invalid JSON`,
-					cause,
 				}),
 		),
 	);
@@ -405,20 +403,30 @@ const requestToken = Effect.fn("requestToken")(function* (
 });
 
 const runTokenRequest = <A>(
+	operation: string,
 	effect: Effect.Effect<A, OAuthRequestError, HttpClient.HttpClient>,
 	options?: { signal?: AbortSignal },
 ) =>
 	Effect.runPromise(
 		effect.pipe(
+			Effect.timeout(REQUEST_TIMEOUT_MS),
+			Effect.mapError((cause) =>
+				Schema.is(OAuthRequestError)(cause)
+					? cause
+					: new OAuthRequestError({
+							message: `Anthropic ${operation} request failed`,
+							cause,
+						}),
+			),
 			Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
 			Effect.provide(Layer.fresh(FetchHttpClient.layer)),
 		),
 		options,
 	);
 
-async function credentialExpiry(expiresInSeconds: number): Promise<number> {
+function credentialExpiry(expiresInSeconds: number): number {
 	const lifetime = expiresInSeconds * 1000;
-	const now = await Effect.runPromise(Clock.currentTimeMillis);
+	const now = Effect.runSync(Clock.currentTimeMillis);
 	return now + lifetime - Math.min(EXPIRY_SKEW_MS, lifetime / 2);
 }
 
@@ -459,6 +467,7 @@ async function loginAnthropic(
 
 	callbacks.onProgress?.("Exchanging authorization code for tokens...");
 	const token = await runTokenRequest(
+		"token exchange",
 		requestToken(
 			"token exchange",
 			{
@@ -480,7 +489,7 @@ async function loginAnthropic(
 	return {
 		access: token.accessToken,
 		refresh: token.refreshToken,
-		expires: await credentialExpiry(token.expiresIn),
+		expires: credentialExpiry(token.expiresIn),
 	};
 }
 
@@ -490,6 +499,7 @@ export const anthropicOAuth = {
 	login: loginAnthropic,
 	async refreshToken(credentials) {
 		const token = await runTokenRequest(
+			"token refresh",
 			requestToken(
 				"token refresh",
 				{
@@ -507,7 +517,7 @@ export const anthropicOAuth = {
 			...credentials,
 			access: token.accessToken,
 			refresh: token.refreshToken ?? credentials.refresh,
-			expires: await credentialExpiry(token.expiresIn),
+			expires: credentialExpiry(token.expiresIn),
 		};
 	},
 	getApiKey(credentials) {

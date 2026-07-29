@@ -15,6 +15,7 @@ export default function sessionTimer(pi: ExtensionAPI): void {
 	}
 
 	pi.on("agent_start", (_event, ctx) => {
+		if (ticker) Effect.runSync(Fiber.interrupt(ticker));
 		runStart = Effect.runSync(Clock.currentTimeMillis);
 		ticker = Effect.runFork(
 			Effect.gen(function* () {

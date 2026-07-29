@@ -241,10 +241,8 @@ export class BackgroundDelivery {
 				const evidence = String(error).replace(/\s+/g, " ").slice(0, 512);
 				for (const id of exhausted) {
 					Effect.runSync(
-						Effect.sync(() =>
-							Reflect.apply(Reflect.get(console, "error"), console, [
-								`[delegate] background delivery failed for ${id}; use delegate_session wait to recover retained results: ${evidence}`,
-							]),
+						Effect.logError(
+							`[delegate] background delivery failed for ${id}; use delegate_session wait to recover retained results: ${evidence}`,
 						),
 					);
 				}

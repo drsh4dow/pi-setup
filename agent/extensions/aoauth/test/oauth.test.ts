@@ -258,6 +258,26 @@ test("rejects invalid token responses without exposing their body", async (t) =>
 		}),
 		/returned invalid JSON/,
 	);
+
+	globalThis.fetch = async () =>
+		Response.json({
+			access_token: "secret-access-token",
+			refresh_token: "secret-refresh-token",
+			expires_in: 0,
+		});
+	await assert.rejects(
+		anthropicOAuth.refreshToken({
+			access: "sk-ant-oat-old",
+			refresh: "refresh-old",
+			expires: 0,
+		}),
+		(error: Error & { cause?: unknown }) => {
+			assert.match(error.message, /returned invalid JSON/);
+			assert.equal(error.cause, undefined);
+			assert.doesNotMatch(JSON.stringify(error), /secret-/);
+			return true;
+		},
+	);
 });
 
 test("accepts raw, query-string, and redirect-URL manual input", async (t) => {

@@ -558,11 +558,7 @@ export class DelegateManager {
 						? errorMessage(abortFailure).replace(/\s+/g, " ").slice(0, 512)
 						: "timed out after 5000ms";
 				Effect.runSync(
-					Effect.sync(() =>
-						Reflect.apply(Reflect.get(console, "error"), console, [
-							`[delegate] abort failed for ${job.id}: ${evidence}`,
-						]),
-					),
+					Effect.logError(`[delegate] abort failed for ${job.id}: ${evidence}`),
 				);
 			}
 			if (!stopped || child.isStreaming) {
@@ -724,11 +720,7 @@ export class DelegateManager {
 						? `timed out after ${DISPOSAL_TIMEOUT_MS}ms`
 						: errorMessage(result.error).replace(/\s+/g, " ").slice(0, 512);
 				Effect.runSync(
-					Effect.sync(() =>
-						Reflect.apply(Reflect.get(console, "error"), console, [
-							`[delegate] cleanup failed for ${id}: ${evidence}`,
-						]),
-					),
+					Effect.logError(`[delegate] cleanup failed for ${id}: ${evidence}`),
 				);
 				try {
 					child.dispose();

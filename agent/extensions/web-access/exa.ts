@@ -90,23 +90,19 @@ const post = Effect.fn("post")(function* <S extends Schema.Constraint>(
 			HttpBody.raw(encodedBody, { contentType: "application/json" }),
 		),
 	);
-	const response = yield* client
-		.execute(request)
-		.pipe(Effect.timeout(REQUEST_TIMEOUT_MS), Effect.mapError(asError));
-
-	if (response.status < 200 || response.status >= 300) {
-		const detail = (yield* response.text.pipe(Effect.mapError(asError)))
-			.replace(/\s+/g, " ")
-			.trim()
-			.slice(0, 300);
-		return yield* webAccessError(
-			`Exa API error ${response.status}${detail ? `: ${detail}` : ""}`,
-		);
-	}
-
-	return yield* HttpClientResponse.schemaBodyJson(responseSchema)(
-		response,
-	).pipe(Effect.mapError(asError));
+	return yield* Effect.gen(function* () {
+		const response = yield* client.execute(request);
+		if (response.status < 200 || response.status >= 300) {
+			const detail = (yield* response.text)
+				.replace(/\s+/g, " ")
+				.trim()
+				.slice(0, 300);
+			return yield* webAccessError(
+				`Exa API error ${response.status}${detail ? `: ${detail}` : ""}`,
+			);
+		}
+		return yield* HttpClientResponse.schemaBodyJson(responseSchema)(response);
+	}).pipe(Effect.timeout(REQUEST_TIMEOUT_MS), Effect.mapError(asError));
 });
 
 function highlights(value: unknown): string[] {

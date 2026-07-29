@@ -194,7 +194,6 @@ const upload = Effect.fn("upload")(function* (video: VideoFile) {
 	const uploadRequest = HttpClientRequest.put(uploadUrl).pipe(
 		HttpClientRequest.bodyUint8Array(body),
 		HttpClientRequest.setHeaders({
-			"Content-Length": String(video.sizeBytes),
 			"X-Goog-Upload-Command": "upload, finalize",
 			"X-Goog-Upload-Offset": "0",
 		}),
@@ -213,33 +212,29 @@ const upload = Effect.fn("upload")(function* (video: VideoFile) {
 		: yield* webAccessError("Gemini returned an invalid video upload response");
 });
 
-const waitUntilActive = Effect.fn("waitUntilActive")(
-	function* (name: string) {
-		const key = yield* apiKey;
-		for (let attempt = 0; attempt < 24; attempt += 1) {
-			const request = HttpClientRequest.get(`${GEMINI_BASE}/${name}`).pipe(
-				HttpClientRequest.setHeader("x-goog-api-key", key),
+const waitUntilActive = Effect.fn("waitUntilActive")(function* (name: string) {
+	const key = yield* apiKey;
+	for (let attempt = 0; attempt < 24; attempt += 1) {
+		const request = HttpClientRequest.get(`${GEMINI_BASE}/${name}`).pipe(
+			HttpClientRequest.setHeader("x-goog-api-key", key),
+		);
+		const response = yield* execute(request, 15_000);
+		if (response.status < 200 || response.status >= 300) {
+			return yield* webAccessError(
+				`Gemini file-state check failed ${response.status}`,
 			);
-			const response = yield* execute(request, 15_000);
-			if (response.status < 200 || response.status >= 300) {
-				return yield* webAccessError(
-					`Gemini file-state check failed ${response.status}`,
-				);
-			}
-			const data = yield* HttpClientResponse.schemaBodyJson(
-				GeminiFileStateResponse,
-			)(response).pipe(Effect.mapError(asError));
-			if (data.state === "ACTIVE") return;
-			if (data.state === "FAILED") {
-				return yield* webAccessError("Gemini video processing failed");
-			}
-			yield* Effect.sleep(5_000);
 		}
-		return yield* webAccessError("Gemini video processing timed out");
-	},
-	Effect.timeout(120_000),
-	Effect.mapError(asError),
-);
+		const data = yield* HttpClientResponse.schemaBodyJson(
+			GeminiFileStateResponse,
+		)(response).pipe(Effect.mapError(asError));
+		if (data.state === "ACTIVE") return;
+		if (data.state === "FAILED") {
+			return yield* webAccessError("Gemini video processing failed");
+		}
+		yield* Effect.sleep(5_000);
+	}
+	return yield* webAccessError("Gemini video processing timed out");
+}, Effect.mapError(asError));
 
 const remove = Effect.fn("remove")(function* (name: string) {
 	return yield* Effect.gen(function* () {

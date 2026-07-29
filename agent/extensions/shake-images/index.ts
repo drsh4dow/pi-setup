@@ -7,6 +7,7 @@ import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import {
 	Crypto,
+	Duration,
 	Effect,
 	Encoding,
 	FileSystem,
@@ -148,24 +149,29 @@ export default function shakeImagesExtension(pi: ExtensionAPI): void {
 		Layer.mergeAll(BunFileSystem.layer, BunPath.layer, BunCrypto.layer),
 	);
 	let enabled = false;
-	let tempImagesDir: Promise<string> | undefined;
+	let tempImagesDir: string | undefined;
+	const [getTempImagesDir, resetTempImagesDir] = runtime.runSync(
+		Effect.cachedInvalidateWithTTL(
+			FileSystem.FileSystem.use((fs) =>
+				fs.makeTempDirectory({ prefix: "pi-shake-images-" }).pipe(
+					Effect.tap((directory) =>
+						Effect.sync(() => {
+							tempImagesDir = directory;
+						}),
+					),
+				),
+			),
+			Duration.infinity,
+		),
+	);
 	const materializeImage: MaterializeImage = (image) =>
 		runtime.runPromise(
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
 				const path = yield* Path.Path;
 				const crypto = yield* Crypto.Crypto;
-				tempImagesDir ??= runtime.runPromise(
-					fs.makeTempDirectory({ prefix: "pi-shake-images-" }),
-				);
-				const directory = yield* Effect.promise(
-					() => tempImagesDir as Promise<string>,
-				).pipe(
-					Effect.tapError(() =>
-						Effect.sync(() => {
-							tempImagesDir = undefined;
-						}),
-					),
+				const directory = yield* getTempImagesDir.pipe(
+					Effect.tapError(() => resetTempImagesDir),
 				);
 				const extension =
 					(
@@ -184,8 +190,15 @@ export default function shakeImagesExtension(pi: ExtensionAPI): void {
 					directory,
 					`${Encoding.encodeHex(digest)}.${extension}`,
 				);
-				if (!(yield* fs.exists(file)))
-					yield* fs.writeFile(file, bytes, { flag: "wx" });
+				yield* fs
+					.writeFile(file, bytes, { flag: "wx" })
+					.pipe(
+						Effect.catch((error) =>
+							error.reason._tag === "AlreadyExists"
+								? Effect.void
+								: Effect.fail(error),
+						),
+					);
 				return file;
 			}),
 		);
@@ -203,7 +216,7 @@ export default function shakeImagesExtension(pi: ExtensionAPI): void {
 	);
 	pi.on("session_shutdown", async () => {
 		if (tempImagesDir) {
-			const directory = await tempImagesDir;
+			const directory = tempImagesDir;
 			tempImagesDir = undefined;
 			await runtime.runPromise(
 				FileSystem.FileSystem.use((fs) =>

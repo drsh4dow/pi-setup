@@ -1,15 +1,20 @@
-import { readFile, writeFile } from "node:fs/promises";
 import {
 	type ExtensionAPI,
 	type ExtensionCommandContext,
 	parseFrontmatter,
 	type Skill,
 } from "@earendil-works/pi-coding-agent";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import { Effect, FileSystem, type PlatformError } from "effect";
 
 const DONE_LABEL = "Done";
 const DISABLE_MODEL_INVOCATION_LINE = /^disable-model-invocation\s*:/;
 const FRONTMATTER_OPEN = "---\n";
 const FRONTMATTER_CLOSE = "\n---";
+
+const runFileSystem = <A>(
+	effect: Effect.Effect<A, PlatformError.PlatformError, FileSystem.FileSystem>,
+) => Effect.runPromise(Effect.provide(effect, BunFileSystem.layer));
 
 type SkillVisibility = {
 	name: string;
@@ -122,7 +127,9 @@ async function listLoadedSkills(skills: Skill[]): Promise<SkillVisibility[]> {
 
 async function isUserInvokable(filePath: string): Promise<boolean> {
 	try {
-		const content = await readFile(filePath, "utf-8");
+		const content = await runFileSystem(
+			FileSystem.FileSystem.use((fs) => fs.readFileString(filePath)),
+		);
 		return parseFrontmatter(content).frontmatter["user-invokable"] !== false;
 	} catch {
 		return true;
@@ -133,11 +140,17 @@ async function writeSkillVisibility(
 	filePath: string,
 	hidden: boolean,
 ): Promise<void> {
-	const content = await readFile(filePath, "utf-8");
+	const content = await runFileSystem(
+		FileSystem.FileSystem.use((fs) => fs.readFileString(filePath)),
+	);
 	const nextContent = setSkillVisibility(content, hidden);
 
 	if (nextContent === content) return;
-	await writeFile(filePath, nextContent, "utf-8");
+	await runFileSystem(
+		FileSystem.FileSystem.use((fs) =>
+			fs.writeFileString(filePath, nextContent),
+		),
+	);
 }
 
 function setSkillVisibility(content: string, hidden: boolean): string {

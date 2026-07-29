@@ -12,15 +12,25 @@ function processError(
 	tool: "ffmpeg" | "ffprobe" | "yt-dlp",
 	error: unknown,
 ): string {
-	const item = error as {
+	const wrapped = error as { cause?: unknown };
+	const item = (wrapped.cause ?? error) as {
 		code?: string;
 		killed?: boolean;
 		stderr?: Buffer | string;
 		message?: string;
 	};
+	const tagged = item as { _tag?: string; reason?: string };
 	if (item.code === "ABORT_ERR") return "Aborted";
-	if (item.code === "ENOENT") return `${tool} is not installed`;
-	if (item.killed || item.code === "ETIMEDOUT") return `${tool} timed out`;
+	if (item.code === "ENOENT" || tagged.reason === "NotFound") {
+		return `${tool} is not installed`;
+	}
+	if (
+		item.killed ||
+		item.code === "ETIMEDOUT" ||
+		tagged._tag === "TimeoutException"
+	) {
+		return `${tool} timed out`;
+	}
 	const stderr = Buffer.isBuffer(item.stderr)
 		? item.stderr.toString("utf8")
 		: (item.stderr ?? "");

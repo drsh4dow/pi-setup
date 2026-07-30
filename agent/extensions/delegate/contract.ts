@@ -117,6 +117,10 @@ export interface DelegateSnapshot extends DelegateDetails {
 	output: string;
 }
 
+export type DelegateSessionDetails =
+	| DelegateSnapshot
+	| { results: DelegateSnapshot[] };
+
 export interface DelegateOutput {
 	text: string;
 	truncation?: TruncationResult;

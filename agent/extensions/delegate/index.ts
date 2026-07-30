@@ -9,8 +9,8 @@ import {
 	registerProcessStatusSource,
 } from "../process-status/status.ts";
 import {
-	type DelegateDetails,
 	DelegateRunParams,
+	type DelegateSessionDetails,
 	DelegateSessionParams,
 	type DelegateSnapshot,
 	MAX_EXECUTION_MS,
@@ -28,7 +28,12 @@ import {
 import { cancelTimer, scheduleTimer } from "./host-timers.ts";
 import { DelegateManager } from "./manager.ts";
 import { formatDelegateOutput } from "./output.ts";
-import { renderDelegateCall, renderDelegateResult } from "./render.ts";
+import {
+	renderDelegateCall,
+	renderDelegateResult,
+	renderDelegateSessionCall,
+	renderDelegateSessionResult,
+} from "./render.ts";
 
 export {
 	CHILD_EXTENSION_PATHS_ENV,
@@ -306,7 +311,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		await manager.shutdown();
 	});
 
-	pi.registerTool<typeof DelegateRunParams, DelegateDetails>({
+	pi.registerTool<typeof DelegateRunParams, DelegateSnapshot>({
 		name: RUN_TOOL_NAME,
 		label: "Delegate Run",
 		description: `Creates one child with fresh context for one self-contained task. State the objective, relevant context and files, mutation permission, constraints, verification, and expected result. Multiple delegate_run calls issued together execute concurrently and settle independently; chain dependent work by using each completed result to compose the next task. By default the call blocks until completion; background=true returns the child id immediately and delivers the result later. Every run is terminated at ${MAX_EXECUTION_MS / 60_000} minutes of wall time or ${MAX_EXECUTION_TOKENS.toLocaleString("en-US")} tokens whatever its effort, so size a task by the minutes it needs. Children share one worktree without write isolation unless you point them elsewhere with cwd. output_format is advisory: correct and complete information takes precedence over exact formatting.`,
@@ -391,7 +396,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		renderResult: renderDelegateResult,
 	});
 
-	pi.registerTool<typeof DelegateSessionParams, unknown>({
+	pi.registerTool<typeof DelegateSessionParams, DelegateSessionDetails>({
 		name: SESSION_TOOL_NAME,
 		label: "Delegate Session",
 		description:
@@ -457,5 +462,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 				details: { results: snapshots },
 			};
 		},
+		renderCall: renderDelegateSessionCall,
+		renderResult: renderDelegateSessionResult,
 	});
 }

@@ -19,15 +19,15 @@ describe("gpt-fast-mode request mapping", () => {
 		});
 	});
 
-	test("uses the canonical Fast tier on the ChatGPT backend", () => {
+	test("uses Codex's catalog tier ID on the ChatGPT backend", () => {
 		const model = { provider: "openai-codex", id: "gpt-5.6-sol" };
 		const payload = { model: model.id, input: "hello" };
 
-		assert.equal(fastServiceTier(model), "fast");
+		assert.equal(fastServiceTier(model), "priority");
 		assert.equal(shouldApplyFastMode(model, payload), true);
 		assert.deepEqual(withFastServiceTier(model, payload), {
 			...payload,
-			service_tier: "fast",
+			service_tier: "priority",
 		});
 	});
 

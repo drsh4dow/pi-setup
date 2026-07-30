@@ -7,10 +7,11 @@ import { tmpdir } from "node:os";
 const { join } = process.getBuiltinModule("path");
 
 import test from "node:test";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-	ToolDefinition,
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	initTheme,
+	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { processStatusView } from "../../process-status/status.ts";
@@ -20,6 +21,11 @@ import delegateExtension, {
 	readDelegateModelSetting,
 	resolveDelegateModel,
 } from "../index.ts";
+import {
+	renderDelegateResult,
+	renderDelegateSessionCall,
+	renderDelegateSessionResult,
+} from "../render.ts";
 import { eventually } from "./eventually.ts";
 
 type ResolveContext = Parameters<typeof resolveDelegateModel>[0];
@@ -223,6 +229,8 @@ test("registers run and session tools", () => {
 	assert.equal(typeof tools[0].execute, "function");
 	assert.equal(typeof tools[0].renderCall, "function");
 	assert.equal(typeof tools[0].renderResult, "function");
+	assert.equal(typeof tools[1].renderCall, "function");
+	assert.equal(typeof tools[1].renderResult, "function");
 	const runProperties = (
 		tools[0] as unknown as { parameters: { properties: object } }
 	).parameters.properties;
@@ -254,6 +262,83 @@ test("registers run and session tools", () => {
 		(sessionProperties as { ids: { maxItems?: number } }).ids.maxItems,
 		undefined,
 	);
+});
+
+test("renders background acceptance and session actions with child context", () => {
+	initTheme();
+	const theme = {
+		bold: (text: string) => text,
+		fg: (_color: string, text: string) => text,
+	} as never;
+	const renderOptions = {
+		expanded: false,
+		isPartial: false,
+	} as never;
+	const renderContext = { isError: false } as never;
+	const background = delegateSnapshot({
+		status: "running",
+		success: false,
+		assignedTask: "audit the background renderer",
+	});
+	const backgroundText = renderDelegateResult(
+		{
+			content: [
+				{ type: "text", text: "Result will be delivered automatically." },
+			],
+			details: background,
+		},
+		renderOptions,
+		theme,
+		renderContext,
+	)
+		.render(120)
+		.join("\n");
+	assert.match(backgroundText, /delegate-1.*running/);
+	assert.match(backgroundText, /result will be delivered automatically/i);
+	assert.match(
+		backgroundText,
+		/assigned task[\s\S]*audit the background renderer/,
+	);
+
+	const callText = renderDelegateSessionCall(
+		{ action: "wait", ids: ["delegate-10", "delegate-11"] },
+		theme,
+		{} as never,
+	)
+		.render(120)
+		.join("\n");
+	assert.match(callText, /delegate_session.*wait.*delegate-10, delegate-11/);
+
+	const sessionText = renderDelegateSessionResult(
+		{
+			content: [{ type: "text", text: "session result" }],
+			details: {
+				results: [
+					delegateSnapshot({
+						id: "delegate-10",
+						assignedTask: "inspect the session renderer",
+						output: "renderer report",
+					}),
+					delegateSnapshot({
+						id: "delegate-11",
+						status: "running",
+						success: false,
+						assignedTask: "wait for another child",
+						output: "",
+					}),
+				],
+			},
+		},
+		renderOptions,
+		theme,
+		renderContext,
+	)
+		.render(120)
+		.join("\n");
+	assert.match(sessionText, /delegate-10.*done/);
+	assert.match(sessionText, /delegate-11.*running/);
+	assert.match(sessionText, /assigned task[\s\S]*inspect the session renderer/);
+	assert.match(sessionText, /child report preview[\s\S]*renderer report/);
 });
 
 test("background run returns immediately and list recovers a bounded task preview", async () => {

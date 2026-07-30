@@ -13,16 +13,12 @@ export const SUPPORTED_MODELS = new Set([
 	"openai/gpt-5.6-terra",
 	"openai/gpt-5.6-luna",
 	"openai-codex/gpt-5.4",
-	"openai-codex/gpt-5.4-mini",
 	"openai-codex/gpt-5.5",
-	"openai-codex/gpt-5.6",
 	"openai-codex/gpt-5.6-sol",
 	"openai-codex/gpt-5.6-terra",
 	"openai-codex/gpt-5.6-luna",
 ]);
-export const TARGET_PROVIDER = "openai-codex";
-export const TARGET_MODEL = "gpt-5.6";
-export const FAST_SERVICE_TIER = "priority";
+export const FAST_SERVICE_TIER = "fast";
 export const KEYBINDING_FIELD = "pi-gpt-fast-mode";
 export const DEFAULT_SHORTCUT = "ctrl+alt+m";
 export const RESERVED_SHORTCUTS = new Set(["ctrl+m", "enter", "return"]);
@@ -63,6 +59,11 @@ export function isSupportedModel(model: PiModel | undefined): boolean {
 		model?.provider && model.id && SUPPORTED_MODELS.has(modelKey(model)),
 	);
 }
+export function fastServiceTier(
+	model: PiModel | undefined,
+): string | undefined {
+	return isSupportedModel(model) ? FAST_SERVICE_TIER : undefined;
+}
 export function shouldApplyFastMode(
 	model: PiModel | undefined,
 	payload: unknown,
@@ -70,13 +71,17 @@ export function shouldApplyFastMode(
 	return Boolean(
 		payload &&
 			typeof payload === "object" &&
-			isSupportedModel(model) &&
+			fastServiceTier(model) &&
 			(payload as ProviderPayload).model === model?.id,
 	);
 }
-export function withFastServiceTier(payload: unknown): unknown {
-	return payload && typeof payload === "object"
-		? { ...(payload as ProviderPayload), service_tier: FAST_SERVICE_TIER }
+export function withFastServiceTier(
+	model: PiModel | undefined,
+	payload: unknown,
+): unknown {
+	const serviceTier = fastServiceTier(model);
+	return serviceTier && payload && typeof payload === "object"
+		? { ...(payload as ProviderPayload), service_tier: serviceTier }
 		: payload;
 }
 
@@ -198,8 +203,9 @@ function announceState(ctx: unknown, enabled: boolean): void {
 		return;
 	}
 	const model = (ctx as { model?: PiModel } | undefined)?.model;
-	if (isSupportedModel(model)) {
-		notify(ctx, `GPT Fast mode enabled (service_tier: ${FAST_SERVICE_TIER}).`);
+	const serviceTier = fastServiceTier(model);
+	if (serviceTier) {
+		notify(ctx, `GPT Fast mode enabled (service_tier: ${serviceTier}).`);
 		return;
 	}
 	notify(
@@ -224,7 +230,7 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
 		}
 	};
 	pi.registerCommand("fast", {
-		description: "Toggle GPT Fast mode (service_tier: priority)",
+		description: "Toggle GPT Fast mode",
 		handler: async (_args, ctx) => toggle(ctx),
 	});
 	for (const shortcut of initialShortcuts)
@@ -237,7 +243,7 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
 	});
 	pi.on("before_provider_request", (event, ctx) =>
 		enabled && shouldApplyFastMode(ctx.model, event.payload)
-			? withFastServiceTier(event.payload)
+			? withFastServiceTier(ctx.model, event.payload)
 			: undefined,
 	);
 }

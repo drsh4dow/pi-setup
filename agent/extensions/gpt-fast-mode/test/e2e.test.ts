@@ -13,7 +13,7 @@ import {
 	waitFor,
 } from "../../test/tmux.ts";
 import {
-	isSupportedModel,
+	fastServiceTier,
 	loadEnabled,
 	resolveFastModeSettingsPath,
 } from "../index.ts";
@@ -36,8 +36,9 @@ function footerModel(pane: string): { provider: string; id: string } {
 
 function noticeFor(enabled: boolean, model: { provider: string; id: string }) {
 	if (!enabled) return /GPT Fast mode disabled\./;
-	return isSupportedModel(model)
-		? /GPT Fast mode enabled \(service_tier: priority\)\./
+	const serviceTier = fastServiceTier(model);
+	return serviceTier
+		? new RegExp(`GPT Fast mode enabled \\(service_tier: ${serviceTier}\\)\\.`)
 		: /GPT Fast mode enabled, but .+ is not supported\./;
 }
 

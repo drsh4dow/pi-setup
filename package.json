@@ -13,8 +13,9 @@
     "test:aoauth": "node --test agent/extensions/aoauth/test/*.test.ts",
     "test:skill-visibility": "node --test agent/extensions/skill-visibility/test/*.test.ts",
     "test:web-access": "node --test agent/extensions/web-access/test/*.test.ts",
+    "test:gpt-fast-mode": "node --test agent/extensions/gpt-fast-mode/test/*.test.ts",
     "test:e2e": "PI_E2E=1 node --test --test-concurrency=1 --test-timeout=900000 agent/extensions/*/test/e2e.test.ts",
-    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:aoauth && bun run test:skill-visibility && bun run test:web-access"
+    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:aoauth && bun run test:skill-visibility && bun run test:web-access && bun run test:gpt-fast-mode"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.82.1",

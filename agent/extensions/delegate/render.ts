@@ -10,7 +10,12 @@ import {
 	COLLAPSED_PREVIEW_LINES,
 	type DelegateDetails,
 	type DelegateRunParams,
+	type DelegateSessionDetails,
+	type DelegateSessionParams,
+	type DelegateSnapshot,
+	type DelegateStatus,
 	RUN_TOOL_NAME,
+	SESSION_TOOL_NAME,
 } from "./contract.ts";
 import {
 	formatCollapsedPreview,
@@ -21,8 +26,8 @@ import {
 } from "./format.ts";
 
 function renderStatus(
-	label: "running" | "done",
-	color: "muted" | "success",
+	label: DelegateStatus,
+	color: "muted" | "success" | "warning" | "error",
 	details: DelegateDetails,
 	includeUsage: boolean,
 	theme: Parameters<DelegateRenderResult>[2],
@@ -72,11 +77,105 @@ function renderAssignedTask(
 	return box;
 }
 
+function renderChildReport(
+	container: Container,
+	output: string,
+	details: DelegateDetails,
+	expanded: boolean,
+	theme: Parameters<DelegateRenderResult>[2],
+) {
+	if (!expanded) {
+		const preview = formatCollapsedPreview(output);
+		if (!preview.text) return;
+		container.addChild(
+			new Text(theme.fg("muted", "─── child report preview ───"), 0, 0),
+		);
+		container.addChild(new Text(theme.fg("toolOutput", preview.text), 0, 0));
+		const previewHint = preview.truncated
+			? preview.hiddenLines > 0
+				? `… ${preview.hiddenLines} more ${preview.hiddenLines === 1 ? "line" : "lines"} hidden • preview truncated`
+				: "preview truncated"
+			: "compact preview";
+		container.addChild(
+			new Text(
+				theme.fg(preview.truncated ? "warning" : "dim", previewHint) +
+					` • ${keyHint("app.tools.expand", "expand child report")}`,
+				0,
+				0,
+			),
+		);
+		return;
+	}
+
+	const detailedUsage = formatDetailedUsage(details.childUsage);
+	if (detailedUsage) {
+		container.addChild(
+			new Text(theme.fg("dim", `usage • ${detailedUsage}`), 0, 0),
+		);
+	}
+	if (details.fallbackReason) {
+		container.addChild(
+			new Text(
+				theme.fg("warning", `fallback • ${details.fallbackReason}`),
+				0,
+				0,
+			),
+		);
+	}
+
+	let expandedOutput = output.trim();
+	let fullOutputReadError: string | undefined;
+	if (details.outputTruncated && details.fullOutputFile) {
+		try {
+			expandedOutput = readFileSync(details.fullOutputFile, "utf8").trim();
+		} catch (error) {
+			fullOutputReadError =
+				error instanceof Error ? error.message : String(error);
+		}
+	}
+	if (details.outputTruncated) {
+		const saved = details.fullOutputFile
+			? ` • full output: ${details.fullOutputFile}`
+			: "";
+		const readStatus = fullOutputReadError
+			? ` • could not read full output: ${fullOutputReadError}`
+			: details.fullOutputFile
+				? " • showing saved full output"
+				: "";
+		container.addChild(
+			new Text(
+				theme.fg("warning", `output truncated${saved}${readStatus}`),
+				0,
+				0,
+			),
+		);
+	}
+	container.addChild(new Spacer(1));
+	container.addChild(new Text(theme.fg("muted", "─── child report ───"), 0, 0));
+	if (expandedOutput) {
+		container.addChild(new Markdown(expandedOutput, 0, 0, getMarkdownTheme()));
+	} else {
+		container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
+	}
+}
+
 type DelegateRenderCall = NonNullable<
-	ToolDefinition<typeof DelegateRunParams, DelegateDetails>["renderCall"]
+	ToolDefinition<typeof DelegateRunParams, DelegateSnapshot>["renderCall"]
 >;
 type DelegateRenderResult = NonNullable<
-	ToolDefinition<typeof DelegateRunParams, DelegateDetails>["renderResult"]
+	ToolDefinition<typeof DelegateRunParams, DelegateSnapshot>["renderResult"]
+>;
+type DelegateSessionRenderCall = NonNullable<
+	ToolDefinition<
+		typeof DelegateSessionParams,
+		DelegateSessionDetails
+	>["renderCall"]
+>;
+type DelegateSessionRenderResult = NonNullable<
+	ToolDefinition<
+		typeof DelegateSessionParams,
+		DelegateSessionDetails
+	>["renderResult"]
 >;
 
 export const renderDelegateCall: DelegateRenderCall = (args, theme) => {
@@ -85,6 +184,26 @@ export const renderDelegateCall: DelegateRenderCall = (args, theme) => {
 		theme.fg("toolTitle", theme.bold(RUN_TOOL_NAME)) +
 			theme.fg("muted", " • ") +
 			theme.fg("accent", effort),
+		0,
+		0,
+	);
+};
+
+export const renderDelegateSessionCall: DelegateSessionRenderCall = (
+	args,
+	theme,
+) => {
+	const ids =
+		args.action === "send"
+			? args.id
+			: args.action === "list"
+				? undefined
+				: args.ids?.join(", ");
+	return new Text(
+		theme.fg("toolTitle", theme.bold(SESSION_TOOL_NAME)) +
+			theme.fg("muted", " • ") +
+			theme.fg("accent", args.action) +
+			(ids ? theme.fg("muted", ` • ${ids}`) : ""),
 		0,
 		0,
 	);
@@ -115,98 +234,45 @@ export const renderDelegateResult: DelegateRenderResult = (
 		return container;
 	}
 
+	if (details?.status === "running" && !context.isError) {
+		const container = new Container();
+		container.addChild(
+			new Text(
+				theme.fg("accent", details.id) +
+					theme.fg("muted", " • ") +
+					renderStatus("running", "muted", details, true, theme) +
+					theme.fg("dim", " • result will be delivered automatically"),
+				0,
+				0,
+			),
+		);
+		const task = renderAssignedTask(
+			details.assignedTask ?? "",
+			options.expanded,
+			theme,
+		);
+		if (task) container.addChild(task);
+		return container;
+	}
+
 	if (details?.success === true) {
 		const line = renderStatus("done", "success", details, true, theme);
 		const content = result.content[0];
 		const output = content?.type === "text" ? content.text : "";
-		if (!options.expanded) {
-			const preview = formatCollapsedPreview(output);
-			const container = new Container();
-			container.addChild(new Text(line, 0, 0));
-			const task = renderAssignedTask(details.assignedTask ?? "", false, theme);
-			if (task) container.addChild(task);
-			if (!preview.text) return container;
-			container.addChild(
-				new Text(theme.fg("muted", "─── child report preview ───"), 0, 0),
-			);
-			container.addChild(new Text(theme.fg("toolOutput", preview.text), 0, 0));
-			const previewHint = preview.truncated
-				? preview.hiddenLines > 0
-					? `… ${preview.hiddenLines} more ${preview.hiddenLines === 1 ? "line" : "lines"} hidden • preview truncated`
-					: "preview truncated"
-				: "compact preview";
-			container.addChild(
-				new Text(
-					theme.fg(preview.truncated ? "warning" : "dim", previewHint) +
-						` • ${keyHint("app.tools.expand", "expand child report")}`,
-					0,
-					0,
-				),
-			);
-			return container;
-		}
-
-		const detailedUsage = formatDetailedUsage(details.childUsage);
 		const container = new Container();
 		container.addChild(new Text(line, 0, 0));
-		container.addChild(
-			new Text(keyHint("app.tools.expand", "collapse child report"), 0, 0),
+		if (options.expanded) {
+			container.addChild(
+				new Text(keyHint("app.tools.expand", "collapse child report"), 0, 0),
+			);
+		}
+		const task = renderAssignedTask(
+			details.assignedTask ?? "",
+			options.expanded,
+			theme,
 		);
-		const task = renderAssignedTask(details.assignedTask ?? "", true, theme);
 		if (task) container.addChild(task);
-		if (detailedUsage) {
-			container.addChild(
-				new Text(theme.fg("dim", `usage • ${detailedUsage}`), 0, 0),
-			);
-		}
-		if (details.fallbackReason) {
-			container.addChild(
-				new Text(
-					theme.fg("warning", `fallback • ${details.fallbackReason}`),
-					0,
-					0,
-				),
-			);
-		}
-
-		let expandedOutput = output.trim();
-		let fullOutputReadError: string | undefined;
-		if (details.outputTruncated && details.fullOutputFile) {
-			try {
-				expandedOutput = readFileSync(details.fullOutputFile, "utf8").trim();
-			} catch (error) {
-				fullOutputReadError =
-					error instanceof Error ? error.message : String(error);
-			}
-		}
-		if (details.outputTruncated) {
-			const saved = details.fullOutputFile
-				? ` • full output: ${details.fullOutputFile}`
-				: "";
-			const readStatus = fullOutputReadError
-				? ` • could not read full output: ${fullOutputReadError}`
-				: details.fullOutputFile
-					? " • showing saved full output"
-					: "";
-			container.addChild(
-				new Text(
-					theme.fg("warning", `output truncated${saved}${readStatus}`),
-					0,
-					0,
-				),
-			);
-		}
-		container.addChild(new Spacer(1));
-		container.addChild(
-			new Text(theme.fg("muted", "─── child report ───"), 0, 0),
-		);
-		if (expandedOutput) {
-			container.addChild(
-				new Markdown(expandedOutput, 0, 0, getMarkdownTheme()),
-			);
-		} else {
-			container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
-		}
+		renderChildReport(container, output, details, options.expanded, theme);
 		return container;
 	}
 
@@ -216,4 +282,69 @@ export const renderDelegateResult: DelegateRenderResult = (
 		return new Text(theme.fg("error", `failed • ${text}`), 0, 0);
 	}
 	return new Text(text, 0, 0);
+};
+
+export const renderDelegateSessionResult: DelegateSessionRenderResult = (
+	result,
+	options,
+	theme,
+	context,
+) => {
+	const content = result.content[0];
+	const text = content?.type === "text" ? content.text : "";
+	if (context.isError) {
+		return new Text(theme.fg("error", `failed • ${text}`), 0, 0);
+	}
+
+	const details = result.details;
+	const snapshots = details
+		? "results" in details
+			? details.results
+			: [details]
+		: [];
+	if (snapshots.length === 0) return new Text(text, 0, 0);
+
+	const container = new Container();
+	for (const [index, snapshot] of snapshots.entries()) {
+		if (index > 0) container.addChild(new Spacer(1));
+		const color =
+			snapshot.status === "done"
+				? "success"
+				: snapshot.status === "error"
+					? "error"
+					: snapshot.status === "cancelled"
+						? "warning"
+						: "muted";
+		container.addChild(
+			new Text(
+				theme.fg("accent", snapshot.id) +
+					theme.fg("muted", " • ") +
+					renderStatus(snapshot.status, color, snapshot, true, theme),
+				0,
+				0,
+			),
+		);
+		const settledOutput = snapshot.status !== "running" && snapshot.output;
+		if (settledOutput && options.expanded) {
+			container.addChild(
+				new Text(keyHint("app.tools.expand", "collapse child report"), 0, 0),
+			);
+		}
+		const task = renderAssignedTask(
+			snapshot.assignedTask ?? "",
+			options.expanded,
+			theme,
+		);
+		if (task) container.addChild(task);
+		if (settledOutput) {
+			renderChildReport(
+				container,
+				snapshot.output,
+				snapshot,
+				options.expanded,
+				theme,
+			);
+		}
+	}
+	return container;
 };

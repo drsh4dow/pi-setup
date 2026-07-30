@@ -18,7 +18,8 @@ export const SUPPORTED_MODELS = new Set([
 	"openai-codex/gpt-5.6-terra",
 	"openai-codex/gpt-5.6-luna",
 ]);
-export const FAST_SERVICE_TIER = "fast";
+export const OPENAI_FAST_SERVICE_TIER = "fast";
+export const CODEX_FAST_SERVICE_TIER = "priority";
 export const KEYBINDING_FIELD = "pi-gpt-fast-mode";
 export const DEFAULT_SHORTCUT = "ctrl+alt+m";
 export const RESERVED_SHORTCUTS = new Set(["ctrl+m", "enter", "return"]);
@@ -62,7 +63,10 @@ export function isSupportedModel(model: PiModel | undefined): boolean {
 export function fastServiceTier(
 	model: PiModel | undefined,
 ): string | undefined {
-	return isSupportedModel(model) ? FAST_SERVICE_TIER : undefined;
+	if (!isSupportedModel(model)) return undefined;
+	return model?.provider === "openai-codex"
+		? CODEX_FAST_SERVICE_TIER
+		: OPENAI_FAST_SERVICE_TIER;
 }
 export function shouldApplyFastMode(
 	model: PiModel | undefined,

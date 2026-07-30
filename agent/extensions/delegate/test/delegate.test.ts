@@ -326,6 +326,16 @@ test("renders background acceptance and session actions with child context", () 
 						assignedTask: "wait for another child",
 						output: "",
 					}),
+					delegateSnapshot({
+						id: "delegate-12",
+						status: "error",
+						success: false,
+						assignedTask: "fail loudly",
+						output: "",
+						error: "child exceeded token budget",
+						checkpoint: "was editing render.ts",
+						fullOutputFile: "/tmp/delegate-12.md",
+					}),
 				],
 			},
 		},
@@ -337,6 +347,10 @@ test("renders background acceptance and session actions with child context", () 
 		.join("\n");
 	assert.match(sessionText, /delegate-10.*done/);
 	assert.match(sessionText, /delegate-11.*running/);
+	assert.match(sessionText, /delegate-12.*error/);
+	assert.match(sessionText, /error • child exceeded token budget/);
+	assert.match(sessionText, /checkpoint[\s\S]*was editing render\.ts/);
+	assert.match(sessionText, /full output: \/tmp\/delegate-12\.md/);
 	assert.match(sessionText, /assigned task[\s\S]*inspect the session renderer/);
 	assert.match(sessionText, /child report preview[\s\S]*renderer report/);
 });

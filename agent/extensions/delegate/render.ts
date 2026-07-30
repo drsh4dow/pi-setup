@@ -324,6 +324,32 @@ export const renderDelegateSessionResult: DelegateSessionRenderResult = (
 				0,
 			),
 		);
+		if (snapshot.error) {
+			container.addChild(
+				new Text(theme.fg("error", `error • ${snapshot.error}`), 0, 0),
+			);
+		}
+		if (snapshot.checkpoint && !snapshot.output) {
+			container.addChild(
+				new Text(
+					theme.fg("muted", "─── checkpoint (child's last activity) ───"),
+					0,
+					0,
+				),
+			);
+			container.addChild(
+				new Text(theme.fg("toolOutput", snapshot.checkpoint.trim()), 0, 0),
+			);
+			if (snapshot.fullOutputFile) {
+				container.addChild(
+					new Text(
+						theme.fg("dim", `full output: ${snapshot.fullOutputFile}`),
+						0,
+						0,
+					),
+				);
+			}
+		}
 		const settledOutput = snapshot.status !== "running" && snapshot.output;
 		if (settledOutput && options.expanded) {
 			container.addChild(

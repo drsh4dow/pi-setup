@@ -42,7 +42,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked processes, each owned by the session that started it |
 | `process-status` | `/ps` shows active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded details, with delegate tasks and their last six plain-text conversation messages |
 | `web-access` | `web_search`, `fetch_content`, and `get_search_content` for Exa search, pages and PDFs, GitHub repositories, and video analysis |
-| `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle OpenAI's priority service tier for supported GPT models |
+| `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle Fast mode for supported OpenAI API and Codex models |
 | `shake-images` | `/shake-images` to retain only the newest two images in model context for the current session |
 | `skill-visibility` | `/skill-visibility` to choose which loaded skills are discoverable by the model |
 | `session-timer` | Per-run and cumulative session timing in the status bar |

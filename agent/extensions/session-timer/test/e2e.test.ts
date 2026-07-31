@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test, { after, before, describe } from "node:test";
+import { describe } from "node:test";
 import {
 	capture,
 	e2eUnavailable,
@@ -9,15 +9,14 @@ import {
 	readStderr,
 	runTask,
 	sessionElapsedSeconds,
-	startPi,
-	stop,
+	setupPiSession,
+	testEffect,
 	waitFor,
 	waitForFile,
 } from "../../test/tmux.ts";
 
 const skip = e2eUnavailable();
 
-/** Matches the extension's readout: `⏱ 12s` or `⏱ 1m03s`. */
 const RUN_READOUT = /⏱️?\s*((?:\d+m)?\d+s)/;
 const SESSION_READOUT = /\(session ((?:\d+m)?\d+s)\)/;
 
@@ -34,22 +33,16 @@ function runSeconds(pane: string): number | undefined {
 
 describe("session-timer (real pi in tmux)", { skip }, () => {
 	let session: PiSession;
-	/** Cumulative session total observed after the first real turn. */
 	let firstTotal = 0;
 
-	before(async () => {
-		session = await startPi();
+	setupPiSession((value) => {
+		session = value;
 	});
 
-	after(async () => {
-		if (session) await stop(session);
-	});
-
-	test("boots with no timer status before any run", () => {
-		assert.equal(isDead(session), false);
-		assert.doesNotMatch(readStderr(session), /uncaughtException/);
-		const pane = capture(session);
-		// agent_start has never fired, so the status slot must be empty.
+	testEffect("boots with no timer status before any run", function* () {
+		assert.equal(yield* isDead(session), false);
+		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
+		const pane = yield* capture(session);
 		assert.doesNotMatch(
 			pane,
 			RUN_READOUT,
@@ -58,81 +51,88 @@ describe("session-timer (real pi in tmux)", { skip }, () => {
 		assert.doesNotMatch(pane, SESSION_READOUT);
 	});
 
-	test("ticks an in-flight timer, then reports the run and session totals", async () => {
-		// A tool-using task keeps the run comfortably longer than the 1s ticker
-		// interval, so the in-flight state is observable rather than a race.
-		await prompt(
-			session,
-			"Create a file named timer-e2e-one.txt whose entire contents are exactly: timer-one",
-		);
+	testEffect(
+		"ticks an in-flight timer, then reports the run and session totals",
+		function* () {
+			yield* prompt(
+				session,
+				"Create a file named timer-e2e-one.txt whose entire contents are exactly: timer-one",
+			);
 
-		// While the run is in flight the ticker prints the elapsed run only —
-		// `(session …)` is written once, at agent_end.
-		const inFlight = await waitFor(
-			session,
-			(pane) => RUN_READOUT.test(pane) && !SESSION_READOUT.test(pane),
-			{ timeoutMs: 60_000, description: "in-flight ⏱ readout without a total" },
-		);
-		assert.ok(
-			(runSeconds(inFlight) ?? -1) >= 1,
-			`in-flight timer should have ticked at least once:\n${inFlight}`,
-		);
+			const inFlight = yield* waitFor(
+				session,
+				(pane) => RUN_READOUT.test(pane) && !SESSION_READOUT.test(pane),
+				{
+					timeoutMs: 60_000,
+					description: "in-flight ⏱ readout without a total",
+				},
+			);
+			assert.ok(
+				(runSeconds(inFlight) ?? -1) >= 1,
+				`in-flight timer should have ticked at least once:\n${inFlight}`,
+			);
 
-		const settled = await waitFor(session, SESSION_READOUT, {
-			timeoutMs: 120_000,
-			description: "session total at agent_end",
-		});
+			const settled = yield* waitFor(session, SESSION_READOUT, {
+				timeoutMs: 120_000,
+				description: "session total at agent_end",
+			});
 
-		assert.equal(
-			(await waitForFile(session, "timer-e2e-one.txt")).trim(),
-			"timer-one",
-		);
+			assert.equal(
+				(yield* waitForFile(session, "timer-e2e-one.txt")).trim(),
+				"timer-one",
+			);
 
-		const run = runSeconds(settled);
-		firstTotal = sessionElapsedSeconds(settled) ?? -1;
-		assert.ok(run !== undefined, `run readout missing:\n${settled}`);
-		assert.ok(firstTotal >= 0, `session readout missing:\n${settled}`);
-		// On the very first run the cumulative total *is* that run, so the two
-		// readouts are formatted from the same duration and must agree exactly.
-		assert.equal(
-			firstTotal,
-			run,
-			`first run and session total should match:\n${settled}`,
-		);
-		assert.ok(run >= 1, `first run should be at least a second:\n${settled}`);
-		assert.doesNotMatch(readStderr(session), /uncaughtException/);
-	});
+			const runSecondsSettled = runSeconds(settled);
+			firstTotal = sessionElapsedSeconds(settled) ?? -1;
+			assert.ok(
+				runSecondsSettled !== undefined,
+				`run readout missing:\n${settled}`,
+			);
+			assert.ok(firstTotal >= 0, `session readout missing:\n${settled}`);
+			assert.equal(
+				firstTotal,
+				runSecondsSettled,
+				`first run and session total should match:\n${settled}`,
+			);
+			assert.ok(
+				runSecondsSettled >= 1,
+				`first run should be at least a second:\n${settled}`,
+			);
+			assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
+		},
+	);
 
-	test("accumulates a monotonic session total across a second turn", async () => {
-		const settled = await runTask(
-			session,
-			"Create a file named timer-e2e-two.txt whose entire contents are exactly: timer-two",
-			120_000,
-		);
-		assert.equal(
-			(await waitForFile(session, "timer-e2e-two.txt")).trim(),
-			"timer-two",
-		);
+	testEffect(
+		"accumulates a monotonic session total across a second turn",
+		function* () {
+			const settled = yield* runTask(
+				session,
+				"Create a file named timer-e2e-two.txt whose entire contents are exactly: timer-two",
+				120_000,
+			);
+			assert.equal(
+				(yield* waitForFile(session, "timer-e2e-two.txt")).trim(),
+				"timer-two",
+			);
 
-		const secondRun = runSeconds(settled);
-		const secondTotal = sessionElapsedSeconds(settled) ?? -1;
-		assert.ok(secondRun !== undefined, `run readout missing:\n${settled}`);
-		assert.ok(
-			secondTotal > firstTotal,
-			`session total must grow: ${firstTotal} -> ${secondTotal}\n${settled}`,
-		);
-		// The second run is one turn, not the whole session.
-		assert.ok(
-			secondRun < secondTotal,
-			`run readout must be less than the cumulative total:\n${settled}`,
-		);
-		// total2 == total1 + run2, up to per-readout second rounding.
-		assert.ok(
-			Math.abs(secondTotal - (firstTotal + secondRun)) <= 1,
-			`total ${secondTotal} should be ${firstTotal} + ${secondRun}:\n${settled}`,
-		);
+			const secondRun = runSeconds(settled);
+			const secondTotal = sessionElapsedSeconds(settled) ?? -1;
+			assert.ok(secondRun !== undefined, `run readout missing:\n${settled}`);
+			assert.ok(
+				secondTotal > firstTotal,
+				`session total must grow: ${firstTotal} -> ${secondTotal}\n${settled}`,
+			);
+			assert.ok(
+				secondRun < secondTotal,
+				`run readout must be less than the cumulative total:\n${settled}`,
+			);
+			assert.ok(
+				Math.abs(secondTotal - (firstTotal + secondRun)) <= 1,
+				`total ${secondTotal} should be ${firstTotal} + ${secondRun}:\n${settled}`,
+			);
 
-		assert.equal(isDead(session), false);
-		assert.doesNotMatch(readStderr(session), /uncaughtException/);
-	});
+			assert.equal(yield* isDead(session), false);
+			assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
+		},
+	);
 });

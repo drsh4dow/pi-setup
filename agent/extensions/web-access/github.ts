@@ -1,6 +1,6 @@
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { Effect, FileSystem, Path } from "effect";
+import { Config, Effect, FileSystem, Path } from "effect";
 import { asError, type WebAccessError } from "./errors.ts";
 import {
 	checkGhAvailable,
@@ -17,11 +17,6 @@ const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 const MAX_REPO_SIZE_MB = 350;
 const MAX_CACHED_CLONES = 10;
 const CLONE_TIMEOUT_MS = 30_000;
-const CLONE_ROOT = path.join(
-	process.env.TMPDIR ?? "/tmp",
-	"pi-web-access-repos",
-	String(process.pid),
-);
 
 export interface GitHubUrlInfo {
 	owner: string;
@@ -34,7 +29,7 @@ export interface GitHubUrlInfo {
 
 interface CachedClone {
 	localPath: string;
-	clone: Effect.Effect<string | null>;
+	clone: Effect.Effect<string | null, WebAccessError>;
 }
 
 const cloneCache = new Map<string, CachedClone>();
@@ -126,10 +121,24 @@ function cacheKey(owner: string, repo: string, ref?: string): string {
 	return ref ? `${owner}/${repo}@${ref}` : `${owner}/${repo}`;
 }
 
-function cloneDir(owner: string, repo: string, ref?: string): string {
+const cloneDir = Effect.fn("cloneDir")(function* (
+	owner: string,
+	repo: string,
+	ref?: string,
+) {
+	const tempDirectory = yield* Config.string("TMPDIR").pipe(
+		Config.withDefault("/tmp"),
+		Effect.mapError(asError),
+	);
 	const dirName = ref ? `${repo}@${ref}` : repo;
-	return path.join(CLONE_ROOT, owner, dirName);
-}
+	return path.join(
+		tempDirectory,
+		"pi-web-access-repos",
+		String(process.pid),
+		owner,
+		dirName,
+	);
+});
 
 const removeClone = Effect.fn("removeClone")(function* (localPath: string) {
 	const fs = yield* FileSystem.FileSystem;
@@ -144,7 +153,7 @@ const cloneRepo = Effect.fn("cloneRepo")(function* (
 	repo: string,
 	ref: string | undefined,
 ) {
-	const localPath = cloneDir(owner, repo, ref);
+	const localPath = yield* cloneDir(owner, repo, ref);
 	if (!(yield* removeClone(localPath))) return null;
 	const hasGh = yield* checkGhAvailable;
 	const args = hasGh
@@ -285,7 +294,7 @@ export const extractGitHub = Effect.fn("extractGitHub")(function* (
 	}
 
 	const clone = yield* Effect.cached(cloneRepo(owner, repo, info.ref));
-	const localPath = cloneDir(owner, repo, info.ref);
+	const localPath = yield* cloneDir(owner, repo, info.ref);
 	cloneCache.set(key, { localPath, clone });
 	const result = yield* clone;
 	if (!result) {

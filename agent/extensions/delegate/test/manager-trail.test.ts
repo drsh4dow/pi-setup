@@ -5,6 +5,10 @@ import type {
 	AgentSessionEvent,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { Effect } from "effect";
+
+const runEffect = Effect.runPromise;
+
 import type { DelegateSnapshot } from "../contract.ts";
 import { DelegateManager, type DelegateRequest } from "../manager.ts";
 import type { ChildSession } from "../runtime.ts";
@@ -157,7 +161,7 @@ function harness(
 test("trail interleaves bounded messages with tool calls", async () => {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "inspect trail", ctx: context });
-	await eventually(() => sessions.length === 1);
+	await runEffect(eventually(() => sessions.length === 1));
 	sessions[0].emit({
 		type: "message_end",
 		message: { role: "user", content: "inspect trail" },
@@ -233,15 +237,15 @@ test("trail interleaves bounded messages with tool calls", async () => {
 	assert.equal(trail.at(-1), "Assistant\n\nmessage 4");
 
 	sessions[0].finish("final answer");
-	await manager.wait([job.id]);
+	await runEffect(manager.wait([job.id]));
 	assert.equal(manager.trail(job.id).at(-1), "Assistant\n\nfinal answer");
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("a tool storm cannot evict the child's last stated intent", async () => {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "grind", ctx: context });
-	await eventually(() => sessions.length === 1);
+	await runEffect(eventually(() => sessions.length === 1));
 	sessions[0].emitAssistant("patching the tokenizer now", 10);
 	for (let index = 0; index < 20; index++) {
 		sessions[0].emit({
@@ -264,17 +268,17 @@ test("a tool storm cannot evict the child's last stated intent", async () => {
 	assert.equal(trail[1], 'Tool: edit {"path":"src/8.ts"} · done');
 	assert.equal(trail.at(-1), 'Tool: edit {"path":"src/19.ts"} · done');
 
-	await manager.cancel([job.id]);
+	await runEffect(manager.cancel([job.id]));
 	const [snapshot] = manager.list([job.id]);
 	assert.match(snapshot.checkpoint ?? "", /patching the tokenizer now/);
 	assert.match(snapshot.checkpoint ?? "", /src\/19\.ts/);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("trail bounds oversized tool arguments", async () => {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "bound args", ctx: context });
-	await eventually(() => sessions.length === 1);
+	await runEffect(eventually(() => sessions.length === 1));
 	sessions[0].emit({
 		type: "tool_execution_start",
 		toolCallId: "call-1",
@@ -286,7 +290,7 @@ test("trail bounds oversized tool arguments", async () => {
 	assert.match(entry, /^Tool: write \{"path":"src\/a\.ts"/);
 	assert.match(entry, /… · running$/);
 	assert.doesNotMatch(entry, /�/);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("only unconsumed background runs trigger automatic delivery", async () => {
@@ -297,9 +301,9 @@ test("only unconsumed background runs trigger automatic delivery", async () => {
 		background: true,
 		ctx: context,
 	});
-	await eventually(() => sessions.length === 1);
+	await runEffect(eventually(() => sessions.length === 1));
 	sessions[0].finish("delivered");
-	await eventually(() => delivered.length === 1);
+	await runEffect(eventually(() => delivered.length === 1));
 	assert.equal(delivered[0].id, automatic.id);
 
 	const consumed = manager.spawn({
@@ -307,8 +311,8 @@ test("only unconsumed background runs trigger automatic delivery", async () => {
 		background: true,
 		ctx: context,
 	});
-	const waiting = manager.wait([consumed.id]);
-	await eventually(() => sessions.length === 2);
+	const waiting = runEffect(manager.wait([consumed.id]));
+	await runEffect(eventually(() => sessions.length === 2));
 	sessions[1].finish("waited");
 	await waiting;
 	assert.equal(delivered.length, 1);
@@ -318,10 +322,10 @@ test("only unconsumed background runs trigger automatic delivery", async () => {
 		background: true,
 		ctx: context,
 	});
-	await eventually(() => sessions.length === 3);
-	await manager.cancel([cancelled.id]);
+	await runEffect(eventually(() => sessions.length === 3));
+	await runEffect(manager.cancel([cancelled.id]));
 	assert.equal(delivered.length, 1);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("shutdown owns a child created just before its deadline", async (t) => {
@@ -351,10 +355,10 @@ test("shutdown owns a child created just before its deadline", async (t) => {
 
 	let firstSettled = false;
 	let secondSettled = false;
-	const firstShutdown = manager.shutdown().finally(() => {
+	const firstShutdown = runEffect(manager.shutdown()).finally(() => {
 		firstSettled = true;
 	});
-	const joinedShutdown = manager.shutdown().finally(() => {
+	const joinedShutdown = runEffect(manager.shutdown()).finally(() => {
 		secondSettled = true;
 	});
 	await new Promise<void>((resolve) => setImmediate(resolve));
@@ -409,10 +413,10 @@ test("shutdown bounds an uncooperative existing child", async (t) => {
 
 	let firstSettled = false;
 	let secondSettled = false;
-	const firstShutdown = manager.shutdown().finally(() => {
+	const firstShutdown = runEffect(manager.shutdown()).finally(() => {
 		firstSettled = true;
 	});
-	const joinedShutdown = manager.shutdown().finally(() => {
+	const joinedShutdown = runEffect(manager.shutdown()).finally(() => {
 		secondSettled = true;
 	});
 	await new Promise<void>((resolve) => setImmediate(resolve));
@@ -458,10 +462,10 @@ test("shutdown returns at its deadline and owns a child arriving later", async (
 	await new Promise<void>((resolve) => setImmediate(resolve));
 
 	let settled = false;
-	const firstShutdown = manager.shutdown().finally(() => {
+	const firstShutdown = runEffect(manager.shutdown()).finally(() => {
 		settled = true;
 	});
-	const joinedShutdown = manager.shutdown();
+	const joinedShutdown = runEffect(manager.shutdown());
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	assert.equal(settled, false);
 	t.mock.timers.tick(4_999);
@@ -494,12 +498,12 @@ test("cancelling during session creation disposes late arrivals", async () => {
 		},
 	});
 	const job = manager.spawn({ task: "slow startup", ctx: context });
-	const [result] = await manager.cancel([job.id]);
+	const [result] = await runEffect(manager.cancel([job.id]));
 	assert.equal(result.status, "cancelled");
 
 	resolveCreation(child as unknown as ChildSession);
-	await eventually(() => child.disposed);
-	await manager.shutdown();
+	await runEffect(eventually(() => child.disposed));
+	await runEffect(manager.shutdown());
 });
 
 test("settled sessions are disposed and list keeps active children first", async () => {
@@ -508,26 +512,26 @@ test("settled sessions are disposed and list keeps active children first", async
 	for (let index = 0; index < 3; index++) {
 		const job = manager.spawn({ task: `task ${index}`, ctx: context });
 		jobs.push(job);
-		await eventually(() => sessions.length === index + 1);
+		await runEffect(eventually(() => sessions.length === index + 1));
 		sessions[index].finish(`done ${index}`);
-		await manager.wait([job.id]);
-		await eventually(() => sessions[index].disposed);
+		await runEffect(manager.wait([job.id]));
+		await runEffect(eventually(() => sessions[index].disposed));
 	}
 
 	const active = manager.spawn({ task: "active", ctx: context });
-	await eventually(() => sessions.length === 4);
+	await runEffect(eventually(() => sessions.length === 4));
 	assert.deepEqual(
 		manager.list().map((snapshot) => snapshot.id),
 		[active.id, jobs[2].id, jobs[1].id, jobs[0].id],
 	);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("settled sessions and usage remain for the parent session", async () => {
 	const { manager, sessions } = harness();
 	for (let index = 0; index < 65; index++) {
 		const job = manager.spawn({ task: `task ${index}`, ctx: context });
-		await eventually(() => sessions.length === index + 1);
+		await runEffect(eventually(() => sessions.length === index + 1));
 		sessions[index].emit({
 			type: "message_end",
 			message: {
@@ -544,19 +548,19 @@ test("settled sessions and usage remain for the parent session", async () => {
 			},
 		} as AgentSessionEvent);
 		sessions[index].finish("done");
-		await manager.wait([job.id]);
+		await runEffect(manager.wait([job.id]));
 	}
 
 	assert.equal(manager.list().length, 65);
 	assert.equal(manager.sessionUsage().tokens, 65 * 16);
 	assert.ok(Math.abs(manager.sessionUsage().cost - 65 * 0.011) < 1e-10);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("an abnormal settle hands back the child's last activity", async () => {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "long build", ctx: context });
-	await eventually(() => sessions.length === 1);
+	await runEffect(eventually(() => sessions.length === 1));
 	sessions[0].emitAssistant("inspected the parser", 10);
 	sessions[0].emit({
 		type: "message_update",
@@ -566,48 +570,48 @@ test("an abnormal settle hands back the child's last activity", async () => {
 		},
 	} as AgentSessionEvent);
 
-	const [cancelled] = await manager.cancel([job.id]);
+	const [cancelled] = await runEffect(manager.cancel([job.id]));
 	assert.match(cancelled.checkpoint ?? "", /inspected the parser/);
 	assert.match(cancelled.checkpoint ?? "", /wiring the lexer/);
 	assert.equal(cancelled.progress, undefined);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("a completed run reports no checkpoint", async () => {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "quick read", ctx: context });
-	await eventually(() => sessions.length === 1);
+	await runEffect(eventually(() => sessions.length === 1));
 	sessions[0].finish("answer");
-	const [done] = await manager.wait([job.id]);
+	const [done] = await runEffect(manager.wait([job.id]));
 	assert.equal(done.checkpoint, undefined);
 	assert.equal(done.progress, undefined);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("the checkpoint keeps the newest messages within its bound", async () => {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "chatty", ctx: context });
-	await eventually(() => sessions.length === 1);
+	await runEffect(eventually(() => sessions.length === 1));
 	for (let index = 0; index < 6; index++) {
 		sessions[0].emitAssistant(`${"padding ".repeat(300)} step ${index}`, 10);
 	}
-	const [cancelled] = await manager.cancel([job.id]);
+	const [cancelled] = await runEffect(manager.cancel([job.id]));
 	const checkpoint = cancelled.checkpoint ?? "";
 	assert.ok(Buffer.byteLength(checkpoint) <= 4 * 1024);
 	assert.match(checkpoint, /step 5/);
 	assert.doesNotMatch(checkpoint, /step 0/);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });
 
 test("a child runs in the requested directory and rejects a missing one", async () => {
 	const { manager, requests, sessions } = harness();
 	manager.spawn({ task: "isolated", cwd: "agent/extensions", ctx: context });
-	await eventually(() => sessions.length === 1);
+	await runEffect(eventually(() => sessions.length === 1));
 	assert.equal(requests[0].cwd, `${process.cwd()}/agent/extensions`);
 
 	assert.throws(
 		() => manager.spawn({ task: "nowhere", cwd: "no/such/dir", ctx: context }),
 		/cwd is not a directory/,
 	);
-	await manager.shutdown();
+	await runEffect(manager.shutdown());
 });

@@ -5,7 +5,7 @@ import type {
 	AgentSessionEvent,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Clock, Effect } from "effect";
+import { Cause, Clock, Deferred, Effect, Fiber, Semaphore } from "effect";
 import { truncateUtf8Tail } from "../../lib/text.ts";
 import { ChildState } from "./child-state.ts";
 import {
@@ -16,7 +16,7 @@ import {
 	MAX_EXECUTION_MS,
 	MAX_EXECUTION_TOKENS,
 } from "./contract.ts";
-import { errorMessage } from "./errors.ts";
+import { delegateError, errorMessage } from "./errors.ts";
 import { cancelTimer, scheduleTimer } from "./host-timers.ts";
 import {
 	type ChildSession,
@@ -30,7 +30,6 @@ import {
 const MAX_PENDING_SENDS = 8;
 const DISPOSAL_TIMEOUT_MS = 16_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
-const MINUTE_MS = 60_000;
 const MAX_CHECKPOINT_BYTES = 4 * 1024;
 export const MAX_CONCURRENT_WAITS_PER_CHILD = 4;
 
@@ -41,11 +40,6 @@ export interface DelegateRequest {
 	background?: boolean;
 	cwd?: string;
 	ctx: ExtensionContext;
-}
-
-interface Deferred {
-	promise: Promise<DelegateSnapshot>;
-	resolve: (snapshot: DelegateSnapshot) => void;
 }
 
 interface Job {
@@ -69,10 +63,10 @@ interface Job {
 	child?: ChildSession;
 	unsubscribe?: () => void;
 	stopping?: boolean;
-	stopPromise?: Promise<void>;
-	completion: Deferred;
+	stopEffect?: Effect.Effect<void>;
+	completion: Deferred.Deferred<DelegateSnapshot>;
 	ownership: AbortController;
-	sendChain: Promise<void>;
+	sendSemaphore: Semaphore.Semaphore;
 	pendingSends: number;
 	deliveryPending: boolean;
 	deliveryWaiters: number;
@@ -93,14 +87,6 @@ export interface DelegateManagerOptions {
 	onSettled?: (snapshot: DelegateSnapshot) => void;
 }
 
-function deferred(): Deferred {
-	let resolve!: (snapshot: DelegateSnapshot) => void;
-	const promise = new Promise<DelegateSnapshot>((done) => {
-		resolve = done;
-	});
-	return { promise, resolve };
-}
-
 function isDirectory(path: string) {
 	try {
 		return statSync(path).isDirectory();
@@ -115,6 +101,16 @@ function abortError(signal: AbortSignal): Error {
 		: new Error("Operation aborted");
 }
 
+function abortSignal(signal: AbortSignal) {
+	if (signal.aborted) return Effect.fail(delegateError(abortError(signal)));
+	return Effect.callback<never, ReturnType<typeof delegateError>>((resume) => {
+		const onAbort = () =>
+			resume(Effect.fail(delegateError(abortError(signal))));
+		signal.addEventListener("abort", onAbort, { once: true });
+		return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+	});
+}
+
 function isAssistantResponse(event: AgentSessionEvent) {
 	return (
 		(event.type === "message_start" ||
@@ -124,57 +120,41 @@ function isAssistantResponse(event: AgentSessionEvent) {
 	);
 }
 
-async function waitUntil(
-	promises: readonly Promise<unknown>[],
+function waitUntil(
+	effects: readonly Effect.Effect<unknown, unknown>[],
 	deadline: number,
-): Promise<void> {
-	if (
-		promises.length === 0 ||
-		Effect.runSync(Clock.currentTimeMillis) >= deadline
-	)
-		return;
-	let timer: ReturnType<typeof scheduleTimer> | undefined;
-	await Promise.race([
-		Promise.allSettled(promises),
-		new Promise<void>((resolve) => {
-			timer = scheduleTimer(
-				resolve,
-				Math.max(0, deadline - Effect.runSync(Clock.currentTimeMillis)),
-			);
-			timer.unref?.();
-		}),
-	]);
-	if (timer) cancelTimer(timer);
+) {
+	return Effect.all(effects.map(Effect.exit), {
+		concurrency: "unbounded",
+	}).pipe(
+		Effect.timeoutOption(
+			Math.max(0, deadline - Effect.runSync(Clock.currentTimeMillis)),
+		),
+		Effect.asVoid,
+	);
 }
 
 export class DelegateManager {
 	// The product contract deliberately admits every run immediately and retains it for the parent session; the user accepts unbounded aggregate use instead of backpressure or eviction.
 	private readonly jobs = new Map<string, Job>();
-	private readonly createSession: NonNullable<
-		DelegateManagerOptions["createSession"]
-	>;
-	private readonly shutdownSession: NonNullable<
-		DelegateManagerOptions["shutdownSession"]
-	>;
+	private readonly createSession?: DelegateManagerOptions["createSession"];
+	private readonly shutdownSession?: DelegateManagerOptions["shutdownSession"];
 	private readonly onSettled?: (snapshot: DelegateSnapshot) => void;
 	private readonly listeners = new Set<(snapshot: DelegateSnapshot) => void>();
-	private readonly runTasks = new Set<Promise<void>>();
-	private readonly lateCreations = new Set<Promise<void>>();
-	private readonly disposals = new Set<Promise<void>>();
-	private readonly childDisposals = new WeakMap<object, Promise<void>>();
+	private readonly runTasks = new Set<Fiber.Fiber<void, never>>();
+	private readonly disposals = new Set<Fiber.Fiber<void, never>>();
+	private readonly childDisposals = new WeakMap<
+		object,
+		Fiber.Fiber<void, never>
+	>();
 	private nextId = 0;
 	private nextSettlementOrder = 0;
 	private disposed: boolean = false;
-	private shutdownPromise?: Promise<void>;
+	private shutdownEffect?: Effect.Effect<void>;
 
 	constructor(options: DelegateManagerOptions = {}) {
-		this.createSession =
-			options.createSession ??
-			((request, model, thinking, signal) =>
-				Effect.runPromise(createChild(request.cwd, model, thinking), {
-					signal,
-				}));
-		this.shutdownSession = options.shutdownSession ?? shutdownChild;
+		this.createSession = options.createSession;
+		this.shutdownSession = options.shutdownSession;
 		this.onSettled = options.onSettled;
 	}
 
@@ -221,9 +201,9 @@ export class DelegateManager {
 			createdAt: Effect.runSync(Clock.currentTimeMillis),
 			settlementOrder: 0,
 			childState: new ChildState(),
-			completion: deferred(),
+			completion: Deferred.makeUnsafe(),
 			ownership: new AbortController(),
-			sendChain: Promise.resolve(),
+			sendSemaphore: Semaphore.makeUnsafe(1),
 			pendingSends: 0,
 			deliveryPending: request.background === true,
 			deliveryWaiters: 0,
@@ -233,13 +213,19 @@ export class DelegateManager {
 		this.startExecutionBudget(job);
 		const snapshot = this.snapshot(job);
 		this.notify(snapshot);
-		const task = this.run(job).catch((error) => {
-			if (job.status === "running" && !job.stopping) {
-				this.finalize(job, "error", errorMessage(error));
-			}
-		});
+		const task = Effect.runFork(
+			this.run(job).pipe(
+				Effect.catch((error) =>
+					Effect.sync(() => {
+						if (job.status === "running" && !job.stopping) {
+							this.finalize(job, "error", errorMessage(error));
+						}
+					}),
+				),
+			),
+		);
 		this.runTasks.add(task);
-		void task.finally(() => this.runTasks.delete(task));
+		task.addObserver(() => this.runTasks.delete(task));
 		return snapshot;
 	}
 
@@ -259,10 +245,11 @@ export class DelegateManager {
 		return this.requireJob(id).childState.trail();
 	}
 
-	async wait(
+	readonly wait = Effect.fn("DelegateManager.wait")(function* (
+		this: DelegateManager,
 		ids: readonly string[],
 		signal?: AbortSignal,
-	): Promise<DelegateSnapshot[]> {
+	) {
 		const jobs = [...new Set(ids)].map((id) => this.requireJob(id));
 		if (jobs.length === 0) throw new Error("Provide at least one delegate id.");
 		if (signal?.aborted) throw abortError(signal);
@@ -280,47 +267,52 @@ export class DelegateManager {
 			job.deliveryWaiters++;
 			return true;
 		});
-		const completion = Promise.all(
+		let completed = false;
+		return yield* Effect.all(
 			jobs.map((job) =>
 				job.status === "running"
-					? job.completion.promise
-					: Promise.resolve(this.snapshot(job)),
+					? Deferred.await(job.completion)
+					: Effect.succeed(this.snapshot(job)),
+			),
+			{ concurrency: "unbounded" },
+		).pipe(
+			signal ? Effect.raceFirst(abortSignal(signal)) : (effect) => effect,
+			Effect.flatMap((snapshots) =>
+				signal?.aborted
+					? Effect.fail(delegateError(abortError(signal)))
+					: Effect.succeed(snapshots),
+			),
+			Effect.tap((snapshots) =>
+				Effect.sync(() => {
+					completed = true;
+					for (const job of claims) job.deliveryPending = false;
+					return snapshots;
+				}),
+			),
+			Effect.ensuring(
+				Effect.sync(() => {
+					for (const job of jobs) job.waiters--;
+					for (const job of claims) {
+						job.deliveryWaiters--;
+						if (
+							!completed &&
+							job.deliveryWaiters === 0 &&
+							job.deliveryPending &&
+							job.status !== "running"
+						) {
+							this.onSettled?.(this.snapshot(job));
+						}
+					}
+				}),
 			),
 		);
-		let completed = false;
-		try {
-			const snapshots = signal
-				? await Promise.race([
-						completion,
-						new Promise<never>((_resolve, reject) => {
-							const onAbort = () => reject(abortError(signal));
-							signal.addEventListener("abort", onAbort, { once: true });
-							void completion.finally(() =>
-								signal.removeEventListener("abort", onAbort),
-							);
-						}),
-					])
-				: await completion;
-			completed = true;
-			for (const job of claims) job.deliveryPending = false;
-			return snapshots;
-		} finally {
-			for (const job of jobs) job.waiters--;
-			for (const job of claims) {
-				job.deliveryWaiters--;
-				if (
-					!completed &&
-					job.deliveryWaiters === 0 &&
-					job.deliveryPending &&
-					job.status !== "running"
-				) {
-					this.onSettled?.(this.snapshot(job));
-				}
-			}
-		}
-	}
+	});
 
-	async send(id: string, message: string): Promise<DelegateSnapshot> {
+	readonly send = Effect.fn("DelegateManager.send")(function* (
+		this: DelegateManager,
+		id: string,
+		message: string,
+	) {
 		const job = this.requireJob(id);
 		const text = message.trim();
 		if (!text) throw new Error("Delegate message must not be empty.");
@@ -337,35 +329,41 @@ export class DelegateManager {
 		}
 		const child = job.child;
 		job.pendingSends++;
-		const sending = job.sendChain.then(async () => {
-			if (
-				job.status !== "running" ||
-				job.child !== child ||
-				job.ownership.signal.aborted
-			) {
-				throw new Error(
-					`Delegate ${id} settled before the queued message could be sent.`,
-				);
-			}
-			await this.steerOwned(job, child, text);
-		});
-		job.sendChain = sending.catch(() => {});
-		try {
-			await sending;
-		} finally {
-			job.pendingSends--;
-		}
+		yield* job.sendSemaphore.withPermit(
+			Effect.gen(
+				function* (this: DelegateManager) {
+					if (
+						job.status !== "running" ||
+						job.child !== child ||
+						job.ownership.signal.aborted
+					) {
+						throw new Error(
+							`Delegate ${id} settled before the queued message could be sent.`,
+						);
+					}
+					yield* this.steerOwned(job, child, text);
+				}.bind(this),
+			).pipe(Effect.ensuring(Effect.sync(() => job.pendingSends--))),
+		);
 		const snapshot = this.snapshot(job);
 		this.notify(snapshot);
 		return snapshot;
-	}
+	});
 
-	async cancel(ids: readonly string[]): Promise<DelegateSnapshot[]> {
+	readonly cancel = Effect.fn("DelegateManager.cancel")(function* (
+		this: DelegateManager,
+		ids: readonly string[],
+	) {
 		const jobs = [...new Set(ids)].map((id) => this.requireJob(id));
 		for (const job of jobs) job.deliveryPending = false;
-		await Promise.all(jobs.map((job) => this.stopOwned(job)));
+		yield* Effect.all(
+			jobs.map((job) => this.stopOwned(job)),
+			{
+				concurrency: "unbounded",
+			},
+		);
 		return jobs.map((job) => this.snapshot(job));
-	}
+	});
 
 	acknowledge(ids: readonly string[]) {
 		for (const id of new Set(ids)) {
@@ -374,27 +372,33 @@ export class DelegateManager {
 		}
 	}
 
-	shutdown(): Promise<void> {
-		if (this.shutdownPromise) return this.shutdownPromise;
+	shutdown(): Effect.Effect<void> {
+		if (this.shutdownEffect) return this.shutdownEffect;
 		this.disposed = true;
-		this.shutdownPromise = this.shutdownOwned();
-		return this.shutdownPromise;
+		this.shutdownEffect = Effect.runSync(Effect.cached(this.shutdownOwned()));
+		return this.shutdownEffect;
 	}
 
-	private async shutdownOwned(): Promise<void> {
-		const deadline =
-			Effect.runSync(Clock.currentTimeMillis) + SHUTDOWN_TIMEOUT_MS;
-		const jobs = [...this.jobs.values()];
-		const stopping = jobs.map((job) =>
-			job.status === "running" ? this.stopOwned(job) : Promise.resolve(),
-		);
-		await waitUntil(stopping, deadline);
-		await waitUntil([...this.runTasks], deadline);
-		await waitUntil([...this.lateCreations, ...this.disposals], deadline);
-		for (const job of jobs) job.childState.cleanup();
-	}
+	private readonly shutdownOwned = Effect.fn("DelegateManager.shutdownOwned")(
+		function* (this: DelegateManager) {
+			const deadline = (yield* Clock.currentTimeMillis) + SHUTDOWN_TIMEOUT_MS;
+			const jobs = [...this.jobs.values()];
+			yield* waitUntil(
+				jobs.map((job) =>
+					job.status === "running" ? this.stopOwned(job) : Effect.void,
+				),
+				deadline,
+			);
+			yield* waitUntil([...this.runTasks].map(Fiber.await), deadline);
+			yield* waitUntil([...this.disposals].map(Fiber.await), deadline);
+			for (const job of jobs) job.childState.cleanup();
+		},
+	);
 
-	private async run(job: Job) {
+	private readonly run = Effect.fn("DelegateManager.run")(function* (
+		this: DelegateManager,
+		job: Job,
+	) {
 		let receivedAssistantResponse = false;
 		if (!job.child) {
 			const request = {
@@ -404,33 +408,24 @@ export class DelegateManager {
 				outputFormat: job.outputFormat,
 				ctx: job.ctx,
 			};
-			const signal = job.ownership.signal;
-			const creation = this.createSession(
-				request,
-				job.modelChoice,
-				job.thinking,
-				signal,
-			);
-			let onEnded: (() => void) | undefined;
-			try {
-				job.child = await Promise.race([
-					creation,
-					new Promise<never>((_resolve, reject) => {
-						onEnded = () => reject(abortError(signal));
-						signal.addEventListener("abort", onEnded, { once: true });
-					}),
-				]);
-			} catch (error) {
-				if (!signal.aborted) throw error;
-				this.ownLateCreation(creation, job.id);
-				return;
-			} finally {
-				if (onEnded) signal.removeEventListener("abort", onEnded);
-			}
+			job.child = yield* this.createSession
+				? Effect.tryPromise({
+						try: () =>
+							this.createSession?.(
+								request,
+								job.modelChoice,
+								job.thinking,
+								job.ownership.signal,
+							) as Promise<ChildSession>,
+						catch: delegateError,
+					})
+				: createChild(request.cwd, job.modelChoice, job.thinking).pipe(
+						Effect.mapError(delegateError),
+					);
 			if (job.status !== "running") {
 				const child = job.child;
 				job.child = undefined;
-				await this.disposeOwned(child, job.id);
+				yield* this.disposeOwned(child, job.id);
 				return;
 			}
 			job.model = modelName(job.child.model ?? job.modelChoice);
@@ -441,47 +436,51 @@ export class DelegateManager {
 		}
 
 		const child = job.child;
-		try {
-			const outputFormat = job.outputFormat?.trim();
-			const instruction = outputFormat
-				? `${job.task}\n\nPreferred output format (advisory):\n${outputFormat}\n\nPrioritize correct and complete information over exact formatting.`
-				: job.task;
-			await this.untilOwnershipEnds(
-				job,
-				child.prompt(instruction, {
-					expandPromptTemplates: false,
-					source: "extension",
-				}),
-			);
-			if (!receivedAssistantResponse) {
-				throw new Error(
-					`Delegate ${job.id} finished without an assistant response. Retry the delegation.`,
-				);
+		const outputFormat = job.outputFormat?.trim();
+		const instruction = outputFormat
+			? `${job.task}\n\nPreferred output format (advisory):\n${outputFormat}\n\nPrioritize correct and complete information over exact formatting.`
+			: job.task;
+		const outcome = yield* this.untilOwnershipEnds(
+			job,
+			child.prompt(instruction, {
+				expandPromptTemplates: false,
+				source: "extension",
+			}),
+		).pipe(Effect.exit);
+		if (outcome._tag === "Failure") {
+			if (job.status === "running" && !job.stopping) {
+				this.finalize(job, "error", errorMessage(Cause.squash(outcome.cause)));
 			}
-			if (job.status !== "running" || job.stopping) return;
-			const childState = job.childState.state();
-			if (childState.assistantStop === "error") {
-				this.finalize(
-					job,
-					"error",
-					childState.assistantError ?? "Child agent failed.",
-				);
-				return;
-			}
-			if (childState.assistantStop === "aborted") {
-				this.finalize(
-					job,
-					"cancelled",
-					childState.assistantError ?? "Child agent aborted.",
-				);
-				return;
-			}
-			this.finalize(job, "done");
-		} catch (error) {
-			if (job.status !== "running" || job.stopping) return;
-			this.finalize(job, "error", errorMessage(error));
+			return;
 		}
-	}
+		if (!receivedAssistantResponse) {
+			this.finalize(
+				job,
+				"error",
+				`Delegate ${job.id} finished without an assistant response. Retry the delegation.`,
+			);
+			return;
+		}
+		if (job.status !== "running" || job.stopping) return;
+		const childState = job.childState.state();
+		if (childState.assistantStop === "error") {
+			this.finalize(
+				job,
+				"error",
+				childState.assistantError ?? "Child agent failed.",
+			);
+			return;
+		}
+		if (childState.assistantStop === "aborted") {
+			this.finalize(
+				job,
+				"cancelled",
+				childState.assistantError ?? "Child agent aborted.",
+			);
+			return;
+		}
+		this.finalize(job, "done");
+	});
 
 	private onEvent(job: Job, event: Parameters<ChildState["capture"]>[0]) {
 		job.childState.capture(event);
@@ -499,7 +498,7 @@ export class DelegateManager {
 			() =>
 				this.stopAtHardLimit(
 					job,
-					`${MAX_EXECUTION_MS / MINUTE_MS} minutes of wall time`,
+					`${MAX_EXECUTION_MS / 60_000} minutes of wall time`,
 				),
 			MAX_EXECUTION_MS,
 		);
@@ -509,7 +508,7 @@ export class DelegateManager {
 	private stopAtHardLimit(job: Job, limit: string) {
 		if (job.status !== "running" || job.stopping) return;
 		job.hardLimitError = `Delegation stopped at the hard execution ceiling: ${limit}.`;
-		void this.stopOwned(job);
+		Effect.runFork(this.stopOwned(job));
 	}
 
 	private clearExecutionBudget(job: Job) {
@@ -517,55 +516,54 @@ export class DelegateManager {
 		job.hardTimer = undefined;
 	}
 
-	private stopOwned(job: Job): Promise<void> {
-		if (job.stopPromise) return job.stopPromise;
-		const stopping = this.stop(job).finally(() => {
-			if (job.stopPromise === stopping) job.stopPromise = undefined;
-		});
-		job.stopPromise = stopping;
-		return stopping;
+	private stopOwned(job: Job): Effect.Effect<void> {
+		if (job.stopEffect) return job.stopEffect;
+		job.stopEffect = Effect.runSync(Effect.cached(this.stop(job)));
+		return job.stopEffect;
 	}
 
-	private async stop(job: Job) {
+	private readonly stop = Effect.fn("DelegateManager.stop")(function* (
+		this: DelegateManager,
+		job: Job,
+	) {
 		this.clearExecutionBudget(job);
+		if (job.status !== "running" || job.stopping) return;
+		job.stopping = true;
 		this.endOwnership(
 			job,
 			new Error(job.hardLimitError ?? `Delegate ${job.id} ownership ended.`),
 		);
-		if (job.status !== "running" || job.stopping) return;
-		job.stopping = true;
 		if (job.child) {
 			const child = job.child;
-			let timer: ReturnType<typeof scheduleTimer> | undefined;
 			let abortFailure: unknown;
-			const stopped = await Promise.race([
-				child.abort().then(
-					() => true,
-					(error) => {
-						abortFailure = error;
-						return false;
-					},
-				),
-				new Promise<false>((resolve) => {
-					timer = scheduleTimer(() => resolve(false), 5_000);
-					timer.unref?.();
+			const stopped = yield* Effect.tryPromise({
+				try: () => child.abort(),
+				catch: delegateError,
+			}).pipe(
+				Effect.as(true),
+				Effect.catch((error) => {
+					abortFailure = error;
+					return Effect.succeed(false);
 				}),
-			]);
-			if (timer) cancelTimer(timer);
+				Effect.timeoutOrElse({
+					duration: 5_000,
+					orElse: () => Effect.succeed(false),
+				}),
+			);
 			if (!stopped) {
 				const evidence =
 					abortFailure !== undefined
 						? errorMessage(abortFailure).replace(/\s+/g, " ").slice(0, 512)
 						: "timed out after 5000ms";
-				Effect.runSync(
-					Effect.logError(`[delegate] abort failed for ${job.id}: ${evidence}`),
+				yield* Effect.logError(
+					`[delegate] abort failed for ${job.id}: ${evidence}`,
 				);
 			}
 			if (!stopped || child.isStreaming) {
 				job.child = undefined;
 				job.unsubscribe?.();
 				job.unsubscribe = undefined;
-				await this.disposeOwned(child, job.id);
+				yield* this.disposeOwned(child, job.id);
 			}
 		}
 		if (job.status === "running") {
@@ -575,9 +573,9 @@ export class DelegateManager {
 				job.hardLimitError ? "error" : "cancelled",
 				job.hardLimitError ?? "Delegation cancelled",
 			);
-			if (child) await this.disposeOwned(child, job.id);
+			if (child) yield* this.disposeOwned(child, job.id);
 		}
-	}
+	});
 
 	private finalize(job: Job, status: DelegateStatus, error?: string) {
 		if (status !== "done") {
@@ -594,7 +592,7 @@ export class DelegateManager {
 		job.error = error;
 		job.stopping = undefined;
 		const snapshot = this.snapshot(job);
-		job.completion.resolve(snapshot);
+		Effect.runSync(Deferred.succeed(job.completion, snapshot));
 		this.notify(snapshot);
 		if (job.deliveryPending && job.deliveryWaiters === 0) {
 			this.onSettled?.(snapshot);
@@ -603,7 +601,7 @@ export class DelegateManager {
 		job.child = undefined;
 		job.unsubscribe?.();
 		job.unsubscribe = undefined;
-		if (child) void this.disposeOwned(child, job.id);
+		if (child) Effect.runFork(this.disposeOwned(child, job.id));
 		if (this.disposed) job.childState.cleanup();
 	}
 
@@ -661,79 +659,55 @@ export class DelegateManager {
 		if (!job.ownership.signal.aborted) job.ownership.abort(reason);
 	}
 
-	private async steerOwned(job: Job, child: ChildSession, text: string) {
-		await this.untilOwnershipEnds(job, child.steer(text));
+	private steerOwned(job: Job, child: ChildSession, text: string) {
+		return this.untilOwnershipEnds(job, child.steer(text));
 	}
 
-	private async untilOwnershipEnds(job: Job, operation: Promise<unknown>) {
-		const signal = job.ownership.signal;
-		let onEnded: (() => void) | undefined;
-		try {
-			await Promise.race([
-				operation,
-				new Promise<never>((_resolve, reject) => {
-					onEnded = () => reject(abortError(signal));
-					signal.addEventListener("abort", onEnded, { once: true });
-				}),
-			]);
-		} finally {
-			if (onEnded) signal.removeEventListener("abort", onEnded);
-		}
+	private untilOwnershipEnds(job: Job, operation: Promise<unknown>) {
+		return Effect.tryPromise({
+			try: () => operation,
+			catch: delegateError,
+		}).pipe(Effect.raceFirst(abortSignal(job.ownership.signal)));
 	}
 
-	private ownLateCreation(creation: Promise<ChildSession>, id: string) {
-		let cleanup: Promise<void>;
-		cleanup = creation.then(
-			(child) => {
-				this.lateCreations.delete(cleanup);
-				return this.disposeOwned(child, id);
-			},
-			() => {
-				this.lateCreations.delete(cleanup);
-			},
-		);
-		this.lateCreations.add(cleanup);
-	}
-
-	private disposeOwned(child: ChildSession, id: string): Promise<void> {
+	private disposeOwned(child: ChildSession, id: string): Effect.Effect<void> {
 		const existing = this.childDisposals.get(child);
-		if (existing) return existing;
-		let timer: ReturnType<typeof scheduleTimer> | undefined;
-		const operation = Promise.resolve().then(() => this.shutdownSession(child));
-		const disposal = Promise.race([
-			operation.then(
-				() => ({ type: "done" as const }),
-				(error) => ({ type: "error" as const, error }),
+		if (existing) return Fiber.join(existing);
+		const shutdown = this.shutdownSession
+			? Effect.tryPromise({
+					try: () => this.shutdownSession?.(child) as Promise<void>,
+					catch: delegateError,
+				})
+			: shutdownChild(child).pipe(Effect.mapError(delegateError));
+		const disposal = Effect.runFork(
+			shutdown.pipe(
+				Effect.as({ type: "done" as const }),
+				Effect.catch((error) =>
+					Effect.succeed({ type: "error" as const, error }),
+				),
+				Effect.timeoutOrElse({
+					duration: DISPOSAL_TIMEOUT_MS,
+					orElse: () => Effect.succeed({ type: "timeout" as const }),
+				}),
+				Effect.flatMap((result) => {
+					if (result.type === "done") return Effect.void;
+					const evidence =
+						result.type === "timeout"
+							? `timed out after ${DISPOSAL_TIMEOUT_MS}ms`
+							: errorMessage(result.error).replace(/\s+/g, " ").slice(0, 512);
+					return Effect.logError(
+						`[delegate] cleanup failed for ${id}: ${evidence}`,
+					).pipe(
+						Effect.andThen(
+							Effect.try(() => child.dispose()).pipe(Effect.ignore),
+						),
+					);
+				}),
 			),
-			new Promise<{ type: "timeout" }>((resolve) => {
-				timer = scheduleTimer(
-					() => resolve({ type: "timeout" }),
-					DISPOSAL_TIMEOUT_MS,
-				);
-				timer.unref?.();
-			}),
-		])
-			.then((result) => {
-				if (result.type === "done") return;
-				const evidence =
-					result.type === "timeout"
-						? `timed out after ${DISPOSAL_TIMEOUT_MS}ms`
-						: errorMessage(result.error).replace(/\s+/g, " ").slice(0, 512);
-				Effect.runSync(
-					Effect.logError(`[delegate] cleanup failed for ${id}: ${evidence}`),
-				);
-				try {
-					child.dispose();
-				} catch {
-					// Local disposal is the final fallback after backend cleanup fails.
-				}
-			})
-			.finally(() => {
-				if (timer) cancelTimer(timer);
-				this.disposals.delete(disposal);
-			});
+		);
 		this.childDisposals.set(child, disposal);
 		this.disposals.add(disposal);
-		return disposal;
+		disposal.addObserver(() => this.disposals.delete(disposal));
+		return Fiber.join(disposal);
 	}
 }

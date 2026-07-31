@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import test, { after, before, describe } from "node:test";
+import { describe } from "node:test";
+import { Effect } from "effect";
 import {
 	capture,
 	e2eUnavailable,
@@ -8,8 +9,8 @@ import {
 	prompt,
 	readStderr,
 	sendKeys,
-	startPi,
-	stop,
+	setupPiSession,
+	testEffect,
 	waitFor,
 } from "../../test/tmux.ts";
 import {
@@ -20,13 +21,11 @@ import {
 
 const skip = e2eUnavailable();
 
-function persistedEnabled(session: PiSession): Promise<boolean> {
-	return loadEnabled({
-		env: { PI_CODING_AGENT_DIR: session.agentDir },
-	});
-}
+const persistedEnabled = (session: PiSession) =>
+	Effect.promise(() =>
+		loadEnabled({ env: { PI_CODING_AGENT_DIR: session.agentDir } }),
+	);
 
-/** The footer prints `(provider) model •`; the cost gauge parens never do. */
 function footerModel(pane: string): { provider: string; id: string } {
 	const matches = [...pane.matchAll(/\(([a-z0-9-]+)\)\s+(\S+)\s+•/g)];
 	const last = matches.at(-1);
@@ -46,47 +45,44 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 	let session: PiSession;
 	let model: { provider: string; id: string };
 	let initialEnabled: boolean;
-	/** Flipped by every toggle so each step knows which notice to expect. */
 	let expected: boolean;
 
-	before(async () => {
-		session = await startPi();
-		initialEnabled = await persistedEnabled(session);
-		expected = initialEnabled;
-		model = footerModel(capture(session));
-	});
+	setupPiSession(
+		(value) => {
+			session = value;
+		},
+		(value) =>
+			Effect.gen(function* () {
+				initialEnabled = yield* persistedEnabled(value);
+				expected = initialEnabled;
+				model = footerModel(yield* capture(value));
+			}),
+	);
 
-	after(async () => {
-		if (session) await stop(session);
-	});
-
-	/** Toggles once and waits for the notice that names the new state. */
-	async function toggle(
-		trigger: () => Promise<void>,
+	const toggle = Effect.fn("toggle")(function* <E>(
+		trigger: Effect.Effect<void, E>,
 		description: string,
-	): Promise<void> {
+	) {
 		const next = !expected;
-		await trigger();
-		// Only one notice is rendered at a time and it is replaced in place, so
-		// waiting for the opposite state is an unambiguous edge.
-		const pane = await waitFor(session, noticeFor(next, model), {
+		yield* trigger;
+		const pane = yield* waitFor(session, noticeFor(next, model), {
 			timeoutMs: 30_000,
 			description,
 		});
 		expected = next;
 		assert.doesNotMatch(pane, noticeFor(!next, model));
 		assert.equal(
-			await persistedEnabled(session),
+			yield* persistedEnabled(session),
 			next,
-			`${await resolveFastModeSettingsPath({ env: { PI_CODING_AGENT_DIR: session.agentDir } })} does not reflect the announced state`,
+			`${yield* Effect.promise(() => resolveFastModeSettingsPath({ env: { PI_CODING_AGENT_DIR: session.agentDir } }))} does not reflect the announced state`,
 		);
-		assert.equal(isDead(session), false);
-	}
+		assert.equal(yield* isDead(session), false);
+	});
 
-	test("registers the extension without crashing", () => {
-		assert.equal(isDead(session), false);
-		assert.doesNotMatch(readStderr(session), /uncaughtException/);
-		const pane = capture(session);
+	testEffect("registers the extension without crashing", function* () {
+		assert.equal(yield* isDead(session), false);
+		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
+		const pane = yield* capture(session);
 		assert.match(
 			pane,
 			/\[Extensions\][\s\S]*gpt-fast-mode/,
@@ -94,30 +90,30 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 		);
 	});
 
-	test("/fast flips the announced state and persists it", async () => {
-		await toggle(() => prompt(session, "/fast"), "first /fast notice");
+	testEffect("/fast flips the announced state and persists it", function* () {
+		yield* toggle(prompt(session, "/fast"), "first /fast notice");
 		assert.notEqual(
-			await persistedEnabled(session),
+			yield* persistedEnabled(session),
 			initialEnabled,
 			"/fast did not change the persisted setting",
 		);
 	});
 
-	test("/fast again flips back to the original state", async () => {
-		await toggle(() => prompt(session, "/fast"), "second /fast notice");
-		assert.equal(await persistedEnabled(session), initialEnabled);
+	testEffect("/fast again flips back to the original state", function* () {
+		yield* toggle(prompt(session, "/fast"), "second /fast notice");
+		assert.equal(yield* persistedEnabled(session), initialEnabled);
 	});
 
-	test("the ctrl+alt+m shortcut toggles the same state", async () => {
-		await toggle(() => sendKeys(session, "C-M-m"), "shortcut notice (off)");
-		await toggle(() => sendKeys(session, "C-M-m"), "shortcut notice (back on)");
-		assert.equal(await persistedEnabled(session), initialEnabled);
+	testEffect("the ctrl+alt+m shortcut toggles the same state", function* () {
+		yield* toggle(sendKeys(session, "C-M-m"), "shortcut notice (off)");
+		yield* toggle(sendKeys(session, "C-M-m"), "shortcut notice (back on)");
+		assert.equal(yield* persistedEnabled(session), initialEnabled);
 	});
 
-	test("survives the toggles cleanly", () => {
-		assert.equal(isDead(session), false);
-		assert.doesNotMatch(readStderr(session), /uncaughtException/);
-		const pane = capture(session);
+	testEffect("survives the toggles cleanly", function* () {
+		assert.equal(yield* isDead(session), false);
+		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
+		const pane = yield* capture(session);
 		assert.match(pane, /%\/\d/, `footer stopped rendering:\n${pane}`);
 	});
 });

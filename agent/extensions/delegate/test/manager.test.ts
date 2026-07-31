@@ -51,7 +51,10 @@ class FakeChild {
 		).then(() => this.steering.push(text));
 	}
 
+	abortCalls = 0;
+
 	abort() {
+		this.abortCalls++;
 		return (
 			this.abortGate ? deferredPromise(this.abortGate) : Promise.resolve()
 		).then(() => {
@@ -557,6 +560,21 @@ test("concurrent cancellation joins the in-progress stop", () => Effect.runPromi
 	yield* Deferred.succeed(abortGate, undefined);
 
 	assert.equal((yield* Fiber.join(first))[0].status, "cancelled");
+	assert.equal((yield* Fiber.join(second))[0].status, "cancelled");
+	yield* manager.shutdown();
+})));
+
+test("an interrupted cancel does not poison the shared stop", () => Effect.runPromise(Effect.gen(function* () {
+	const { manager, sessions } = harness();
+	const job = manager.spawn({ task: "interrupted cancel", ctx: context });
+	yield* eventually(() => sessions.length === 1);
+	const abortGate = yield* Deferred.make<void>();
+	sessions[0].abortGate = abortGate;
+	const first = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
+	yield* eventually(() => sessions[0].abortCalls === 1);
+	yield* Fiber.interrupt(first);
+	const second = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
+	yield* Deferred.succeed(abortGate, undefined);
 	assert.equal((yield* Fiber.join(second))[0].status, "cancelled");
 	yield* manager.shutdown();
 })));

@@ -1,4 +1,4 @@
-import { Clock, Effect } from "effect";
+import { Clock, Config, Deferred, Effect } from "effect";
 
 const { spawn } = process.getBuiltinModule("node:child_process");
 type ChildProcess = ReturnType<typeof spawn>;
@@ -119,9 +119,8 @@ interface Entry {
 	killSignaled: boolean;
 	pipeGeneration: number;
 	groupGeneration: number;
-	termination?: Promise<void>;
-	settled: Promise<void>;
-	resolveSettled: () => void;
+	termination?: Effect.Effect<void>;
+	settled: Deferred.Deferred<void>;
 }
 
 export class BackgroundTerminalManager {
@@ -179,7 +178,9 @@ export class BackgroundTerminalManager {
 		const invocation =
 			process.platform === "win32"
 				? {
-						file: process.env.ComSpec ?? "cmd.exe",
+						file: Effect.runSync(
+							Config.string("ComSpec").pipe(Config.withDefault("cmd.exe")),
+						),
 						args: ["/d", "/s", "/c", options.command],
 					}
 				: { file: "/bin/sh", args: ["-c", options.command] };
@@ -191,10 +192,7 @@ export class BackgroundTerminalManager {
 			windowsHide: true,
 		});
 		const id = this.allocateId();
-		let resolveSettled = () => {};
-		const settled = new Promise<void>((resolve) => {
-			resolveSettled = resolve;
-		});
+		const settled = Effect.runSync(Deferred.make<void>());
 		const entry: Entry = {
 			snapshot: {
 				id,
@@ -214,7 +212,6 @@ export class BackgroundTerminalManager {
 			pipeGeneration: 0,
 			groupGeneration: 0,
 			settled,
-			resolveSettled,
 		};
 		this.entries.set(id, entry);
 		child.stdout?.on("data", (chunk: Buffer) => entry.stdout.append(chunk));
@@ -233,7 +230,7 @@ export class BackgroundTerminalManager {
 					!entry.closed &&
 					entry.snapshot.state === "running"
 				)
-					void this.terminate(entry, false);
+					void Effect.runPromise(this.terminate(entry, false));
 			});
 		});
 		child.once("close", (code, signal) => {
@@ -279,7 +276,7 @@ export class BackgroundTerminalManager {
 				? "failed"
 				: "done";
 		entry.snapshot.settledAt = Effect.runSync(Clock.currentTimeMillis);
-		entry.resolveSettled();
+		Effect.runSync(Deferred.succeed(entry.settled, undefined));
 		const snapshot = this.snapshot(entry);
 		try {
 			if (this.lifecycle === "running")
@@ -293,65 +290,67 @@ export class BackgroundTerminalManager {
 		this.prune();
 	}
 
-	private async signalTree(entry: Entry, force: boolean): Promise<void> {
+	private signalTree(entry: Entry, force: boolean): Effect.Effect<void> {
 		if (process.platform === "win32" && entry.child.pid) {
-			const killer = spawn(
-				"taskkill",
-				["/pid", String(entry.child.pid), "/T", ...(force ? ["/F"] : [])],
-				{ stdio: "ignore", windowsHide: true },
-			);
-			const result = await Promise.race([
-				new Promise<number | null>((resolve) => {
-					killer.once("error", () => resolve(null));
-					killer.once("close", resolve);
-				}),
-				new Promise<undefined>(
-					(resolve) =>
-						void Effect.runPromise(Effect.sleep(TASKKILL_GRACE_MS)).then(() =>
-							resolve(undefined),
-						),
-				),
-			]);
-			if (result === 0) return;
-			try {
-				killer.kill();
-			} catch {}
-			entry.snapshot.error = `taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`;
-			try {
-				entry.child.kill(force ? "SIGKILL" : "SIGTERM");
-			} catch {}
-			return;
+			return Effect.gen(function* () {
+				const killer = spawn(
+					"taskkill",
+					["/pid", String(entry.child.pid), "/T", ...(force ? ["/F"] : [])],
+					{ stdio: "ignore", windowsHide: true },
+				);
+				const result = yield* Effect.race(
+					Effect.callback<number | null>((resume) => {
+						const error = () => resume(Effect.succeed(null));
+						const close = (code: number | null) => resume(Effect.succeed(code));
+						killer.once("error", error);
+						killer.once("close", close);
+						return Effect.sync(() => {
+							killer.off("error", error);
+							killer.off("close", close);
+						});
+					}),
+					Effect.sleep(TASKKILL_GRACE_MS).pipe(Effect.as(undefined)),
+				);
+				if (result === 0) return;
+				yield* Effect.sync(() => {
+					try {
+						killer.kill();
+					} catch {}
+					entry.snapshot.error = `taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`;
+					try {
+						entry.child.kill(force ? "SIGKILL" : "SIGTERM");
+					} catch {}
+				});
+			});
 		}
-		try {
-			if (entry.child.pid)
-				process.kill(-entry.child.pid, force ? "SIGKILL" : "SIGTERM");
-			else entry.child.kill(force ? "SIGKILL" : "SIGTERM");
-		} catch {
+		return Effect.sync(() => {
 			try {
-				entry.child.kill(force ? "SIGKILL" : "SIGTERM");
-			} catch {}
-		}
+				if (entry.child.pid)
+					process.kill(-entry.child.pid, force ? "SIGKILL" : "SIGTERM");
+				else entry.child.kill(force ? "SIGKILL" : "SIGTERM");
+			} catch {
+				try {
+					entry.child.kill(force ? "SIGKILL" : "SIGTERM");
+				} catch {}
+			}
+		});
 	}
 
-	private async waitForSettlement(entry: Entry, timeoutMs: number) {
-		await Effect.runPromise(
-			Effect.race(
-				Effect.promise(() => entry.settled),
-				Effect.sleep(timeoutMs),
-			),
-		);
+	private waitForSettlement(entry: Entry, timeoutMs: number) {
+		return Effect.race(Deferred.await(entry.settled), Effect.sleep(timeoutMs));
 	}
 
-	private terminate(entry: Entry, owned: boolean): Promise<void> {
+	private terminate(entry: Entry, owned: boolean): Effect.Effect<void> {
 		if (entry.termination) return entry.termination;
-		entry.termination = (async () => {
+		const self = this;
+		entry.termination = Effect.gen(function* () {
 			if (entry.snapshot.state !== "running") return;
 			if (owned) entry.killSignaled = true;
-			await this.signalTree(entry, false);
-			await this.waitForSettlement(entry, TERM_GRACE_MS);
+			yield* self.signalTree(entry, false);
+			yield* self.waitForSettlement(entry, TERM_GRACE_MS);
 			if (entry.snapshot.state === "running") {
-				await this.signalTree(entry, true);
-				await this.waitForSettlement(entry, CLOSE_GRACE_MS);
+				yield* self.signalTree(entry, true);
+				yield* self.waitForSettlement(entry, CLOSE_GRACE_MS);
 			}
 			if (entry.snapshot.state === "running") {
 				entry.snapshot.error ??=
@@ -359,13 +358,16 @@ export class BackgroundTerminalManager {
 				entry.child.stdout?.destroy();
 				entry.child.stderr?.destroy();
 				entry.child.unref();
-				this.settle(entry);
+				self.settle(entry);
 			}
-		})();
+		});
 		return entry.termination;
 	}
 
-	async kill(ids: readonly string[]): Promise<KillResult[]> {
+	kill = Effect.fn("BackgroundTerminalManager.kill")(function* (
+		this: BackgroundTerminalManager,
+		ids: readonly string[],
+	) {
 		const unique = [...new Set(ids)];
 		const entries = unique.map((id) => {
 			const entry = this.entries.get(id);
@@ -380,7 +382,10 @@ export class BackgroundTerminalManager {
 		for (const id of wasRunning)
 			this.killInterest.set(id, (this.killInterest.get(id) ?? 0) + 1);
 		try {
-			await Promise.all(entries.map((entry) => this.terminate(entry, true)));
+			yield* Effect.all(
+				entries.map((entry) => this.terminate(entry, true)),
+				{ concurrency: "unbounded" },
+			);
 			return entries.map((entry) => ({
 				id: entry.snapshot.id,
 				title: entry.snapshot.title,
@@ -397,17 +402,20 @@ export class BackgroundTerminalManager {
 				else this.killInterest.set(id, count);
 			}
 		}
-	}
+	});
 
-	async shutdown(): Promise<void> {
+	shutdown = Effect.fn("BackgroundTerminalManager.shutdown")(function* (
+		this: BackgroundTerminalManager,
+	) {
 		if (this.lifecycle !== "running") return;
 		this.lifecycle = "stopping";
-		await Promise.all(
+		yield* Effect.all(
 			[...this.entries.values()]
 				.filter((entry) => entry.snapshot.state === "running")
 				.map((entry) => this.terminate(entry, true)),
+			{ concurrency: "unbounded" },
 		);
 		this.entries.clear();
 		this.lifecycle = "stopped";
-	}
+	});
 }

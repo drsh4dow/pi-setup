@@ -339,31 +339,38 @@ export class BackgroundTerminalManager {
 	}
 
 	private terminate(entry: Entry, owned: boolean): Effect.Effect<void> {
-		if (entry.termination) return Deferred.await(entry.termination);
-		const termination = Deferred.makeUnsafe<void>();
-		entry.termination = termination;
 		const self = this;
-		return Deferred.complete(
-			termination,
-			Effect.gen(function* () {
-				if (entry.snapshot.state !== "running") return;
-				if (owned) entry.killSignaled = true;
-				yield* self.signalTree(entry, false);
-				yield* self.waitForSettlement(entry, TERM_GRACE_MS);
-				if (entry.snapshot.state === "running") {
-					yield* self.signalTree(entry, true);
-					yield* self.waitForSettlement(entry, CLOSE_GRACE_MS);
-				}
-				if (entry.snapshot.state === "running") {
-					entry.snapshot.error ??=
-						"stdio did not close after termination; output may be incomplete";
-					entry.child.stdout?.destroy();
-					entry.child.stderr?.destroy();
-					entry.child.unref();
-					self.settle(entry);
-				}
-			}),
-		).pipe(Effect.andThen(Deferred.await(termination)));
+		return Effect.suspend(() => {
+			if (entry.termination) return Deferred.await(entry.termination);
+			const termination = Deferred.makeUnsafe<void>();
+			entry.termination = termination;
+			// Uninterruptible: an interrupted terminator must not leave the
+			// Deferred forever incomplete for concurrent callers awaiting it.
+			return Deferred.complete(
+				termination,
+				Effect.gen(function* () {
+					if (entry.snapshot.state !== "running") return;
+					if (owned) entry.killSignaled = true;
+					yield* self.signalTree(entry, false);
+					yield* self.waitForSettlement(entry, TERM_GRACE_MS);
+					if (entry.snapshot.state === "running") {
+						yield* self.signalTree(entry, true);
+						yield* self.waitForSettlement(entry, CLOSE_GRACE_MS);
+					}
+					if (entry.snapshot.state === "running") {
+						entry.snapshot.error ??=
+							"stdio did not close after termination; output may be incomplete";
+						entry.child.stdout?.destroy();
+						entry.child.stderr?.destroy();
+						entry.child.unref();
+						self.settle(entry);
+					}
+				}),
+			).pipe(
+				Effect.uninterruptible,
+				Effect.andThen(Deferred.await(termination)),
+			);
+		});
 	}
 
 	kill = Effect.fn("BackgroundTerminalManager.kill")(function* (

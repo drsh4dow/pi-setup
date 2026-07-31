@@ -89,6 +89,15 @@ export function parseGitHubUrl(url: string): GitHubUrlInfo | null {
 		});
 	if (segments.length < 2) return null;
 
+	// Decoded segments feed path.join for the clone directory, which removeClone
+	// deletes recursively; traversal sequences must never reach it.
+	const unsafeSegment = (segment: string) =>
+		segment === "." ||
+		segment === ".." ||
+		/[/\\\0]/.test(segment) ||
+		segment.startsWith("~");
+	if (segments.some(unsafeSegment)) return null;
+
 	const owner = segments[0];
 	const repo = segments[1].replace(/\.git$/, "");
 

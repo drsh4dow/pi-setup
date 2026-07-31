@@ -4,158 +4,133 @@ import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, FileSystem } from "effect";
 import { openSessionResponseArchive } from "../response-archive.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
-	Effect.runPromise(effect.pipe(Effect.provide(BunFileSystem.layer)));
+const fs = Effect.runSync(
+	FileSystem.FileSystem.pipe(Effect.provide(BunFileSystem.layer)),
+);
 
-const withRoot = <A>(
-	use: (root: string, fs: FileSystem.FileSystem) => Promise<A>,
+const withRoot = <A, E>(
+	use: (root: string, fs: FileSystem.FileSystem) => Effect.Effect<A, E>,
 ): Promise<A> =>
-	run(
-		Effect.gen(function* () {
-			const fs = yield* FileSystem.FileSystem;
-			const root = yield* fs.makeTempDirectory({
-				prefix: "pi-web-access-archive-test-",
-			});
-			return yield* Effect.tryPromise(() => use(root, fs)).pipe(
-				Effect.ensuring(
-					fs.remove(root, { recursive: true, force: true }).pipe(Effect.ignore),
-				),
-			);
-		}),
+	Effect.runPromise(
+		Effect.acquireUseRelease(
+			fs.makeTempDirectory({ prefix: "pi-web-access-archive-test-" }),
+			(root) => use(root, fs),
+			(root) => fs.remove(root, { recursive: true, force: true }),
+		),
 	);
 
-const sessionArchivePath = async (root: string, fs: FileSystem.FileSystem) => {
-	const [sessionDirectory] = await Effect.runPromise(
-		fs.readDirectory(`${root}/pi-web-access`),
-	);
+const sessionArchivePath = Effect.fn("sessionArchivePath")(function* (
+	root: string,
+	fs: FileSystem.FileSystem,
+) {
+	const [sessionDirectory] = yield* fs.readDirectory(`${root}/pi-web-access`);
 	assert.ok(sessionDirectory);
 	return `${root}/pi-web-access/${sessionDirectory}`;
-};
+});
 
 test("archives text, retrieves selections, and evicts beyond twenty responses", () =>
-	withRoot(async (root, fs) => {
-		const archive = await Effect.runPromise(
-			openSessionResponseArchive("session-a", root),
-		);
-		const firstId = await Effect.runPromise(
-			archive.archive(["first item", "second item"]),
-		);
-		assert.deepEqual(await Effect.runPromise(archive.retrieve(firstId)), {
-			status: "found",
-			text: "first item\n\n---\n\nsecond item",
-			itemCount: 2,
-		});
-		assert.deepEqual(await Effect.runPromise(archive.retrieve(firstId, 1)), {
-			status: "found",
-			text: "second item",
-			itemCount: 1,
-		});
-		assert.deepEqual(await Effect.runPromise(archive.retrieve(firstId, 2)), {
-			status: "item-index-out-of-range",
-			itemCount: 2,
-		});
-
-		const retainedIds: string[] = [];
-		for (let index = 0; index < 20; index += 1) {
-			retainedIds.push(
-				await Effect.runPromise(archive.archive([`response ${index}`])),
-			);
-		}
-		assert.deepEqual(await Effect.runPromise(archive.retrieve(firstId)), {
-			status: "not-found",
-		});
-
-		const archivePath = await sessionArchivePath(root, fs);
-		const files = await Effect.runPromise(fs.readDirectory(archivePath));
-		assert.equal(files.length, 20);
-		assert.equal(
-			(await Effect.runPromise(fs.stat(archivePath))).mode & 0o777,
-			0o700,
-		);
-		assert.equal(
-			(await Effect.runPromise(fs.stat(`${archivePath}/${files[0]}`))).mode &
-				0o777,
-			0o600,
-		);
-
-		const reopened = await Effect.runPromise(
-			openSessionResponseArchive("session-a", root),
-		);
-		assert.deepEqual(await Effect.runPromise(reopened.retrieve(firstId)), {
-			status: "not-found",
-		});
-		for (const [index, responseId] of retainedIds.entries()) {
-			assert.deepEqual(await Effect.runPromise(reopened.retrieve(responseId)), {
+	withRoot((root, fs) =>
+		Effect.gen(function* () {
+			const archive = yield* openSessionResponseArchive("session-a", root);
+			const firstId = yield* archive.archive(["first item", "second item"]);
+			assert.deepEqual(yield* archive.retrieve(firstId), {
 				status: "found",
-				text: `response ${index}`,
+				text: "first item\n\n---\n\nsecond item",
+				itemCount: 2,
+			});
+			assert.deepEqual(yield* archive.retrieve(firstId, 1), {
+				status: "found",
+				text: "second item",
 				itemCount: 1,
 			});
-		}
-	}));
+			assert.deepEqual(yield* archive.retrieve(firstId, 2), {
+				status: "item-index-out-of-range",
+				itemCount: 2,
+			});
+			const retainedIds: string[] = [];
+			for (let index = 0; index < 20; index += 1) {
+				retainedIds.push(yield* archive.archive([`response ${index}`]));
+			}
+			assert.deepEqual(yield* archive.retrieve(firstId), {
+				status: "not-found",
+			});
+			const archivePath = yield* sessionArchivePath(root, fs);
+			const files = yield* fs.readDirectory(archivePath);
+			assert.equal(files.length, 20);
+			assert.equal((yield* fs.stat(archivePath)).mode & 0o777, 0o700);
+			assert.equal(
+				(yield* fs.stat(`${archivePath}/${files[0]}`)).mode & 0o777,
+				0o600,
+			);
+			const reopened = yield* openSessionResponseArchive("session-a", root);
+			assert.deepEqual(yield* reopened.retrieve(firstId), {
+				status: "not-found",
+			});
+			for (const [index, responseId] of retainedIds.entries()) {
+				assert.deepEqual(yield* reopened.retrieve(responseId), {
+					status: "found",
+					text: `response ${index}`,
+					itemCount: 1,
+				});
+			}
+		}),
+	));
 
 test("activation removes invalid entries and isolates sessions", () =>
-	withRoot(async (root, fs) => {
-		const archive = await Effect.runPromise(
-			openSessionResponseArchive("session-a", root),
-		);
-		const responseId = await Effect.runPromise(archive.archive(["kept"]));
-		const archivePath = await sessionArchivePath(root, fs);
-		await Effect.runPromise(
-			fs.writeFileString(`${archivePath}/invalid.json`, "not json\n"),
-		);
-		await Effect.runPromise(
-			fs.writeFileString(
+	withRoot((root, fs) =>
+		Effect.gen(function* () {
+			const archive = yield* openSessionResponseArchive("session-a", root);
+			const responseId = yield* archive.archive(["kept"]);
+			const archivePath = yield* sessionArchivePath(root, fs);
+			yield* fs.writeFileString(`${archivePath}/invalid.json`, "not json\n");
+			yield* fs.writeFileString(
 				`${archivePath}/legacy.json`,
 				'{"id":"legacy","type":"fetch","timestamp":1,"items":[]}\n',
-			),
-		);
-		await Effect.runPromise(
-			fs.writeFileString(`${archivePath}/.orphan.tmp`, "partial"),
-		);
-
-		const reopened = await Effect.runPromise(
-			openSessionResponseArchive("session-a", root),
-		);
-		assert.equal(
-			(await Effect.runPromise(reopened.retrieve(responseId))).status,
-			"found",
-		);
-		assert.deepEqual(await Effect.runPromise(fs.readDirectory(archivePath)), [
-			`${responseId}.json`,
-		]);
-
-		const otherSession = await Effect.runPromise(
-			openSessionResponseArchive("session-b", root),
-		);
-		assert.deepEqual(
-			await Effect.runPromise(otherSession.retrieve(responseId)),
-			{ status: "not-found" },
-		);
-	}));
+			);
+			yield* fs.writeFileString(`${archivePath}/.orphan.tmp`, "partial");
+			const reopened = yield* openSessionResponseArchive("session-a", root);
+			assert.equal((yield* reopened.retrieve(responseId)).status, "found");
+			assert.deepEqual(yield* fs.readDirectory(archivePath), [
+				`${responseId}.json`,
+			]);
+			const otherSession = yield* openSessionResponseArchive("session-b", root);
+			assert.deepEqual(yield* otherSession.retrieve(responseId), {
+				status: "not-found",
+			});
+		}),
+	));
 
 test("activation rejects a polluted archive directory before reading responses", () =>
-	withRoot(async (root, fs) => {
-		await Effect.runPromise(openSessionResponseArchive("session-a", root));
-		const archivePath = await sessionArchivePath(root, fs);
-		for (let index = 0; index < 41; index += 1) {
-			await Effect.runPromise(
-				fs.writeFileString(`${archivePath}/pollution-${index}`, "ignored"),
+	withRoot((root, fs) =>
+		Effect.gen(function* () {
+			yield* openSessionResponseArchive("session-a", root);
+			const archivePath = yield* sessionArchivePath(root, fs);
+			for (let index = 0; index < 41; index += 1) {
+				yield* fs.writeFileString(
+					`${archivePath}/pollution-${index}`,
+					"ignored",
+				);
+			}
+			const error = yield* openSessionResponseArchive("session-a", root).pipe(
+				Effect.flip,
 			);
-		}
-		await assert.rejects(
-			Effect.runPromise(openSessionResponseArchive("session-a", root)),
-			/exceeds 40 directory entries/,
-		);
-	}));
+			assert.match(String(error), /exceeds 40 directory entries/);
+		}),
+	));
 
 test("archive rejects empty responses and responses with too many items", () =>
-	withRoot(async (root) => {
-		const archive = await Effect.runPromise(
-			openSessionResponseArchive("session-a", root),
-		);
-		await assert.rejects(Effect.runPromise(archive.archive([])), /1-10/);
-		await assert.rejects(
-			Effect.runPromise(archive.archive(Array(11).fill("item"))),
-			/1-10/,
-		);
-	}));
+	withRoot((root) =>
+		Effect.gen(function* () {
+			const archive = yield* openSessionResponseArchive("session-a", root);
+			assert.match(
+				String(yield* archive.archive([]).pipe(Effect.flip)),
+				/1-10/,
+			);
+			assert.match(
+				String(
+					yield* archive.archive(Array(11).fill("item")).pipe(Effect.flip),
+				),
+				/1-10/,
+			);
+		}),
+	));

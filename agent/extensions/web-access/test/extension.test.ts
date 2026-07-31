@@ -4,7 +4,7 @@ import { afterEach, test } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { Effect, FileSystem, Path } from "effect";
+import { ConfigProvider, Effect, FileSystem, Path } from "effect";
 import extension from "../index.ts";
 
 const fs = Effect.runSync(
@@ -12,7 +12,7 @@ const fs = Effect.runSync(
 );
 const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 const originalFetch = globalThis.fetch;
-const originalKey = process.env.EXA_API_KEY;
+const testConfig = ConfigProvider.fromUnknown({ EXA_API_KEY: "test-exa-key" });
 const sessionId = `extension-test-${process.pid}`;
 const failedSessionId = `extension-test-failed-${process.pid}`;
 const writeFailureSessionId = `extension-test-write-failed-${process.pid}`;
@@ -52,20 +52,62 @@ function loadExtension() {
 			tools.set(tool.name, tool as unknown as TestTool);
 		},
 	} as unknown as ExtensionAPI;
-	extension(api);
+	extension(api, testConfig);
 	return { tools, handlers };
 }
 
-afterEach(async () => {
-	globalThis.fetch = originalFetch;
-	if (originalKey === undefined) delete process.env.EXA_API_KEY;
-	else process.env.EXA_API_KEY = originalKey;
-	for (const id of [sessionId, failedSessionId, writeFailureSessionId]) {
-		await Effect.runPromise(
-			fs.remove(archivePath(id), { recursive: true, force: true }),
+const run = Effect.runPromise;
+
+const invokeTool = (
+	tool: TestTool,
+	callId: string,
+	params: Record<string, unknown>,
+) =>
+	Effect.tryPromise(() =>
+		tool.execute(callId, params, undefined, undefined, {}),
+	);
+
+const startSession = (handlers: Map<string, unknown>, id: string) =>
+	Effect.tryPromise(() => {
+		const start = handlers.get("session_start") as (
+			event: { type: "session_start"; reason: "startup" },
+			context: { sessionManager: { getSessionId(): string } },
+		) => Promise<void>;
+		return start(
+			{ type: "session_start", reason: "startup" },
+			{ sessionManager: { getSessionId: () => id } },
 		);
-	}
-});
+	});
+
+function useExaFetch(assertEndpoint = false) {
+	globalThis.fetch = (url) => {
+		if (assertEndpoint) {
+			assert.equal(String(url), "https://api.exa.ai/contents");
+		}
+		return Promise.resolve(
+			Response.json({
+				results: [
+					{
+						title: "Example",
+						url: "https://example.com",
+						text: "full extracted text",
+					},
+				],
+			}),
+		);
+	};
+}
+
+afterEach(() =>
+	run(
+		Effect.gen(function* () {
+			globalThis.fetch = originalFetch;
+			for (const id of [sessionId, failedSessionId, writeFailureSessionId]) {
+				yield* fs.remove(archivePath(id), { recursive: true, force: true });
+			}
+		}),
+	),
+);
 
 test("extension registers only the three agreed tools", () => {
 	const { tools } = loadExtension();
@@ -79,193 +121,113 @@ test("extension registers only the three agreed tools", () => {
 	assert.doesNotMatch(searchSchema, /provider|workflow/);
 });
 
-test("fetch and retrieval tools work through the registered interface", async () => {
-	process.env.EXA_API_KEY = "test-exa-key";
-	globalThis.fetch = async (url) => {
-		assert.equal(String(url), "https://api.exa.ai/contents");
-		return Response.json({
-			results: [
-				{
-					title: "Example",
-					url: "https://example.com",
-					text: "full extracted text",
-				},
-			],
-		});
-	};
+test("fetch and retrieval tools work through the registered interface", () =>
+	run(
+		Effect.gen(function* () {
+			useExaFetch(true);
+			const { tools, handlers } = loadExtension();
+			yield* startSession(handlers, sessionId);
 
-	const { tools, handlers } = loadExtension();
-	const sessionStart = handlers.get("session_start");
-	assert.equal(typeof sessionStart, "function");
-	await (
-		sessionStart as (
-			event: { type: "session_start"; reason: "startup" },
-			context: { sessionManager: { getSessionId(): string } },
-		) => Promise<void>
-	)(
-		{ type: "session_start", reason: "startup" },
-		{ sessionManager: { getSessionId: () => sessionId } },
-	);
-
-	const fetchTool = tools.get("fetch_content");
-	assert.ok(fetchTool);
-	const fetched = await fetchTool.execute(
-		"call-1",
-		{ url: "https://example.com" },
-		undefined,
-		undefined,
-		{},
-	);
-	assert.equal(fetched.details.successful, 1);
-	const fetchedText = fetched.content.find(
-		(item) => item.type === "text",
-	)?.text;
-	assert.match(fetchedText ?? "", /full extracted text/);
-
-	const responseId = fetched.details.responseId;
-	assert.equal(typeof responseId, "string");
-	const retrievalTool = tools.get("get_search_content");
-	assert.ok(retrievalTool);
-	const retrieved = await retrievalTool.execute(
-		"call-2",
-		{ responseId, itemIndex: 0 },
-		undefined,
-		undefined,
-		{},
-	);
-	const retrievedText = retrieved.content.find(
-		(item) => item.type === "text",
-	)?.text;
-	assert.match(retrievedText ?? "", /full extracted text/);
-});
-
-test("archive write failure preserves fetched content without emitting a response ID", async () => {
-	process.env.EXA_API_KEY = "test-exa-key";
-	globalThis.fetch = async () =>
-		Response.json({
-			results: [
-				{
-					title: "Example",
-					url: "https://example.com",
-					text: "full extracted text",
-				},
-			],
-		});
-
-	const { tools, handlers } = loadExtension();
-	const sessionStart = handlers.get("session_start") as (
-		event: { type: "session_start"; reason: "startup" },
-		context: { sessionManager: { getSessionId(): string } },
-	) => Promise<void>;
-	await sessionStart(
-		{ type: "session_start", reason: "startup" },
-		{ sessionManager: { getSessionId: () => writeFailureSessionId } },
-	);
-	await Effect.runPromise(
-		fs.remove(archivePath(writeFailureSessionId), {
-			recursive: true,
-			force: true,
+			const fetchTool = tools.get("fetch_content");
+			assert.ok(fetchTool);
+			const fetched = yield* invokeTool(fetchTool, "call-1", {
+				url: "https://example.com",
+			});
+			assert.equal(fetched.details.successful, 1);
+			const fetchedText = fetched.content.find(
+				(item) => item.type === "text",
+			)?.text;
+			assert.match(fetchedText ?? "", /full extracted text/);
+			const responseId = fetched.details.responseId;
+			assert.equal(typeof responseId, "string");
+			const retrievalTool = tools.get("get_search_content");
+			assert.ok(retrievalTool);
+			const retrieved = yield* invokeTool(retrievalTool, "call-2", {
+				responseId,
+				itemIndex: 0,
+			});
+			const retrievedText = retrieved.content.find(
+				(item) => item.type === "text",
+			)?.text;
+			assert.match(retrievedText ?? "", /full extracted text/);
 		}),
-	);
-	await Effect.runPromise(
-		fs.writeFileString(
-			archivePath(writeFailureSessionId),
-			"blocks response file creation",
-		),
-	);
+	));
 
-	const fetchTool = tools.get("fetch_content");
-	assert.ok(fetchTool);
-	const fetched = await fetchTool.execute(
-		"call-1",
-		{ url: "https://example.com" },
-		undefined,
-		undefined,
-		{},
-	);
-	assert.equal(fetched.details.successful, 1);
-	assert.equal(fetched.details.responseId, undefined);
-	assert.match(String(fetched.details.archiveError), /ENOTDIR/);
-	const text = fetched.content.find((item) => item.type === "text")?.text ?? "";
-	assert.match(text, /full extracted text/);
-	assert.match(text, /Archive error:/);
-	assert.doesNotMatch(text, /Response ID:/);
-});
+test("archive write failure preserves fetched content without emitting a response ID", () =>
+	run(
+		Effect.gen(function* () {
+			useExaFetch();
+			const { tools, handlers } = loadExtension();
+			yield* startSession(handlers, writeFailureSessionId);
+			yield* fs.remove(archivePath(writeFailureSessionId), {
+				recursive: true,
+				force: true,
+			});
+			yield* fs.writeFileString(
+				archivePath(writeFailureSessionId),
+				"blocks response file creation",
+			);
+			const fetchTool = tools.get("fetch_content");
+			assert.ok(fetchTool);
+			const fetched = yield* invokeTool(fetchTool, "call-1", {
+				url: "https://example.com",
+			});
+			assert.equal(fetched.details.successful, 1);
+			assert.equal(fetched.details.responseId, undefined);
+			assert.match(String(fetched.details.archiveError), /ENOTDIR/);
+			const text =
+				fetched.content.find((item) => item.type === "text")?.text ?? "";
+			assert.match(text, /full extracted text/);
+			assert.match(text, /Archive error:/);
+			assert.doesNotMatch(text, /Response ID:/);
+		}),
+	));
 
-test("failed activation clears the prior session and never emits a dead response ID", async () => {
-	process.env.EXA_API_KEY = "test-exa-key";
-	globalThis.fetch = async () =>
-		Response.json({
-			results: [
-				{
-					title: "Example",
-					url: "https://example.com",
-					text: "full extracted text",
-				},
-			],
-		});
+test("failed activation clears the prior session and never emits a dead response ID", () =>
+	run(
+		Effect.gen(function* () {
+			useExaFetch();
+			const { tools, handlers } = loadExtension();
+			yield* startSession(handlers, sessionId);
 
-	const { tools, handlers } = loadExtension();
-	const sessionStart = handlers.get("session_start") as (
-		event: { type: "session_start"; reason: "startup" },
-		context: { sessionManager: { getSessionId(): string } },
-	) => Promise<void>;
-	await sessionStart(
-		{ type: "session_start", reason: "startup" },
-		{ sessionManager: { getSessionId: () => sessionId } },
-	);
+			const fetchTool = tools.get("fetch_content");
+			const retrievalTool = tools.get("get_search_content");
+			assert.ok(fetchTool);
+			assert.ok(retrievalTool);
+			const first = yield* invokeTool(fetchTool, "call-1", {
+				url: "https://example.com",
+			});
+			assert.equal(typeof first.details.responseId, "string");
 
-	const fetchTool = tools.get("fetch_content");
-	const retrievalTool = tools.get("get_search_content");
-	assert.ok(fetchTool);
-	assert.ok(retrievalTool);
-	const first = await fetchTool.execute(
-		"call-1",
-		{ url: "https://example.com" },
-		undefined,
-		undefined,
-		{},
-	);
-	assert.equal(typeof first.details.responseId, "string");
+			yield* fs.writeFileString(
+				archivePath(failedSessionId),
+				"blocks directory creation",
+			);
+			yield* startSession(handlers, failedSessionId);
 
-	await Effect.runPromise(
-		fs.writeFileString(
-			archivePath(failedSessionId),
-			"blocks directory creation",
-		),
-	);
-	await sessionStart(
-		{ type: "session_start", reason: "startup" },
-		{ sessionManager: { getSessionId: () => failedSessionId } },
-	);
+			const unavailable = yield* invokeTool(retrievalTool, "call-2", {
+				responseId: first.details.responseId,
+			});
+			assert.match(
+				unavailable.content.find((item) => item.type === "text")?.text ?? "",
+				/Session Response Archive is unavailable/,
+			);
 
-	const unavailable = await retrievalTool.execute(
-		"call-2",
-		{ responseId: first.details.responseId },
-		undefined,
-		undefined,
-		{},
-	);
-	assert.match(
-		unavailable.content.find((item) => item.type === "text")?.text ?? "",
-		/Session Response Archive is unavailable/,
-	);
-
-	const unarchived = await fetchTool.execute(
-		"call-3",
-		{ url: "https://example.com" },
-		undefined,
-		undefined,
-		{},
-	);
-	assert.equal(unarchived.details.successful, 1);
-	assert.equal(unarchived.details.responseId, undefined);
-	assert.equal(
-		unarchived.details.archiveError,
-		"Session Response Archive is unavailable",
-	);
-	const text =
-		unarchived.content.find((item) => item.type === "text")?.text ?? "";
-	assert.match(text, /Archive error: Session Response Archive is unavailable/);
-	assert.doesNotMatch(text, /Response ID:/);
-});
+			const unarchived = yield* invokeTool(fetchTool, "call-3", {
+				url: "https://example.com",
+			});
+			assert.equal(unarchived.details.successful, 1);
+			assert.equal(unarchived.details.responseId, undefined);
+			assert.equal(
+				unarchived.details.archiveError,
+				"Session Response Archive is unavailable",
+			);
+			const text =
+				unarchived.content.find((item) => item.type === "text")?.text ?? "";
+			assert.match(
+				text,
+				/Archive error: Session Response Archive is unavailable/,
+			);
+			assert.doesNotMatch(text, /Response ID:/);
+		}),
+	));

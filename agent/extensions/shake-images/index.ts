@@ -14,7 +14,6 @@ import {
 	Layer,
 	ManagedRuntime,
 	Path,
-	Result,
 } from "effect";
 
 type AgentMessage = ContextEvent["messages"][number];
@@ -127,9 +126,20 @@ export const pruneImages = Effect.fn("pruneImages")(function* <E, R>(
 				nextContent.push(block);
 				continue;
 			}
-			const path =
-				sourcePaths.at(imageIndex) ??
-				(yield* materializeImage(block as ImageBlock));
+			let path = sourcePaths.at(imageIndex);
+			if (path === undefined) {
+				const materialized = yield* Effect.result(
+					materializeImage(block as ImageBlock),
+				);
+				if (materialized._tag === "Failure") {
+					// Pruning is best effort: an image that cannot be materialized
+					// stays in context instead of failing the whole hook.
+					imageIndex++;
+					nextContent.push(block);
+					continue;
+				}
+				path = materialized.success;
+			}
 			imageIndex++;
 			imagesToPrune--;
 			changed = true;
@@ -184,7 +194,9 @@ export default function shakeImagesExtension(pi: ExtensionAPI): void {
 					"image/webp": "webp",
 				} as Record<string, string>
 			)[image.mimeType] ?? "img";
-		const bytes = Result.getOrThrow(Encoding.decodeBase64(image.data));
+		const decoded = Encoding.decodeBase64(image.data);
+		if (decoded._tag === "Failure") return yield* decoded.failure;
+		const bytes = decoded.success;
 		const digest = yield* crypto.digest("SHA-256", bytes);
 		const file = path.join(
 			directory,
@@ -231,6 +243,6 @@ export default function shakeImagesExtension(pi: ExtensionAPI): void {
 					fs.remove(directory, { force: true, recursive: true }),
 				)
 			: Effect.void;
-		return runtime.runPromise(cleanup).then(() => runtime.dispose());
+		return runtime.runPromise(cleanup).finally(() => runtime.dispose());
 	});
 }

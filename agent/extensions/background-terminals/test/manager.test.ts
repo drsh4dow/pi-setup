@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 import assert from "node:assert/strict";
 import { Clock, Effect } from "effect";
 
@@ -57,7 +58,7 @@ test("captures stdout and stderr and classifies success and nonzero", async () =
 	assert.ok(completed);
 	assert.equal(completed.stdout.text, "out");
 	assert.equal(completed.stderr.text, "err");
-	await manager.shutdown();
+	await Effect.runPromise(manager.shutdown());
 });
 
 test("retains a UTF-8-safe newest 256 KiB tail with byte counts", async () => {
@@ -76,7 +77,7 @@ test("retains a UTF-8-safe newest 256 KiB tail with byte counts", async () => {
 		snapshot.stdout.truncatedBytes,
 	);
 	assert.ok(snapshot.stdout.truncatedBytes > 0);
-	await manager.shutdown();
+	await Effect.runPromise(manager.shutdown());
 });
 
 test("retains exact newest output after many small writes", async () => {
@@ -92,7 +93,7 @@ test("retains exact newest output after many small writes", async () => {
 	assert.equal(Buffer.byteLength(snapshot.stdout.text), RETAINED_BYTES);
 	assert.equal(snapshot.stdout.truncatedBytes, writes - RETAINED_BYTES);
 	assert.equal(snapshot.stdout.text.slice(-20), "45678901234567890123");
-	await manager.shutdown();
+	await Effect.runPromise(manager.shutdown());
 });
 
 test("prunes to the tracked bound without evicting running entries", async () => {
@@ -111,21 +112,22 @@ test("prunes to the tracked bound without evicting running entries", async () =>
 	assert.equal(manager.list().length, MAX_TRACKED);
 	const tracked = new Set(manager.list().map((entry) => entry.id));
 	assert.ok(running.every((run) => tracked.has(run.id)));
-	await manager.shutdown();
+	await Effect.runPromise(manager.shutdown());
 });
 
 test("repeated and overlapping kills settle once", async () => {
 	let notifications = 0;
 	const manager = new BackgroundTerminalManager(() => notifications++);
 	const run = manager.start({ command: "sleep 30", title: "repeat", cwd });
-	const [first, second] = await Promise.all([
-		manager.kill([run.id]),
-		manager.kill([run.id, run.id]),
-	]);
+	const [first, second] = await Effect.runPromise(
+		Effect.all([manager.kill([run.id]), manager.kill([run.id, run.id])], {
+			concurrency: "unbounded",
+		}),
+	);
 	assert.equal(first[0].state, "killed");
 	assert.equal(second[0].state, "killed");
 	assert.equal(notifications, 1);
-	await manager.shutdown();
+	await Effect.runPromise(manager.shutdown());
 });
 
 test("escalates SIGTERM and cleans the POSIX process group", {
@@ -143,7 +145,7 @@ test("escalates SIGTERM and cleans the POSIX process group", {
 	const childPid = Number(/child:(\d+)/.exec(running.stdout.text)?.[1]);
 	assert.ok(childPid);
 	const started = now();
-	await manager.kill([run.id]);
+	await Effect.runPromise(manager.kill([run.id]));
 	const snapshot = manager.get(run.id);
 	assert.equal(snapshot?.state, "killed");
 	assert.ok(now() - started >= 1_800);
@@ -151,7 +153,7 @@ test("escalates SIGTERM and cleans the POSIX process group", {
 	for (let attempt = 0; attempt < 50 && !processIsGone(childPid); attempt++)
 		await wait(20);
 	assert.ok(processIsGone(childPid));
-	await manager.shutdown();
+	await Effect.runPromise(manager.shutdown());
 });
 
 test("shutdown kills a process group after its shell exits", {
@@ -176,7 +178,7 @@ test("shutdown kills a process group after its shell exits", {
 		assert.ok(childPid);
 		assert.ok(run.pid && processIsGone(run.pid));
 		assert.ok(!processIsGone(childPid));
-		await manager.shutdown();
+		await Effect.runPromise(manager.shutdown());
 		for (let attempt = 0; attempt < 50 && !processIsGone(childPid); attempt++)
 			await wait(20);
 		assert.ok(processIsGone(childPid));
@@ -194,7 +196,7 @@ test("shutdown kills running processes without delivering completion", async () 
 	const manager = new BackgroundTerminalManager(() => notifications++);
 	const run = manager.start({ command: "sleep 30", title: "shutdown", cwd });
 	assert.ok(run.pid);
-	await manager.shutdown();
+	await Effect.runPromise(manager.shutdown());
 	assert.equal(manager.list().length, 0);
 	assert.equal(notifications, 0);
 	assert.ok(processIsGone(run.pid));
@@ -221,7 +223,7 @@ test("releases inherited pipe handles after bounded termination", {
 		assert.equal(entries.get(run.id)?.child.stdout?.destroyed, true);
 		assert.equal(entries.get(run.id)?.child.stderr?.destroyed, true);
 	} finally {
-		await manager.shutdown();
+		await Effect.runPromise(manager.shutdown());
 		if (escapedPid && !processIsGone(escapedPid)) {
 			try {
 				process.kill(escapedPid, "SIGKILL");
@@ -242,5 +244,5 @@ test("bounds settlement when descendants retain inherited pipes", {
 	const snapshot = await settled(manager, run.id, 5_000);
 	assert.equal(snapshot.state, "done");
 	assert.ok((snapshot.settledAt ?? 0) - snapshot.createdAt < 4_500);
-	await manager.shutdown();
+	await Effect.runPromise(manager.shutdown());
 });

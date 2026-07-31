@@ -11,7 +11,7 @@ import { Deferred, Effect, Fiber } from "effect";
 import type { DelegateSnapshot } from "../contract.ts";
 import { DelegateManager, type DelegateRequest } from "../manager.ts";
 import type { ChildSession } from "../runtime.ts";
-import { eventually } from "./eventually.ts";
+import { deferredPromise, eventually, yieldImmediate } from "./eventually.ts";
 
 const context = {
 	cwd: process.cwd(),
@@ -128,14 +128,6 @@ function harness(
 		},
 	});
 	return { manager, sessions, requests };
-}
-
-const yieldImmediate = Effect.callback<void>((resume) => {
-	setImmediate(() => resume(Effect.void));
-});
-
-function deferredPromise<A, E extends Error>(deferred: Deferred.Deferred<A, E>): Promise<A> {
-	return Effect.runPromise(Deferred.await(deferred));
 }
 
 function disposeAfter(gate: Deferred.Deferred<void>, child: ChildSession) {

@@ -157,7 +157,7 @@ export class BackgroundTerminalDelivery {
 			);
 		}
 		this.pending.set(snapshot.id, snapshot);
-		if (this.context.isIdle()) void Effect.runPromise(this.flush());
+		if (this.context.isIdle()) Effect.runFork(this.flush);
 	}
 	consume(ids: readonly string[]) {
 		for (const id of ids) {
@@ -198,68 +198,68 @@ export class BackgroundTerminalDelivery {
 	private scheduleRetry(attempt: number) {
 		if (this.lifecycle === "closed") return;
 		const generation = ++this.retryGeneration;
-		void Effect.runPromise(
+		Effect.runFork(
 			Effect.sleep(
 				RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)],
+			).pipe(
+				Effect.tap(() =>
+					this.retryGeneration === generation && this.context?.isIdle()
+						? this.flush
+						: Effect.void,
+				),
 			),
-		).then(() => {
-			if (this.retryGeneration === generation && this.context?.isIdle())
-				void Effect.runPromise(this.flush());
-		});
+		);
 	}
-	flush = () =>
-		Effect.sync(() => {
-			if (
-				this.flushState === "flushing" ||
-				this.lifecycle === "closed" ||
-				!this.context
-			)
-				return;
-			this.retryGeneration++;
-			this.flushState = "flushing";
-			try {
-				for (let sent = 0; sent < MAX_TRACKED; sent++) {
-					const batch = this.batch();
-					if (!batch) return;
-					try {
-						this.pi.sendMessage(
-							{
-								customType: "background-terminal-results",
-								content: batch.content,
-								display: true,
-								details: {
-									ids: batch.snapshots.map((snapshot) => snapshot.id),
-								},
+	flush = Effect.sync(() => {
+		if (
+			this.flushState === "flushing" ||
+			this.lifecycle === "closed" ||
+			!this.context
+		)
+			return;
+		this.retryGeneration++;
+		this.flushState = "flushing";
+		try {
+			for (let sent = 0; sent < MAX_TRACKED; sent++) {
+				const batch = this.batch();
+				if (!batch) return;
+				try {
+					this.pi.sendMessage(
+						{
+							customType: "background-terminal-results",
+							content: batch.content,
+							display: true,
+							details: {
+								ids: batch.snapshots.map((snapshot) => snapshot.id),
 							},
-							{
-								deliverAs: "followUp",
-								triggerTurn: batch.snapshots.some(
-									(snapshot) => snapshot.state !== "done",
-								),
-							},
-						);
-						this.consume(batch.snapshots.map((snapshot) => snapshot.id));
-					} catch (error) {
-						let attempt = 0;
-						for (const snapshot of batch.snapshots) {
-							attempt = (this.attempts.get(snapshot.id) ?? 0) + 1;
-							this.attempts.set(snapshot.id, attempt);
-							if (attempt === MAX_DELIVERY_ATTEMPTS)
-								this.markFailed(snapshot.id);
-						}
-						if (attempt < MAX_DELIVERY_ATTEMPTS) this.scheduleRetry(attempt);
-						else
-							this.reportError(
-								`[background-terminals] completion delivery failed for ${batch.snapshots.map((snapshot) => snapshot.id).join(", ")}; use bg_status to inspect retained results: ${sanitizeInline(String(error).slice(0, 512))}`,
-							);
-						return;
+						},
+						{
+							deliverAs: "followUp",
+							triggerTurn: batch.snapshots.some(
+								(snapshot) => snapshot.state !== "done",
+							),
+						},
+					);
+					this.consume(batch.snapshots.map((snapshot) => snapshot.id));
+				} catch (error) {
+					let attempt = 0;
+					for (const snapshot of batch.snapshots) {
+						attempt = (this.attempts.get(snapshot.id) ?? 0) + 1;
+						this.attempts.set(snapshot.id, attempt);
+						if (attempt === MAX_DELIVERY_ATTEMPTS) this.markFailed(snapshot.id);
 					}
+					if (attempt < MAX_DELIVERY_ATTEMPTS) this.scheduleRetry(attempt);
+					else
+						this.reportError(
+							`[background-terminals] completion delivery failed for ${batch.snapshots.map((snapshot) => snapshot.id).join(", ")}; use bg_status to inspect retained results: ${sanitizeInline(String(error).slice(0, 512))}`,
+						);
+					return;
 				}
-			} finally {
-				this.flushState = "idle";
 			}
-		});
-
+		} finally {
+			this.flushState = "idle";
+		}
+	});
 	clear(): TerminalSnapshot[] {
 		this.lifecycle = "closed";
 		this.context = undefined;
@@ -354,14 +354,11 @@ class BackgroundTerminalSession {
 	}
 
 	kill(client: symbol, ids: readonly string[]) {
-		const self = this;
-		return Effect.gen(function* () {
-			for (const id of ids) {
-				if (self.owners.get(id) !== client)
-					throw new Error(`Unknown terminal id "${id}".`);
-			}
-			return yield* self.manager.kill(ids);
-		});
+		for (const id of ids) {
+			if (this.owners.get(id) !== client)
+				throw new Error(`Unknown terminal id "${id}".`);
+		}
+		return this.manager.kill(ids);
 	}
 
 	consume(ids: readonly string[]) {
@@ -372,33 +369,33 @@ class BackgroundTerminalSession {
 		for (const client of this.clients.values()) client.updateStatus();
 	}
 
-	leave(id: symbol) {
-		const self = this;
-		return Effect.gen(function* () {
-			const client = self.clients.get(id);
-			if (!client) return;
-			client.delivery.clear();
-			self.clients.delete(id);
-			if (id !== self.owner) {
-				const held = self.list(id);
-				for (const snapshot of held) self.owners.delete(snapshot.id);
-				yield* self.manager.kill(
-					held
-						.filter((snapshot) => snapshot.state === "running")
-						.map((snapshot) => snapshot.id),
-				);
-				self.updateStatuses();
-				return;
-			}
+	leave = Effect.fn("BackgroundTerminalSession.leave")(function* (
+		this: BackgroundTerminalSession,
+		id: symbol,
+	) {
+		const client = this.clients.get(id);
+		if (!client) return;
+		client.delivery.clear();
+		this.clients.delete(id);
+		if (id !== this.owner) {
+			const held = this.list(id);
+			for (const snapshot of held) this.owners.delete(snapshot.id);
+			yield* this.manager.kill(
+				held
+					.filter((snapshot) => snapshot.state === "running")
+					.map((snapshot) => snapshot.id),
+			);
+			this.updateStatuses();
+			return;
+		}
 
-			self.lifecycle = "stopping";
-			if (activeTerminalSession === self) activeTerminalSession = undefined;
-			for (const remaining of self.clients.values()) remaining.delivery.clear();
-			self.clients.clear();
-			self.owners.clear();
-			yield* self.manager.shutdown();
-		});
-	}
+		this.lifecycle = "stopping";
+		if (activeTerminalSession === this) activeTerminalSession = undefined;
+		for (const remaining of this.clients.values()) remaining.delivery.clear();
+		this.clients.clear();
+		this.owners.clear();
+		yield* this.manager.shutdown();
+	});
 }
 
 let activeTerminalSession: BackgroundTerminalSession | undefined;
@@ -449,31 +446,29 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			},
 		}));
 	});
-	const leaveSession = (keepContext: boolean) =>
-		Effect.gen(function* () {
-			const joined = session;
-			session = undefined;
-			yield* Effect.sync(() => {
-				try {
-					if (context?.hasUI)
-						context.ui.setStatus("background-terminals", undefined);
-				} catch {}
-			});
-			lastStatus = null;
-			if (!keepContext) context = undefined;
-			if (joined) yield* joined.leave(clientId);
-			if (keepContext && context) {
-				delivery.setContext(context);
-				if (!activeTerminalSession)
-					activeTerminalSession = new BackgroundTerminalSession(
-						clientId,
-						client,
-					);
-				else activeTerminalSession.join(clientId, client);
-				session = activeTerminalSession;
-				updateStatus();
-			}
-		});
+	const leaveSession = Effect.fn("leaveSession")(function* (
+		keepContext: boolean,
+	) {
+		const joined = session;
+		session = undefined;
+		yield* Effect.try({
+			try: () =>
+				context?.hasUI &&
+				context.ui.setStatus("background-terminals", undefined),
+			catch: () => undefined,
+		}).pipe(Effect.ignore);
+		lastStatus = null;
+		if (!keepContext) context = undefined;
+		if (joined) yield* joined.leave(clientId);
+		if (keepContext && context) {
+			delivery.setContext(context);
+			if (!activeTerminalSession)
+				activeTerminalSession = new BackgroundTerminalSession(clientId, client);
+			else activeTerminalSession.join(clientId, client);
+			session = activeTerminalSession;
+			updateStatus();
+		}
+	});
 
 	pi.on("session_start", (_event, ctx) => {
 		context = ctx;
@@ -489,13 +484,11 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		updateStatus();
 	});
 	pi.on("agent_end", () =>
-		Effect.runPromise(
-			context && !context.hasUI && session?.isOwner(clientId)
-				? leaveSession(true)
-				: Effect.void,
-		),
+		context && !context.hasUI && session?.isOwner(clientId)
+			? Effect.runPromise(leaveSession(true))
+			: undefined,
 	);
-	pi.on("agent_settled", () => Effect.runPromise(delivery.flush()));
+	pi.on("agent_settled", () => Effect.runPromise(delivery.flush));
 	pi.on("session_shutdown", () => Effect.runPromise(leaveSession(false)));
 
 	const listText = (entries: TerminalSnapshot[]) => {
@@ -504,6 +497,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			: "No background terminals.";
 		return delivery.problem ? `${terminals}\n${delivery.problem}` : terminals;
 	};
+	const runSynchronous = <A>(evaluate: () => A) =>
+		Effect.runPromise(Effect.sync(evaluate));
 
 	pi.registerTool({
 		name: "bg_start",
@@ -527,16 +522,13 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 				Effect.gen(function* () {
 					const command = params.command.trim();
 					if (!command) throw new Error("command must not be empty.");
-					const { cwd, cwdIsDirectory } = yield* Effect.gen(function* () {
-						const fs = yield* FileSystem.FileSystem;
-						const path = yield* Path.Path;
-						const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
-						const cwdIsDirectory = yield* fs.stat(cwd).pipe(
-							Effect.map((info) => info.type === "Directory"),
-							Effect.orElseSucceed(() => false),
-						);
-						return { cwd, cwdIsDirectory };
-					}).pipe(Effect.provide(platformLayer));
+					const fs = yield* FileSystem.FileSystem;
+					const path = yield* Path.Path;
+					const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
+					const cwdIsDirectory = yield* fs.stat(cwd).pipe(
+						Effect.map((info) => info.type === "Directory"),
+						Effect.orElseSucceed(() => false),
+					);
 					if (!cwdIsDirectory)
 						throw new Error(
 							`working_dir is not a directory: ${sanitizeInline(cwd)}`,
@@ -559,13 +551,13 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 					return {
 						content: [
 							{
-								type: "text",
+								type: "text" as const,
 								text: `Started ${summary(snapshot)}\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
 							},
 						],
 						details: terminalMetadata(snapshot),
 					};
-				}),
+				}).pipe(Effect.provide(platformLayer)),
 			);
 		},
 	});
@@ -577,22 +569,20 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
 		executionMode: "parallel",
 		execute(_id, params) {
-			return Effect.runPromise(
-				Effect.sync(() => {
-					const terminalSession = currentSession();
-					const snapshot = terminalSession.get(clientId, params.id);
-					if (!snapshot)
-						throw new Error(
-							`Unknown terminal id "${sanitizeInline(params.id)}".`,
-						);
-					if (snapshot.state !== "running")
-						terminalSession.consume([snapshot.id]);
-					return {
-						content: [{ type: "text", text: formatTerminalReport(snapshot) }],
-						details: terminalMetadata(snapshot),
-					};
-				}),
-			);
+			return runSynchronous(() => {
+				const terminalSession = currentSession();
+				const snapshot = terminalSession.get(clientId, params.id);
+				if (!snapshot)
+					throw new Error(
+						`Unknown terminal id "${sanitizeInline(params.id)}".`,
+					);
+				if (snapshot.state !== "running")
+					terminalSession.consume([snapshot.id]);
+				return {
+					content: [{ type: "text", text: formatTerminalReport(snapshot) }],
+					details: terminalMetadata(snapshot),
+				};
+			});
 		},
 	});
 	pi.registerTool({
@@ -603,20 +593,18 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 		executionMode: "parallel",
 		execute() {
-			return Effect.runPromise(
-				Effect.sync(() => {
-					const entries = currentSession().list(clientId);
-					return {
-						content: [
-							{
-								type: "text",
-								text: listText(entries),
-							},
-						],
-						details: { terminals: entries.map(terminalMetadata) },
-					};
-				}),
-			);
+			return runSynchronous(() => {
+				const entries = currentSession().list(clientId);
+				return {
+					content: [
+						{
+							type: "text",
+							text: listText(entries),
+						},
+					],
+					details: { terminals: entries.map(terminalMetadata) },
+				};
+			});
 		},
 	});
 	pi.registerTool({
@@ -633,53 +621,44 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		executionMode: "parallel",
 		execute(_id, params, signal) {
 			const ids = [...new Set(params.ids)];
-			if (signal?.aborted)
-				return Promise.reject(
-					new Error("Kill aborted before termination started."),
-				);
 			const terminalSession = currentSession();
-			const work = Effect.runPromise(terminalSession.kill(clientId, ids));
+			const work = Effect.runPromise(
+				Effect.suspend(() => terminalSession.kill(clientId, ids)),
+			);
 			return Effect.runPromise(
-				Effect.gen(function* () {
-					if (signal?.aborted)
-						return yield* Effect.die(
-							new Error(
-								"Kill wait aborted; termination continues in the background.",
-							),
-						);
-					if (signal) {
-						yield* Effect.sleep(10);
-						if (signal.aborted)
-							return yield* Effect.die(
-								new Error(
-									"Kill wait aborted; termination continues in the background.",
-								),
-							);
-					}
-					const results = yield* Effect.promise(() => work);
-					terminalSession.consume(ids);
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: results
-									.map(
-										(result) =>
-											`${result.id} [${result.state}] ${sanitizeInline(result.title)}${result.killed ? " · killed" : " · already settled"}`,
-									)
-									.join("\n"),
+				Effect.promise(() => work).pipe(
+					Effect.map((results) => {
+						terminalSession.consume(ids);
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: results
+										.map(
+											(result) =>
+												`${result.id} [${result.state}] ${sanitizeInline(result.title)}${result.killed ? " · killed" : " · already settled"}`,
+										)
+										.join("\n"),
+								},
+							],
+							details: {
+								results: results.map((result) => ({
+									...result,
+									title: sanitizeInline(result.title),
+								})),
 							},
-						],
-						details: {
-							results: results.map((result) => ({
-								...result,
-								title: sanitizeInline(result.title),
-							})),
-						},
-					};
-				}),
+						};
+					}),
+				),
+				{ signal },
 			).catch((error) => {
-				throw sanitizeErrorForDisplay(error);
+				throw sanitizeErrorForDisplay(
+					signal?.aborted
+						? new Error(
+								"Kill wait aborted; termination continues in the background.",
+							)
+						: error,
+				);
 			});
 		},
 	});

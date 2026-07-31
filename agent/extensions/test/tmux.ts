@@ -13,6 +13,7 @@ import {
 	Option,
 	Path,
 	type PlatformError,
+	Schedule,
 	type Schema,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -21,25 +22,24 @@ const { execFileSync } = process.getBuiltinModule("child_process");
 const bunTestServices = BunChildProcessSpawner.layer.pipe(
 	Layer.provideMerge(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
 );
-const {
-	fs,
-	path: pathService,
-	spawner,
-} = Effect.runSync(
-	Effect.gen(function* () {
-		return {
-			fs: yield* FileSystem.FileSystem,
-			path: yield* Path.Path,
-			spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-		};
-	}).pipe(Effect.provide(bunTestServices)),
+const fs = Effect.runSync(
+	FileSystem.FileSystem.pipe(Effect.provide(BunFileSystem.layer)),
+);
+const pathService = Effect.runSync(
+	Path.Path.pipe(Effect.provide(BunPath.layer)),
+);
+const spawner = Effect.runSync(
+	ChildProcessSpawner.ChildProcessSpawner.pipe(Effect.provide(bunTestServices)),
 );
 
-const PANE_WIDTH = 200;
-const PANE_HEIGHT = 50;
-const POLL_INTERVAL_MS = 250;
 const DEFAULT_TIMEOUT_MS = 120_000;
-const READY_TIMEOUT_MS = 60_000;
+const pollUntilSome = <A, E, R>(
+	effect: Effect.Effect<Option.Option<A>, E, R>,
+) =>
+	effect.pipe(
+		Effect.repeat({ schedule: Schedule.spaced(250), until: Option.isSome }),
+		Effect.map(Option.getOrThrow),
+	);
 const REPOSITORY_AGENT_DIR = Effect.runSync(
 	pathService.fromFileUrl(new URL("../..", import.meta.url)),
 );
@@ -67,12 +67,9 @@ export interface PiSession {
 	readonly stderrPath: string;
 }
 
-export function runEffect<A, E>(effect: Effect.Effect<A, E>): () => Promise<A> {
-	return () => Effect.runPromise(effect);
-}
-
 type TestEffectError =
 	| Cause.TimeoutError
+	| Config.ConfigError
 	| PlatformError.PlatformError
 	| Schema.SchemaError;
 
@@ -80,12 +77,11 @@ export function testEffect(
 	name: string,
 	body: () => Generator<Effect.Effect<unknown, TestEffectError>, void, never>,
 ): void {
-	test(name, runEffect(Effect.gen(body)));
+	test(name, () => Effect.runPromise(Effect.gen(body)));
 }
 
-const tmux = Effect.fn("tmux")(function* (...args: string[]) {
-	return yield* spawner.string(ChildProcess.make("tmux", args));
-});
+const tmux = (...args: string[]) =>
+	spawner.string(ChildProcess.make("tmux", args));
 
 /** tmux runs the pane command through a shell, so paths must be quoted. */
 function shellQuote(value: string): string {
@@ -95,35 +91,25 @@ function shellQuote(value: string): string {
 /** Unique per session so parallel test files never collide on a tmux name. */
 let sessionCounter = 0;
 
-export const readStderr = Effect.fn("readStderr")(function* (
-	session: PiSession,
-) {
-	return yield* fs
-		.readFileString(session.stderrPath)
-		.pipe(Effect.orElseSucceed(() => ""));
-});
+export const readStderr = (session: PiSession) =>
+	fs.readFileString(session.stderrPath).pipe(Effect.orElseSucceed(() => ""));
 
-export const isDead = Effect.fn("isDead")(function* (session: PiSession) {
-	return yield* tmux(
-		"list-panes",
-		"-t",
-		session.name,
-		"-F",
-		"#{pane_dead}",
-	).pipe(
+export const isDead = (session: PiSession) =>
+	tmux("list-panes", "-t", session.name, "-F", "#{pane_dead}").pipe(
 		Effect.map((output) => output.trim() === "1"),
 		Effect.orElseSucceed(() => true),
 	);
-});
 
-export const capture = Effect.fn("capture")(function* (
-	session: PiSession,
-	scrollback = false,
-) {
-	const args = ["capture-pane", "-p", "-J", "-t", session.name];
-	if (scrollback) args.push("-S", "-");
-	return yield* tmux(...args).pipe(Effect.orElseSucceed(() => ""));
-});
+export function capture(session: PiSession, scrollback = false) {
+	return tmux(
+		"capture-pane",
+		"-p",
+		"-J",
+		"-t",
+		session.name,
+		...(scrollback ? ["-S", "-"] : []),
+	).pipe(Effect.orElseSucceed(() => ""));
+}
 
 export const startPi = Effect.fn("startPi")(function* (
 	options: StartPiOptions = {},
@@ -190,9 +176,9 @@ export const startPi = Effect.fn("startPi")(function* (
 		"-s",
 		name,
 		"-x",
-		String(PANE_WIDTH),
+		"200",
 		"-y",
-		String(PANE_HEIGHT),
+		"50",
 		"-c",
 		cwd,
 		...Object.entries(environment).flatMap(([key, value]) => [
@@ -207,7 +193,7 @@ export const startPi = Effect.fn("startPi")(function* (
 
 	const session: PiSession = { name, cwd, agentDir, stderrPath };
 	yield* waitFor(session, /\$?\s*\d+(\.\d+)?%\/\d/, {
-		timeoutMs: options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+		timeoutMs: options.readyTimeoutMs ?? 60_000,
 		description: "pi footer to render (startup)",
 	}).pipe(Effect.onError(() => stop(session)));
 	return session;
@@ -221,24 +207,22 @@ export const waitFor = Effect.fn("waitFor")(function* (
 ) {
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const description = options.description ?? String(match);
-	const poll = Effect.gen(function* () {
-		const text = yield* capture(session, options.scrollback);
-		if (typeof match === "function" ? match(text) : match.test(text)) {
-			return { done: true, text };
-		}
-		if (yield* isDead(session)) {
-			return yield* Effect.die(
-				new Error(
-					`pi exited before ${description}\n` +
-						`--- stderr ---\n${yield* readStderr(session)}\n--- pane ---\n${text}`,
-				),
-			);
-		}
-		yield* Effect.sleep(POLL_INTERVAL_MS);
-		return { done: false, text };
-	}).pipe(
-		Effect.repeat({ until: ({ done }) => done }),
-		Effect.map(({ text }) => text),
+	const poll = pollUntilSome(
+		Effect.gen(function* () {
+			const text = yield* capture(session, options.scrollback);
+			if (typeof match === "function" ? match(text) : match.test(text)) {
+				return Option.some(text);
+			}
+			if (yield* isDead(session)) {
+				return yield* Effect.die(
+					new Error(
+						`pi exited before ${description}\n` +
+							`--- stderr ---\n${yield* readStderr(session)}\n--- pane ---\n${text}`,
+					),
+				);
+			}
+			return Option.none<string>();
+		}),
 	);
 
 	return yield* poll.pipe(
@@ -267,12 +251,8 @@ export const prompt = Effect.fn("prompt")(function* (
 	yield* tmux("send-keys", "-t", session.name, "Enter");
 });
 
-export const sendKeys = Effect.fn("sendKeys")(function* (
-	session: PiSession,
-	...keys: string[]
-) {
-	yield* tmux("send-keys", "-t", session.name, ...keys);
-});
+export const sendKeys = (session: PiSession, ...keys: string[]) =>
+	tmux("send-keys", "-t", session.name, ...keys).pipe(Effect.asVoid);
 
 /** Cumulative run time emitted at agent_end. */
 export function sessionElapsedSeconds(pane: string): number | undefined {
@@ -305,20 +285,19 @@ export const waitForFile = Effect.fn("waitForFile")(function* (
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 ) {
 	const filePath = pathService.join(session.cwd, relative);
-	const poll = Effect.gen(function* () {
-		const content = yield* fs.readFileString(filePath).pipe(Effect.option);
-		if (Option.isSome(content)) return content.value;
-		if (yield* isDead(session)) {
-			return yield* Effect.die(
-				new Error(
-					`pi exited before writing ${relative}\n--- stderr ---\n${yield* readStderr(session)}`,
-				),
-			);
-		}
-		yield* Effect.sleep(POLL_INTERVAL_MS);
-	}).pipe(
-		Effect.repeat({ until: (content) => content !== undefined }),
-		Effect.map((content) => content as string),
+	const poll = pollUntilSome(
+		Effect.gen(function* () {
+			const content = yield* fs.readFileString(filePath).pipe(Effect.option);
+			if (Option.isSome(content)) return content;
+			if (yield* isDead(session)) {
+				return yield* Effect.die(
+					new Error(
+						`pi exited before writing ${relative}\n--- stderr ---\n${yield* readStderr(session)}`,
+					),
+				);
+			}
+			return Option.none<string>();
+		}),
 	);
 
 	return yield* poll.pipe(
@@ -336,12 +315,8 @@ export const waitForFile = Effect.fn("waitForFile")(function* (
 	);
 });
 
-export const workspaceFile = Effect.fn("workspaceFile")(function* (
-	session: PiSession,
-	relative: string,
-) {
-	return yield* fs.readFileString(pathService.join(session.cwd, relative));
-});
+export const workspaceFile = (session: PiSession, relative: string) =>
+	fs.readFileString(pathService.join(session.cwd, relative));
 
 export const stop = Effect.fn("stop")(function* (session: PiSession) {
 	yield* tmux("kill-session", "-t", session.name).pipe(Effect.ignore);
@@ -358,12 +333,16 @@ export function setupPiSession<E = never>(
 	initialize?: (session: PiSession) => Effect.Effect<void, E>,
 ): void {
 	let session: PiSession | undefined;
-	Effect.gen(function* () {
-		const value = yield* startPi();
-		session = value;
-		setSession(value);
-		if (initialize) yield* initialize(value);
-	}).pipe(runEffect, before);
+	before(() =>
+		Effect.runPromise(
+			Effect.gen(function* () {
+				const value = yield* startPi();
+				session = value;
+				setSession(value);
+				if (initialize) yield* initialize(value);
+			}),
+		),
+	);
 	after(() => (session ? Effect.runPromise(stop(session)) : undefined));
 }
 

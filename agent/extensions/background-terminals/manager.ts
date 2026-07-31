@@ -13,6 +13,8 @@ const PIPE_GRACE_MS = 1_000;
 const CLOSE_GRACE_MS = 750;
 const TASKKILL_GRACE_MS = 1_000;
 const GROUP_CHECK_MS = 100;
+const schedule = (delayMs: number, action: () => void) =>
+	Effect.runFork(Effect.delay(Effect.sync(action), delayMs));
 
 export type TerminalState = "running" | "done" | "failed" | "killed";
 export interface OutputTail {
@@ -119,7 +121,7 @@ interface Entry {
 	killSignaled: boolean;
 	pipeGeneration: number;
 	groupGeneration: number;
-	termination?: Effect.Effect<void>;
+	termination?: Deferred.Deferred<void>;
 	settled: Deferred.Deferred<void>;
 }
 
@@ -186,13 +188,12 @@ export class BackgroundTerminalManager {
 				: { file: "/bin/sh", args: ["-c", options.command] };
 		const child = spawn(invocation.file, invocation.args, {
 			cwd: options.cwd,
-			env: process.env,
 			stdio: ["ignore", "pipe", "pipe"],
 			detached: process.platform !== "win32",
 			windowsHide: true,
 		});
 		const id = this.allocateId();
-		const settled = Effect.runSync(Deferred.make<void>());
+		const settled = Deferred.makeUnsafe<void>();
 		const entry: Entry = {
 			snapshot: {
 				id,
@@ -224,13 +225,13 @@ export class BackgroundTerminalManager {
 			entry.snapshot.exitCode = code ?? undefined;
 			entry.snapshot.signal = signal ?? undefined;
 			const generation = ++entry.pipeGeneration;
-			void Effect.runPromise(Effect.sleep(PIPE_GRACE_MS)).then(() => {
+			schedule(PIPE_GRACE_MS, () => {
 				if (
 					entry.pipeGeneration === generation &&
 					!entry.closed &&
 					entry.snapshot.state === "running"
 				)
-					void Effect.runPromise(this.terminate(entry, false));
+					Effect.runFork(this.terminate(entry, false));
 			});
 		});
 		child.once("close", (code, signal) => {
@@ -260,7 +261,7 @@ export class BackgroundTerminalManager {
 			return;
 		}
 		const generation = ++entry.groupGeneration;
-		void Effect.runPromise(Effect.sleep(GROUP_CHECK_MS)).then(() => {
+		schedule(GROUP_CHECK_MS, () => {
 			if (entry.groupGeneration === generation)
 				this.settleWhenProcessGroupExits(entry);
 		});
@@ -276,7 +277,6 @@ export class BackgroundTerminalManager {
 				? "failed"
 				: "done";
 		entry.snapshot.settledAt = Effect.runSync(Clock.currentTimeMillis);
-		Effect.runSync(Deferred.succeed(entry.settled, undefined));
 		const snapshot = this.snapshot(entry);
 		try {
 			if (this.lifecycle === "running")
@@ -288,6 +288,7 @@ export class BackgroundTerminalManager {
 			// Notification failures do not own process lifecycle state.
 		}
 		this.prune();
+		Effect.runSync(Deferred.succeed(entry.settled, undefined));
 	}
 
 	private signalTree(entry: Entry, force: boolean): Effect.Effect<void> {
@@ -312,28 +313,25 @@ export class BackgroundTerminalManager {
 					Effect.sleep(TASKKILL_GRACE_MS).pipe(Effect.as(undefined)),
 				);
 				if (result === 0) return;
-				yield* Effect.sync(() => {
-					try {
-						killer.kill();
-					} catch {}
-					entry.snapshot.error = `taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`;
-					try {
-						entry.child.kill(force ? "SIGKILL" : "SIGTERM");
-					} catch {}
-				});
+				yield* Effect.try(() => killer.kill()).pipe(Effect.ignore);
+				entry.snapshot.error = `taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`;
+				yield* Effect.try(() =>
+					entry.child.kill(force ? "SIGKILL" : "SIGTERM"),
+				).pipe(Effect.ignore);
 			});
 		}
-		return Effect.sync(() => {
-			try {
-				if (entry.child.pid)
-					process.kill(-entry.child.pid, force ? "SIGKILL" : "SIGTERM");
-				else entry.child.kill(force ? "SIGKILL" : "SIGTERM");
-			} catch {
-				try {
-					entry.child.kill(force ? "SIGKILL" : "SIGTERM");
-				} catch {}
-			}
-		});
+		return Effect.try(() => {
+			if (entry.child.pid)
+				process.kill(-entry.child.pid, force ? "SIGKILL" : "SIGTERM");
+			else entry.child.kill(force ? "SIGKILL" : "SIGTERM");
+		}).pipe(
+			Effect.catch(() =>
+				Effect.try(() => entry.child.kill(force ? "SIGKILL" : "SIGTERM")).pipe(
+					Effect.ignore,
+				),
+			),
+			Effect.asVoid,
+		);
 	}
 
 	private waitForSettlement(entry: Entry, timeoutMs: number) {
@@ -341,27 +339,31 @@ export class BackgroundTerminalManager {
 	}
 
 	private terminate(entry: Entry, owned: boolean): Effect.Effect<void> {
-		if (entry.termination) return entry.termination;
+		if (entry.termination) return Deferred.await(entry.termination);
+		const termination = Deferred.makeUnsafe<void>();
+		entry.termination = termination;
 		const self = this;
-		entry.termination = Effect.gen(function* () {
-			if (entry.snapshot.state !== "running") return;
-			if (owned) entry.killSignaled = true;
-			yield* self.signalTree(entry, false);
-			yield* self.waitForSettlement(entry, TERM_GRACE_MS);
-			if (entry.snapshot.state === "running") {
-				yield* self.signalTree(entry, true);
-				yield* self.waitForSettlement(entry, CLOSE_GRACE_MS);
-			}
-			if (entry.snapshot.state === "running") {
-				entry.snapshot.error ??=
-					"stdio did not close after termination; output may be incomplete";
-				entry.child.stdout?.destroy();
-				entry.child.stderr?.destroy();
-				entry.child.unref();
-				self.settle(entry);
-			}
-		});
-		return entry.termination;
+		return Deferred.complete(
+			termination,
+			Effect.gen(function* () {
+				if (entry.snapshot.state !== "running") return;
+				if (owned) entry.killSignaled = true;
+				yield* self.signalTree(entry, false);
+				yield* self.waitForSettlement(entry, TERM_GRACE_MS);
+				if (entry.snapshot.state === "running") {
+					yield* self.signalTree(entry, true);
+					yield* self.waitForSettlement(entry, CLOSE_GRACE_MS);
+				}
+				if (entry.snapshot.state === "running") {
+					entry.snapshot.error ??=
+						"stdio did not close after termination; output may be incomplete";
+					entry.child.stdout?.destroy();
+					entry.child.stderr?.destroy();
+					entry.child.unref();
+					self.settle(entry);
+				}
+			}),
+		).pipe(Effect.andThen(Deferred.await(termination)));
 	}
 
 	kill = Effect.fn("BackgroundTerminalManager.kill")(function* (

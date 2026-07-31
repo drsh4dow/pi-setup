@@ -2,7 +2,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Cause, Effect } from "effect";
 import { truncateUtf8Window } from "../../lib/text.ts";
 import {
 	MAX_ACTIVITIES_PER_SOURCE,
@@ -18,6 +18,7 @@ import {
 	RUN_TOOL_NAME,
 	SESSION_TOOL_NAME,
 } from "./contract.ts";
+import { delegateError } from "./errors.ts";
 import {
 	formatProgress,
 	formatStatusParts,
@@ -55,6 +56,10 @@ export {
 
 const DELIVERY_RETRY_DELAYS_MS = [25, 100] as const;
 
+function textContent(text: string) {
+	return { type: "text" as const, text };
+}
+
 function delegateDetail(manager: DelegateManager, id: string) {
 	const snapshot = manager.list([id])[0];
 	const lines = [
@@ -77,7 +82,9 @@ function delegateDetail(manager: DelegateManager, id: string) {
 	return lines.join("\n");
 }
 
-export async function resultText(snapshots: DelegateSnapshot[]) {
+export const resultText = Effect.fn("resultText")(function* (
+	snapshots: DelegateSnapshot[],
+) {
 	const sections: string[] = [];
 	for (const snapshot of snapshots) {
 		let text = summary(snapshot);
@@ -94,8 +101,8 @@ export async function resultText(snapshots: DelegateSnapshot[]) {
 		}
 		sections.push(text);
 	}
-	return (await formatDelegateOutput(sections.join("\n\n---\n\n"))).text;
-}
+	return (yield* formatDelegateOutput(sections.join("\n\n---\n\n"))).text;
+});
 
 export class BackgroundDelivery {
 	// The product contract accepts unbounded aggregate delivery state so every admitted background run remains recoverable until the parent session clears it.
@@ -132,7 +139,7 @@ export class BackgroundDelivery {
 		if (this.retryTimer) cancelTimer(this.retryTimer);
 		this.retryTimer = undefined;
 		this.version++;
-		if (context.isIdle()) void this.flush();
+		if (context.isIdle()) Effect.runFork(this.flush());
 	}
 
 	clear() {
@@ -190,86 +197,104 @@ export class BackgroundDelivery {
 			});
 		}
 		this.version++;
-		if (this.context.isIdle()) void this.flush();
+		if (this.context.isIdle()) Effect.runFork(this.flush());
 	}
 
-	async flush() {
+	flush() {
 		const context = this.context;
 		if (this.flushing || this.retryTimer || !context || this.pending.size === 0)
-			return;
+			return Effect.void;
 		const entries = [...this.pending.values()].filter(
 			(entry) => !entry.exhausted,
 		);
-		if (entries.length === 0) return;
+		if (entries.length === 0) return Effect.void;
 		this.flushing = true;
 		const startVersion = this.version;
 		const snapshots = entries.map((entry) => entry.snapshot);
-		try {
-			const content = await this.render(snapshots);
-			if (
-				this.context !== context ||
-				entries.some((entry) => this.pending.get(entry.snapshot.id) !== entry)
-			) {
-				return;
-			}
-			this.pi.sendMessage(
-				{
-					customType: "delegate-results",
-					content: `[Background delegation results]\n\n${content}`,
-					display: true,
-					details: { ids: snapshots.map((snapshot) => snapshot.id) },
-				},
-				{ deliverAs: "followUp", triggerTurn: true },
-			);
-			this.consume(snapshots);
-		} catch (error) {
-			if (this.context !== context) return;
-			const exhausted: string[] = [];
-			let retryDelay: number | undefined;
-			for (const entry of entries) {
-				if (this.pending.get(entry.snapshot.id) !== entry) continue;
-				entry.attempts++;
-				if (entry.attempts > DELIVERY_RETRY_DELAYS_MS.length) {
-					entry.exhausted = true;
-					if (!entry.diagnosed) {
-						entry.diagnosed = true;
-						exhausted.push(entry.snapshot.id);
+		return Effect.gen(
+			function* (this: BackgroundDelivery) {
+				const outcome = yield* this.render(snapshots).pipe(
+					Effect.flatMap((content) =>
+						Effect.try({
+							try: () => {
+								if (
+									this.context !== context ||
+									entries.some(
+										(entry) => this.pending.get(entry.snapshot.id) !== entry,
+									)
+								) {
+									return;
+								}
+								this.pi.sendMessage(
+									{
+										customType: "delegate-results",
+										content: `[Background delegation results]\n\n${content}`,
+										display: true,
+										details: {
+											ids: snapshots.map((snapshot) => snapshot.id),
+										},
+									},
+									{ deliverAs: "followUp", triggerTurn: true },
+								);
+								this.consume(snapshots);
+							},
+							catch: delegateError,
+						}),
+					),
+					Effect.exit,
+				);
+				if (outcome._tag === "Success" || this.context !== context) return;
+				const exhausted: string[] = [];
+				let retryDelay: number | undefined;
+				for (const entry of entries) {
+					if (this.pending.get(entry.snapshot.id) !== entry) continue;
+					entry.attempts++;
+					if (entry.attempts > DELIVERY_RETRY_DELAYS_MS.length) {
+						entry.exhausted = true;
+						if (!entry.diagnosed) {
+							entry.diagnosed = true;
+							exhausted.push(entry.snapshot.id);
+						}
+					} else {
+						retryDelay = Math.min(
+							retryDelay ?? Number.POSITIVE_INFINITY,
+							DELIVERY_RETRY_DELAYS_MS[entry.attempts - 1],
+						);
 					}
-				} else {
-					retryDelay = Math.min(
-						retryDelay ?? Number.POSITIVE_INFINITY,
-						DELIVERY_RETRY_DELAYS_MS[entry.attempts - 1],
-					);
 				}
-			}
-			if (exhausted.length > 0) {
-				const evidence = String(error).replace(/\s+/g, " ").slice(0, 512);
-				for (const id of exhausted) {
-					Effect.runSync(
-						Effect.logError(
+				if (exhausted.length > 0) {
+					const evidence = String(Cause.squash(outcome.cause))
+						.replace(/\s+/g, " ")
+						.slice(0, 512);
+					for (const id of exhausted) {
+						yield* Effect.logError(
 							`[delegate] background delivery failed for ${id}; use delegate_session wait to recover retained results: ${evidence}`,
-						),
-					);
+						);
+					}
 				}
-			}
-			if (retryDelay !== undefined) {
-				this.retryTimer = scheduleTimer(() => {
-					this.retryTimer = undefined;
-					if (this.context?.isIdle()) void this.flush();
-				}, retryDelay);
-				this.retryTimer.unref?.();
-			}
-		} finally {
-			this.flushing = false;
-			if (
-				!this.retryTimer &&
-				this.version !== startVersion &&
-				this.context?.isIdle() &&
-				[...this.pending.values()].some((entry) => !entry.exhausted)
-			) {
-				void this.flush();
-			}
-		}
+				if (retryDelay !== undefined) {
+					this.retryTimer = scheduleTimer(() => {
+						this.retryTimer = undefined;
+						if (this.context?.isIdle()) Effect.runFork(this.flush());
+					}, retryDelay);
+					this.retryTimer.unref?.();
+				}
+			}.bind(this),
+		).pipe(
+			Effect.ensuring(
+				Effect.sync(() => {
+					this.flushing = false;
+					if (
+						!this.retryTimer &&
+						this.version !== startVersion &&
+						this.context?.isIdle() &&
+						[...this.pending.values()].some((entry) => !entry.exhausted)
+					) {
+						Effect.runFork(this.flush());
+					}
+				}),
+			),
+		);
 	}
 }
 
@@ -305,10 +330,10 @@ export default function delegateExtension(pi: ExtensionAPI) {
 	);
 
 	pi.on("session_start", (_event, ctx) => delivery.setContext(ctx));
-	pi.on("agent_settled", () => delivery.flush());
-	pi.on("session_shutdown", async () => {
+	pi.on("agent_settled", () => Effect.runPromise(delivery.flush()));
+	pi.on("session_shutdown", () => {
 		delivery.clear();
-		await manager.shutdown();
+		return Effect.runPromise(manager.shutdown());
 	});
 
 	pi.registerTool<typeof DelegateRunParams, DelegateSnapshot>({
@@ -326,71 +351,87 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		],
 		parameters: DelegateRunParams,
 		executionMode: "parallel",
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const reservation = params.background ? delivery.reserve() : undefined;
-			let snapshot: DelegateSnapshot;
-			try {
-				snapshot = manager.spawn({
-					task: params.task,
-					effort: params.effort,
-					outputFormat: params.output_format,
-					background: params.background,
-					cwd: params.cwd,
-					ctx,
-				});
-				if (reservation) delivery.attach(reservation, snapshot);
-			} catch (error) {
-				if (reservation) delivery.release(reservation);
-				throw error;
-			}
-			if (params.background) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: `${summary(snapshot)}\nResult will be delivered automatically; continue useful work and wait only when blocked.`,
+		execute(_toolCallId, params, signal, onUpdate, ctx) {
+			let spawnedId: string | undefined;
+			return Effect.runPromise(
+				Effect.gen(function* () {
+					const reservation = params.background
+						? delivery.reserve()
+						: undefined;
+					const snapshot = yield* Effect.try({
+						try: () => {
+							const spawned = manager.spawn({
+								task: params.task,
+								effort: params.effort,
+								outputFormat: params.output_format,
+								background: params.background,
+								cwd: params.cwd,
+								ctx,
+							});
+							spawnedId = spawned.id;
+							if (reservation) delivery.attach(reservation, spawned);
+							return spawned;
 						},
-					],
-					details: snapshot,
-				};
-			}
-			const unsubscribe = manager.subscribe((update) => {
-				if (update.id !== snapshot.id) return;
-				onUpdate?.({
-					content: [{ type: "text", text: `Delegating (${update.effort})...` }],
-					details: update,
-				});
-			});
-			try {
-				const [result] = await manager.wait([snapshot.id], signal);
-				if (!result.success) {
-					const reason = result.error ?? result.status;
-					const checkpoint = result.checkpoint
-						? `\n\nCheckpoint (child's last activity):\n${result.checkpoint}`
-						: "";
-					throw new Error(
-						`Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Use delegate_session wait with ids=["${result.id}"] to recover retained output.${checkpoint}`,
-					);
-				}
-				const output = await formatDelegateOutput(
-					result.output || "Delegated task completed without a final response.",
-					result.fullOutputFile,
-				);
-				return {
-					content: [{ type: "text", text: output.text }],
-					details: {
-						...result,
-						outputTruncated:
-							result.outputTruncated || output.truncation?.truncated,
-						fullOutputFile: result.fullOutputFile ?? output.fullOutputFile,
-					},
-				};
-			} catch (error) {
-				if (signal?.aborted) await manager.cancel([snapshot.id]);
-				throw error;
-			} finally {
-				unsubscribe();
-			}
+						catch: (error) => {
+							if (reservation) delivery.release(reservation);
+							return delegateError(error);
+						},
+					});
+					if (params.background) {
+						return {
+							content: [
+								textContent(
+									`${summary(snapshot)}\nResult will be delivered automatically; continue useful work and wait only when blocked.`,
+								),
+							],
+							details: snapshot,
+						};
+					}
+					const unsubscribe = manager.subscribe((update) => {
+						if (update.id !== snapshot.id) return;
+						onUpdate?.({
+							content: [textContent(`Delegating (${update.effort})...`)],
+							details: update,
+						});
+					});
+					try {
+						const [result] = yield* manager.wait([snapshot.id], signal);
+						if (!result.success) {
+							const reason = result.error ?? result.status;
+							const checkpoint = result.checkpoint
+								? `\n\nCheckpoint (child's last activity):\n${result.checkpoint}`
+								: "";
+							throw new Error(
+								`Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Use delegate_session wait with ids=["${result.id}"] to recover retained output.${checkpoint}`,
+							);
+						}
+						const output = yield* formatDelegateOutput(
+							result.output ||
+								"Delegated task completed without a final response.",
+							result.fullOutputFile,
+						);
+						return {
+							content: [textContent(output.text)],
+							details: {
+								...result,
+								outputTruncated:
+									result.outputTruncated || output.truncation?.truncated,
+								fullOutputFile: result.fullOutputFile ?? output.fullOutputFile,
+							},
+						};
+					} finally {
+						unsubscribe();
+					}
+				}).pipe(
+					Effect.ensuring(
+						Effect.suspend(() =>
+							signal?.aborted && spawnedId
+								? manager.cancel([spawnedId]).pipe(Effect.asVoid)
+								: Effect.void,
+						),
+					),
+				),
+			);
 		},
 		renderCall: renderDelegateCall,
 		renderResult: renderDelegateResult,
@@ -410,57 +451,58 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		],
 		parameters: DelegateSessionParams,
 		executionMode: "parallel",
-		async execute(_toolCallId, params, signal) {
-			if (params.action === "send") {
-				if (!params.id || !params.message) {
-					throw new Error("send requires id and message.");
-				}
-				const snapshot = await manager.send(params.id, params.message);
-				return {
-					content: [
-						{ type: "text", text: `Message sent. ${summary(snapshot)}` },
-					],
-					details: snapshot,
-				};
-			}
-			const ids = params.ids ?? [];
-			if (params.action === "list") {
-				const snapshots = manager.list();
-				const output = await formatDelegateOutput(
-					snapshots.length > 0
-						? snapshots.map(sessionSummary).join("\n")
-						: "No delegates are tracked.",
-				);
-				return {
-					content: [{ type: "text", text: output.text }],
-					details: { results: snapshots },
-				};
-			}
-			if (ids.length === 0)
-				throw new Error("Provide at least one delegate id.");
-			if (params.action === "wait") {
-				const snapshots = await manager.wait(ids, signal);
-				delivery.consume(snapshots);
-				return {
-					content: [{ type: "text", text: await resultText(snapshots) }],
-					details: { results: snapshots },
-				};
-			}
-			if (params.action === "cancel") {
-				const snapshots = await manager.cancel(ids);
-				delivery.consume(snapshots);
-				return {
-					content: [{ type: "text", text: await resultText(snapshots) }],
-					details: { results: snapshots },
-				};
-			}
-			const snapshots = manager.list(ids);
-			return {
-				content: [
-					{ type: "text", text: snapshots.map(sessionSummary).join("\n") },
-				],
-				details: { results: snapshots },
-			};
+		execute(_toolCallId, params, signal) {
+			return Effect.runPromise(
+				Effect.gen(function* () {
+					if (params.action === "send") {
+						if (!params.id || !params.message) {
+							throw new Error("send requires id and message.");
+						}
+						const snapshot = yield* manager.send(params.id, params.message);
+						return {
+							content: [textContent(`Message sent. ${summary(snapshot)}`)],
+							details: snapshot,
+						};
+					}
+					const ids = params.ids ?? [];
+					if (params.action === "list") {
+						const snapshots = manager.list();
+						const output = yield* formatDelegateOutput(
+							snapshots.length > 0
+								? snapshots.map(sessionSummary).join("\n")
+								: "No delegates are tracked.",
+						);
+						return {
+							content: [textContent(output.text)],
+							details: { results: snapshots },
+						};
+					}
+					if (ids.length === 0) {
+						throw new Error("Provide at least one delegate id.");
+					}
+					if (params.action === "wait") {
+						const snapshots = yield* manager.wait(ids, signal);
+						delivery.consume(snapshots);
+						return {
+							content: [textContent(yield* resultText(snapshots))],
+							details: { results: snapshots },
+						};
+					}
+					if (params.action === "cancel") {
+						const snapshots = yield* manager.cancel(ids);
+						delivery.consume(snapshots);
+						return {
+							content: [textContent(yield* resultText(snapshots))],
+							details: { results: snapshots },
+						};
+					}
+					const snapshots = manager.list(ids);
+					return {
+						content: [textContent(snapshots.map(sessionSummary).join("\n"))],
+						details: { results: snapshots },
+					};
+				}),
+			);
 		},
 		renderCall: renderDelegateSessionCall,
 		renderResult: renderDelegateSessionResult,

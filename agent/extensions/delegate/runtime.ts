@@ -11,7 +11,7 @@ import {
 	SessionManager,
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Config, Effect } from "effect";
 import {
 	CHILD_EXTENSION_PATHS_ENV,
 	type DelegateEffort,
@@ -20,7 +20,6 @@ import {
 	SESSION_TOOL_NAME,
 } from "./contract.ts";
 import { delegateError, errorMessage } from "./errors.ts";
-import { cancelTimer, scheduleTimer } from "./host-timers.ts";
 
 export const DELEGATION_TOOL_DENYLIST = [
 	RUN_TOOL_NAME,
@@ -45,58 +44,35 @@ export function thinkingForEffort(effort: DelegateEffort): DelegateThinking {
 export function selectChildToolNames(
 	tools: Pick<ToolInfo, "name">[],
 ): string[] {
-	const deny = new Set<string>(DELEGATION_TOOL_DENYLIST);
-	const selected: string[] = [];
-	const seen = new Set<string>();
-	for (const tool of tools) {
-		if (deny.has(tool.name) || seen.has(tool.name)) continue;
-		seen.add(tool.name);
-		selected.push(tool.name);
-	}
-	return selected;
+	const denied = new Set<string>(DELEGATION_TOOL_DENYLIST);
+	return [...new Set(tools.map((tool) => tool.name))].filter(
+		(name) => !denied.has(name),
+	);
 }
 
-function modelName(
+export function modelName(
 	model: { provider?: unknown; id?: unknown } | undefined,
 ): string | undefined {
-	if (
-		!model ||
-		typeof model.provider !== "string" ||
-		typeof model.id !== "string"
-	) {
-		return undefined;
-	}
-	return `${model.provider}/${model.id}`;
+	return typeof model?.provider === "string" && typeof model.id === "string"
+		? `${model.provider}/${model.id}`
+		: undefined;
 }
 
-export { modelName };
-
-interface DelegateModelSetting {
-	model?: string;
-	problem?: string;
-}
+type DelegateModelSetting = { model?: string; problem?: string };
 
 export function readDelegateModelSetting(
 	settingsPath = join(getAgentDir(), "settings.json"),
 ): DelegateModelSetting {
-	let raw: string;
+	let settings: unknown;
 	try {
-		raw = readFileSync(settingsPath, "utf8");
+		settings = JSON.parse(readFileSync(settingsPath, "utf8"));
 	} catch (error) {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
 			return {};
 		}
+		const action = error instanceof SyntaxError ? "parse" : "read";
 		return {
-			problem: `Could not read ${settingsPath}: ${errorMessage(error)}.`,
-		};
-	}
-
-	let settings: unknown;
-	try {
-		settings = JSON.parse(raw);
-	} catch (error) {
-		return {
-			problem: `Could not parse ${settingsPath}: ${errorMessage(error)}.`,
+			problem: `Could not ${action} ${settingsPath}: ${errorMessage(error)}.`,
 		};
 	}
 
@@ -175,17 +151,16 @@ export function resolveDelegateModel(
 }
 
 export function childExtensionPaths(
-	env: Record<string, string | undefined> = process.env,
+	env: Record<string, string | undefined>,
 ): string[] {
-	const seen = new Set<string>();
-	const paths: string[] = [];
-	for (const raw of (env[CHILD_EXTENSION_PATHS_ENV] ?? "").split(delimiter)) {
-		const path = raw.trim();
-		if (!path || seen.has(path)) continue;
-		seen.add(path);
-		paths.push(path);
-	}
-	return paths;
+	return [
+		...new Set(
+			(env[CHILD_EXTENSION_PATHS_ENV] ?? "")
+				.split(delimiter)
+				.map((path) => path.trim())
+				.filter(Boolean),
+		),
+	];
 }
 
 export const createChild = Effect.fn("createChild")(function* (
@@ -194,12 +169,17 @@ export const createChild = Effect.fn("createChild")(function* (
 	thinking: DelegateThinking,
 ) {
 	const services = yield* Effect.context<never>();
+	const extensionPaths = yield* Config.string(CHILD_EXTENSION_PATHS_ENV).pipe(
+		Config.withDefault(""),
+	);
 	const resourceLoader = yield* Effect.try({
 		try: () =>
 			new DefaultResourceLoader({
 				cwd,
 				agentDir: getAgentDir(),
-				additionalExtensionPaths: childExtensionPaths(),
+				additionalExtensionPaths: childExtensionPaths({
+					[CHILD_EXTENSION_PATHS_ENV]: extensionPaths,
+				}),
 				systemPrompt: fileURLToPath(new URL("./SYSTEM.md", import.meta.url)),
 				appendSystemPromptOverride: () => [],
 			}),
@@ -209,26 +189,30 @@ export const createChild = Effect.fn("createChild")(function* (
 		try: () => resourceLoader.reload(),
 		catch: delegateError,
 	});
-	const result = yield* Effect.tryPromise({
-		try: (signal) =>
-			createAgentSession({
-				cwd,
-				agentDir: getAgentDir(),
-				resourceLoader,
-				sessionManager: SessionManager.inMemory(cwd),
-				model,
-				thinkingLevel: thinking,
-				excludeTools: [...DELEGATION_TOOL_DENYLIST],
-			}).then(async (created) => {
-				if (!signal.aborted) return created;
-				await shutdownChild(created.session);
-				throw signal.reason ?? new Error("Child session creation aborted.");
-			}),
-		catch: delegateError,
+	const result = yield* Effect.callback<
+		Awaited<ReturnType<typeof createAgentSession>>,
+		ReturnType<typeof delegateError>
+	>((resume, signal) => {
+		createAgentSession({
+			cwd,
+			agentDir: getAgentDir(),
+			resourceLoader,
+			sessionManager: SessionManager.inMemory(cwd),
+			model,
+			thinkingLevel: thinking,
+			excludeTools: [...DELEGATION_TOOL_DENYLIST],
+		}).then(
+			(created) => {
+				if (!signal.aborted) resume(Effect.succeed(created));
+				else Effect.runForkWith(services)(shutdownChild(created.session));
+			},
+			(error) => resume(Effect.fail(delegateError(error))),
+		);
 	});
 	yield* Effect.tryPromise({
 		try: (signal) => {
-			const onAbort = () => void shutdownChild(result.session);
+			const onAbort = () =>
+				Effect.runForkWith(services)(shutdownChild(result.session));
 			signal.addEventListener("abort", onAbort, { once: true });
 			return result.session
 				.bindExtensions({
@@ -247,9 +231,7 @@ export const createChild = Effect.fn("createChild")(function* (
 				.finally(() => signal.removeEventListener("abort", onAbort));
 		},
 		catch: delegateError,
-	}).pipe(
-		Effect.tapError(() => Effect.promise(() => shutdownChild(result.session))),
-	);
+	}).pipe(Effect.tapError(() => shutdownChild(result.session)));
 
 	result.session.setActiveToolsByName(
 		selectChildToolNames(result.session.getAllTools()),
@@ -258,52 +240,35 @@ export const createChild = Effect.fn("createChild")(function* (
 });
 
 const CHILD_SHUTDOWN_MS = 7_500;
-const childShutdowns = new WeakMap<object, Promise<void>>();
+const childShutdowns = new WeakMap<object, Effect.Effect<void>>();
 
-function waitBounded(operation: Promise<unknown>, timeoutMs: number) {
-	let timer: ReturnType<typeof scheduleTimer> | undefined;
-	const timeout = new Promise<void>((resolve) => {
-		timer = scheduleTimer(resolve, timeoutMs);
-		timer.unref?.();
-	});
-	return Promise.race([
-		operation.then(
-			() => undefined,
-			() => undefined,
-		),
-		timeout,
-	])
-		.catch(() => {})
-		.finally(() => {
-			if (timer) cancelTimer(timer);
-		});
+function waitBounded(operation: Promise<unknown>) {
+	return Effect.promise(() => operation).pipe(
+		Effect.exit,
+		Effect.timeoutOption(CHILD_SHUTDOWN_MS),
+		Effect.asVoid,
+	);
 }
 
-export function shutdownChild(child: ChildSession): Promise<void> {
+export function shutdownChild(child: ChildSession): Effect.Effect<void> {
 	const existing = childShutdowns.get(child);
 	if (existing) return existing;
-	const shutdown = (async () => {
-		if (child.isStreaming) await waitBounded(child.abort(), CHILD_SHUTDOWN_MS);
-		try {
-			if (child.extensionRunner.hasHandlers("session_shutdown")) {
-				await waitBounded(
-					child.extensionRunner.emit({
-						type: "session_shutdown",
-						reason: "quit",
-					}),
-					CHILD_SHUTDOWN_MS,
-				);
-			}
-		} catch {
-			// Teardown must still dispose a child when an extension hook fails.
-		} finally {
-			try {
-				child.dispose();
-			} catch {
-				// Disposal is terminal and idempotent at this ownership seam.
-			}
-		}
-	})();
+	const shutdown = Effect.runSync(
+		Effect.cached(
+			Effect.gen(function* () {
+				if (child.isStreaming) yield* waitBounded(child.abort());
+				if (child.extensionRunner.hasHandlers("session_shutdown")) {
+					yield* waitBounded(
+						child.extensionRunner.emit({
+							type: "session_shutdown",
+							reason: "quit",
+						}),
+					);
+				}
+				yield* Effect.try(() => child.dispose()).pipe(Effect.ignore);
+			}),
+		),
+	);
 	childShutdowns.set(child, shutdown);
 	return shutdown;
 }

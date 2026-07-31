@@ -174,7 +174,7 @@ const startBunCallbackServer = Effect.fn("startBunCallbackServer")(function* (
 	const server = yield* Effect.tryPromise({
 		try: (signal) => runtime.runPromise(HttpServer.HttpServer, { signal }),
 		catch: (cause) => flowError("Callback server operation failed", cause),
-	}).pipe(Effect.onError(() => dispose.pipe(Effect.orDie)));
+	}).pipe(Effect.onError(() => Effect.ignore(dispose)));
 	if (server.address._tag !== "TcpAddress") {
 		yield* dispose;
 		return yield* flowError(CALLBACK_BIND_ERROR);
@@ -463,7 +463,7 @@ const loginAnthropic = Effect.fn("loginAnthropic")(function* (
 			csrfState,
 			server.redirectUri,
 		);
-	}).pipe(Effect.ensuring(server.close.pipe(Effect.orDie)));
+	}).pipe(Effect.ensuring(Effect.ignore(server.close)));
 
 	callbacks.onProgress?.("Exchanging authorization code for tokens...");
 	const tokenRequest = runTokenRequest("token exchange", {

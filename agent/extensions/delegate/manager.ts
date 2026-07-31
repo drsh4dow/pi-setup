@@ -63,7 +63,7 @@ interface Job {
 	child?: ChildSession;
 	unsubscribe?: () => void;
 	stopping?: boolean;
-	stopEffect?: Effect.Effect<void>;
+	stopTask?: Fiber.Fiber<void>;
 	completion: Deferred.Deferred<DelegateSnapshot>;
 	ownership: AbortController;
 	sendSemaphore: Semaphore.Semaphore;
@@ -124,14 +124,12 @@ function waitUntil(
 	effects: readonly Effect.Effect<unknown, unknown>[],
 	deadline: number,
 ) {
-	return Effect.all(effects.map(Effect.exit), {
-		concurrency: "unbounded",
-	}).pipe(
-		Effect.timeoutOption(
-			Math.max(0, deadline - Effect.runSync(Clock.currentTimeMillis)),
-		),
-		Effect.asVoid,
-	);
+	return Effect.gen(function* () {
+		const now = yield* Clock.currentTimeMillis;
+		yield* Effect.all(effects.map(Effect.exit), {
+			concurrency: "unbounded",
+		}).pipe(Effect.timeoutOption(Math.max(0, deadline - now)), Effect.asVoid);
+	});
 }
 
 export class DelegateManager {
@@ -215,10 +213,10 @@ export class DelegateManager {
 		this.notify(snapshot);
 		const task = Effect.runFork(
 			this.run(job).pipe(
-				Effect.catch((error) =>
+				Effect.catchCause((cause) =>
 					Effect.sync(() => {
 						if (job.status === "running" && !job.stopping) {
-							this.finalize(job, "error", errorMessage(error));
+							this.finalize(job, "error", errorMessage(Cause.squash(cause)));
 						}
 					}),
 				),
@@ -329,22 +327,24 @@ export class DelegateManager {
 		}
 		const child = job.child;
 		job.pendingSends++;
-		yield* job.sendSemaphore.withPermit(
-			Effect.gen(
-				function* (this: DelegateManager) {
-					if (
-						job.status !== "running" ||
-						job.child !== child ||
-						job.ownership.signal.aborted
-					) {
-						throw new Error(
-							`Delegate ${id} settled before the queued message could be sent.`,
-						);
-					}
-					yield* this.steerOwned(job, child, text);
-				}.bind(this),
-			).pipe(Effect.ensuring(Effect.sync(() => job.pendingSends--))),
-		);
+		yield* job.sendSemaphore
+			.withPermit(
+				Effect.gen(
+					function* (this: DelegateManager) {
+						if (
+							job.status !== "running" ||
+							job.child !== child ||
+							job.ownership.signal.aborted
+						) {
+							throw new Error(
+								`Delegate ${id} settled before the queued message could be sent.`,
+							);
+						}
+						yield* this.steerOwned(job, child, text);
+					}.bind(this),
+				),
+			)
+			.pipe(Effect.ensuring(Effect.sync(() => job.pendingSends--)));
 		const snapshot = this.snapshot(job);
 		this.notify(snapshot);
 		return snapshot;
@@ -516,10 +516,14 @@ export class DelegateManager {
 		job.hardTimer = undefined;
 	}
 
+	// The stop runs on its own root fiber so an interrupted observer (an
+	// aborted cancel, a shutdown deadline) cannot poison the shared stop for
+	// later callers; Fiber.join only attaches an observer.
 	private stopOwned(job: Job): Effect.Effect<void> {
-		if (job.stopEffect) return job.stopEffect;
-		job.stopEffect = Effect.runSync(Effect.cached(this.stop(job)));
-		return job.stopEffect;
+		return Effect.suspend(() => {
+			job.stopTask ??= Effect.runFork(this.stop(job));
+			return Fiber.join(job.stopTask);
+		});
 	}
 
 	private readonly stop = Effect.fn("DelegateManager.stop")(function* (

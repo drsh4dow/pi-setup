@@ -139,7 +139,9 @@ const writeSkillVisibility = Effect.fn("writeSkillVisibility")(function* (
 	const content = yield* FileSystem.FileSystem.use((fs) =>
 		fs.readFileString(filePath),
 	);
-	const nextContent = setSkillVisibility(content, hidden);
+	const nextContent = yield* Effect.try(() =>
+		setSkillVisibility(content, hidden),
+	);
 	if (nextContent !== content)
 		yield* FileSystem.FileSystem.use((fs) =>
 			fs.writeFileString(filePath, nextContent),

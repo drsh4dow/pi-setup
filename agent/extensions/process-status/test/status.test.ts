@@ -179,7 +179,7 @@ test("keeps active entries when a group reaches its display bound", () => {
 	assert.match(view.expanded, /1 omitted/);
 });
 
-test("renders compact lists, multiline details, and compounded worker cost", async () => {
+test("renders compact lists, multiline details, and compounded worker cost", () => {
 	const events = eventBus();
 	registerProcessStatusSource(
 		{ events },
@@ -282,8 +282,8 @@ test("renders compact lists, multiline details, and compounded worker cost", asy
 	);
 
 	const ctx = { mode: "tui", hasUI: true } as ExtensionCommandContext;
-	await handler?.("", ctx);
-	await handler?.("d1", ctx);
+	handler?.("", ctx);
+	handler?.("d1", ctx);
 	assert.equal(appended.length, 2);
 	assert.ok(renderer);
 	const theme = {

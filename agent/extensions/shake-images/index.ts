@@ -97,51 +97,57 @@ function sourcePathsForMessage(
 	);
 }
 
-export async function pruneImages(
+export function pruneImages(
 	messages: ContextEvent["messages"],
 	materializeImage: MaterializeImage,
 ): Promise<ContextEvent["messages"]> {
-	let imageCount = 0;
-	for (const message of messages)
-		for (const block of contentOf(message) ?? [])
-			if (isContentBlock(block) && block.type === "image") imageCount++;
-	let imagesToPrune = imageCount - 2;
-	if (imagesToPrune <= 0) return messages;
-	const toolPaths = readToolPaths(messages);
-	const transformed: ContextEvent["messages"] = [];
-	for (const message of messages) {
-		const content = contentOf(message);
-		if (!content) {
-			transformed.push(message);
-			continue;
-		}
-		const sourcePaths = sourcePathsForMessage(message, toolPaths);
-		let imageIndex = 0;
-		let changed = false;
-		const nextContent: unknown[] = [];
-		for (const block of content) {
-			if (
-				!isContentBlock(block) ||
-				block.type !== "image" ||
-				imagesToPrune <= 0
-			) {
-				nextContent.push(block);
-				continue;
+	return Effect.runPromise(
+		Effect.gen(function* () {
+			let imageCount = 0;
+			for (const message of messages)
+				for (const block of contentOf(message) ?? [])
+					if (isContentBlock(block) && block.type === "image") imageCount++;
+			let imagesToPrune = imageCount - 2;
+			if (imagesToPrune <= 0) return messages;
+			const toolPaths = readToolPaths(messages);
+			const transformed: ContextEvent["messages"] = [];
+			for (const message of messages) {
+				const content = contentOf(message);
+				if (!content) {
+					transformed.push(message);
+					continue;
+				}
+				const sourcePaths = sourcePathsForMessage(message, toolPaths);
+				let imageIndex = 0;
+				let changed = false;
+				const nextContent: unknown[] = [];
+				for (const block of content) {
+					if (
+						!isContentBlock(block) ||
+						block.type !== "image" ||
+						imagesToPrune <= 0
+					) {
+						nextContent.push(block);
+						continue;
+					}
+					const image = block as ImageBlock;
+					const path =
+						sourcePaths.at(imageIndex) ??
+						(yield* Effect.promise(() => materializeImage(image)));
+					imageIndex++;
+					imagesToPrune--;
+					changed = true;
+					nextContent.push({ type: "text", text: `Image: ${path}` });
+				}
+				transformed.push(
+					changed
+						? ({ ...message, content: nextContent } as unknown as AgentMessage)
+						: message,
+				);
 			}
-			const image = block as ImageBlock;
-			const path = sourcePaths[imageIndex] ?? (await materializeImage(image));
-			imageIndex++;
-			imagesToPrune--;
-			changed = true;
-			nextContent.push({ type: "text", text: `Image: ${path}` });
-		}
-		transformed.push(
-			changed
-				? ({ ...message, content: nextContent } as unknown as AgentMessage)
-				: message,
-		);
-	}
-	return transformed;
+			return transformed;
+		}),
+	);
 }
 
 export default function shakeImagesExtension(pi: ExtensionAPI): void {
@@ -204,26 +210,33 @@ export default function shakeImagesExtension(pi: ExtensionAPI): void {
 		);
 	pi.registerCommand("shake-images", {
 		description: "Keep only the latest two images in model context",
-		handler: async (_args, ctx) => {
+		handler: (_args, ctx) => {
 			enabled = true;
 			ctx.ui.notify("Image context pruned to the latest two images", "info");
+			return Promise.resolve();
 		},
 	});
-	pi.on("context", async (event) =>
+	pi.on("context", (event) =>
 		enabled
-			? { messages: await pruneImages(event.messages, materializeImage) }
+			? Effect.runPromise(
+					Effect.promise(() =>
+						pruneImages(event.messages, materializeImage),
+					).pipe(Effect.map((messages) => ({ messages }))),
+				)
 			: undefined,
 	);
-	pi.on("session_shutdown", async () => {
-		if (tempImagesDir) {
-			const directory = tempImagesDir;
-			tempImagesDir = undefined;
-			await runtime.runPromise(
-				FileSystem.FileSystem.use((fs) =>
-					fs.remove(directory, { force: true, recursive: true }),
-				),
-			);
-		}
-		await runtime.dispose();
-	});
+	pi.on("session_shutdown", () =>
+		Effect.runPromise(
+			Effect.gen(function* () {
+				if (tempImagesDir) {
+					const directory = tempImagesDir;
+					tempImagesDir = undefined;
+					yield* FileSystem.FileSystem.use((fs) =>
+						fs.remove(directory, { force: true, recursive: true }),
+					).pipe(Effect.provide(BunFileSystem.layer));
+				}
+				yield* Effect.promise(() => runtime.dispose());
+			}),
+		),
+	);
 }

@@ -6,8 +6,8 @@ import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import {
 	Clock,
+	Deferred,
 	Effect,
-	Fiber,
 	Layer,
 	ManagedRuntime,
 	Schema,
@@ -27,6 +27,8 @@ const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://api.anthropic.com/v1/oauth/token";
 const CALLBACK_PORT = 54_545;
 const CALLBACK_PATH = "/callback";
+const CALLBACK_BIND_ERROR =
+	"Anthropic OAuth callback server did not bind to TCP";
 const SCOPES =
 	"org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 const LOGIN_TIMEOUT_MS = 5 * 60_000;
@@ -51,6 +53,9 @@ class OAuthRequestError extends Schema.TaggedErrorClass<OAuthRequestError>()(
 	},
 ) {}
 
+const flowError = (message: string, cause?: unknown) =>
+	new OAuthRequestError({ message, cause });
+
 type TokenResponse = {
 	accessToken: string;
 	refreshToken?: string;
@@ -59,26 +64,9 @@ type TokenResponse = {
 
 type CallbackServer = {
 	redirectUri: string;
-	result: Promise<AuthorizationCode>;
-	close(): Promise<void>;
+	result: Effect.Effect<AuthorizationCode, OAuthRequestError>;
+	close: Effect.Effect<void, OAuthRequestError>;
 };
-
-async function generatePkce() {
-	const verifierBytes = new Uint8Array(96);
-	crypto.getRandomValues(verifierBytes);
-	const verifier = Buffer.from(verifierBytes).toString("base64url");
-	const digest = await crypto.subtle.digest(
-		"SHA-256",
-		new TextEncoder().encode(verifier),
-	);
-	return { verifier, challenge: Buffer.from(digest).toString("base64url") };
-}
-
-function generateState(): string {
-	const bytes = new Uint8Array(16);
-	crypto.getRandomValues(bytes);
-	return Buffer.from(bytes).toString("hex");
-}
 
 function parseAuthorizationInput(input: string): Partial<AuthorizationCode> {
 	const value = input.trim();
@@ -117,7 +105,7 @@ function handleCallback(
 	method: string,
 	requestUrl: string,
 	expectedState: string,
-	settle: (result: AuthorizationCode | Error) => void,
+	settle: (result: AuthorizationCode | OAuthRequestError) => void,
 ): { status: number; message: string } {
 	if (method !== "GET") return { status: 405, message: "Method not allowed" };
 
@@ -132,7 +120,7 @@ function handleCallback(
 		const description =
 			url.searchParams.get("error_description") ?? providerError;
 		if (state === expectedState) {
-			settle(new Error(`Anthropic authorization failed: ${description}`));
+			settle(flowError(`Anthropic authorization failed: ${description}`));
 		}
 		return { status: 400, message: `Authorization failed: ${description}` };
 	}
@@ -150,11 +138,11 @@ function handleCallback(
 	};
 }
 
-async function startBunCallbackServer(
+const startBunCallbackServer = Effect.fn("startBunCallbackServer")(function* (
 	expectedState: string,
 	port: number,
-	settle: (result: AuthorizationCode | Error) => void,
-): Promise<Omit<CallbackServer, "result">> {
+	settle: (result: AuthorizationCode | OAuthRequestError) => void,
+): Effect.fn.Return<Omit<CallbackServer, "result">, OAuthRequestError> {
 	const app = Effect.gen(function* () {
 		const request = yield* HttpServerRequest.HttpServerRequest;
 		const response = handleCallback(
@@ -179,28 +167,29 @@ async function startBunCallbackServer(
 			HttpServer.serve(app).pipe(Layer.provide(serverLayer)),
 		),
 	);
-	try {
-		const server = await runtime.runPromise(HttpServer.HttpServer);
-		if (server.address._tag !== "TcpAddress") {
-			throw new Error("Anthropic OAuth callback server did not bind to TCP");
-		}
-		return {
-			redirectUri: `http://localhost:${server.address.port}${CALLBACK_PATH}`,
-			close: () => runtime.dispose(),
-		};
-	} catch (error) {
-		await runtime.dispose();
-		throw error;
+	const dispose = Effect.tryPromise({
+		try: () => runtime.dispose(),
+		catch: (cause) => flowError("Callback server operation failed", cause),
+	});
+	const server = yield* Effect.tryPromise({
+		try: (signal) => runtime.runPromise(HttpServer.HttpServer, { signal }),
+		catch: (cause) => flowError("Callback server operation failed", cause),
+	}).pipe(Effect.onError(() => dispose.pipe(Effect.orDie)));
+	if (server.address._tag !== "TcpAddress") {
+		yield* dispose;
+		return yield* flowError(CALLBACK_BIND_ERROR);
 	}
-}
+	return {
+		redirectUri: `http://localhost:${server.address.port}${CALLBACK_PATH}`,
+		close: dispose,
+	};
+});
 
-async function startNodeCallbackServer(
+const startNodeCallbackServer = Effect.fn("startNodeCallbackServer")(function* (
 	expectedState: string,
 	port: number,
-	settle: (result: AuthorizationCode | Error) => void,
-): Promise<Omit<CallbackServer, "result">> {
-	// Node-based extension tests cannot instantiate BunHttpServer because Bun.serve
-	// is not present. Keep this host boundary local; production Bun uses Effect above.
+	settle: (result: AuthorizationCode | OAuthRequestError) => void,
+): Effect.fn.Return<Omit<CallbackServer, "result">, OAuthRequestError> {
 	const nodeHttp = process.getBuiltinModule("node:http");
 	const server = nodeHttp.createServer((request, response) => {
 		const result = handleCallback(
@@ -215,113 +204,121 @@ async function startNodeCallbackServer(
 		response.end(result.message);
 	});
 	server.maxConnections = MAX_CALLBACK_CONNECTIONS;
-	await new Promise<void>((resolve, reject) => {
-		const onError = (error: Error) => reject(error);
+	yield* Effect.callback<void, OAuthRequestError>((resume) => {
+		const onError = (cause: Error) =>
+			resume(Effect.fail(flowError("Failed to start callback server", cause)));
 		server.once("error", onError);
 		server.listen(port, "127.0.0.1", () => {
 			server.off("error", onError);
-			resolve();
+			resume(Effect.void);
 		});
+		return Effect.sync(() => server.close());
 	});
-	server.on("error", settle);
+	server.on("error", (cause) =>
+		settle(flowError("Callback server failed", cause)),
+	);
 	const address = server.address();
 	if (!address || typeof address === "string") {
 		server.close();
-		throw new Error("Anthropic OAuth callback server did not bind to TCP");
+		return yield* flowError(CALLBACK_BIND_ERROR);
 	}
 	return {
 		redirectUri: `http://localhost:${address.port}${CALLBACK_PATH}`,
-		close: () =>
-			new Promise((resolve, reject) => {
-				if (!server.listening) return resolve();
-				const forceClose = Effect.runFork(
-					Effect.sleep(SERVER_CLOSE_GRACE_MS).pipe(
-						Effect.andThen(Effect.sync(() => server.closeAllConnections())),
-					),
-				);
-				server.close((error) => {
-					Effect.runFork(Fiber.interrupt(forceClose));
-					if (error) reject(error);
-					else resolve();
-				});
+		close: Effect.callback<void, OAuthRequestError>((resume) => {
+			if (!server.listening) {
+				resume(Effect.void);
+				return;
+			}
+			server.close((cause) =>
+				resume(
+					cause
+						? Effect.fail(flowError("Failed to close callback server", cause))
+						: Effect.void,
+				),
+			);
+			return Effect.sync(() => server.closeAllConnections());
+		}).pipe(
+			Effect.timeoutOrElse({
+				duration: SERVER_CLOSE_GRACE_MS,
+				orElse: () => Effect.void,
 			}),
+		),
 	};
-}
+});
 
-async function startCallbackServer(
+const startCallbackServer = Effect.fn("startCallbackServer")(function* (
 	expectedState: string,
-): Promise<CallbackServer> {
-	let resolveResult!: (result: AuthorizationCode) => void;
-	let rejectResult!: (error: Error) => void;
-	let settled = false;
-	const result = new Promise<AuthorizationCode>((resolve, reject) => {
-		resolveResult = resolve;
-		rejectResult = reject;
-	});
-	const settle = (outcome: AuthorizationCode | Error) => {
-		if (settled) return;
-		settled = true;
-		if (outcome instanceof Error) rejectResult(outcome);
-		else resolveResult(outcome);
-	};
+): Effect.fn.Return<CallbackServer, OAuthRequestError> {
+	const deferred = yield* Deferred.make<AuthorizationCode, OAuthRequestError>();
+	const settle = (outcome: AuthorizationCode | OAuthRequestError) =>
+		Deferred.doneUnsafe(
+			deferred,
+			outcome instanceof Error ? Effect.fail(outcome) : Effect.succeed(outcome),
+		);
 	const start =
 		"Bun" in globalThis ? startBunCallbackServer : startNodeCallbackServer;
+	const server = yield* start(expectedState, CALLBACK_PORT, settle).pipe(
+		Effect.catch((error) =>
+			(error.cause as { code?: string } | undefined)?.code === "EADDRINUSE"
+				? start(expectedState, 0, settle)
+				: Effect.fail(error),
+		),
+	);
+	return { ...server, result: Deferred.await(deferred) };
+});
 
-	let server: Omit<CallbackServer, "result">;
-	try {
-		server = await start(expectedState, CALLBACK_PORT, settle);
-	} catch (error) {
-		if ((error as { code?: string }).code !== "EADDRINUSE") throw error;
-		server = await start(expectedState, 0, settle);
-	}
-	return { ...server, result };
-}
+const abortSignal = Effect.fn("abortSignal")((signal: AbortSignal) =>
+	Effect.callback<never, OAuthRequestError>((resume) => {
+		const onAbort = () => {
+			const message =
+				signal.reason instanceof DOMException &&
+				signal.reason.name === "TimeoutError"
+					? "Anthropic authentication timed out"
+					: "Login cancelled";
+			resume(Effect.fail(flowError(message)));
+		};
+		if (signal.aborted) onAbort();
+		else signal.addEventListener("abort", onAbort, { once: true });
+		return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+	}),
+);
 
-function cancellationError(signal: AbortSignal): Error {
-	return signal.reason instanceof DOMException &&
-		signal.reason.name === "TimeoutError"
-		? new Error("Anthropic authentication timed out")
-		: new Error("Login cancelled");
-}
-
-async function waitForAuthorization(
-	callbackResult: Promise<AuthorizationCode>,
+const waitForAuthorization = Effect.fn("waitForAuthorization")(function* (
+	callbackResult: Effect.Effect<AuthorizationCode, OAuthRequestError>,
 	callbacks: OAuthLoginCallbacks,
 	expectedState: string,
 	redirectUri: string,
-): Promise<AuthorizationCode> {
-	const timeout = AbortSignal.timeout(LOGIN_TIMEOUT_MS);
-	const signal = callbacks.signal
-		? AbortSignal.any([callbacks.signal, timeout])
-		: timeout;
-	let onAbort!: () => void;
-	const aborted = new Promise<never>((_, reject) => {
-		onAbort = () => reject(cancellationError(signal));
-		signal.addEventListener("abort", onAbort, { once: true });
-	});
-
-	try {
-		if (signal.aborted) throw cancellationError(signal);
-		const manualInput = callbacks.onManualCodeInput
-			? callbacks.onManualCodeInput()
-			: callbacks.onPrompt({
-					message: "Paste the authorization code or full redirect URL:",
-					placeholder: redirectUri,
-				});
-		const manualResult = manualInput.then((input): AuthorizationCode => {
+): Effect.fn.Return<AuthorizationCode, OAuthRequestError> {
+	const manualResult = Effect.tryPromise({
+		try: () =>
+			callbacks.onManualCodeInput
+				? callbacks.onManualCodeInput()
+				: callbacks.onPrompt({
+						message: "Paste the authorization code or full redirect URL:",
+						placeholder: redirectUri,
+					}),
+		catch: (cause) => flowError("Manual authorization failed", cause),
+	}).pipe(
+		Effect.flatMap((input) => {
 			const parsed = parseAuthorizationInput(input);
-			if (!parsed.code) throw new Error("Missing authorization code");
-			if (parsed.state && parsed.state !== expectedState) {
-				throw new Error("OAuth state mismatch");
-			}
-			return { code: parsed.code, state: expectedState };
-		});
-
-		return await Promise.race([callbackResult, manualResult, aborted]);
-	} finally {
-		signal.removeEventListener("abort", onAbort);
-	}
-}
+			if (!parsed.code)
+				return Effect.fail(flowError("Missing authorization code"));
+			if (parsed.state && parsed.state !== expectedState)
+				return Effect.fail(flowError("OAuth state mismatch"));
+			return Effect.succeed({ code: parsed.code, state: expectedState });
+		}),
+	);
+	const authorization = Effect.raceFirst(callbackResult, manualResult).pipe(
+		Effect.timeoutOrElse({
+			duration: LOGIN_TIMEOUT_MS,
+			orElse: () =>
+				Effect.fail(flowError("Anthropic authentication timed out")),
+		}),
+	);
+	return yield* callbacks.signal
+		? Effect.raceFirst(authorization, abortSignal(callbacks.signal))
+		: authorization;
+});
 
 const requestToken = Effect.fn("requestToken")(function* (
 	operation: string,
@@ -402,43 +399,48 @@ const requestToken = Effect.fn("requestToken")(function* (
 	};
 });
 
-const runTokenRequest = <A>(
+const runTokenRequest = (
 	operation: string,
-	effect: Effect.Effect<A, OAuthRequestError, HttpClient.HttpClient>,
-	options?: { signal?: AbortSignal },
+	body: Record<string, string>,
+	headers?: Record<string, string>,
 ) =>
-	Effect.runPromise(
-		effect.pipe(
-			Effect.timeout(REQUEST_TIMEOUT_MS),
-			Effect.mapError((cause) =>
-				Schema.is(OAuthRequestError)(cause)
-					? cause
-					: new OAuthRequestError({
-							message: `Anthropic ${operation} request failed`,
-							cause,
-						}),
-			),
-			Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
-			Effect.provide(Layer.fresh(FetchHttpClient.layer)),
+	requestToken(operation, body, headers).pipe(
+		Effect.timeout(REQUEST_TIMEOUT_MS),
+		Effect.mapError((cause) =>
+			Schema.is(OAuthRequestError)(cause)
+				? cause
+				: new OAuthRequestError({
+						message: `Anthropic ${operation} request failed`,
+						cause,
+					}),
 		),
-		options,
+		Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+		Effect.provide(Layer.fresh(FetchHttpClient.layer)),
 	);
 
-function credentialExpiry(expiresInSeconds: number): number {
+const credentialExpiry = Effect.fn("credentialExpiry")(function* (
+	expiresInSeconds: number,
+) {
 	const lifetime = expiresInSeconds * 1000;
-	const now = Effect.runSync(Clock.currentTimeMillis);
+	const now = yield* Clock.currentTimeMillis;
 	return now + lifetime - Math.min(EXPIRY_SKEW_MS, lifetime / 2);
-}
+});
 
-async function loginAnthropic(
+const loginAnthropic = Effect.fn("loginAnthropic")(function* (
 	callbacks: OAuthLoginCallbacks,
-): Promise<OAuthCredentials> {
-	const csrfState = generateState();
-	const { verifier, challenge } = await generatePkce();
-	const server = await startCallbackServer(csrfState);
-
-	let authorization: AuthorizationCode;
-	try {
+): Effect.fn.Return<OAuthCredentials, OAuthRequestError> {
+	const stateBytes = new Uint8Array(16);
+	crypto.getRandomValues(stateBytes);
+	const csrfState = Buffer.from(stateBytes).toString("hex");
+	const verifierBytes = new Uint8Array(96);
+	crypto.getRandomValues(verifierBytes);
+	const verifier = Buffer.from(verifierBytes).toString("base64url");
+	const digest = yield* Effect.promise(() =>
+		crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
+	);
+	const challenge = Buffer.from(digest).toString("base64url");
+	const server = yield* startCallbackServer(csrfState);
+	const authorization = yield* Effect.gen(function* () {
 		const params = new URLSearchParams({
 			code: "true",
 			client_id: CLIENT_ID,
@@ -455,71 +457,66 @@ async function loginAnthropic(
 				"Complete login in your browser. If the browser cannot reach this machine, paste the final redirect URL or authorization code.",
 		});
 		callbacks.onProgress?.("Waiting for browser authentication...");
-		authorization = await waitForAuthorization(
+		return yield* waitForAuthorization(
 			server.result,
 			callbacks,
 			csrfState,
 			server.redirectUri,
 		);
-	} finally {
-		await server.close();
-	}
+	}).pipe(Effect.ensuring(server.close.pipe(Effect.orDie)));
 
 	callbacks.onProgress?.("Exchanging authorization code for tokens...");
-	const token = await runTokenRequest(
-		"token exchange",
-		requestToken(
-			"token exchange",
-			{
-				grant_type: "authorization_code",
-				client_id: CLIENT_ID,
-				code: authorization.code,
-				state: authorization.state,
-				redirect_uri: server.redirectUri,
-				code_verifier: verifier,
-			},
-			undefined,
-		),
-		{ signal: callbacks.signal },
-	);
+	const tokenRequest = runTokenRequest("token exchange", {
+		grant_type: "authorization_code",
+		client_id: CLIENT_ID,
+		code: authorization.code,
+		state: authorization.state,
+		redirect_uri: server.redirectUri,
+		code_verifier: verifier,
+	});
+	const token = yield* callbacks.signal
+		? Effect.raceFirst(tokenRequest, abortSignal(callbacks.signal))
+		: tokenRequest;
 	if (!token.refreshToken) {
-		throw new Error("Anthropic token exchange response omitted refresh_token");
+		return yield* flowError(
+			"Anthropic token exchange response omitted refresh_token",
+		);
 	}
 
 	return {
 		access: token.accessToken,
 		refresh: token.refreshToken,
-		expires: credentialExpiry(token.expiresIn),
+		expires: yield* credentialExpiry(token.expiresIn),
 	};
-}
+});
 
 export const anthropicOAuth = {
 	name: "Anthropic (Claude Pro/Max)",
 	usesCallbackServer: true,
-	login: loginAnthropic,
-	async refreshToken(credentials) {
-		const token = await runTokenRequest(
-			"token refresh",
-			requestToken(
-				"token refresh",
-				{
-					grant_type: "refresh_token",
-					client_id: CLIENT_ID,
-					refresh_token: credentials.refresh,
-				},
-				{
-					"anthropic-beta": "oauth-2025-04-20",
-					"User-Agent": "anthropic-sdk-typescript/0.94.0 userOAuthProvider",
-				},
-			),
-		);
-		return {
-			...credentials,
-			access: token.accessToken,
-			refresh: token.refreshToken ?? credentials.refresh,
-			expires: credentialExpiry(token.expiresIn),
-		};
-	},
+	login: (callbacks) => Effect.runPromise(loginAnthropic(callbacks)),
+	refreshToken: (credentials) =>
+		Effect.runPromise(
+			Effect.gen(function* () {
+				const token = yield* runTokenRequest(
+					"token refresh",
+					{
+						grant_type: "refresh_token",
+						client_id: CLIENT_ID,
+						refresh_token: credentials.refresh,
+					},
+					{
+						"anthropic-beta": "oauth-2025-04-20",
+						"User-Agent": "anthropic-sdk-typescript/0.94.0 userOAuthProvider",
+					},
+				);
+				return {
+					...credentials,
+					access: token.accessToken,
+					refresh: token.refreshToken ?? credentials.refresh,
+					expires: yield* credentialExpiry(token.expiresIn),
+				};
+			}),
+		),
 	getApiKey(credentials) {
 		return credentials.access;
 	},

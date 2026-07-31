@@ -1,7 +1,7 @@
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunHttpClient from "@effect/platform-bun/BunHttpClient";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Config, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import {
 	HttpBody,
 	HttpClient,
@@ -20,6 +20,7 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_UPLOAD_BASE =
 	"https://generativelanguage.googleapis.com/upload/v1beta";
 export const DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview";
+const API_KEY_REQUIRED = "GEMINI_API_KEY is required for video analysis";
 
 const GeminiContentResponse = Schema.Struct({
 	candidates: Schema.optionalKey(
@@ -62,14 +63,16 @@ export interface VideoFile {
 	sizeBytes: number;
 }
 
-const apiKey: Effect.Effect<string, WebAccessError> = Effect.suspend(() => {
-	const value = process.env.GEMINI_API_KEY?.trim();
-	return value
-		? Effect.succeed(value)
-		: Effect.fail(
-				webAccessError("GEMINI_API_KEY is required for video analysis"),
-			);
-});
+const apiKey: Effect.Effect<string, WebAccessError> = Config.string(
+	"GEMINI_API_KEY",
+).pipe(
+	Effect.map((key) => key.trim()),
+	Effect.filterOrFail(
+		(key) => key.length > 0,
+		() => webAccessError(API_KEY_REQUIRED),
+	),
+	Effect.mapError(() => webAccessError(API_KEY_REQUIRED)),
+);
 
 function errorBody(
 	response: HttpClientResponse.HttpClientResponse,

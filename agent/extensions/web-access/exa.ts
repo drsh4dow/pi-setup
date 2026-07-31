@@ -1,5 +1,5 @@
 import * as BunHttpClient from "@effect/platform-bun/BunHttpClient";
-import { DateTime, Effect, Schema } from "effect";
+import { Config, DateTime, Effect, Schema } from "effect";
 import {
 	HttpBody,
 	HttpClient,
@@ -18,6 +18,8 @@ const API_BASE = "https://api.exa.ai";
 const REQUEST_TIMEOUT_MS = 60_000;
 const SEARCH_CONTENT_CHARS = 20_000;
 const FETCH_CONTENT_CHARS = 100_000;
+const API_KEY_REQUIRED =
+	"EXA_API_KEY is required for Exa search and URL extraction";
 
 const ExaResult = Schema.Struct({
 	id: Schema.optionalKey(Schema.String),
@@ -63,16 +65,16 @@ type ExaContentsResponse = typeof ExaContentsResponse.Type;
 
 const encodeJson = Schema.encodeEffect(Schema.UnknownFromJsonString);
 
-const apiKey: Effect.Effect<string, WebAccessError> = Effect.suspend(() => {
-	const key = process.env.EXA_API_KEY?.trim();
-	return key
-		? Effect.succeed(key)
-		: Effect.fail(
-				webAccessError(
-					"EXA_API_KEY is required for Exa search and URL extraction",
-				),
-			);
-});
+const apiKey: Effect.Effect<string, WebAccessError> = Config.string(
+	"EXA_API_KEY",
+).pipe(
+	Effect.map((key) => key.trim()),
+	Effect.filterOrFail(
+		(key) => key.length > 0,
+		() => webAccessError(API_KEY_REQUIRED),
+	),
+	Effect.mapError(() => webAccessError(API_KEY_REQUIRED)),
+);
 
 const post = Effect.fn("post")(function* <S extends Schema.Constraint>(
 	path: string,

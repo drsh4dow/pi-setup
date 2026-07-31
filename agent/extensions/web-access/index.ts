@@ -5,7 +5,7 @@ import type {
 	Theme,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { Effect } from "effect";
+import { ConfigProvider, Effect } from "effect";
 import { errorMessage } from "./errors.ts";
 import { searchExa } from "./exa.ts";
 import {
@@ -138,15 +138,7 @@ type SearchItem = SearchResult & {
 	error: string | null;
 };
 
-interface SearchDetails {
-	responseId?: string;
-	itemCount: number;
-	successful: number;
-	error?: string;
-	archiveError?: string;
-}
-
-interface FetchDetails {
+interface ToolResponseDetails {
 	responseId?: string;
 	itemCount: number;
 	successful: number;
@@ -302,12 +294,22 @@ function archiveResponse(
 	);
 }
 
-export default function webAccessExtension(pi: ExtensionAPI) {
+export default function webAccessExtension(
+	pi: ExtensionAPI,
+	configProvider = ConfigProvider.fromEnv(),
+) {
 	let responseArchive: SessionResponseArchive | null = null;
+	const run = <A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal) =>
+		Effect.runPromise(
+			effect.pipe(
+				Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
+			),
+			{ signal },
+		);
 
 	pi.on("session_start", (_event, context) => {
 		responseArchive = null;
-		return Effect.runPromise(
+		return run(
 			openSessionResponseArchive(context.sessionManager.getSessionId()).pipe(
 				Effect.tap((archive) =>
 					Effect.sync(() => {
@@ -326,7 +328,7 @@ export default function webAccessExtension(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", () => {
 		responseArchive = null;
-		return Effect.runPromise(clearCloneCache);
+		return run(clearCloneCache);
 	});
 
 	pi.registerTool({
@@ -338,70 +340,75 @@ export default function webAccessExtension(pi: ExtensionAPI) {
 			"Use for web research. Prefer 2-4 genuinely varied queries for broad questions.",
 		parameters: SearchParams,
 		executionMode: "sequential",
-		async execute(_toolCallId, params, signal, onUpdate) {
-			const normalized = normalizeSearch(params);
-			if ("error" in normalized) {
-				return textResult<SearchDetails>(`Error: ${normalized.error}`, {
-					itemCount: 0,
-					successful: 0,
-					error: normalized.error,
-				});
-			}
+		execute(_toolCallId, params, signal, onUpdate) {
+			return run(
+				Effect.gen(function* () {
+					const normalized = normalizeSearch(params);
+					if ("error" in normalized) {
+						return textResult<ToolResponseDetails>(
+							`Error: ${normalized.error}`,
+							{
+								itemCount: 0,
+								successful: 0,
+								error: normalized.error,
+							},
+						);
+					}
 
-			const items = await Effect.runPromise(
-				Effect.forEach(normalized.queries, (query, index) =>
-					Effect.sync(() =>
-						onUpdate?.({
-							content: [
-								{
-									type: "text",
-									text: `Searching ${index + 1}/${normalized.queries.length}: ${query}`,
-								},
-							],
-							details: { index, query },
-						}),
-					).pipe(
-						Effect.andThen(searchExa(query, normalized.options)),
-						Effect.map(
-							(result): SearchItem => ({
-								query,
-								...result,
-								error: null,
-							}),
-						),
-						Effect.catch((error) =>
-							Effect.succeed({
-								query,
-								answer: "",
-								sources: [],
-								content: [],
-								error: errorMessage(error),
-							}),
-						),
-					),
-				),
-				{ signal },
-			);
+					const items = yield* Effect.forEach(
+						normalized.queries,
+						(query, index) =>
+							Effect.sync(() =>
+								onUpdate?.({
+									content: [
+										{
+											type: "text",
+											text: `Searching ${index + 1}/${normalized.queries.length}: ${query}`,
+										},
+									],
+									details: { index, query },
+								}),
+							).pipe(
+								Effect.andThen(searchExa(query, normalized.options)),
+								Effect.map(
+									(result): SearchItem => ({
+										query,
+										...result,
+										error: null,
+									}),
+								),
+								Effect.catch((error) =>
+									Effect.succeed({
+										query,
+										answer: "",
+										sources: [],
+										content: [],
+										error: errorMessage(error),
+									}),
+								),
+							),
+					);
 
-			const { responseId, archiveError } = await Effect.runPromise(
-				archiveResponse(
-					responseArchive,
-					items.map((item) => formatSearchItem(item, true)),
-				),
+					const { responseId, archiveError } = yield* archiveResponse(
+						responseArchive,
+						items.map((item) => formatSearchItem(item, true)),
+					);
+					const successful = items.filter((item) => item.error === null).length;
+					const output = [
+						...items.map((item) => formatSearchItem(item, false)),
+						...(responseId ? [`Response ID: ${responseId}`] : []),
+						...(archiveError ? [`Archive error: ${archiveError}`] : []),
+					].join("\n\n---\n\n");
+					return textResult<ToolResponseDetails>(output, {
+						...(responseId ? { responseId } : {}),
+						itemCount: items.length,
+						successful,
+						...(successful === 0 ? { error: "All searches failed" } : {}),
+						...(archiveError ? { archiveError } : {}),
+					});
+				}),
+				signal,
 			);
-			const successful = items.filter((item) => item.error === null).length;
-			const output = [
-				...items.map((item) => formatSearchItem(item, false)),
-				...(responseId ? [`Response ID: ${responseId}`] : []),
-				...(archiveError ? [`Archive error: ${archiveError}`] : []),
-			].join("\n\n---\n\n");
-			return textResult<SearchDetails>(output, {
-				...(responseId ? { responseId } : {}),
-				itemCount: items.length,
-				successful,
-				...(successful === 0 ? { error: "All searches failed" } : {}),
-				...(archiveError ? { archiveError } : {}),
-			});
 		},
 		renderCall(args, theme) {
 			const count = args.queries?.length ?? (args.query ? 1 : 0);
@@ -414,7 +421,7 @@ export default function webAccessExtension(pi: ExtensionAPI) {
 		},
 		renderResult(result, options, theme) {
 			if (options.isPartial) return renderProgress(result, "Searching…", theme);
-			const details = result.details as SearchDetails | undefined;
+			const details = result.details as ToolResponseDetails | undefined;
 			if (!details) return new Text("Search finished", 0, 0);
 			const text = `${details.successful}/${details.itemCount} searches • ${details.responseId ?? details.archiveError ?? details.error ?? "not archived"}`;
 			return new Text(
@@ -434,63 +441,69 @@ export default function webAccessExtension(pi: ExtensionAPI) {
 			"Use to read URLs, repositories, PDFs, YouTube, or local videos. Pass the user's exact question as prompt for video analysis.",
 		parameters: FetchParams,
 		executionMode: "sequential",
-		async execute(_toolCallId, params, signal, onUpdate) {
-			const normalized = normalizeFetchParams(params as RawFetchParams);
-			if ("error" in normalized) {
-				return textResult<FetchDetails>(`Error: ${normalized.error}`, {
-					itemCount: 0,
-					successful: 0,
-					error: normalized.error,
-				});
-			}
-			onUpdate?.({
-				content: [
-					{
-						type: "text",
-						text: `Fetching ${normalized.urls.length} item${normalized.urls.length === 1 ? "" : "s"}`,
-					},
-				],
-				details: { itemCount: normalized.urls.length },
-			});
-
-			const items = await Effect.runPromise(
-				fetchContent(normalized.urls, normalized.options),
-				{ signal },
-			);
-			const { responseId, archiveError } = await Effect.runPromise(
-				archiveResponse(
-					responseArchive,
-					items.map((item) => formatFetchedItem(item, false)),
-				),
-			);
-			const successful = items.filter((item) => item.error === null).length;
-			const output = [
-				...items.map((item) => formatFetchedItem(item, true)),
-				...(responseId ? [`Response ID: ${responseId}`] : []),
-				...(archiveError ? [`Archive error: ${archiveError}`] : []),
-			].join("\n\n---\n\n");
-			const result: AgentToolResult<FetchDetails> = {
-				content: [{ type: "text", text: output }],
-				details: {
-					...(responseId ? { responseId } : {}),
-					itemCount: items.length,
-					successful,
-					...(successful === 0 ? { error: "All fetches failed" } : {}),
-					...(archiveError ? { archiveError } : {}),
-				},
-			};
-			for (const item of items) {
-				if (item.thumbnail)
-					result.content.push({ type: "image", ...item.thumbnail });
-				for (const frame of item.frames ?? []) {
-					result.content.push({
-						type: "image",
-						data: frame.data,
-						mimeType: frame.mimeType,
+		execute(_toolCallId, params, signal, onUpdate) {
+			return run(
+				Effect.gen(function* () {
+					const normalized = normalizeFetchParams(params as RawFetchParams);
+					if ("error" in normalized) {
+						return textResult<ToolResponseDetails>(
+							`Error: ${normalized.error}`,
+							{
+								itemCount: 0,
+								successful: 0,
+								error: normalized.error,
+							},
+						);
+					}
+					onUpdate?.({
+						content: [
+							{
+								type: "text",
+								text: `Fetching ${normalized.urls.length} item${normalized.urls.length === 1 ? "" : "s"}`,
+							},
+						],
+						details: { itemCount: normalized.urls.length },
 					});
-				}
-			}
-			return result;
+
+					const items = yield* fetchContent(
+						normalized.urls,
+						normalized.options,
+					);
+					const { responseId, archiveError } = yield* archiveResponse(
+						responseArchive,
+						items.map((item) => formatFetchedItem(item, false)),
+					);
+					const successful = items.filter((item) => item.error === null).length;
+					const output = [
+						...items.map((item) => formatFetchedItem(item, true)),
+						...(responseId ? [`Response ID: ${responseId}`] : []),
+						...(archiveError ? [`Archive error: ${archiveError}`] : []),
+					].join("\n\n---\n\n");
+					const result: AgentToolResult<ToolResponseDetails> = {
+						content: [{ type: "text", text: output }],
+						details: {
+							...(responseId ? { responseId } : {}),
+							itemCount: items.length,
+							successful,
+							...(successful === 0 ? { error: "All fetches failed" } : {}),
+							...(archiveError ? { archiveError } : {}),
+						},
+					};
+					for (const item of items) {
+						if (item.thumbnail)
+							result.content.push({ type: "image", ...item.thumbnail });
+						for (const frame of item.frames ?? []) {
+							result.content.push({
+								type: "image",
+								data: frame.data,
+								mimeType: frame.mimeType,
+							});
+						}
+					}
+					return result;
+				}),
+				signal,
+			);
 		},
 		renderCall(args, theme) {
 			const count = args.urls?.length ?? (args.url ? 1 : 0);
@@ -503,7 +516,7 @@ export default function webAccessExtension(pi: ExtensionAPI) {
 		},
 		renderResult(result, options, theme) {
 			if (options.isPartial) return renderProgress(result, "Fetching…", theme);
-			const details = result.details as FetchDetails | undefined;
+			const details = result.details as ToolResponseDetails | undefined;
 			if (!details) return new Text("Fetch finished", 0, 0);
 			const text = `${details.successful}/${details.itemCount} fetched • ${details.responseId ?? details.archiveError ?? details.error ?? "not archived"}`;
 			return new Text(
@@ -523,44 +536,49 @@ export default function webAccessExtension(pi: ExtensionAPI) {
 			"Use a response ID to retrieve archived full text, optionally selecting one item by zero-based index.",
 		parameters: GetContentParams,
 		executionMode: "sequential",
-		async execute(_toolCallId, params) {
-			if (!responseArchive) {
-				const error = "Session Response Archive is unavailable";
-				return textResult<GetContentDetails>(`Error: ${error}`, {
-					responseId: params.responseId,
-					itemCount: 0,
-					error,
-				});
-			}
+		execute(_toolCallId, params) {
+			return run(
+				Effect.gen(function* () {
+					if (!responseArchive) {
+						const error = "Session Response Archive is unavailable";
+						return textResult<GetContentDetails>(`Error: ${error}`, {
+							responseId: params.responseId,
+							itemCount: 0,
+							error,
+						});
+					}
 
-			const result = await Effect.runPromise(
-				responseArchive.retrieve(params.responseId, params.itemIndex),
+					const result = yield* responseArchive.retrieve(
+						params.responseId,
+						params.itemIndex,
+					);
+					if (result.status === "not-found") {
+						const error = `Response not found: ${params.responseId}`;
+						return textResult<GetContentDetails>(`Error: ${error}`, {
+							responseId: params.responseId,
+							itemCount: 0,
+							error,
+						});
+					}
+					if (result.status === "item-index-out-of-range") {
+						const error = `itemIndex ${params.itemIndex} is outside 0-${result.itemCount - 1}`;
+						return textResult<GetContentDetails>(`Error: ${error}`, {
+							responseId: params.responseId,
+							itemCount: result.itemCount,
+							itemIndex: params.itemIndex,
+							error,
+						});
+					}
+
+					return textResult<GetContentDetails>(result.text, {
+						responseId: params.responseId,
+						itemCount: result.itemCount,
+						...(params.itemIndex !== undefined
+							? { itemIndex: params.itemIndex }
+							: {}),
+					});
+				}),
 			);
-			if (result.status === "not-found") {
-				const error = `Response not found: ${params.responseId}`;
-				return textResult<GetContentDetails>(`Error: ${error}`, {
-					responseId: params.responseId,
-					itemCount: 0,
-					error,
-				});
-			}
-			if (result.status === "item-index-out-of-range") {
-				const error = `itemIndex ${params.itemIndex} is outside 0-${result.itemCount - 1}`;
-				return textResult<GetContentDetails>(`Error: ${error}`, {
-					responseId: params.responseId,
-					itemCount: result.itemCount,
-					itemIndex: params.itemIndex,
-					error,
-				});
-			}
-
-			return textResult<GetContentDetails>(result.text, {
-				responseId: params.responseId,
-				itemCount: result.itemCount,
-				...(params.itemIndex !== undefined
-					? { itemIndex: params.itemIndex }
-					: {}),
-			});
 		},
 		renderCall(args, theme) {
 			const suffix =

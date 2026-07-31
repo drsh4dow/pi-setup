@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off
+// biome-ignore-all format: Effect test boundaries stay compact to keep the conversion deletion-first.
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
@@ -22,13 +22,14 @@ const noEvents = {
 	},
 };
 
-async function eventually(condition: () => boolean | Promise<boolean>) {
+const fromPromise = <A>(value: A | PromiseLike<A>) => Effect.promise(() => Promise.resolve(value));
+const eventually = Effect.fn("eventually")(function* (condition: () => boolean | Promise<boolean>) {
 	for (let attempt = 0; attempt < 200; attempt += 1) {
-		if (await condition()) return;
-		await Effect.runPromise(Effect.sleep(25));
+		if (yield* fromPromise(condition())) return;
+		yield* Effect.sleep(25);
 	}
 	throw new Error("condition not met within 5 seconds");
-}
+});
 
 function registeredTools() {
 	const tools: ToolDefinition[] = [];
@@ -82,7 +83,7 @@ test("registers four parallel tools and lifecycle hooks", () => {
 	);
 });
 
-test("child terminals die with the child and stay out of the parent's list", async () => {
+test("child terminals die with the child and stay out of the parent's list", () => Effect.runPromise(Effect.gen(function* () {
 	const parentTools: ToolDefinition[] = [];
 	const childTools: ToolDefinition[] = [];
 	const parentHandlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -115,14 +116,14 @@ test("child terminals die with the child and stay out of the parent's list", asy
 		hasUI: false,
 		isIdle: () => false,
 	} as ExtensionContext;
-	await parentHandlers.get("session_start")?.(
+	yield* fromPromise(parentHandlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		parentContext,
-	);
-	await childHandlers.get("session_start")?.(
+	));
+	yield* fromPromise(childHandlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		childContext,
-	);
+	));
 	const start = childTools[0] as unknown as {
 		execute: (...args: unknown[]) => Promise<{
 			details: { id: string; pid: number };
@@ -136,45 +137,45 @@ test("child terminals die with the child and stay out of the parent's list", asy
 	const [status, kill] = [parentTools[1], parentTools[3]] as unknown as {
 		execute: (...args: unknown[]) => Promise<unknown>;
 	}[];
-	const started = await start.execute(
+	const started = yield* fromPromise(start.execute(
 		"1",
 		{ command: "sleep 30", title: "child server" },
 		undefined,
 		undefined,
 		childContext,
-	);
+	));
 	try {
-		assert.deepEqual((await list.execute("2", {})).details.terminals, []);
-		await assert.rejects(
+		assert.deepEqual((yield* fromPromise(list.execute("2", {}))).details.terminals, []);
+		yield* fromPromise(assert.rejects(
 			status.execute("3", { id: started.details.id }),
 			/Unknown terminal id/,
-		);
-		await assert.rejects(
+		));
+		yield* fromPromise(assert.rejects(
 			kill.execute("4", { ids: [started.details.id] }, undefined),
 			/Unknown terminal id/,
-		);
+		));
 		assert.equal(processIsGone(started.details.pid), false);
 
-		await childHandlers.get("agent_end")?.(
+		yield* fromPromise(childHandlers.get("agent_end")?.(
 			{ type: "agent_end", messages: [] },
 			childContext,
-		);
-		await childHandlers.get("session_shutdown")?.(
+		));
+		yield* fromPromise(childHandlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },
 			childContext,
-		);
+		));
 		assert.ok(processIsGone(started.details.pid));
-		const listed = await list.execute("5", {});
+		const listed = yield* fromPromise(list.execute("5", {}));
 		assert.deepEqual(listed.details.terminals, []);
 	} finally {
-		await parentHandlers.get("session_shutdown")?.(
+		yield* fromPromise(parentHandlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },
 			parentContext,
-		);
+		));
 	}
-});
+})));
 
-test("a saturated child cannot exhaust the parent's terminal slots", async () => {
+test("a saturated child cannot exhaust the parent's terminal slots", () => Effect.runPromise(Effect.gen(function* () {
 	const parentTools: ToolDefinition[] = [];
 	const childTools: ToolDefinition[] = [];
 	const parentHandlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -201,14 +202,14 @@ test("a saturated child cannot exhaust the parent's terminal slots", async () =>
 		hasUI: false,
 		isIdle: () => false,
 	} as ExtensionContext;
-	await parentHandlers.get("session_start")?.(
+	yield* fromPromise(parentHandlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
-	);
-	await childHandlers.get("session_start")?.(
+	));
+	yield* fromPromise(childHandlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
-	);
+	));
 	const childStart = childTools[0] as unknown as {
 		execute: (...args: unknown[]) => Promise<unknown>;
 	};
@@ -217,15 +218,15 @@ test("a saturated child cannot exhaust the parent's terminal slots", async () =>
 	};
 	try {
 		for (let index = 0; index < MAX_RUNNING_PER_OWNER; index++) {
-			await childStart.execute(
+			yield* fromPromise(childStart.execute(
 				`child-${index}`,
 				{ command: "sleep 30", title: `child ${index}` },
 				undefined,
 				undefined,
 				context,
-			);
+			));
 		}
-		await assert.rejects(
+		yield* fromPromise(assert.rejects(
 			childStart.execute(
 				"child-overflow",
 				{ command: "sleep 30", title: "child overflow" },
@@ -236,28 +237,28 @@ test("a saturated child cannot exhaust the parent's terminal slots", async () =>
 			new RegExp(
 				`Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${MAX_RUNNING_PER_OWNER}\\.`,
 			),
-		);
-		const parentTerminal = await parentStart.execute(
+		));
+		const parentTerminal = yield* fromPromise(parentStart.execute(
 			"parent-1",
 			{ command: "sleep 30", title: "parent work" },
 			undefined,
 			undefined,
 			context,
-		);
+		));
 		assert.ok(parentTerminal.details.id);
 	} finally {
-		await childHandlers.get("session_shutdown")?.(
+		yield* fromPromise(childHandlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },
 			context,
-		);
-		await parentHandlers.get("session_shutdown")?.(
+		));
+		yield* fromPromise(parentHandlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },
 			context,
-		);
+		));
 	}
-});
+})));
 
-test("no-UI runs stop terminals before release and can start another run", async () => {
+test("no-UI runs stop terminals before release and can start another run", () => Effect.runPromise(Effect.gen(function* () {
 	const tools: ToolDefinition[] = [];
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	extension({
@@ -275,47 +276,47 @@ test("no-UI runs stop terminals before release and can start another run", async
 		hasUI: false,
 		isIdle: () => false,
 	} as ExtensionContext;
-	await handlers.get("session_start")?.(
+	yield* fromPromise(handlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
-	);
+	));
 	const start = tools[0] as unknown as {
 		execute: (...args: unknown[]) => Promise<{
 			details: { id: string; pid: number };
 		}>;
 	};
-	const first = await start.execute(
+	const first = yield* fromPromise(start.execute(
 		"1",
 		{ command: "sleep 30", title: "first" },
 		undefined,
 		undefined,
 		context,
-	);
+	));
 	try {
 		assert.ok(first.details.pid);
-		await handlers.get("agent_end")?.(
+		yield* fromPromise(handlers.get("agent_end")?.(
 			{ type: "agent_end", messages: [] },
 			context,
-		);
+		));
 		assert.ok(processIsGone(first.details.pid));
-		const second = await start.execute(
+		const second = yield* fromPromise(start.execute(
 			"2",
 			{ command: "true", title: "second" },
 			undefined,
 			undefined,
 			context,
-		);
+		));
 		assert.ok(second.details.pid);
 		assert.notEqual(second.details.id, first.details.id);
 	} finally {
-		await handlers.get("session_shutdown")?.(
+		yield* fromPromise(handlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },
 			context,
-		);
+		));
 	}
-});
+})));
 
-test("session shutdown clears status, kills processes, and permits restart", async () => {
+test("session shutdown clears status, kills processes, and permits restart", () => Effect.runPromise(Effect.gen(function* () {
 	const tools: ToolDefinition[] = [];
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	const statuses: Array<string | undefined> = [];
@@ -344,42 +345,42 @@ test("session shutdown clears status, kills processes, and permits restart", asy
 			details: { pid: number };
 		}>;
 	};
-	await handlers.get("session_start")?.(
+	yield* fromPromise(handlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
-	);
-	const first = await start.execute(
+	));
+	const first = yield* fromPromise(start.execute(
 		"1",
 		{ command: "sleep 30", title: "session one" },
 		undefined,
 		undefined,
 		context,
-	);
-	await handlers.get("session_shutdown")?.(
+	));
+	yield* fromPromise(handlers.get("session_shutdown")?.(
 		{ type: "session_shutdown", reason: "new" },
 		context,
-	);
+	));
 	assert.ok(processIsGone(first.details.pid));
 	assert.equal(statuses.at(-1), undefined);
-	await handlers.get("session_start")?.(
+	yield* fromPromise(handlers.get("session_start")?.(
 		{ type: "session_start", reason: "new" },
 		context,
-	);
-	const second = await start.execute(
+	));
+	const second = yield* fromPromise(start.execute(
 		"2",
 		{ command: "true", title: "session two" },
 		undefined,
 		undefined,
 		context,
-	);
+	));
 	assert.ok(second.details.pid);
-	await handlers.get("session_shutdown")?.(
+	yield* fromPromise(handlers.get("session_shutdown")?.(
 		{ type: "session_shutdown", reason: "quit" },
 		context,
-	);
-});
+	));
+})));
 
-test("successful completions are passive while failures trigger a turn", async () => {
+test("successful completions are passive while failures trigger a turn", () => Effect.runPromise(Effect.gen(function* () {
 	const deliveries: Array<{ options: { triggerTurn: boolean } }> = [];
 	const tools: ToolDefinition[] = [];
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -402,57 +403,54 @@ test("successful completions are passive while failures trigger a turn", async (
 		isIdle: () => true,
 		ui: { setStatus() {} },
 	} as unknown as ExtensionContext;
-	await handlers.get("session_start")?.(
+	yield* fromPromise(handlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
-	);
+	));
 	const [start, status] = tools as unknown as Array<{
 		execute: (...args: unknown[]) => Promise<unknown>;
 	}>;
 	assert.ok(start);
 	assert.ok(status);
 	try {
-		const silent = (await start.execute(
+		const silent = (yield* fromPromise(start.execute(
 			"1",
 			{ command: "true", title: "silent success" },
 			undefined,
 			undefined,
 			context,
-		)) as { details: { id: string } };
-		await eventually(async () => {
-			const result = (await status.execute("status-1", {
-				id: silent.details.id,
-			})) as { content: [{ text: string }] };
-			return result.content[0].text.includes("[done]");
-		});
+		))) as { details: { id: string } };
+		yield* eventually(() => status.execute("status-1", { id: silent.details.id }).then(
+			(result) => (result as { content: [{ text: string }] }).content[0].text.includes("[done]"),
+		));
 		assert.equal(deliveries.length, 0);
-		await start.execute(
+		yield* fromPromise(start.execute(
 			"2",
 			{ command: "printf ok", title: "success" },
 			undefined,
 			undefined,
 			context,
-		);
-		await eventually(() => deliveries.length === 1);
+		));
+		yield* eventually(() => deliveries.length === 1);
 		assert.equal(deliveries[0].options.triggerTurn, false);
-		await start.execute(
+		yield* fromPromise(start.execute(
 			"3",
 			{ command: "false", title: "failure" },
 			undefined,
 			undefined,
 			context,
-		);
-		await eventually(() => deliveries.length === 2);
+		));
+		yield* eventually(() => deliveries.length === 2);
 		assert.equal(deliveries[1].options.triggerTurn, true);
 	} finally {
-		await handlers.get("session_shutdown")?.(
+		yield* fromPromise(handlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },
 			context,
-		);
+		));
 	}
-});
+})));
 
-test("completion delivery is suppressible and closed delivery stays closed", async () => {
+test("completion delivery is suppressible and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
 	const messages: unknown[] = [];
 	const delivery = new BackgroundTerminalDelivery({
 		sendMessage(message: unknown) {
@@ -474,15 +472,15 @@ test("completion delivery is suppressible and closed delivery stays closed", asy
 	} as const;
 	delivery.enqueue(snapshot);
 	delivery.consume([snapshot.id]);
-	await Effect.runPromise(delivery.flush());
+	yield* delivery.flush;
 	assert.equal(messages.length, 0);
 	delivery.enqueue(snapshot);
 	delivery.clear();
-	await Effect.runPromise(delivery.flush());
+	yield* delivery.flush;
 	assert.equal(messages.length, 0);
-});
+})));
 
-test("bounds complete delivery batches with worst-case metadata", async () => {
+test("bounds complete delivery batches with worst-case metadata", () => Effect.runPromise(Effect.gen(function* () {
 	const messages: Array<{
 		content: string;
 		details: { ids: string[] };
@@ -513,7 +511,7 @@ test("bounds complete delivery batches with worst-case metadata", async () => {
 				truncatedBytes: 0,
 			},
 		} as TerminalSnapshot);
-	await Effect.runPromise(delivery.flush());
+	yield* delivery.flush;
 	assert.ok(messages.length > 1);
 	assert.ok(
 		messages.every(
@@ -525,9 +523,9 @@ test("bounds complete delivery batches with worst-case metadata", async () => {
 		Array.from({ length: MAX_TRACKED }, (_, index) => `bt-${index}`),
 	);
 	assert.ok(messages.every((message) => !message.content.includes("�")));
-});
+})));
 
-test("retries completion delivery three times and exposes final failure", async () => {
+test("retries completion delivery three times and exposes final failure", () => Effect.runPromise(Effect.gen(function* () {
 	let attempts = 0;
 	let idle = false;
 	const diagnostics: string[] = [];
@@ -554,8 +552,8 @@ test("retries completion delivery three times and exposes final failure", async 
 			stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
 		});
 		idle = true;
-		await Effect.runPromise(delivery.flush());
-		await Effect.runPromise(Effect.sleep(700));
+		yield* delivery.flush;
+		yield* Effect.sleep(700);
 		assert.equal(attempts, 3);
 		assert.match(delivery.problem ?? "", /bt-retry/);
 		assert.equal(diagnostics.length, 1);
@@ -565,12 +563,12 @@ test("retries completion delivery three times and exposes final failure", async 
 	} finally {
 		delivery.clear();
 	}
-});
+})));
 
-test("sanitizes displayed data and list details omit process output", async () => {
+test("sanitizes displayed data and list details omit process output", () => Effect.runPromise(Effect.gen(function* () {
 	const [start, status, list, kill] = registeredTools();
 	const ctx = { cwd: process.cwd() };
-	const started = (await start.execute(
+	const started = (yield* fromPromise(start.execute(
 		"1",
 		{
 			command: `node -e 'process.stdout.write(String.fromCharCode(128) + "bad")'`,
@@ -579,7 +577,7 @@ test("sanitizes displayed data and list details omit process output", async () =
 		undefined,
 		undefined,
 		ctx,
-	)) as { details: { id: string }; content: [{ text: string }] };
+	))) as { details: { id: string }; content: [{ text: string }] };
 	assert.ok(!started.content[0].text.includes("\u001b"));
 	assert.ok(!started.content[0].text.includes("\u202e"));
 	assert.ok(!started.content[0].text.includes("\u200b"));
@@ -590,11 +588,11 @@ test("sanitizes displayed data and list details omit process output", async () =
 		content: [{ text: string }];
 	};
 	for (let attempt = 0; attempt < 200; attempt++) {
-		result = (await status.execute("2", {
+		result = (yield* fromPromise(status.execute("2", {
 			id: started.details.id,
-		})) as typeof result;
+		}))) as typeof result;
 		if (/\[done\]/.test(result.content[0].text)) break;
-		await Effect.runPromise(Effect.sleep(25));
+		yield* Effect.sleep(25);
 	}
 	assert.doesNotMatch(result.content[0].text, /[\u0080-\u009f]/u);
 	assert.match(
@@ -603,7 +601,7 @@ test("sanitizes displayed data and list details omit process output", async () =
 	);
 	assert.ok(!("stdout" in result.details));
 	assert.ok(!("stderr" in result.details));
-	const listed = (await list.execute("3", {})) as {
+	const listed = (yield* fromPromise(list.execute("3", {}))) as {
 		details: { terminals: Array<Record<string, unknown>> };
 	};
 	assert.ok(!("stdout" in listed.details.terminals[0]));
@@ -612,13 +610,13 @@ test("sanitizes displayed data and list details omit process output", async () =
 		[status, { id: "bad\n\u202eid" }],
 		[kill, { ids: ["bad\n\u202eid"] }],
 	] as const) {
-		await assert.rejects(tool.execute("4", params), (error: Error) => {
+		yield* fromPromise(assert.rejects(tool.execute("4", params), (error: Error) => {
 			assert.ok(!error.message.includes("\n"));
 			assert.ok(!error.message.includes("\u202e"));
 			return true;
-		});
+		}));
 	}
-	await assert.rejects(
+	yield* fromPromise(assert.rejects(
 		start.execute(
 			"5",
 			{ command: "true", title: "bad cwd", working_dir: "bad\n\u202edir" },
@@ -631,52 +629,53 @@ test("sanitizes displayed data and list details omit process output", async () =
 			assert.ok(!error.message.includes("\u202e"));
 			return true;
 		},
-	);
-});
+	));
+})));
 
-test("pre-aborted bg_kill does not start termination", async () => {
+test("pre-aborted bg_kill still starts termination", () => Effect.runPromise(Effect.gen(function* () {
 	const tools = registeredTools();
-	const started = (await tools[0].execute(
+	const started = (yield* fromPromise(tools[0].execute(
 		"1",
 		{ command: "sleep 30", title: "pre-abort" },
 		undefined,
 		undefined,
 		{ cwd: process.cwd() },
-	)) as { details: { id: string } };
+	))) as { details: { id: string } };
 	const controller = new AbortController();
 	controller.abort();
-	await assert.rejects(
+	yield* fromPromise(assert.rejects(
 		tools[3].execute("2", { ids: [started.details.id] }, controller.signal),
-		/before termination started/,
-	);
-	const status = (await tools[1].execute("3", {
-		id: started.details.id,
-	})) as { content: [{ text: string }] };
-	assert.match(status.content[0].text, /\[running\]/);
-	await tools[3].execute("4", { ids: [started.details.id] });
-});
+		/termination continues/,
+	));
+	yield* eventually(() => tools[1].execute("3", { id: started.details.id }).then(
+		(status) => (status as { content: [{ text: string }] }).content[0].text.includes("[killed]"),
+	));
+})));
 
-test("aborted bg_kill wait does not cancel termination", async () => {
+test("aborted bg_kill wait does not cancel termination", () => Effect.runPromise(Effect.gen(function* () {
 	const tools = registeredTools();
 	const start = tools[0];
 	const kill = tools[3];
 	const status = tools[1];
 	const ctx = { cwd: process.cwd() };
-	const started = (await start.execute(
+	const started = (yield* fromPromise(start.execute(
 		"1",
-		{ command: "sleep 30", title: "abort" },
+		{ command: "trap '' TERM; sleep 30 & echo child:$!; wait", title: "abort" },
 		undefined,
 		undefined,
 		ctx,
-	)) as { details: { id: string } };
+	))) as { details: { id: string } };
 	const id = started.details.id;
+	yield* eventually(() => status.execute("ready", { id }).then(
+		(result) => (result as { content: [{ text: string }] }).content[0].text.includes("child:"),
+	));
+	yield* Effect.sleep(100);
 	const controller = new AbortController();
 	const waiting = kill.execute("2", { ids: [id] }, controller.signal);
+	yield* Effect.sleep(25);
 	controller.abort();
-	await assert.rejects(waiting, /termination continues/);
-	await Effect.runPromise(Effect.sleep(300));
-	const result = (await status.execute("3", { id })) as {
-		content: [{ text: string }];
-	};
-	assert.match(result.content[0].text, /\[killed\]/);
-});
+	yield* fromPromise(assert.rejects(waiting, /termination continues/));
+	yield* eventually(() => status.execute("3", { id }).then(
+		(result) => (result as { content: [{ text: string }] }).content[0].text.includes("[killed]"),
+	));
+})));

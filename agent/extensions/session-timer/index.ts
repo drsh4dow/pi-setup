@@ -1,9 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Clock, Effect, Fiber } from "effect";
-
-// Tracks wall-clock time from prompt submission (agent_start) until control
-// returns to the user (agent_end) — the whole run, not a single turn — plus
-// a cumulative total across the session.
 export default function sessionTimer(pi: ExtensionAPI): void {
 	let runStart = 0;
 	let sessionTotalMs = 0;
@@ -29,15 +25,19 @@ export default function sessionTimer(pi: ExtensionAPI): void {
 		);
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
-		if (ticker) await Effect.runPromise(Fiber.interrupt(ticker));
-		ticker = null;
-		const runMs = Effect.runSync(Clock.currentTimeMillis) - runStart;
-		sessionTotalMs += runMs;
-		const theme = ctx.ui.theme;
-		ctx.ui.setStatus(
-			"session-timer",
-			`${theme.fg("accent", `⏱ ${fmt(runMs)}`)} ${theme.fg("dim", `(session ${fmt(sessionTotalMs)})`)}`,
-		);
-	});
+	pi.on("agent_end", (_event, ctx) =>
+		Effect.runPromise(
+			Effect.gen(function* () {
+				if (ticker) yield* Fiber.interrupt(ticker);
+				ticker = null;
+				const runMs = (yield* Clock.currentTimeMillis) - runStart;
+				sessionTotalMs += runMs;
+				const theme = ctx.ui.theme;
+				ctx.ui.setStatus(
+					"session-timer",
+					`${theme.fg("accent", `⏱ ${fmt(runMs)}`)} ${theme.fg("dim", `(session ${fmt(sessionTotalMs)})`)}`,
+				);
+			}),
+		),
+	);
 }

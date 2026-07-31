@@ -14,15 +14,10 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { Effect } from "effect";
 
 const TOOL_NAME = "ask_questions";
-const TOOL_TITLE = ` ${TOOL_NAME} `;
 const CUSTOM_LABEL = "Write your own answer";
-const CUSTOM_DESCRIPTION = "Open a small text box.";
-const UNAVAILABLE_TEXT =
-	"ask_questions requires the interactive TUI. Ask the user in chat instead.";
-const CANCELLED_TEXT =
-	"The user dismissed the questions without submitting answers.";
 
 const OptionSchema = Type.Object({
 	label: Type.String({
@@ -68,21 +63,18 @@ type QuestionOption = Static<typeof OptionSchema>;
 type InputQuestion = Static<typeof QuestionSchema>;
 type DisplayOption = QuestionOption & { isCustom?: true };
 
-/** Question shape used internally by the TUI flow. */
 interface NormalizedQuestion {
 	header: string;
 	question: string;
 	options: QuestionOption[];
 }
 
-/** Question metadata persisted in tool results. */
 interface QuestionDetails {
 	header: string;
 	question: string;
 	options: string[];
 }
 
-/** Answer metadata persisted in tool results. */
 interface AnswerDetails {
 	questionIndex: number;
 	header: string;
@@ -92,16 +84,12 @@ interface AnswerDetails {
 	optionIndex?: number;
 }
 
-/** Full persisted result shape for the ask_questions tool. */
 interface ToolDetails {
 	status: "answered" | "cancelled" | "unavailable";
 	questions: QuestionDetails[];
 	answers: AnswerDetails[];
 }
 
-/**
- * Normalizes tool input and derives the persisted question metadata in one pass.
- */
 function prepareQuestions(input: InputQuestion[]) {
 	const questions = input.map(
 		(question, index) =>
@@ -124,7 +112,6 @@ function prepareQuestions(input: InputQuestion[]) {
 	};
 }
 
-/** Builds the standard text content for a tool result. */
 function textResult(
 	text: string,
 	details: ToolDetails,
@@ -132,7 +119,6 @@ function textResult(
 	return { content: [{ type: "text", text }], details };
 }
 
-/** Formats submitted answers into a full-fidelity text block for the agent. */
 function summarize(details: ToolDetails): string {
 	return details.answers.length === 0
 		? "No answers were submitted."
@@ -144,22 +130,7 @@ function summarize(details: ToolDetails): string {
 				.join("\n\n");
 }
 
-/** Formats a persisted answer for full-fidelity result rendering. */
-function formatAnswer(answer: AnswerDetails): string {
-	return `${answer.header}\nQuestion: ${answer.question}\nAnswer: ${answer.answer}`;
-}
-
-/**
- * Runs the interactive ask_questions flow.
- *
- * Keymap:
- * - `j` / `k` or arrow keys move through options
- * - `h` or left arrow returns to the previous screen
- * - `Enter` confirms the current option or submits the review screen
- * - `l` confirms the current option, except on the review screen
- * - `Esc` cancels the flow
- */
-async function askQuestionsInTui(
+function askQuestionsInTui(
 	ctx: ExtensionContext,
 	questions: NormalizedQuestion[],
 	details: QuestionDetails[],
@@ -187,12 +158,7 @@ async function askQuestionsInTui(
 			cache = undefined;
 			tui.requestRender();
 		};
-		const isUp = (data: string) => matchesKey(data, Key.up) || data === "k";
-		const isDown = (data: string) => matchesKey(data, Key.down) || data === "j";
 		const isBack = (data: string) => matchesKey(data, Key.left) || data === "h";
-		const isConfirm = (data: string) => matchesKey(data, Key.enter);
-		const isSelect = (data: string) =>
-			matchesKey(data, Key.enter) || data === "l";
 		const inReview = () => !single && screen === questions.length;
 		const question = () => questions[screen];
 		const answer = () => answers[screen];
@@ -205,7 +171,7 @@ async function askQuestionsInTui(
 						...item.options,
 						{
 							label: CUSTOM_LABEL,
-							description: CUSTOM_DESCRIPTION,
+							description: "Open a small text box.",
 							isCustom: true,
 						},
 					];
@@ -219,7 +185,8 @@ async function askQuestionsInTui(
 				),
 			});
 		const title = (text: string) =>
-			theme.fg("toolTitle", theme.bold(TOOL_TITLE)) + theme.fg("muted", text);
+			theme.fg("toolTitle", theme.bold(` ${TOOL_NAME} `)) +
+			theme.fg("muted", text);
 		const resetEditor = () => {
 			editing = false;
 			editor.setText("");
@@ -369,7 +336,7 @@ async function askQuestionsInTui(
 				return;
 			}
 			if (inReview()) {
-				if (isConfirm(data)) {
+				if (matchesKey(data, Key.enter)) {
 					addResult("answered");
 					return;
 				}
@@ -390,12 +357,12 @@ async function askQuestionsInTui(
 					return;
 				}
 			}
-			if (isUp(data)) {
+			if (matchesKey(data, Key.up) || data === "k") {
 				selections[screen] = Math.max(0, selection() - 1);
 				refresh();
 				return;
 			}
-			if (isDown(data)) {
+			if (matchesKey(data, Key.down) || data === "j") {
 				selections[screen] = Math.min(options().length - 1, selection() + 1);
 				refresh();
 				return;
@@ -407,7 +374,7 @@ async function askQuestionsInTui(
 				}
 				return;
 			}
-			if (isSelect(data)) {
+			if (matchesKey(data, Key.enter) || data === "l") {
 				select();
 				return;
 			}
@@ -431,12 +398,6 @@ async function askQuestionsInTui(
 	});
 }
 
-/**
- * Registers the minimal `ask_questions` Pi extension.
- *
- * The stable contract is the schema and TUI flow. Prompt copy stays small and
- * tunable.
- */
 export default function askQuestionsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: TOOL_NAME,
@@ -450,25 +411,30 @@ export default function askQuestionsExtension(pi: ExtensionAPI) {
 		],
 		parameters: AskQuestionsParams,
 		executionMode: "sequential",
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const prepared = prepareQuestions(params.questions);
-			if (!ctx.hasUI) {
-				return textResult(UNAVAILABLE_TEXT, {
-					status: "unavailable",
-					questions: prepared.details,
-					answers: [],
-				});
-			}
-			const details = await askQuestionsInTui(
-				ctx,
-				prepared.questions,
-				prepared.details,
-			);
-			return textResult(
-				details.status === "cancelled"
-					? CANCELLED_TEXT
-					: `User answers:\n${summarize(details)}`,
-				details,
+		execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			return Effect.runPromise(
+				Effect.gen(function* () {
+					const prepared = prepareQuestions(params.questions);
+					if (!ctx.hasUI) {
+						return textResult(
+							"ask_questions requires the interactive TUI. Ask the user in chat instead.",
+							{
+								status: "unavailable",
+								questions: prepared.details,
+								answers: [],
+							},
+						);
+					}
+					const details = yield* Effect.promise(() =>
+						askQuestionsInTui(ctx, prepared.questions, prepared.details),
+					);
+					return textResult(
+						details.status === "cancelled"
+							? "The user dismissed the questions without submitting answers."
+							: `User answers:\n${summarize(details)}`,
+						details,
+					);
+				}),
 			);
 		},
 		renderCall(args, theme) {
@@ -503,7 +469,10 @@ export default function askQuestionsExtension(pi: ExtensionAPI) {
 					.map(
 						(answer) =>
 							theme.fg("success", "✓ ") +
-							theme.fg("accent", formatAnswer(answer)),
+							theme.fg(
+								"accent",
+								`${answer.header}\nQuestion: ${answer.question}\nAnswer: ${answer.answer}`,
+							),
 					)
 					.join("\n\n"),
 				0,

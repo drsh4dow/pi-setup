@@ -2,7 +2,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as BunCrypto from "@effect/platform-bun/BunCrypto";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { FileSystem, Layer, ManagedRuntime, Path, Schema } from "effect";
+import {
+	Config,
+	Effect,
+	FileSystem,
+	Layer,
+	ManagedRuntime,
+	Path,
+	Schema,
+} from "effect";
 
 export const SUPPORTED_MODELS = new Set([
 	"openai/gpt-5.4",
@@ -97,96 +105,123 @@ function expandHome(input: string, home: string): string {
 		: input;
 }
 
-export async function resolvePiFilePath(
+const resolvePiFilePathEffect = Effect.fn("resolvePiFilePath")(function* (
 	fileName: string,
 	options: PiFileOptions = {},
-): Promise<string> {
-	const env = options.env ?? process.env;
-	const home = options.home ?? env.HOME ?? "";
-	const exists =
-		options.exists ??
-		((candidate: string) =>
-			runtime.runPromise(
-				FileSystem.FileSystem.use((fs) => fs.exists(candidate)),
-			));
-	const piDir = env.PI_CODING_AGENT_DIR?.trim();
+) {
+	const configured =
+		options.env ??
+		(yield* Config.all({
+			HOME: Config.string("HOME").pipe(Config.withDefault("")),
+			PI_CODING_AGENT_DIR: Config.string("PI_CODING_AGENT_DIR").pipe(
+				Config.withDefault(""),
+			),
+			XDG_CONFIG_HOME: Config.string("XDG_CONFIG_HOME").pipe(
+				Config.withDefault(""),
+			),
+		}));
+	const home = options.home ?? configured.HOME ?? "";
+	const piDir = configured.PI_CODING_AGENT_DIR?.trim();
 	if (piDir)
 		return pathService.join(
 			pathService.resolve(expandHome(piDir, home)),
 			fileName,
 		);
-	const xdgConfigHome = env.XDG_CONFIG_HOME?.trim()
-		? pathService.resolve(expandHome(env.XDG_CONFIG_HOME, home))
+	const xdgConfigHome = configured.XDG_CONFIG_HOME?.trim()
+		? pathService.resolve(expandHome(configured.XDG_CONFIG_HOME, home))
 		: pathService.join(home, ".config");
 	for (const candidate of [
 		pathService.join(xdgConfigHome, "pi", "agent", fileName),
 		pathService.join(xdgConfigHome, "pi", fileName),
-	])
-		if (await exists(candidate)) return candidate;
+	]) {
+		const exists = options.exists
+			? yield* Effect.promise(() =>
+					Promise.resolve(options.exists?.(candidate)),
+				)
+			: yield* FileSystem.FileSystem.use((fs) => fs.exists(candidate)).pipe(
+					Effect.provide(BunFileSystem.layer),
+				);
+		if (exists) return candidate;
+	}
 	return pathService.join(home, ".pi", "agent", fileName);
+});
+export function resolvePiFilePath(
+	fileName: string,
+	options: PiFileOptions = {},
+): Promise<string> {
+	return Effect.runPromise(resolvePiFilePathEffect(fileName, options));
 }
-export const resolveKeybindingsPath = (options: PiFileOptions = {}) =>
-	resolvePiFilePath("keybindings.json", options);
 export const resolveFastModeSettingsPath = (options: PiFileOptions = {}) =>
 	resolvePiFilePath("gpt-fast-mode.json", options);
 
-function normalizeShortcutList(values: unknown[]): string[] {
-	return values
+export function normalizeShortcutSetting(value: unknown): string[] {
+	if (value === false || value === null) return [];
+	const shortcuts = (Array.isArray(value) ? value : [value])
 		.filter((item): item is string => typeof item === "string")
 		.map((item) => item.trim())
 		.filter(Boolean)
 		.filter((shortcut) => !RESERVED_SHORTCUTS.has(shortcut.toLowerCase()));
-}
-export function normalizeShortcutSetting(value: unknown): string[] {
-	if (value === false || value === null) return [];
-	const shortcuts = normalizeShortcutList(
-		Array.isArray(value) ? value : [value],
-	);
 	return shortcuts.length > 0 ? shortcuts : [DEFAULT_SHORTCUT];
 }
 
-async function readText(path: string, options: PiFileOptions): Promise<string> {
-	if (options.readFile) return options.readFile(path, "utf8");
-	return runtime.runPromise(
-		FileSystem.FileSystem.use((fs) => fs.readFileString(path)),
+const readText = Effect.fn("readText")(function* (
+	path: string,
+	options: PiFileOptions,
+) {
+	return options.readFile
+		? yield* Effect.promise(() =>
+				Promise.resolve(options.readFile?.(path, "utf8")),
+			)
+		: yield* FileSystem.FileSystem.use((fs) => fs.readFileString(path)).pipe(
+				Effect.provide(BunFileSystem.layer),
+			);
+});
+export function loadShortcuts(options: PiFileOptions = {}): Promise<string[]> {
+	return Effect.runPromise(
+		Effect.gen(function* () {
+			const path = yield* resolvePiFilePathEffect("keybindings.json", options);
+			const parsed = yield* Schema.decodeUnknownEffect(Keybindings)(
+				yield* readText(path, options),
+			);
+			return normalizeShortcutSetting(parsed[KEYBINDING_FIELD]);
+		}).pipe(Effect.orElseSucceed(() => [DEFAULT_SHORTCUT])),
 	);
 }
-export async function loadShortcuts(
-	options: PiFileOptions = {},
-): Promise<string[]> {
-	try {
-		const parsed = Schema.decodeUnknownSync(Keybindings)(
-			await readText(await resolveKeybindingsPath(options), options),
-		);
-		return normalizeShortcutSetting(parsed[KEYBINDING_FIELD]);
-	} catch {
-		return [DEFAULT_SHORTCUT];
-	}
+export function loadEnabled(options: PiFileOptions = {}): Promise<boolean> {
+	return Effect.runPromise(
+		Effect.gen(function* () {
+			const path = yield* resolvePiFilePathEffect(
+				"gpt-fast-mode.json",
+				options,
+			);
+			const parsed = yield* Schema.decodeUnknownEffect(FastModeSettings)(
+				yield* readText(path, options),
+			);
+			return parsed.enabled === true;
+		}).pipe(Effect.orElseSucceed(() => false)),
+	);
 }
-export async function loadEnabled(
-	options: PiFileOptions = {},
-): Promise<boolean> {
-	try {
-		const parsed = Schema.decodeUnknownSync(FastModeSettings)(
-			await readText(await resolveFastModeSettingsPath(options), options),
-		);
-		return parsed.enabled === true;
-	} catch {
-		return false;
-	}
-}
-export async function saveEnabled(
+export function saveEnabled(
 	enabled: boolean,
 	options: PiFileOptions = {},
 ): Promise<void> {
-	const path = await resolveFastModeSettingsPath(options);
-	const data = `${JSON.stringify({ enabled }, null, 2)}\n`;
-	if (options.writeFile)
-		return options.writeFile(path, data, { encoding: "utf8", mode: 0o600 });
-	return runtime.runPromise(
-		FileSystem.FileSystem.use((fs) =>
-			fs.writeFileString(path, data, { mode: 0o600 }),
-		),
+	return Effect.runPromise(
+		Effect.gen(function* () {
+			const path = yield* resolvePiFilePathEffect(
+				"gpt-fast-mode.json",
+				options,
+			);
+			const data = `${yield* Schema.encodeEffect(FastModeSettings)({ enabled })}\n`;
+			if (options.writeFile)
+				return yield* Effect.promise(() =>
+					Promise.resolve(
+						options.writeFile?.(path, data, { encoding: "utf8", mode: 0o600 }),
+					),
+				);
+			yield* FileSystem.FileSystem.use((fs) =>
+				fs.writeFileString(path, data, { mode: 0o600 }),
+			).pipe(Effect.provide(BunFileSystem.layer));
+		}),
 	);
 }
 
@@ -223,28 +258,43 @@ const initialEnabled = await loadEnabled();
 const initialShortcuts = await loadShortcuts();
 export default function fastModeExtension(pi: ExtensionAPI): void {
 	let enabled = initialEnabled;
-	const toggle = async (ctx: unknown) => {
-		const nextEnabled = !enabled;
-		try {
-			await saveEnabled(nextEnabled);
-			enabled = nextEnabled;
-			announceState(ctx, enabled);
-		} catch {
-			notify(ctx, "Could not save GPT Fast mode setting.", "error");
-		}
-	};
+	const toggle = (ctx: unknown) =>
+		Effect.runPromise(
+			Effect.tryPromise(() => saveEnabled(!enabled)).pipe(
+				Effect.tap(() =>
+					Effect.sync(() => {
+						enabled = !enabled;
+						announceState(ctx, enabled);
+					}),
+				),
+				Effect.catch(() =>
+					Effect.sync(() =>
+						notify(ctx, "Could not save GPT Fast mode setting.", "error"),
+					),
+				),
+			),
+		);
 	pi.registerCommand("fast", {
 		description: "Toggle GPT Fast mode",
-		handler: async (_args, ctx) => toggle(ctx),
+		handler: (_args, ctx) => toggle(ctx),
 	});
 	for (const shortcut of initialShortcuts)
 		pi.registerShortcut(
 			shortcut as Parameters<ExtensionAPI["registerShortcut"]>[0],
 			{ description: "Toggle GPT Fast mode", handler: (ctx) => toggle(ctx) },
 		);
-	pi.on("session_start", async () => {
-		enabled = await loadEnabled();
-	});
+	pi.on("session_start", () =>
+		Effect.runPromise(
+			Effect.promise(() => loadEnabled()).pipe(
+				Effect.tap((value) =>
+					Effect.sync(() => {
+						enabled = value;
+					}),
+				),
+				Effect.asVoid,
+			),
+		),
+	);
 	pi.on("before_provider_request", (event, ctx) =>
 		enabled && shouldApplyFastMode(ctx.model, event.payload)
 			? withFastServiceTier(ctx.model, event.payload)

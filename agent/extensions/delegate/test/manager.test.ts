@@ -13,7 +13,7 @@ import { Cause, Deferred, Effect, Fiber } from "effect";
 import { type DelegateSnapshot, MAX_CHILD_OUTPUT_BYTES } from "../contract.ts";
 import { DelegateManager } from "../manager.ts";
 import type { ChildSession } from "../runtime.ts";
-import { eventually } from "./eventually.ts";
+import { deferredPromise, eventually, yieldImmediate } from "./eventually.ts";
 
 const context = {
 	cwd: process.cwd(),
@@ -156,14 +156,6 @@ function harness(
 		},
 	});
 	return { manager, sessions };
-}
-
-const yieldImmediate = Effect.callback<void>((resume) => {
-	setImmediate(() => resume(Effect.void));
-});
-
-function deferredPromise<A, E extends Error>(deferred: Deferred.Deferred<A, E>): Promise<A> {
-	return Effect.runPromise(Deferred.await(deferred));
 }
 
 function failureMessage<A, E, R>(effect: Effect.Effect<A, E, R>) {

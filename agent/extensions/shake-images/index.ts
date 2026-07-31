@@ -19,7 +19,6 @@ import {
 
 type AgentMessage = ContextEvent["messages"][number];
 type ImageBlock = { type: "image"; data: string; mimeType: string };
-type MaterializeImage = (image: ImageBlock) => Promise<string>;
 interface ContentBlock {
 	type: string;
 	text?: string;
@@ -97,58 +96,53 @@ function sourcePathsForMessage(
 	);
 }
 
-export function pruneImages(
+export const pruneImages = Effect.fn("pruneImages")(function* <E, R>(
 	messages: ContextEvent["messages"],
-	materializeImage: MaterializeImage,
-): Promise<ContextEvent["messages"]> {
-	return Effect.runPromise(
-		Effect.gen(function* () {
-			let imageCount = 0;
-			for (const message of messages)
-				for (const block of contentOf(message) ?? [])
-					if (isContentBlock(block) && block.type === "image") imageCount++;
-			let imagesToPrune = imageCount - 2;
-			if (imagesToPrune <= 0) return messages;
-			const toolPaths = readToolPaths(messages);
-			const transformed: ContextEvent["messages"] = [];
-			for (const message of messages) {
-				const content = contentOf(message);
-				if (!content) {
-					transformed.push(message);
-					continue;
-				}
-				const sourcePaths = sourcePathsForMessage(message, toolPaths);
-				let imageIndex = 0;
-				let changed = false;
-				const nextContent: unknown[] = [];
-				for (const block of content) {
-					if (
-						!isContentBlock(block) ||
-						block.type !== "image" ||
-						imagesToPrune <= 0
-					) {
-						nextContent.push(block);
-						continue;
-					}
-					const image = block as ImageBlock;
-					const path =
-						sourcePaths.at(imageIndex) ??
-						(yield* Effect.promise(() => materializeImage(image)));
-					imageIndex++;
-					imagesToPrune--;
-					changed = true;
-					nextContent.push({ type: "text", text: `Image: ${path}` });
-				}
-				transformed.push(
-					changed
-						? ({ ...message, content: nextContent } as unknown as AgentMessage)
-						: message,
-				);
+	materializeImage: (image: ImageBlock) => Effect.Effect<string, E, R>,
+) {
+	let imageCount = 0;
+	for (const message of messages)
+		for (const block of contentOf(message) ?? [])
+			if (isContentBlock(block) && block.type === "image") imageCount++;
+	let imagesToPrune = imageCount - 2;
+	if (imagesToPrune <= 0) return messages;
+	const toolPaths = readToolPaths(messages);
+	const transformed: ContextEvent["messages"] = [];
+	for (const message of messages) {
+		const content = contentOf(message);
+		if (!content) {
+			transformed.push(message);
+			continue;
+		}
+		const sourcePaths = sourcePathsForMessage(message, toolPaths);
+		let imageIndex = 0;
+		let changed = false;
+		const nextContent: unknown[] = [];
+		for (const block of content) {
+			if (
+				!isContentBlock(block) ||
+				block.type !== "image" ||
+				imagesToPrune <= 0
+			) {
+				nextContent.push(block);
+				continue;
 			}
-			return transformed;
-		}),
-	);
-}
+			const path =
+				sourcePaths.at(imageIndex) ??
+				(yield* materializeImage(block as ImageBlock));
+			imageIndex++;
+			imagesToPrune--;
+			changed = true;
+			nextContent.push({ type: "text", text: `Image: ${path}` });
+		}
+		transformed.push(
+			changed
+				? ({ ...message, content: nextContent } as unknown as AgentMessage)
+				: message,
+		);
+	}
+	return transformed;
+});
 
 export default function shakeImagesExtension(pi: ExtensionAPI): void {
 	const runtime = ManagedRuntime.make(
@@ -170,73 +164,73 @@ export default function shakeImagesExtension(pi: ExtensionAPI): void {
 			Duration.infinity,
 		),
 	);
-	const materializeImage: MaterializeImage = (image) =>
-		runtime.runPromise(
-			Effect.gen(function* () {
-				const fs = yield* FileSystem.FileSystem;
-				const path = yield* Path.Path;
-				const crypto = yield* Crypto.Crypto;
-				const directory = yield* getTempImagesDir.pipe(
-					Effect.tapError(() => resetTempImagesDir),
-				);
-				const extension =
-					(
-						{
-							"image/avif": "avif",
-							"image/bmp": "bmp",
-							"image/gif": "gif",
-							"image/jpeg": "jpg",
-							"image/png": "png",
-							"image/webp": "webp",
-						} as Record<string, string>
-					)[image.mimeType] ?? "img";
-				const bytes = Result.getOrThrow(Encoding.decodeBase64(image.data));
-				const digest = yield* crypto.digest("SHA-256", bytes);
-				const file = path.join(
-					directory,
-					`${Encoding.encodeHex(digest)}.${extension}`,
-				);
-				yield* fs
-					.writeFile(file, bytes, { flag: "wx" })
-					.pipe(
-						Effect.catch((error) =>
-							error.reason._tag === "AlreadyExists"
-								? Effect.void
-								: Effect.fail(error),
-						),
-					);
-				return file;
-			}),
+	const materializeImage = Effect.fn("materializeImage")(function* (
+		image: ImageBlock,
+	) {
+		const fs = yield* FileSystem.FileSystem;
+		const path = yield* Path.Path;
+		const crypto = yield* Crypto.Crypto;
+		const directory = yield* getTempImagesDir.pipe(
+			Effect.tapError(() => resetTempImagesDir),
 		);
+		const extension =
+			(
+				{
+					"image/avif": "avif",
+					"image/bmp": "bmp",
+					"image/gif": "gif",
+					"image/jpeg": "jpg",
+					"image/png": "png",
+					"image/webp": "webp",
+				} as Record<string, string>
+			)[image.mimeType] ?? "img";
+		const bytes = Result.getOrThrow(Encoding.decodeBase64(image.data));
+		const digest = yield* crypto.digest("SHA-256", bytes);
+		const file = path.join(
+			directory,
+			`${Encoding.encodeHex(digest)}.${extension}`,
+		);
+		yield* fs
+			.writeFile(file, bytes, { flag: "wx" })
+			.pipe(
+				Effect.catch((error) =>
+					error.reason._tag === "AlreadyExists"
+						? Effect.void
+						: Effect.fail(error),
+				),
+			);
+		return file;
+	});
 	pi.registerCommand("shake-images", {
 		description: "Keep only the latest two images in model context",
-		handler: (_args, ctx) => {
-			enabled = true;
-			ctx.ui.notify("Image context pruned to the latest two images", "info");
-			return Promise.resolve();
-		},
+		handler: (_args, ctx) =>
+			Effect.runPromise(
+				Effect.sync(() => {
+					enabled = true;
+					ctx.ui.notify(
+						"Image context pruned to the latest two images",
+						"info",
+					);
+				}),
+			),
 	});
 	pi.on("context", (event) =>
 		enabled
-			? Effect.runPromise(
-					Effect.promise(() =>
-						pruneImages(event.messages, materializeImage),
-					).pipe(Effect.map((messages) => ({ messages }))),
+			? runtime.runPromise(
+					pruneImages(event.messages, materializeImage).pipe(
+						Effect.map((messages) => ({ messages })),
+					),
 				)
 			: undefined,
 	);
-	pi.on("session_shutdown", () =>
-		Effect.runPromise(
-			Effect.gen(function* () {
-				if (tempImagesDir) {
-					const directory = tempImagesDir;
-					tempImagesDir = undefined;
-					yield* FileSystem.FileSystem.use((fs) =>
-						fs.remove(directory, { force: true, recursive: true }),
-					).pipe(Effect.provide(BunFileSystem.layer));
-				}
-				yield* Effect.promise(() => runtime.dispose());
-			}),
-		),
-	);
+	pi.on("session_shutdown", () => {
+		const directory = tempImagesDir;
+		tempImagesDir = undefined;
+		const cleanup = directory
+			? FileSystem.FileSystem.use((fs) =>
+					fs.remove(directory, { force: true, recursive: true }),
+				)
+			: Effect.void;
+		return runtime.runPromise(cleanup).then(() => runtime.dispose());
+	});
 }

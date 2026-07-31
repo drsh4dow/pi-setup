@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe } from "node:test";
-import { Effect } from "effect";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { ConfigProvider, Effect, Layer } from "effect";
 import {
 	capture,
 	e2eUnavailable,
@@ -21,10 +23,17 @@ import {
 
 const skip = e2eUnavailable();
 
-const persistedEnabled = (session: PiSession) =>
-	Effect.promise(() =>
-		loadEnabled({ env: { PI_CODING_AGENT_DIR: session.agentDir } }),
+const piFileServices = (session: PiSession) =>
+	Layer.mergeAll(
+		BunFileSystem.layer,
+		BunPath.layer,
+		Layer.succeed(
+			ConfigProvider.ConfigProvider,
+			ConfigProvider.fromUnknown({ PI_CODING_AGENT_DIR: session.agentDir }),
+		),
 	);
+const persistedEnabled = (session: PiSession) =>
+	loadEnabled().pipe(Effect.provide(piFileServices(session)));
 
 function footerModel(pane: string): { provider: string; id: string } {
 	const matches = [...pane.matchAll(/\(([a-z0-9-]+)\)\s+(\S+)\s+•/g)];
@@ -74,7 +83,9 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 		assert.equal(
 			yield* persistedEnabled(session),
 			next,
-			`${yield* Effect.promise(() => resolveFastModeSettingsPath({ env: { PI_CODING_AGENT_DIR: session.agentDir } }))} does not reflect the announced state`,
+			`${yield* resolveFastModeSettingsPath().pipe(
+				Effect.provide(piFileServices(session)),
+			)} does not reflect the announced state`,
 		);
 		assert.equal(yield* isDead(session), false);
 	});

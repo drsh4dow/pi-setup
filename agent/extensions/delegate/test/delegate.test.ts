@@ -427,7 +427,7 @@ test("covers background delivery behavior", (t) =>
 				yield* delivery.flush();
 				assert.equal(attempts, 1);
 				t.mock.timers.tick(25);
-				yield* Effect.promise(() => Promise.resolve());
+				yield* Effect.yieldNow;
 				assert.equal(attempts, 2);
 				assert.equal(messages.length, 1);
 				assert.deepEqual(messages[0].options, {
@@ -544,7 +544,7 @@ test("covers background delivery behavior", (t) =>
 				try {
 					yield* delivery.flush();
 					t.mock.timers.tick(25);
-					yield* Effect.promise(() => Promise.resolve());
+					yield* Effect.yieldNow;
 					t.mock.timers.tick(100);
 					yield* Effect.callback<void>((resume) => {
 						setImmediate(() => resume(Effect.void));
@@ -602,9 +602,9 @@ test("covers background delivery behavior", (t) =>
 				try {
 					yield* delivery.flush();
 					t.mock.timers.tick(25);
-					yield* Effect.promise(() => Promise.resolve());
+					yield* Effect.yieldNow;
 					t.mock.timers.tick(100);
-					yield* Effect.promise(() => Promise.resolve());
+					yield* Effect.yieldNow;
 					assert.equal(diagnostics.length, 1);
 					assert.match(diagnostics[0], /delegate-1/);
 					assert.match(diagnostics[0], /transport unavailable/);
@@ -636,16 +636,16 @@ test("covers background delivery behavior", (t) =>
 				);
 				delivery.setContext({ isIdle: () => true } as ExtensionContext);
 				delivery.enqueue(delegateSnapshot());
-				yield* Effect.promise(() => Promise.resolve());
+				yield* Effect.yieldNow;
 				t.mock.timers.tick(25);
-				yield* Effect.promise(() => Promise.resolve());
+				yield* Effect.yieldNow;
 				delivery.enqueue(delegateSnapshot({ id: "delegate-2" }));
 				t.mock.timers.tick(100);
-				yield* Effect.promise(() => Promise.resolve());
+				yield* Effect.yieldNow;
 				t.mock.timers.tick(100);
-				yield* Effect.promise(() => Promise.resolve());
+				yield* Effect.yieldNow;
 				t.mock.timers.tick(100);
-				yield* Effect.promise(() => Promise.resolve());
+				yield* Effect.yieldNow;
 				yield* delivery.flush();
 				assert.equal(attempts.get("delegate-1"), 3);
 				assert.equal(attempts.get("delegate-2"), 3);
@@ -668,7 +668,7 @@ test("covers background delivery behavior", (t) =>
 				const second = { isIdle: () => true } as ExtensionContext;
 				delivery.setContext(first);
 				delivery.enqueue(delegateSnapshot());
-				yield* Effect.promise(() => Promise.resolve());
+				yield* Effect.yieldNow;
 				delivery.setContext(second);
 				yield* Deferred.succeed(gate, undefined);
 				yield* eventually(() => sent.length === 1);
@@ -693,7 +693,7 @@ test("covers background delivery behavior", (t) =>
 				assert.equal(attempts, 1);
 				delivery.clear();
 				t.mock.timers.tick(1_000);
-				yield* Effect.promise(() => Promise.resolve());
+				yield* Effect.yieldNow;
 				assert.equal(attempts, 1);
 			}
 

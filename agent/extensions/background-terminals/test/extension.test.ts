@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
@@ -473,11 +474,11 @@ test("completion delivery is suppressible and closed delivery stays closed", asy
 	} as const;
 	delivery.enqueue(snapshot);
 	delivery.consume([snapshot.id]);
-	await delivery.flush();
+	await Effect.runPromise(delivery.flush());
 	assert.equal(messages.length, 0);
 	delivery.enqueue(snapshot);
 	delivery.clear();
-	await delivery.flush();
+	await Effect.runPromise(delivery.flush());
 	assert.equal(messages.length, 0);
 });
 
@@ -512,7 +513,7 @@ test("bounds complete delivery batches with worst-case metadata", async () => {
 				truncatedBytes: 0,
 			},
 		} as TerminalSnapshot);
-	await delivery.flush();
+	await Effect.runPromise(delivery.flush());
 	assert.ok(messages.length > 1);
 	assert.ok(
 		messages.every(
@@ -553,7 +554,7 @@ test("retries completion delivery three times and exposes final failure", async 
 			stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
 		});
 		idle = true;
-		await delivery.flush();
+		await Effect.runPromise(delivery.flush());
 		await Effect.runPromise(Effect.sleep(700));
 		assert.equal(attempts, 3);
 		assert.match(delivery.problem ?? "", /bt-retry/);

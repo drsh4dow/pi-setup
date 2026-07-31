@@ -1,3 +1,4 @@
+// biome-ignore-all format: Effect test boundaries stay compact to keep the conversion deletion-first.
 import assert from "node:assert/strict";
 
 const { readFile } = process.getBuiltinModule("fs/promises");
@@ -7,12 +8,10 @@ import type {
 	AgentSessionEvent,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
-
-const runEffect = Effect.runPromise;
+import { Cause, Deferred, Effect, Fiber } from "effect";
 
 import { type DelegateSnapshot, MAX_CHILD_OUTPUT_BYTES } from "../contract.ts";
-import { DelegateManager, type DelegateRequest } from "../manager.ts";
+import { DelegateManager } from "../manager.ts";
 import type { ChildSession } from "../runtime.ts";
 import { eventually } from "./eventually.ts";
 
@@ -33,40 +32,36 @@ class FakeChild {
 	isStreaming = false;
 	disposed = false;
 	abortLeavesRunning: boolean = false;
-	abortGate?: Promise<void>;
-	steerGate?: Promise<void>;
+	abortGate?: Deferred.Deferred<void>;
+	steerGate?: Deferred.Deferred<void>;
 	private listeners = new Set<(event: AgentSessionEvent) => void>();
-	private promptResolve?: () => void;
-	private promptReject?: (error: Error) => void;
+	private promptCompletion?: Deferred.Deferred<void, Error>;
 
 	prompt(text: string) {
 		this.prompts.push(text);
 		this.isStreaming = true;
-		return new Promise<void>((resolve, reject) => {
-			this.promptResolve = resolve;
-			this.promptReject = reject;
-		});
+		this.promptCompletion = Deferred.makeUnsafe<void, Error>();
+		return deferredPromise(this.promptCompletion);
 	}
 
-	async steer(text: string) {
+	steer(text: string) {
 		this.steeringStarted.push(text);
-		await this.steerGate;
-		this.steering.push(text);
+		return (
+			this.steerGate ? deferredPromise(this.steerGate) : Promise.resolve()
+		).then(() => this.steering.push(text));
 	}
 
-	async abort() {
-		await this.abortGate;
-		if (this.abortLeavesRunning) return;
-		this.isStreaming = false;
-		this.promptResolve?.();
-		this.promptResolve = undefined;
+	abort() {
+		return (
+			this.abortGate ? deferredPromise(this.abortGate) : Promise.resolve()
+		).then(() => {
+			if (!this.abortLeavesRunning) this.completePrompt();
+		});
 	}
 
 	disposeNow() {
 		this.disposed = true;
-		this.isStreaming = false;
-		this.promptResolve?.();
-		this.promptResolve = undefined;
+		this.completePrompt();
 	}
 
 	dispose() {
@@ -74,10 +69,7 @@ class FakeChild {
 	}
 
 	rejectPrompt(error: Error) {
-		this.isStreaming = false;
-		this.promptReject?.(error);
-		this.promptResolve = undefined;
-		this.promptReject = undefined;
+		this.completePrompt(error);
 	}
 
 	emitAssistantStart() {
@@ -111,18 +103,12 @@ class FakeChild {
 	}
 
 	finishWithoutResponse() {
-		this.isStreaming = false;
-		this.promptResolve?.();
-		this.promptResolve = undefined;
-		this.promptReject = undefined;
+		this.completePrompt();
 	}
 
 	finish(output: string, totalTokens = 15) {
 		this.emitAssistant(output, totalTokens, "stop");
-		this.isStreaming = false;
-		this.promptResolve?.();
-		this.promptResolve = undefined;
-		this.promptReject = undefined;
+		this.completePrompt();
 	}
 
 	subscribe(listener: (event: AgentSessionEvent) => void) {
@@ -133,125 +119,152 @@ class FakeChild {
 	emit(event: AgentSessionEvent) {
 		for (const listener of this.listeners) listener(event);
 	}
+
+	private completePrompt(error?: Error) {
+		this.isStreaming = false;
+		if (this.promptCompletion) {
+			Effect.runSync(
+				error
+					? Deferred.fail(this.promptCompletion, error)
+					: Deferred.succeed(this.promptCompletion, undefined),
+			);
+			this.promptCompletion = undefined;
+		}
+	}
 }
 
 function harness(
 	onSettled?: (snapshot: DelegateSnapshot) => void,
-	beforeShutdown?: (child: FakeChild) => Promise<void>,
+	beforeShutdown?: (child: FakeChild) => Effect.Effect<void>,
 ) {
 	const sessions: FakeChild[] = [];
-	const shutdown: FakeChild[] = [];
-	const requests: DelegateRequest[] = [];
 	const manager = new DelegateManager({
 		onSettled,
-		async createSession(request) {
-			requests.push(request);
+		createSession() {
 			const child = new FakeChild();
 			setImmediate(() => sessions.push(child));
-			return child as unknown as ChildSession;
+			return Promise.resolve(child as unknown as ChildSession);
 		},
-		async shutdownSession(child) {
+		shutdownSession(child) {
 			const fake = child as unknown as FakeChild;
-			await beforeShutdown?.(fake);
-			fake.disposeNow();
-			shutdown.push(fake);
+			return Effect.runPromise(
+				Effect.gen(function* () {
+					if (beforeShutdown) yield* beforeShutdown(fake);
+					fake.disposeNow();
+				}),
+			);
 		},
 	});
-	return { manager, sessions, shutdown, requests };
+	return { manager, sessions };
 }
 
-test("wait admission is atomic, bounded per child, and releases capacity", async () => {
+const yieldImmediate = Effect.callback<void>((resume) => {
+	setImmediate(() => resume(Effect.void));
+});
+
+function deferredPromise<A, E extends Error>(deferred: Deferred.Deferred<A, E>): Promise<A> {
+	return Effect.runPromise(Deferred.await(deferred));
+}
+
+function failureMessage<A, E, R>(effect: Effect.Effect<A, E, R>) {
+	return effect.pipe(Effect.exit, Effect.map((exit) => {
+		if (exit._tag === "Success") assert.fail("expected Effect to fail");
+		return String(Cause.squash(exit.cause));
+	}));
+}
+
+test("wait admission is atomic, bounded per child, and releases capacity", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const first = manager.spawn({ task: "first", ctx: context });
 	const second = manager.spawn({ task: "second", ctx: context });
-	await runEffect(eventually(() => sessions.length === 2));
-	const waits = Array.from({ length: 4 }, () =>
-		runEffect(manager.wait([first.id])),
+	yield* eventually(() => sessions.length === 2);
+	const waits = yield* Effect.all(
+		Array.from({ length: 4 }, () => Effect.forkChild(manager.wait([first.id]))),
 	);
-	await assert.rejects(
-		runEffect(manager.wait([first.id, second.id])),
-		/4 pending waits/,
-	);
+	yield* yieldImmediate;
+	const refused = yield* failureMessage(manager.wait([first.id, second.id]));
+	assert.match(refused, /4 pending waits/);
 	sessions[0].finish("done");
-	await Promise.all(waits);
-	const available = runEffect(manager.wait([first.id, second.id]));
+	yield* Effect.all(waits.map(Fiber.join));
+	const available = yield* Effect.forkChild(manager.wait([first.id, second.id]));
 	sessions[1].finish("done");
-	await available;
-	await runEffect(manager.shutdown());
-});
+	yield* Fiber.join(available);
+	yield* manager.shutdown();
+})));
 
-test("starts every run immediately without aggregate scheduling", async () => {
+test("starts every run immediately without aggregate scheduling", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const jobs = Array.from({ length: 40 }, (_, index) =>
 		manager.spawn({ task: `parallel task ${index}`, ctx: context }),
 	);
-	await runEffect(eventually(() => sessions.length === jobs.length));
+	yield* eventually(() => sessions.length === jobs.length);
 	assert.ok(manager.list().every((snapshot) => snapshot.status === "running"));
 
-	await runEffect(manager.cancel(jobs.map((job) => job.id)));
-	await runEffect(manager.shutdown());
-});
+	yield* manager.cancel(jobs.map((job) => job.id));
+	yield* manager.shutdown();
+})));
 
-test("the universal ceiling owns a child created after settlement", async (t) => {
+test("the universal ceiling owns a child created after settlement", (t) => Effect.runPromise(Effect.gen(function* () {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
-	let resolveCreation!: (child: ChildSession) => void;
+	const creation = yield* Deferred.make<ChildSession>();
 	const manager = new DelegateManager({
-		createSession() {
-			return new Promise<ChildSession>((resolve) => {
-				resolveCreation = resolve;
-			});
-		},
-		async shutdownSession(child) {
+		createSession: () => deferredPromise(creation),
+		shutdownSession(child) {
 			(child as unknown as FakeChild).disposeNow();
+			return Promise.resolve();
 		},
 	});
 	const job = manager.spawn({ task: "creation hangs", ctx: context });
-	await new Promise<void>((resolve) => setImmediate(resolve));
+	yield* yieldImmediate;
 
 	t.mock.timers.tick(60 * 60_000);
-	const [failed] = await runEffect(manager.wait([job.id]));
+	const [failed] = yield* manager.wait([job.id]);
 	assert.equal(failed.status, "error");
 	assert.match(failed.error ?? "", /60 minutes of wall time/);
 
 	const child = new FakeChild();
-	resolveCreation(child as unknown as ChildSession);
-	await new Promise<void>((resolve) => setImmediate(resolve));
-	await new Promise<void>((resolve) => setImmediate(resolve));
+	yield* Deferred.succeed(creation, child as unknown as ChildSession);
+	yield* yieldImmediate;
+	yield* yieldImmediate;
 	assert.equal(child.disposed, true);
 	assert.deepEqual(child.prompts, []);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("a stalled provider runs until the universal ceiling", async (t) => {
+test("a stalled provider runs until the universal ceiling", (t) => Effect.runPromise(Effect.gen(function* () {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "provider stalls", ctx: context });
-	await new Promise<void>((resolve) => setImmediate(resolve));
+	yield* yieldImmediate;
 	assert.equal(sessions.length, 1);
 
 	t.mock.timers.tick(59 * 60_000);
 	assert.equal(manager.list([job.id])[0].status, "running");
 	t.mock.timers.tick(60_000);
-	const [failed] = await runEffect(manager.wait([job.id]));
+	yield* yieldImmediate;
+	const [failed] = yield* manager.wait([job.id]);
 	assert.equal(failed.status, "error");
 	assert.match(failed.error ?? "", /60 minutes of wall time/);
-	await runEffect(eventually(() => sessions[0].disposed));
-	await runEffect(manager.shutdown());
-});
+	yield* eventually(() => sessions[0].disposed);
+	yield* manager.shutdown();
+})));
 
-test("prompt completion without an assistant response is an error", async () => {
+test("prompt completion without an assistant response is an error", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
-	const job = manager.spawn({ task: "empty provider response", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
+	const job = manager.spawn({
+		task: "empty provider response",
+		ctx: context,
+	});
+	yield* eventually(() => sessions.length === 1);
 	sessions[0].finishWithoutResponse();
 
-	const [failed] = await runEffect(manager.wait([job.id]));
+	const [failed] = yield* manager.wait([job.id]);
 	assert.equal(failed.status, "error");
 	assert.match(failed.error ?? "", /without an assistant response.*Retry/);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("all effort modes stop at the same sixty-minute ceiling", async (t) => {
+test("all effort modes stop at the same sixty-minute ceiling", (t) => Effect.runPromise(Effect.gen(function* () {
 	t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 });
 	const { manager, sessions } = harness();
 	const jobs = [
@@ -262,7 +275,7 @@ test("all effort modes stop at the same sixty-minute ceiling", async (t) => {
 			ctx: context,
 		}),
 	];
-	await new Promise<void>((resolve) => setImmediate(resolve));
+	yield* yieldImmediate;
 	for (const session of sessions) session.emitAssistantStart();
 
 	t.mock.timers.tick(59 * 60_000);
@@ -273,7 +286,8 @@ test("all effort modes stop at the same sixty-minute ceiling", async (t) => {
 		true,
 	);
 	t.mock.timers.tick(60_000);
-	const stopped = await runEffect(manager.wait(jobs.map((job) => job.id)));
+	yield* yieldImmediate;
+	const stopped = yield* manager.wait(jobs.map((job) => job.id));
 	assert.equal(
 		stopped.every((job) => job.status === "error"),
 		true,
@@ -282,14 +296,15 @@ test("all effort modes stop at the same sixty-minute ceiling", async (t) => {
 		stopped.every((job) => /60 minutes of wall time/.test(job.error ?? "")),
 		true,
 	);
+	yield* yieldImmediate;
 	assert.equal(
 		sessions.every((session) => session.disposed),
 		true,
 	);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("all effort modes stop at sixty million reported tokens", async () => {
+test("all effort modes stop at sixty million reported tokens", () => Effect.runPromise(Effect.gen(function* () {
 	const requests = [
 		{ task: "fast token-heavy task", ctx: context },
 		{
@@ -302,59 +317,59 @@ test("all effort modes stop at sixty million reported tokens", async () => {
 	for (const request of requests) {
 		const { manager, sessions } = harness();
 		const job = manager.spawn(request);
-		await runEffect(eventually(() => sessions.length === 1));
+		yield* eventually(() => sessions.length === 1);
 
 		sessions[0].emitAssistant("checkpoint", 59_999_999);
 		assert.equal(manager.list([job.id])[0].status, "running");
 		assert.equal(sessions[0].steeringStarted.length, 0);
 
 		sessions[0].emitAssistant("hard checkpoint", 1);
-		const [stopped] = await runEffect(manager.wait([job.id]));
+		const [stopped] = yield* manager.wait([job.id]);
 		assert.equal(stopped.status, "error");
 		assert.equal(stopped.output, "hard checkpoint");
 		assert.equal(stopped.childUsage.totalTokens, 60_000_000);
 		assert.match(stopped.error ?? "", /60,000,000 reported tokens/);
-		assert.equal(sessions[0].disposed, true);
-		await runEffect(manager.shutdown());
+		yield* eventually(() => sessions[0].disposed);
+		yield* manager.shutdown();
 	}
-});
+})));
 
-test("cancellation releases prompts that ignore child abort", async () => {
+test("cancellation releases prompts that ignore child abort", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const jobs = Array.from({ length: 4 }, (_, index) =>
 		manager.spawn({ task: `stuck prompt ${index}`, ctx: context }),
 	);
-	await runEffect(eventually(() => sessions.length === 4));
+	yield* eventually(() => sessions.length === 4);
 	for (const session of sessions) session.abortLeavesRunning = true;
-	await runEffect(manager.cancel(jobs.map((job) => job.id)));
+	yield* manager.cancel(jobs.map((job) => job.id));
 
 	const later = manager.spawn({ task: "later", ctx: context });
-	await runEffect(eventually(() => sessions.length === 5));
+	yield* eventually(() => sessions.length === 5);
 	assert.equal(manager.list([later.id])[0].status, "running");
 	sessions[4].finish("done");
-	await runEffect(manager.wait([later.id]));
-	await runEffect(manager.shutdown());
-});
+	yield* manager.wait([later.id]);
+	yield* manager.shutdown();
+})));
 
-test("teardown timeout falls back to local disposal and diagnoses", async (t) => {
+test("teardown timeout falls back to local disposal and diagnoses", (t) => Effect.runPromise(Effect.gen(function* () {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const diagnostics: string[] = [];
 	const originalLog = console.log;
 	console.log = (...values: unknown[]) =>
 		diagnostics.push(values.map(String).join(" "));
-	const { manager, sessions } = harness(
-		undefined,
-		() => new Promise<void>(() => {}),
+	const teardown = yield* Deferred.make<void>();
+	const { manager, sessions } = harness(undefined, () =>
+		Deferred.await(teardown),
 	);
 	const job = manager.spawn({ task: "teardown hangs", ctx: context });
-	await new Promise<void>((resolve) => setImmediate(resolve));
+	yield* yieldImmediate;
 	assert.equal(sessions.length, 1);
 
 	try {
-		const cancelling = runEffect(manager.cancel([job.id]));
-		await new Promise<void>((resolve) => setImmediate(resolve));
+		const cancelling = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
+		yield* yieldImmediate;
 		t.mock.timers.tick(16_000);
-		const [cancelled] = await cancelling;
+		const [cancelled] = yield* Fiber.join(cancelling);
 		assert.equal(cancelled.status, "cancelled");
 		assert.equal(sessions[0].disposed, true);
 		assert.equal(diagnostics.length, 1);
@@ -362,22 +377,22 @@ test("teardown timeout falls back to local disposal and diagnoses", async (t) =>
 	} finally {
 		console.log = originalLog;
 	}
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("teardown rejection falls back to local disposal and diagnoses", async () => {
+test("teardown rejection falls back to local disposal and diagnoses", () => Effect.runPromise(Effect.gen(function* () {
 	const diagnostics: string[] = [];
 	const originalLog = console.log;
 	console.log = (...values: unknown[]) =>
 		diagnostics.push(values.map(String).join(" "));
-	const { manager, sessions } = harness(undefined, async () => {
-		throw new Error("shutdown transport failed");
-	});
+	const { manager, sessions } = harness(undefined, () =>
+		Effect.die(new Error("shutdown transport failed")),
+	);
 	const job = manager.spawn({ task: "teardown rejects", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 
 	try {
-		const [cancelled] = await runEffect(manager.cancel([job.id]));
+		const [cancelled] = yield* manager.cancel([job.id]);
 		assert.equal(cancelled.status, "cancelled");
 		assert.equal(sessions[0].disposed, true);
 		assert.equal(diagnostics.length, 1);
@@ -385,13 +400,13 @@ test("teardown rejection falls back to local disposal and diagnoses", async () =
 	} finally {
 		console.log = originalLog;
 	}
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("rejected child prompt settles, remains inspectable, and releases capacity", async () => {
+test("rejected child prompt settles, remains inspectable, and releases capacity", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const failed = manager.spawn({ task: "transport fails", ctx: context });
-	await runEffect(eventually(() => sessions.at(0)?.prompts.length === 1));
+	yield* eventually(() => sessions.at(0)?.prompts.length === 1);
 	sessions[0].emit({
 		type: "message_end",
 		message: {
@@ -410,37 +425,38 @@ test("rejected child prompt settles, remains inspectable, and releases capacity"
 	assert.deepEqual(manager.sessionUsage(), { tokens: 3, cost: 0.0123 });
 	sessions[0].rejectPrompt(new Error("prompt transport rejected"));
 
-	const [snapshot] = await runEffect(manager.wait([failed.id]));
+	const [snapshot] = yield* manager.wait([failed.id]);
 	assert.equal(snapshot.status, "error");
 	assert.equal(snapshot.error, "prompt transport rejected");
 	assert.equal(snapshot.output, "partial activity");
 	assert.equal(manager.list([failed.id])[0].error, "prompt transport rejected");
-	await runEffect(eventually(() => sessions[0].disposed));
+	yield* eventually(() => sessions[0].disposed);
 
 	const next = manager.spawn({ task: "capacity is free", ctx: context });
-	await runEffect(eventually(() => sessions.at(1)?.prompts.length === 1));
+	yield* eventually(() => sessions.at(1)?.prompts.length === 1);
 	assert.equal(manager.list([next.id])[0].status, "running");
 	sessions[1].finish("done");
-	await runEffect(manager.wait([next.id]));
-	await runEffect(manager.shutdown());
-});
+	yield* manager.wait([next.id]);
+	yield* manager.shutdown();
+})));
 
-test("interrupted waits leave children running and explicit cancel stops them", async () => {
+test("interrupted waits leave children running and explicit cancel stops them", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "long", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 	const controller = new AbortController();
-	const waiting = runEffect(manager.wait([job.id], controller.signal));
+	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
 	controller.abort(new Error("stop waiting"));
-	await assert.rejects(waiting, /stop waiting/);
+	const interrupted = yield* failureMessage(Fiber.join(waiting));
+	assert.match(interrupted, /stop waiting/);
 	assert.equal(manager.list([job.id])[0].status, "running");
 
-	const [cancelled] = await runEffect(manager.cancel([job.id]));
+	const [cancelled] = yield* manager.cancel([job.id]);
 	assert.equal(cancelled.status, "cancelled");
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("an interrupted background wait restores delivery for the same run", async () => {
+test("an interrupted background wait restores delivery for the same run", () => Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
 	const job = manager.spawn({
@@ -448,20 +464,21 @@ test("an interrupted background wait restores delivery for the same run", async 
 		background: true,
 		ctx: context,
 	});
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 	const controller = new AbortController();
-	const waiting = runEffect(manager.wait([job.id], controller.signal));
+	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
 	controller.abort(new Error("stop waiting"));
 	sessions[0].finish("raced result");
 
-	await assert.rejects(waiting, /stop waiting/);
-	await runEffect(eventually(() => delivered.length === 1));
+	const interrupted = yield* failureMessage(Fiber.join(waiting));
+	assert.match(interrupted, /stop waiting/);
+	yield* eventually(() => delivered.length === 1);
 	assert.equal(delivered[0].output, "raced result");
 	assert.equal(manager.list([job.id])[0].status, "done");
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("a successful concurrent wait prevents an aborted wait from restoring delivery", async () => {
+test("a successful concurrent wait prevents an aborted wait from restoring delivery", () => Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
 	const job = manager.spawn({
@@ -469,20 +486,22 @@ test("a successful concurrent wait prevents an aborted wait from restoring deliv
 		background: true,
 		ctx: context,
 	});
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 	const controller = new AbortController();
-	const aborted = runEffect(manager.wait([job.id], controller.signal));
-	const successful = runEffect(manager.wait([job.id]));
+	const aborted = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
+	const successful = yield* manager.wait([job.id]).pipe(Effect.forkChild);
+	yield* yieldImmediate;
 	controller.abort(new Error("stop one wait"));
 	sessions[0].finish("result");
 
-	await assert.rejects(aborted, /stop one wait/);
-	await successful;
+	const interrupted = yield* failureMessage(Fiber.join(aborted));
+	assert.match(interrupted, /stop one wait/);
+	yield* Fiber.join(successful);
 	assert.equal(delivered.length, 0);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("cancel consumption wins over an aborted concurrent wait", async () => {
+test("cancel consumption wins over an aborted concurrent wait", () => Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
 	const job = manager.spawn({
@@ -490,240 +509,237 @@ test("cancel consumption wins over an aborted concurrent wait", async () => {
 		background: true,
 		ctx: context,
 	});
-	await runEffect(eventually(() => sessions.length === 1));
-	let releaseAbort!: () => void;
-	sessions[0].abortGate = new Promise<void>((resolve) => {
-		releaseAbort = resolve;
-	});
+	yield* eventually(() => sessions.length === 1);
+	const abortGate = yield* Deferred.make<void>();
+	sessions[0].abortGate = abortGate;
 	const controller = new AbortController();
-	const waiting = runEffect(manager.wait([job.id], controller.signal));
-	const cancelling = runEffect(manager.cancel([job.id]));
+	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
+	const cancelling = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
 	controller.abort(new Error("stop waiting"));
-	releaseAbort();
+	yield* Deferred.succeed(abortGate, undefined);
 
-	await assert.rejects(waiting, /stop waiting/);
-	const [cancelled] = await cancelling;
+	const interrupted = yield* failureMessage(Fiber.join(waiting));
+	assert.match(interrupted, /stop waiting/);
+	const [cancelled] = yield* Fiber.join(cancelling);
 	assert.equal(cancelled.status, "cancelled");
 	assert.equal(delivered.length, 0);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("concurrent shutdown joins gated child disposal", async () => {
-	let releaseDisposal!: () => void;
-	const disposalGate = new Promise<void>((resolve) => {
-		releaseDisposal = resolve;
-	});
+test("concurrent shutdown joins gated child disposal", () => Effect.runPromise(Effect.gen(function* () {
+	const disposalGate = yield* Deferred.make<void>();
 	let disposalStarted = false;
-	const { manager, sessions } = harness(undefined, async () => {
+	const { manager, sessions } = harness(undefined, () => {
 		disposalStarted = true;
-		await disposalGate;
+		return Deferred.await(disposalGate);
 	});
 	manager.spawn({ task: "shutdown twice", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 
 	let firstSettled = false;
 	let secondSettled = false;
-	const first = runEffect(manager.shutdown()).finally(() => {
-		firstSettled = true;
-	});
-	const second = runEffect(manager.shutdown()).finally(() => {
-		secondSettled = true;
-	});
-	await runEffect(eventually(() => disposalStarted));
+	const first = yield* manager.shutdown().pipe(
+		Effect.ensuring(Effect.sync(() => (firstSettled = true))), Effect.forkChild,
+	);
+	const second = yield* manager.shutdown().pipe(
+		Effect.ensuring(Effect.sync(() => (secondSettled = true))), Effect.forkChild,
+	);
+	yield* eventually(() => disposalStarted);
 	assert.equal(firstSettled, false);
 	assert.equal(secondSettled, false);
-	releaseDisposal();
-	await Promise.all([first, second]);
+	yield* Deferred.succeed(disposalGate, undefined);
+	yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
 	assert.equal(firstSettled, true);
 	assert.equal(secondSettled, true);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("concurrent cancellation joins the in-progress stop", async () => {
+test("concurrent cancellation joins the in-progress stop", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "cancel twice", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
-	let releaseAbort!: () => void;
-	sessions[0].abortGate = new Promise<void>((resolve) => {
-		releaseAbort = resolve;
-	});
-	const first = runEffect(manager.cancel([job.id]));
-	const second = runEffect(manager.cancel([job.id]));
-	releaseAbort();
+	yield* eventually(() => sessions.length === 1);
+	const abortGate = yield* Deferred.make<void>();
+	sessions[0].abortGate = abortGate;
+	const first = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
+	const second = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
+	yield* Deferred.succeed(abortGate, undefined);
 
-	assert.equal((await first)[0].status, "cancelled");
-	assert.equal((await second)[0].status, "cancelled");
-	await runEffect(manager.shutdown());
-});
+	assert.equal((yield* Fiber.join(first))[0].status, "cancelled");
+	assert.equal((yield* Fiber.join(second))[0].status, "cancelled");
+	yield* manager.shutdown();
+})));
 
-test("cancellation waits for an existing child to be disposed", async () => {
-	let releaseDisposal!: () => void;
-	const disposalGate = new Promise<void>((resolve) => {
-		releaseDisposal = resolve;
-	});
+test("cancellation waits for an existing child to be disposed", () => Effect.runPromise(Effect.gen(function* () {
+	const disposalGate = yield* Deferred.make<void>();
 	let disposalStarted = false;
-	const { manager, sessions } = harness(undefined, async () => {
+	const { manager, sessions } = harness(undefined, () => {
 		disposalStarted = true;
-		await disposalGate;
+		return Deferred.await(disposalGate);
 	});
 	const job = manager.spawn({ task: "cancel and dispose", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 
 	let settled = false;
-	const cancelling = runEffect(manager.cancel([job.id])).finally(() => {
-		settled = true;
-	});
-	await runEffect(eventually(() => disposalStarted));
+	const cancelling = yield* manager.cancel([job.id]).pipe(
+		Effect.ensuring(Effect.sync(() => (settled = true))), Effect.forkChild,
+	);
+	yield* eventually(() => disposalStarted);
 	assert.equal(settled, false);
-	releaseDisposal();
-	assert.equal((await cancelling)[0].status, "cancelled");
-	await runEffect(manager.shutdown());
-});
+	yield* Deferred.succeed(disposalGate, undefined);
+	assert.equal((yield* Fiber.join(cancelling))[0].status, "cancelled");
+	yield* manager.shutdown();
+})));
 
-test("an uncooperative cancelled child is disposed", async () => {
+test("an uncooperative cancelled child is disposed", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "stuck", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 	sessions[0].abortLeavesRunning = true;
 
-	const [cancelled] = await runEffect(manager.cancel([job.id]));
+	const [cancelled] = yield* manager.cancel([job.id]);
 	assert.equal(cancelled.status, "cancelled");
 	assert.equal(sessions[0].disposed, true);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("send steers only a running child", async () => {
+test("send steers only a running child", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const running = manager.spawn({ task: "running", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 
-	await runEffect(manager.send(running.id, "focus here"));
+	yield* manager.send(running.id, "focus here");
 	assert.deepEqual(sessions[0].steering, ["focus here"]);
 	sessions[0].finish("done");
-	await runEffect(manager.wait([running.id]));
-	await assert.rejects(
-		runEffect(manager.send(running.id, "late")),
-		/send requires a running child/,
-	);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.wait([running.id]);
+	const rejected = yield* failureMessage(manager.send(running.id, "late"));
+	assert.match(rejected, /send requires a running child/);
+	yield* manager.shutdown();
+})));
 
-test("cancellation settles all gated sends", async () => {
+test("cancellation settles all gated sends", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "gated steering", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
-	sessions[0].steerGate = new Promise<void>(() => {});
-	const sends = Array.from({ length: 8 }, (_, index) =>
-		runEffect(manager.send(job.id, `message ${index}`)),
+	yield* eventually(() => sessions.length === 1);
+	sessions[0].steerGate = yield* Deferred.make<void>();
+	const sends = yield* Effect.all(
+		Array.from({ length: 8 }, (_, index) => manager.send(job.id, `message ${index}`).pipe(Effect.exit, Effect.forkChild)),
 	);
-	const settled = Promise.allSettled(sends);
-	await runEffect(eventually(() => sessions[0].steeringStarted.length === 1));
+	yield* eventually(() => sessions[0].steeringStarted.length === 1);
 
-	await runEffect(manager.cancel([job.id]));
-	const results = await settled;
+	yield* manager.cancel([job.id]);
+	const results = yield* Effect.all(sends.map(Fiber.join));
 	assert.equal(
-		results.every((result) => result.status === "rejected"),
+		results.every((result) => result._tag === "Failure"),
 		true,
 	);
 	assert.deepEqual(sessions[0].steeringStarted, ["message 0"]);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("stalled steering remains owned until the universal ceiling", async (t) => {
+test("stalled steering remains owned until the universal ceiling", (t) => Effect.runPromise(Effect.gen(function* () {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "timed steering", ctx: context });
-	await new Promise<void>((resolve) => setImmediate(resolve));
+	yield* yieldImmediate;
 	sessions[0].emitAssistantStart();
-	sessions[0].steerGate = new Promise<void>(() => {});
-	const sending = runEffect(manager.send(job.id, "stalled"));
-	await new Promise<void>((resolve) => setImmediate(resolve));
+	sessions[0].steerGate = yield* Deferred.make<void>();
+	const sending = yield* Effect.forkChild(manager.send(job.id, "stalled"));
+	yield* yieldImmediate;
 
 	t.mock.timers.tick(59 * 60_000);
 	assert.equal(manager.list([job.id])[0].status, "running");
 	t.mock.timers.tick(60_000);
-	await assert.rejects(sending, /60 minutes of wall time/);
-	const [stopped] = await runEffect(manager.wait([job.id]));
+	const interrupted = yield* failureMessage(Fiber.join(sending));
+	assert.match(interrupted, /60 minutes of wall time/);
+	const [stopped] = yield* manager.wait([job.id]);
 	assert.equal(stopped.status, "error");
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("queued sends do not reach a settled child", async () => {
+test("queued sends do not reach a settled child", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "initial", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
-	let releaseSteer!: () => void;
-	sessions[0].steerGate = new Promise<void>((resolve) => {
-		releaseSteer = resolve;
-	});
-	const first = runEffect(manager.send(job.id, "first"));
-	await runEffect(eventually(() => sessions[0].steeringStarted.length === 1));
-	const stale = runEffect(manager.send(job.id, "stale"));
+	yield* eventually(() => sessions.length === 1);
+	const steerGate = yield* Deferred.make<void>();
+	sessions[0].steerGate = steerGate;
+	const first = yield* manager.send(job.id, "first").pipe(Effect.forkChild);
+	yield* eventually(() => sessions[0].steeringStarted.length === 1);
+	const stale = yield* manager.send(job.id, "stale").pipe(Effect.forkChild);
+	yield* yieldImmediate;
 	sessions[0].finish("done");
-	await runEffect(manager.wait([job.id]));
-	releaseSteer();
+	yield* manager.wait([job.id]);
+	yield* Deferred.succeed(steerGate, undefined);
 
-	await assert.rejects(first, /ownership ended/);
-	await assert.rejects(stale, /settled before the queued message/);
+	const firstError = yield* failureMessage(Fiber.join(first));
+	assert.match(firstError, /ownership ended/);
+	const staleError = yield* failureMessage(Fiber.join(stale));
+	assert.match(staleError, /settled before the queued message/);
 	assert.deepEqual(sessions[0].steering, ["first"]);
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("pending sends are capped", async () => {
+test("pending sends are capped", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "running", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
-	let releaseSteer!: () => void;
-	sessions[0].steerGate = new Promise<void>((resolve) => {
-		releaseSteer = resolve;
-	});
-	const sends = Array.from({ length: 8 }, (_, index) =>
-		runEffect(manager.send(job.id, `message ${index}`)),
+	yield* eventually(() => sessions.length === 1);
+	const steerGate = yield* Deferred.make<void>();
+	sessions[0].steerGate = steerGate;
+	const sends = yield* Effect.all(
+		Array.from({ length: 8 }, (_, index) => Effect.forkChild(manager.send(job.id, `message ${index}`))),
 	);
-	await assert.rejects(
-		runEffect(manager.send(job.id, "overflow")),
-		/8 pending messages/,
-	);
-	releaseSteer();
-	await Promise.all(sends);
+	yield* yieldImmediate;
+	const overflow = yield* failureMessage(manager.send(job.id, "overflow"));
+	assert.match(overflow, /8 pending messages/);
+	yield* Deferred.succeed(steerGate, undefined);
+	yield* Effect.all(sends.map(Fiber.join));
 	sessions[0].finish("done");
-	await runEffect(manager.wait([job.id]));
-	await runEffect(manager.shutdown());
-});
+	yield* manager.wait([job.id]);
+	yield* manager.shutdown();
+})));
 
-test("output format guides without enforcing the final response", async () => {
+test("output format guides without enforcing the final response", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({
 		task: "collect evidence",
 		outputFormat: "Return JSON with a findings array.",
 		ctx: context,
 	});
-	await runEffect(eventually(() => sessions.length === 1));
+	yield* eventually(() => sessions.length === 1);
 	assert.match(sessions[0].prompts[0], /Preferred output format \(advisory\)/);
 	assert.match(sessions[0].prompts[0], /Return JSON with a findings array/);
 	assert.match(sessions[0].prompts[0], /correct and complete information/);
 
 	sessions[0].finish("The useful evidence does not fit that shape.");
-	const [result] = await runEffect(manager.wait([job.id]));
+	const [result] = yield* manager.wait([job.id]);
 	assert.equal(result.status, "done");
 	assert.equal(result.output, "The useful evidence does not fit that shape.");
-	await runEffect(manager.shutdown());
-});
+	yield* manager.shutdown();
+})));
 
-test("archives complete oversized child output until parent shutdown", async () => {
+test("archives complete oversized child output until parent shutdown", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
-	const job = manager.spawn({ task: "Return a large report.", ctx: context });
-	await runEffect(eventually(() => sessions.length === 1));
+	const job = manager.spawn({
+		task: "Return a large report.",
+		ctx: context,
+	});
+	yield* eventually(() => sessions.length === 1);
 	const report = "é".repeat(MAX_CHILD_OUTPUT_BYTES);
 	sessions[0].finish(report);
 
-	const [result] = await runEffect(manager.wait([job.id]));
+	const [result] = yield* manager.wait([job.id]);
 	assert.equal(result.outputTruncated, true);
-	assert.ok(result.fullOutputFile);
+	const outputFile = result.fullOutputFile;
+	assert.ok(outputFile);
 	assert.match(result.output, /full output saved to:/);
-	assert.equal(await readFile(result.fullOutputFile, "utf8"), report);
+	assert.equal(
+		yield* Effect.promise(() => readFile(outputFile, "utf8")),
+		report,
+	);
 
-	const savedOutput = result.fullOutputFile;
-	await runEffect(manager.shutdown());
-	await assert.rejects(readFile(savedOutput, "utf8"), { code: "ENOENT" });
-});
+	const savedOutput = outputFile;
+	yield* manager.shutdown();
+	const missing = yield* Effect.tryPromise(() =>
+		readFile(savedOutput, "utf8"),
+	).pipe(Effect.flip);
+	assert.equal((missing.cause as { code?: string }).code, "ENOENT");
+})));

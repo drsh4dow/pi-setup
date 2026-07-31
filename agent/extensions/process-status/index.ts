@@ -48,7 +48,6 @@ export default function processStatus(pi: ExtensionAPI) {
 		currentModel = ctx.model;
 		if (ctx.mode !== "tui") return;
 		ctx.ui.setFooter((tui, _theme, footerData) => {
-			// FooterComponent derives cost from entries; add workers without changing parent token counters.
 			const sessionManager = new Proxy(ctx.sessionManager, {
 				get(target, property) {
 					if (property === "getEntries") {
@@ -56,9 +55,6 @@ export default function processStatus(pi: ExtensionAPI) {
 							const entries = target.getEntries();
 							const workerCost = processStatusCost(pi);
 							if (workerCost === 0) return entries;
-							// Prepended, not appended: FooterComponent derives its cache-hit
-							// rate from the *last* assistant entry, and a zero-token synthetic
-							// one would blank that readout whenever workers have spent cost.
 							return [
 								{
 									type: "message",
@@ -87,8 +83,6 @@ export default function processStatus(pi: ExtensionAPI) {
 					return typeof value === "function" ? value.bind(target) : value;
 				},
 			});
-			// The installed CLI and package dependency use different FooterComponent
-			// session contracts, so satisfy both OAuth lookup shapes at this boundary.
 			const modelRuntime = {
 				isUsingOAuth: (providerId: string) =>
 					currentModel !== undefined &&
@@ -131,10 +125,11 @@ export default function processStatus(pi: ExtensionAPI) {
 
 	pi.registerCommand("ps", {
 		description: "/ps: active; Ctrl+O: tracked; /ps <id>: details",
-		handler: async (args, ctx) => {
+		handler: (args, ctx) => {
 			const view = processStatusView(pi, args.trim() || undefined);
 			if (ctx.mode === "tui") pi.appendEntry(ENTRY_TYPE, view);
 			else if (ctx.hasUI) ctx.ui.notify(view.collapsed, "info");
+			return Promise.resolve();
 		},
 	});
 }

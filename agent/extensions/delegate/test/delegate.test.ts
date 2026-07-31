@@ -483,6 +483,8 @@ test("covers background delivery behavior", (t) =>
 			}
 
 			{
+				// eventually() sleeps on real setTimeout; keep it out of mock scope.
+				t.mock.timers.reset();
 				const messages: unknown[] = [];
 				const renderGate = yield* Deferred.make<void>();
 				let renders = 0;
@@ -516,6 +518,7 @@ test("covers background delivery behavior", (t) =>
 			}
 
 			{
+				t.mock.timers.enable({ apis: ["setTimeout"] });
 				const diagnostics: string[] = [];
 				const messages: unknown[] = [];
 				const originalLog = console.log;
@@ -653,6 +656,7 @@ test("covers background delivery behavior", (t) =>
 			}
 
 			{
+				t.mock.timers.reset();
 				const sent: unknown[] = [];
 				const gate = yield* Deferred.make<void>();
 				let renders = 0;
@@ -676,6 +680,7 @@ test("covers background delivery behavior", (t) =>
 			}
 
 			{
+				t.mock.timers.enable({ apis: ["setTimeout"] });
 				let attempts = 0;
 				const delivery = new BackgroundDelivery(
 					{

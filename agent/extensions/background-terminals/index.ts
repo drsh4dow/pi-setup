@@ -622,9 +622,13 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		execute(_id, params, signal) {
 			const ids = [...new Set(params.ids)];
 			const terminalSession = currentSession();
+			let killError: unknown;
 			const work = Effect.runPromise(
 				Effect.suspend(() => terminalSession.kill(clientId, ids)),
 			);
+			work.catch((error) => {
+				killError = error;
+			});
 			return Effect.runPromise(
 				Effect.promise(() => work).pipe(
 					Effect.map((results) => {
@@ -652,6 +656,9 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 				),
 				{ signal },
 			).catch((error) => {
+				// An abort only interrupts the wait; a failure of the kill itself
+				// must surface even when the signal is also aborted.
+				if (killError !== undefined) throw sanitizeErrorForDisplay(killError);
 				throw sanitizeErrorForDisplay(
 					signal?.aborted
 						? new Error(

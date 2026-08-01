@@ -1,4 +1,4 @@
-const { readFileSync } = process.getBuiltinModule("fs");
+const { existsSync, readFileSync } = process.getBuiltinModule("fs");
 const { delimiter, join } = process.getBuiltinModule("path");
 
 import { fileURLToPath } from "node:url";
@@ -172,6 +172,7 @@ export const createChild = Effect.fn("createChild")(function* (
 	const extensionPaths = yield* Config.string(CHILD_EXTENSION_PATHS_ENV).pipe(
 		Config.withDefault(""),
 	);
+	const projectSystemPrompt = join(cwd, ".pi", "DELEGATE_SYSTEM.md");
 	const resourceLoader = yield* Effect.try({
 		try: () =>
 			new DefaultResourceLoader({
@@ -180,7 +181,9 @@ export const createChild = Effect.fn("createChild")(function* (
 				additionalExtensionPaths: childExtensionPaths({
 					[CHILD_EXTENSION_PATHS_ENV]: extensionPaths,
 				}),
-				systemPrompt: fileURLToPath(new URL("./SYSTEM.md", import.meta.url)),
+				systemPrompt: existsSync(projectSystemPrompt)
+					? projectSystemPrompt
+					: fileURLToPath(new URL("./SYSTEM.md", import.meta.url)),
 				appendSystemPromptOverride: () => [],
 			}),
 		catch: delegateError,

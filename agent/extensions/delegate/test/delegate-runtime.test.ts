@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
-const { mkdtempSync, rmSync, writeFileSync } = process.getBuiltinModule("fs");
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } =
+	process.getBuiltinModule("fs");
 const { readFile, unlink } = process.getBuiltinModule("fs/promises");
 
 import { tmpdir } from "node:os";
@@ -118,6 +119,27 @@ test("covers delegated runtime behavior", () =>
 			);
 			assert.doesNotMatch(promptChild.systemPrompt, /Final report:/);
 			promptChild.dispose();
+
+			const projectDir = join(settingsDir, "custom-prompt-project");
+			mkdirSync(join(projectDir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(projectDir, ".pi", "DELEGATE_SYSTEM.md"),
+				"PROJECT DELEGATE PROMPT",
+				"utf8",
+			);
+			const customizedChild = yield* createChild(
+				projectDir,
+				undefined,
+				"low",
+			).pipe(
+				Effect.provideService(ConfigProvider.ConfigProvider, childConfig()),
+			);
+			assert.match(customizedChild.systemPrompt, /PROJECT DELEGATE PROMPT/);
+			assert.doesNotMatch(
+				customizedChild.systemPrompt,
+				/You are Pi, running as a delegated child in a fresh context\./,
+			);
+			customizedChild.dispose();
 
 			const backgroundExtension = fileURLToPath(
 				new URL("../../background-terminals/index.ts", import.meta.url),

@@ -19,15 +19,15 @@
     "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:compaction && bun run test:aoauth && bun run test:skill-visibility && bun run test:web-access && bun run test:gpt-fast-mode"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.82.1",
-    "@earendil-works/pi-coding-agent": "^0.82.1",
-    "@earendil-works/pi-tui": "^0.82.1",
+    "@earendil-works/pi-ai": "^0.83.0",
+    "@earendil-works/pi-coding-agent": "^0.83.0",
+    "@earendil-works/pi-tui": "^0.83.0",
     "@effect/platform-bun": "4.0.0-beta.102",
     "effect": "4.0.0-beta.102"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",
-    "@effect/tsgo": "0.24.3",
+    "@effect/tsgo": "0.26.7",
     "@types/node": "^26.1.2",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2"

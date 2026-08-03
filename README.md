@@ -10,7 +10,7 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 - Additional model: `opencode-go/kimi-k3`
 - Child-agent model: `openai-codex/gpt-5.6-sol`
 - Theme: Catppuccin Mocha; Gruvbox Dark Hard is also included
-- Dense handoff compaction at 90% context usage or 200k tokens, whichever comes first
+- Dense handoff compaction at 85% context usage or 250k tokens, whichever comes first
 - GPT Fast mode enabled
 
 The agent's behavior and engineering standards are defined in [`agent/SYSTEM.md`](agent/SYSTEM.md). In short: act autonomously, investigate before editing, prefer simple and deep designs, verify before claiming success, and preserve user-owned work.

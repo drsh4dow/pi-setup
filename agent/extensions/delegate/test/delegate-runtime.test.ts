@@ -118,6 +118,7 @@ test("covers delegated runtime behavior", () =>
 				/your job is to collaborate with them until their goal is genuinely handled/,
 			);
 			assert.doesNotMatch(promptChild.systemPrompt, /Final report:/);
+			assert.ok(promptChild.getActiveToolNames().includes("session_usage"));
 			promptChild.dispose();
 
 			const projectDir = join(settingsDir, "custom-prompt-project");

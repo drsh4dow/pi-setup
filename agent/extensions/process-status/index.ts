@@ -15,6 +15,10 @@ import {
 
 const ENTRY_TYPE = "process-status";
 
+function roundUsd(cost: number): number {
+	return Math.round(cost * 1000) / 1000;
+}
+
 export default function processStatus(pi: ExtensionAPI) {
 	let currentModel: Parameters<typeof pi.setModel>[0] | undefined;
 	let requestFooterRender: (() => void) | undefined;
@@ -139,9 +143,9 @@ export default function processStatus(pi: ExtensionAPI) {
 			const main = sessionCost(ctx.sessionManager.getEntries());
 			const delegates = processStatusUsage(pi).cost;
 			const usage = {
-				totalUsd: main + delegates,
-				mainUsd: main,
-				delegatesUsd: delegates,
+				totalUsd: roundUsd(main + delegates),
+				mainUsd: roundUsd(main),
+				delegatesUsd: roundUsd(delegates),
 			};
 			return Promise.resolve({
 				content: [{ type: "text" as const, text: JSON.stringify(usage) }],

@@ -19,22 +19,8 @@ export interface ProcessStatusUsage {
 	cost: number;
 }
 
-export interface SessionUsage extends ProcessStatusUsage {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-}
-
-export function sessionUsage(entries: readonly SessionEntry[]): SessionUsage {
-	const totals: SessionUsage = {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		tokens: 0,
-		cost: 0,
-	};
+export function sessionCost(entries: readonly SessionEntry[]): number {
+	let total = 0;
 	for (const entry of entries) {
 		let usage: Usage | undefined;
 		if (
@@ -47,15 +33,9 @@ export function sessionUsage(entries: readonly SessionEntry[]): SessionUsage {
 			usage = entry.usage;
 		}
 		if (!usage) continue;
-		totals.input += usage.input;
-		totals.output += usage.output;
-		totals.cacheRead += usage.cacheRead;
-		totals.cacheWrite += usage.cacheWrite;
-		totals.tokens +=
-			usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-		totals.cost += usage.cost.total;
+		total += usage.cost.total;
 	}
-	return totals;
+	return total;
 }
 
 export interface ProcessStatusActivity {

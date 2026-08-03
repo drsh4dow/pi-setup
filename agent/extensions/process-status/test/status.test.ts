@@ -15,7 +15,7 @@ import extension from "../index.ts";
 import {
 	processStatusView,
 	registerProcessStatusSource,
-	sessionUsage,
+	sessionCost,
 } from "../status.ts";
 
 function eventBus() {
@@ -69,8 +69,8 @@ function activity(
 	};
 }
 
-test("aggregates all provider-reported session usage", () => {
-	const totals = sessionUsage([
+test("aggregates all provider-reported session cost", () => {
+	const cost = sessionCost([
 		{
 			type: "message",
 			message: { role: "assistant", usage: reportedUsage(10, 5, 2, 3, 0.2) },
@@ -83,14 +83,7 @@ test("aggregates all provider-reported session usage", () => {
 		{ type: "message", message: { role: "user" } },
 	] as never);
 
-	assert.deepEqual(totals, {
-		input: 22,
-		output: 8,
-		cacheRead: 3,
-		cacheWrite: 4,
-		tokens: 37,
-		cost: 0.35,
-	});
+	assert.equal(cost, 0.35);
 });
 
 test("lists each activity on its own line with aggregate usage", () => {
@@ -417,31 +410,13 @@ test("exposes cumulative session and delegate usage to the model", () =>
 						},
 					],
 				},
-				getContextUsage: () => ({
-					tokens: 100,
-					contextWindow: 1000,
-					percent: 10,
-				}),
 			} as unknown as ExtensionContext;
 			const result = yield* Effect.promise(() =>
 				tool.execute("usage-call", {}, undefined, undefined, context),
 			);
-			const expected = {
-				total: { tokens: 215, costUsd: 1 },
-				session: {
-					input: 10,
-					output: 5,
-					cacheRead: 0,
-					cacheWrite: 0,
-					tokens: 15,
-					costUsd: 0.25,
-				},
-				delegates: { tokens: 200, costUsd: 0.75 },
-				context: { tokens: 100, contextWindow: 1000, percent: 10 },
-				asOf: "latest completed provider response",
-			};
+			const expected = { totalUsd: 1, mainUsd: 0.25, delegatesUsd: 0.75 };
 			assert.deepEqual(result.details, expected);
 			const text = result.content.find((part) => part.type === "text")?.text;
-			assert.match(text ?? "", /"total":\{"tokens":215,"costUsd":1\}/);
+			assert.equal(text, '{"totalUsd":1,"mainUsd":0.25,"delegatesUsd":0.75}');
 		}),
 	));

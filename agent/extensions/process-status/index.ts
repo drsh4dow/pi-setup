@@ -10,7 +10,7 @@ import {
 	processStatusCost,
 	processStatusUsage,
 	processStatusView,
-	sessionUsage,
+	sessionCost,
 } from "./status.ts";
 
 const ENTRY_TYPE = "process-status";
@@ -136,27 +136,12 @@ export default function processStatus(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 		executionMode: "parallel",
 		execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-			const session = sessionUsage(ctx.sessionManager.getEntries());
-			const delegates = processStatusUsage(pi);
+			const main = sessionCost(ctx.sessionManager.getEntries());
+			const delegates = processStatusUsage(pi).cost;
 			const usage = {
-				total: {
-					tokens: session.tokens + delegates.tokens,
-					costUsd: session.cost + delegates.cost,
-				},
-				session: {
-					input: session.input,
-					output: session.output,
-					cacheRead: session.cacheRead,
-					cacheWrite: session.cacheWrite,
-					tokens: session.tokens,
-					costUsd: session.cost,
-				},
-				delegates: {
-					tokens: delegates.tokens,
-					costUsd: delegates.cost,
-				},
-				context: ctx.getContextUsage() ?? null,
-				asOf: "latest completed provider response",
+				totalUsd: main + delegates,
+				mainUsd: main,
+				delegatesUsd: delegates,
 			};
 			return Promise.resolve({
 				content: [{ type: "text" as const, text: JSON.stringify(usage) }],

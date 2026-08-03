@@ -64,6 +64,10 @@ _Avoid_: Isolation mode, managed worktree, sandbox
 
 ### Local tools
 
+**Session Usage**:
+The cumulative reported token usage and cost of one Pi session and every Delegate Run it owns, including settled Delegate Runs. It is split into own-session and delegate usage; exact totals extend through the latest completed provider response.
+_Avoid_: Running cost, live cost, token budget
+
 **Session Response Archive**:
 A bounded collection of text responses retained for later retrieval within one Pi session, including resumed use of that same session.
 _Avoid_: Response cache, response storage

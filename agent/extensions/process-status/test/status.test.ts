@@ -7,10 +7,16 @@ import {
 	type ExtensionContext,
 	type ExtensionEvent,
 	initTheme,
+	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { Effect } from "effect";
 import extension from "../index.ts";
-import { processStatusView, registerProcessStatusSource } from "../status.ts";
+import {
+	processStatusView,
+	registerProcessStatusSource,
+	sessionUsage,
+} from "../status.ts";
 
 function eventBus() {
 	const listeners = new Map<string, Set<(data: unknown) => void>>();
@@ -24,6 +30,23 @@ function eventBus() {
 			listeners.set(channel, channelListeners);
 			return () => channelListeners.delete(listener);
 		},
+	};
+}
+
+function reportedUsage(
+	input: number,
+	output: number,
+	cacheRead: number,
+	cacheWrite: number,
+	cost: number,
+) {
+	return {
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
+		totalTokens: input + output + cacheRead + cacheWrite,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
 	};
 }
 
@@ -45,6 +68,30 @@ function activity(
 		detail: detail === undefined ? undefined : () => detail,
 	};
 }
+
+test("aggregates all provider-reported session usage", () => {
+	const totals = sessionUsage([
+		{
+			type: "message",
+			message: { role: "assistant", usage: reportedUsage(10, 5, 2, 3, 0.2) },
+		},
+		{
+			type: "message",
+			message: { role: "toolResult", usage: reportedUsage(4, 1, 0, 0, 0.05) },
+		},
+		{ type: "compaction", usage: reportedUsage(8, 2, 1, 1, 0.1) },
+		{ type: "message", message: { role: "user" } },
+	] as never);
+
+	assert.deepEqual(totals, {
+		input: 22,
+		output: 8,
+		cacheRead: 3,
+		cacheWrite: 4,
+		tokens: 37,
+		cost: 0.35,
+	});
+});
 
 test("lists each activity on its own line with aggregate usage", () => {
 	const events = eventBus();
@@ -223,6 +270,7 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 		registerEntryRenderer(_type: string, value: EntryRenderer) {
 			renderer = value;
 		},
+		registerTool() {},
 		registerCommand(
 			name: string,
 			command: {
@@ -273,7 +321,11 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 			getCwd: () => "/tmp/project",
 			getSessionName: () => undefined,
 		},
-		getContextUsage: () => ({ tokens: 100, contextWindow: 1000, percent: 10 }),
+		getContextUsage: () => ({
+			tokens: 100,
+			contextWindow: 1000,
+			percent: 10,
+		}),
 		ui,
 	} as unknown as ExtensionContext;
 	lifecycle.get("session_start")?.(
@@ -328,3 +380,68 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 	assert.match(footer.render(100).join("\n"), /\$1\.000/);
 	footer.dispose?.();
 });
+
+test("exposes cumulative session and delegate usage to the model", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const events = eventBus();
+			registerProcessStatusSource(
+				{ events },
+				"delegate",
+				() => [],
+				() => ({ tokens: 200, cost: 0.75 }),
+			);
+			let usageTool: ToolDefinition | undefined;
+			extension({
+				events,
+				on() {},
+				registerEntryRenderer() {},
+				registerTool(tool: ToolDefinition) {
+					assert.equal(tool.name, "session_usage");
+					usageTool = tool;
+				},
+				registerCommand() {},
+			} as unknown as ExtensionAPI);
+
+			assert.ok(usageTool);
+			const tool = usageTool;
+			const context = {
+				sessionManager: {
+					getEntries: () => [
+						{
+							type: "message",
+							message: {
+								role: "assistant",
+								usage: reportedUsage(10, 5, 0, 0, 0.25),
+							},
+						},
+					],
+				},
+				getContextUsage: () => ({
+					tokens: 100,
+					contextWindow: 1000,
+					percent: 10,
+				}),
+			} as unknown as ExtensionContext;
+			const result = yield* Effect.promise(() =>
+				tool.execute("usage-call", {}, undefined, undefined, context),
+			);
+			const expected = {
+				total: { tokens: 215, costUsd: 1 },
+				session: {
+					input: 10,
+					output: 5,
+					cacheRead: 0,
+					cacheWrite: 0,
+					tokens: 15,
+					costUsd: 0.25,
+				},
+				delegates: { tokens: 200, costUsd: 0.75 },
+				context: { tokens: 100, contextWindow: 1000, percent: 10 },
+				asOf: "latest completed provider response",
+			};
+			assert.deepEqual(result.details, expected);
+			const text = result.content.find((part) => part.type === "text")?.text;
+			assert.match(text ?? "", /"total":\{"tokens":215,"costUsd":1\}/);
+		}),
+	));

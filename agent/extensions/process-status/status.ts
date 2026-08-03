@@ -1,4 +1,8 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Usage } from "@earendil-works/pi-ai";
+import type {
+	ExtensionAPI,
+	SessionEntry,
+} from "@earendil-works/pi-coding-agent";
 import { truncateUtf8Window } from "../../lib/text.ts";
 
 const COLLECT_CHANNEL = "process-status:collect";
@@ -13,6 +17,45 @@ export type ProcessStatusKind = "subagents" | "terminals";
 export interface ProcessStatusUsage {
 	tokens: number;
 	cost: number;
+}
+
+export interface SessionUsage extends ProcessStatusUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
+
+export function sessionUsage(entries: readonly SessionEntry[]): SessionUsage {
+	const totals: SessionUsage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		tokens: 0,
+		cost: 0,
+	};
+	for (const entry of entries) {
+		let usage: Usage | undefined;
+		if (
+			entry.type === "message" &&
+			(entry.message.role === "assistant" ||
+				entry.message.role === "toolResult")
+		) {
+			usage = entry.message.usage;
+		} else if (entry.type === "branch_summary" || entry.type === "compaction") {
+			usage = entry.usage;
+		}
+		if (!usage) continue;
+		totals.input += usage.input;
+		totals.output += usage.output;
+		totals.cacheRead += usage.cacheRead;
+		totals.cacheWrite += usage.cacheWrite;
+		totals.tokens +=
+			usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+		totals.cost += usage.cost.total;
+	}
+	return totals;
 }
 
 export interface ProcessStatusActivity {
@@ -205,8 +248,14 @@ function listText(
 		: `${usage} · idle`;
 }
 
+export function processStatusUsage(
+	pi: Pick<ExtensionAPI, "events">,
+): ProcessStatusUsage {
+	return collect(pi, false).usage;
+}
+
 export function processStatusCost(pi: Pick<ExtensionAPI, "events">): number {
-	return collect(pi, false).usage.cost;
+	return processStatusUsage(pi).cost;
 }
 
 export function processStatusView(

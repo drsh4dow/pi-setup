@@ -1,3 +1,4 @@
+import { Type } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	type ExtensionAPI,
@@ -7,7 +8,9 @@ import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
 	type ProcessStatusView,
 	processStatusCost,
+	processStatusUsage,
 	processStatusView,
+	sessionUsage,
 } from "./status.ts";
 
 const ENTRY_TYPE = "process-status";
@@ -121,6 +124,45 @@ export default function processStatus(pi: ExtensionAPI) {
 	pi.on("session_shutdown", (_event, ctx) => {
 		requestFooterRender = undefined;
 		if (ctx.mode === "tui") ctx.ui.setFooter(undefined);
+	});
+
+	pi.registerTool({
+		name: "session_usage",
+		label: "Session Usage",
+		description:
+			"Returns cumulative reported token usage and USD cost for this session and its Delegate Runs. Includes settled delegates and usage through the latest completed provider response.",
+		promptSnippet:
+			"Query this session's cumulative token usage and provider-reported cost, including delegates",
+		parameters: Type.Object({}),
+		executionMode: "parallel",
+		execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			const session = sessionUsage(ctx.sessionManager.getEntries());
+			const delegates = processStatusUsage(pi);
+			const usage = {
+				total: {
+					tokens: session.tokens + delegates.tokens,
+					costUsd: session.cost + delegates.cost,
+				},
+				session: {
+					input: session.input,
+					output: session.output,
+					cacheRead: session.cacheRead,
+					cacheWrite: session.cacheWrite,
+					tokens: session.tokens,
+					costUsd: session.cost,
+				},
+				delegates: {
+					tokens: delegates.tokens,
+					costUsd: delegates.cost,
+				},
+				context: ctx.getContextUsage() ?? null,
+				asOf: "latest completed provider response",
+			};
+			return Promise.resolve({
+				content: [{ type: "text" as const, text: JSON.stringify(usage) }],
+				details: usage,
+			});
+		},
 	});
 
 	pi.registerCommand("ps", {

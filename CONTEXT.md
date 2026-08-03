@@ -4,6 +4,28 @@ Opinionated configuration and extensions that define how Pi behaves and exposes 
 
 ## Language
 
+### Session continuity
+
+**Compaction Boundary**:
+The earlier of 90% of the active model's context window and 200,000 tokens. Crossing it starts one context compaction at the end of the current model/tool turn, before the agent's next turn; another cannot start until observed usage first falls below the boundary.
+_Avoid_: Overflow threshold, fixed context limit
+
+**Dense Handoff**:
+The active conversation model's internal summary for every compaction, written so the same model can resume. It carries forward the handoff prompt's focus, suggested skills, and preference for referencing durable artifacts over duplicating them, but creates no external file and performs no redaction. Manual compaction instructions add focus without replacing these rules.
+_Avoid_: Transcript summary, handoff document
+
+**Compaction Continuation**:
+Exactly one automatic follow-on agent turn after boundary-triggered compaction, including after a normal model stop. It finishes remaining work or reports completion without inventing work. Manual compaction remains user-controlled, while overflow recovery remains a retry of the interrupted turn.
+_Avoid_: Auto-retry, automatic handoff
+
+**Retained Conversation Tail**:
+Approximately 30,000 tokens of the newest raw conversation kept alongside the compaction summary. The system prompt, tool definitions, and summary are outside this budget.
+_Avoid_: Total compacted context, summary budget
+
+**Overflow Recovery**:
+Pi's last-resort compaction and retry when a model call exceeds its context window before boundary compaction can run. It preserves the interrupted turn rather than creating a Compaction Continuation.
+_Avoid_: Compaction Continuation, proactive compaction
+
 ### Delegation
 
 **Delegate Trail**:

@@ -24,6 +24,8 @@
     "anthropicExtraUsage": false
   },
   "compaction": {
-    "enabled": true
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 30000
   }
 }

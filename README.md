@@ -10,7 +10,7 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 - Additional model: `opencode-go/kimi-k3`
 - Child-agent model: `openai-codex/gpt-5.6-sol`
 - Theme: Catppuccin Mocha; Gruvbox Dark Hard is also included
-- Automatic context compaction enabled
+- Dense handoff compaction at 90% context usage or 200k tokens, whichever comes first
 - GPT Fast mode enabled
 
 The agent's behavior and engineering standards are defined in [`agent/SYSTEM.md`](agent/SYSTEM.md). In short: act autonomously, investigate before editing, prefer simple and deep designs, verify before claiming success, and preserve user-owned work.
@@ -38,6 +38,7 @@ Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agen
 | Extension | What it adds |
 | --- | --- |
 | `questions` | `ask_questions`, an interactive questionnaire with predefined or free-form answers |
+| `compaction` | Writes a dense handoff, retains about 30k recent tokens, and continues automatically after proactive compaction; Pi's overflow retry remains the fallback |
 | `delegate` | `delegate_run` creates one blocking or background child; independent calls can run in parallel, while `delegate_session` inspects, steers, waits for, or cancels existing children |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked processes, each owned by the session that started it |
 | `process-status` | `/ps` shows active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded details, with delegate tasks and their last six plain-text conversation messages |
@@ -100,7 +101,7 @@ bun install
 bun run verify
 ```
 
-`verify` runs TypeScript type checking, Effect diagnostics, Biome, delegate, background-terminal, and web-access tests. GitHub Actions runs the same command on pushes and pull requests. Live web-access smoke tests are opt-in:
+`verify` runs TypeScript type checking, Effect diagnostics, Biome, compaction, delegate, background-terminal, and web-access tests. GitHub Actions runs the same command on pushes and pull requests. Live web-access smoke tests are opt-in:
 
 ```bash
 PI_WEB_ACCESS_LIVE=1 node --test agent/extensions/web-access/test/live.test.ts

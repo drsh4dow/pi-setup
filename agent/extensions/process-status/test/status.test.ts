@@ -382,7 +382,7 @@ test("exposes cumulative session and delegate usage to the model", () =>
 				{ events },
 				"delegate",
 				() => [],
-				() => ({ tokens: 200, cost: 0.75 }),
+				() => ({ tokens: 200, cost: 0.1236 }),
 			);
 			let usageTool: ToolDefinition | undefined;
 			extension({
@@ -405,7 +405,14 @@ test("exposes cumulative session and delegate usage to the model", () =>
 							type: "message",
 							message: {
 								role: "assistant",
-								usage: reportedUsage(10, 5, 0, 0, 0.25),
+								usage: reportedUsage(10, 5, 0, 0, 0.1),
+							},
+						},
+						{
+							type: "message",
+							message: {
+								role: "assistant",
+								usage: reportedUsage(10, 5, 0, 0, 0.2),
 							},
 						},
 					],
@@ -414,9 +421,12 @@ test("exposes cumulative session and delegate usage to the model", () =>
 			const result = yield* Effect.promise(() =>
 				tool.execute("usage-call", {}, undefined, undefined, context),
 			);
-			const expected = { totalUsd: 1, mainUsd: 0.25, delegatesUsd: 0.75 };
+			const expected = { totalUsd: 0.424, mainUsd: 0.3, delegatesUsd: 0.124 };
 			assert.deepEqual(result.details, expected);
 			const text = result.content.find((part) => part.type === "text")?.text;
-			assert.equal(text, '{"totalUsd":1,"mainUsd":0.25,"delegatesUsd":0.75}');
+			assert.equal(
+				text,
+				'{"totalUsd":0.424,"mainUsd":0.3,"delegatesUsd":0.124}',
+			);
 		}),
 	));

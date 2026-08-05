@@ -6,23 +6,27 @@ import type {
 	SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
+import { prepareCompaction } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js";
 import extension, {
 	compactionBoundary,
 	createDenseHandoff,
 	DENSE_HANDOFF_INSTRUCTIONS,
 } from "../index.ts";
 
-function loadExtension() {
+function loadExtension(autoCompactionEnabled = true) {
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	const sent: Array<{ message: unknown; options: unknown }> = [];
-	extension({
-		on(name: string, handler: (...args: unknown[]) => unknown) {
-			handlers.set(name, handler);
-		},
-		sendMessage(message: unknown, options: unknown) {
-			sent.push({ message, options });
-		},
-	} as unknown as ExtensionAPI);
+	extension(
+		{
+			on(name: string, handler: (...args: unknown[]) => unknown) {
+				handlers.set(name, handler);
+			},
+			sendMessage(message: unknown, options: unknown) {
+				sent.push({ message, options });
+			},
+		} as unknown as ExtensionAPI,
+		() => autoCompactionEnabled,
+	);
 	return { handlers, sent };
 }
 
@@ -53,6 +57,75 @@ test("uses the earlier 85% or 250k boundary", () => {
 	assert.equal(compactionBoundary(128_000), 108_800);
 	assert.equal(compactionBoundary(272_000), 231_200);
 	assert.equal(compactionBoundary(1_000_000), 250_000);
+});
+
+test("can compact when a large tool result is the last session entry", () => {
+	const entries = [
+		{
+			type: "message",
+			id: "user",
+			message: { role: "user", content: "investigate", timestamp: 1 },
+		},
+		{
+			type: "message",
+			id: "assistant",
+			message: {
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: "search",
+						name: "web_search",
+						arguments: {},
+					},
+				],
+				timestamp: 2,
+			},
+		},
+		{
+			type: "message",
+			id: "result",
+			message: {
+				role: "toolResult",
+				toolCallId: "search",
+				toolName: "web_search",
+				content: [{ type: "text", text: "x".repeat(100) }],
+				timestamp: 3,
+			},
+		},
+	] as Parameters<typeof prepareCompaction>[0];
+
+	const preparation = prepareCompaction(entries, {
+		enabled: true,
+		reserveTokens: 16_384,
+		keepRecentTokens: 10,
+	});
+
+	assert.ok(preparation);
+	assert.equal(preparation.firstKeptEntryId, "assistant");
+	assert.deepEqual(
+		preparation.turnPrefixMessages.map((message) => message.role),
+		["user"],
+	);
+});
+
+test("does not compact automatically when auto-compaction is disabled", () => {
+	const { handlers } = loadExtension(false);
+	let compactCalls = 0;
+	const context = {
+		compact() {
+			compactCalls += 1;
+		},
+		getContextUsage: () => ({
+			tokens: 250_000,
+			contextWindow: 272_000,
+			percent: 92,
+		}),
+	} as unknown as ExtensionContext;
+
+	handlers.get("session_start")?.({}, context);
+	handlers.get("turn_end")?.(turn, context);
+	assert.equal(compactCalls, 0);
 });
 
 test("queues one continuation that reconciles stale tail state and the terminal gate", () => {

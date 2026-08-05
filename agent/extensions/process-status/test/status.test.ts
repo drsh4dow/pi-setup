@@ -248,7 +248,8 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 		(event: ExtensionEvent, ctx: ExtensionContext) => unknown
 	>();
 	const appended: unknown[] = [];
-	extension({
+	let autoCompactionEnabled = false;
+	const api = {
 		events,
 		appendEntry(_type: string, data: unknown) {
 			appended.push(data);
@@ -273,7 +274,8 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 			assert.equal(name, "ps");
 			handler = command.handler;
 		},
-	} as unknown as ExtensionAPI);
+	} as unknown as ExtensionAPI;
+	extension(api, () => autoCompactionEnabled);
 
 	const parentEntry = {
 		type: "message",
@@ -370,7 +372,11 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 		getAvailableProviderCount: () => 1,
 		onBranchChange: () => () => {},
 	});
-	assert.match(footer.render(100).join("\n"), /\$1\.000/);
+	const footerText = footer.render(100).join("\n");
+	assert.match(footerText, /\$1\.000/);
+	assert.doesNotMatch(footerText, /\(auto\)/);
+	autoCompactionEnabled = true;
+	assert.match(footer.render(100).join("\n"), /\(auto\)/);
 	footer.dispose?.();
 });
 

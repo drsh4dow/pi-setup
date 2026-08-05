@@ -1,0 +1,14 @@
+diff --git a/dist/core/compaction/compaction.js b/dist/core/compaction/compaction.js
+index e7ffee7a8566a7556f75e3f3edd228af3d93b141..01376369b15be87a1f1936d7d0b1282f450d5158 100644
+--- a/dist/core/compaction/compaction.js
++++ b/dist/core/compaction/compaction.js
+@@ -321,7 +321,8 @@ export function findCutPoint(entries, startIndex, endIndex, keepRecentTokens) {
+         accumulatedTokens += messageTokens;
+         // Check if we've exceeded the budget
+         if (accumulatedTokens >= keepRecentTokens) {
+-            // Find the closest valid cut point at or after this entry
++            // A trailing tool result has no cut point after it, so retain it with its call.
++            cutIndex = cutPoints[cutPoints.length - 1];
+             for (let c = 0; c < cutPoints.length; c++) {
+                 if (cutPoints[c] >= i) {
+                     cutIndex = cutPoints[c];

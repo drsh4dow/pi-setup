@@ -35,5 +35,8 @@
   "trustedDependencies": [
     "@google/genai",
     "protobufjs"
-  ]
+  ],
+  "patchedDependencies": {
+    "@earendil-works/pi-coding-agent@0.83.0": "patches/@earendil-works%2Fpi-coding-agent@0.83.0.patch"
+  }
 }

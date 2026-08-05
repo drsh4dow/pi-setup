@@ -6,6 +6,7 @@ import {
 	generateSummaryWithUsage,
 	type SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
+import { isAutoCompactionEnabled } from "../../lib/settings.ts";
 
 export const DENSE_HANDOFF_INSTRUCTIONS = `Write a dense handoff of only the compacted prefix. A newer raw conversation tail will remain after this summary, so describe prefix state as provisional rather than current. Newer retained messages and canonical state always override the summary.
 
@@ -280,7 +281,12 @@ export function createDenseHandoff(
 		.catch(() => undefined);
 }
 
-export default function compactionExtension(pi: ExtensionAPI): void {
+export default function compactionExtension(
+	pi: ExtensionAPI,
+	autoCompactionEnabled: (
+		ctx: ExtensionContext,
+	) => boolean = isAutoCompactionEnabled,
+): void {
 	let generation = 0;
 	let armed = true;
 	let compacting = false;
@@ -300,6 +306,7 @@ export default function compactionExtension(pi: ExtensionAPI): void {
 			: createDenseHandoff(event, ctx),
 	);
 	pi.on("turn_end", (event, ctx) => {
+		if (!autoCompactionEnabled(ctx)) return;
 		const usage = ctx.getContextUsage();
 		if (!usage || usage.tokens === null) return;
 		const boundary = compactionBoundary(usage.contextWindow);

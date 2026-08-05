@@ -2,9 +2,11 @@ import { Type } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	type ExtensionAPI,
+	type ExtensionContext,
 	FooterComponent,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { isAutoCompactionEnabled } from "../../lib/settings.ts";
 import {
 	type ProcessStatusView,
 	processStatusCost,
@@ -19,7 +21,12 @@ function roundUsd(cost: number): number {
 	return Math.round(cost * 1000) / 1000;
 }
 
-export default function processStatus(pi: ExtensionAPI) {
+export default function processStatus(
+	pi: ExtensionAPI,
+	autoCompactionEnabled: (
+		ctx: ExtensionContext,
+	) => boolean = isAutoCompactionEnabled,
+) {
 	let currentModel: Parameters<typeof pi.setModel>[0] | undefined;
 	let requestFooterRender: (() => void) | undefined;
 
@@ -110,7 +117,10 @@ export default function processStatus(pi: ExtensionAPI) {
 			requestFooterRender = () => tui.requestRender();
 			return {
 				invalidate: () => tui.requestRender(),
-				render: (width: number) => footer.render(width),
+				render(width: number) {
+					footer.setAutoCompactEnabled(autoCompactionEnabled(ctx));
+					return footer.render(width);
+				},
 				dispose() {
 					unsubscribe();
 					footer.dispose();

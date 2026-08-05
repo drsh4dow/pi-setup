@@ -18,9 +18,9 @@ Show this to the user, then immediately proceed to Step 2. The user reads and th
 
 ### 2. Spawn sub-agents
 
-Issue 3+ `delegate_run` calls together so the design tasks execute in parallel. Each child must produce a **radically different** interface for the deepened module.
+Spawn 3+ sub-agents in parallel using the Agent tool. Each must produce a **radically different** interface for the deepened module.
 
-Each child lacks the parent conversation, so give it a separate, fully self-contained technical brief: objective, relevant file paths and coupling details, dependency category from [DEEPENING.md](DEEPENING.md), what sits behind the seam, constraints, permissions, verification expectations, and expected result. The brief is independent of the user-facing problem-space explanation in Step 1. Give each child a different design constraint:
+Prompt each sub-agent with a separate technical brief (file paths, coupling details, dependency category from [DEEPENING.md](DEEPENING.md), what sits behind the seam). The brief is independent of the user-facing problem-space explanation in Step 1. Give each agent a different design constraint:
 
 - Agent 1: "Minimize the interface — aim for 1–3 entry points max. Maximise leverage per entry point."
 - Agent 2: "Maximise flexibility — support many use cases and extension."

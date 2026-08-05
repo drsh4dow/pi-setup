@@ -244,7 +244,7 @@
         }
       }
     ],
-    "checkedAt": 1785786577613,
+    "checkedAt": 1785961815647,
     "lastModified": 1785495292000,
     "etag": "W/\"400cac2d73673d9fff4c7d0ed22691b0\""
   },
@@ -878,6 +878,37 @@
         },
         "contextWindow": 1048576,
         "maxTokens": 384000
+      },
+      {
+        "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "name": "DeepSeek V4 Flash 0731",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "input": [
+          "text"
+        ],
+        "cost": {
+          "input": 0.14,
+          "output": 0.28,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "compat": {
+          "supportsDeveloperRole": false
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 384000,
+        "thinkingLevelMap": {
+          "off": null,
+          "minimal": null,
+          "low": null,
+          "medium": null,
+          "high": "high",
+          "xhigh": null,
+          "max": "max"
+        }
       },
       {
         "id": "deepseek-ai/DeepSeek-V4-Pro",
@@ -1547,9 +1578,9 @@
         "maxTokens": 131072
       }
     ],
-    "checkedAt": 1785786577614,
-    "lastModified": 1785751531000,
-    "etag": "W/\"7858bc0757ca8b15bb4e52a220f9f80f\""
+    "checkedAt": 1785962359168,
+    "lastModified": 1785841797000,
+    "etag": "W/\"35b9bf40cd7968f511206ebf23ce37b0\""
   },
   "opencode": {
     "models": [
@@ -1870,7 +1901,7 @@
       },
       {
         "id": "deepseek-v4-flash",
-        "name": "DeepSeek V4 Flash 0731",
+        "name": "DeepSeek V4 Flash (New)",
         "api": "openai-completions",
         "provider": "opencode",
         "baseUrl": "https://opencode.ai/zen/v1",
@@ -3043,6 +3074,30 @@
         }
       },
       {
+        "id": "longcat-2.0-free",
+        "name": "LongCat-2.0 Free",
+        "api": "openai-completions",
+        "provider": "opencode",
+        "baseUrl": "https://opencode.ai/zen/v1",
+        "reasoning": true,
+        "input": [
+          "text"
+        ],
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "compat": {
+          "supportsStore": false,
+          "supportsDeveloperRole": false,
+          "maxTokensField": "max_tokens"
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 131072
+      },
+      {
         "id": "mimo-v2.5-free",
         "name": "MiMo V2.5 Free",
         "api": "openai-completions",
@@ -3239,9 +3294,9 @@
         "maxTokens": 65536
       }
     ],
-    "checkedAt": 1785786577614,
-    "lastModified": 1785751543000,
-    "etag": "W/\"6a8d635c1854e90dcd972ee55d3ba535\""
+    "checkedAt": 1785962353332,
+    "lastModified": 1785917085000,
+    "etag": "W/\"eb53c016e608c41c0c79b534e7b1c40a\""
   },
   "openai": {
     "models": [
@@ -4453,7 +4508,7 @@
         }
       }
     ],
-    "checkedAt": 1785786577614,
+    "checkedAt": 1785961815651,
     "lastModified": 1785502726000,
     "etag": "W/\"f1f6f2e8493b001e6b8e24ca0e98ac6d\""
   },
@@ -4842,7 +4897,7 @@
         }
       }
     ],
-    "checkedAt": 1785786577613,
+    "checkedAt": 1785961815624,
     "lastModified": 1785146159000,
     "etag": "W/\"2955a0a2593d701973abef2d80e4a8e0\""
   },
@@ -5339,7 +5394,7 @@
         "maxTokens": 131072
       }
     ],
-    "checkedAt": 1785786577617,
+    "checkedAt": 1785962353074,
     "lastModified": 1785751544000,
     "etag": "W/\"9acd354f1fe084eec04a65a7ad727beb\""
   }

@@ -16,7 +16,9 @@ import extension, {
 	HANDOFF_REQUEST,
 } from "../index.ts";
 
-function loadExtension(autoCompactionEnabled = true) {
+function loadExtension(
+	autoCompactionEnabled: boolean | (() => boolean) = true,
+) {
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	const sent: Array<{ message: unknown; options: unknown }> = [];
 	extension(
@@ -28,7 +30,9 @@ function loadExtension(autoCompactionEnabled = true) {
 				sent.push({ message, options });
 			},
 		} as unknown as ExtensionAPI,
-		() => autoCompactionEnabled,
+		typeof autoCompactionEnabled === "function"
+			? autoCompactionEnabled
+			: () => autoCompactionEnabled,
 	);
 	return { handlers, sent };
 }
@@ -172,6 +176,30 @@ test("does not compact automatically when auto-compaction is disabled", () => {
 	handlers.get("turn_end")?.(turn, context);
 	assert.equal(compactCalls.length, 0);
 	assert.equal(sent.length, 0);
+});
+
+test("abandons a pending handoff request when auto-compaction is disabled", () => {
+	let enabled = true;
+	const { handlers, sent } = loadExtension(() => enabled);
+	const compactCalls: Array<Record<string, unknown>> = [];
+	const context = makeContext(compactCalls, () => 250_000);
+	handlers.get("session_start")?.({}, context);
+
+	handlers.get("turn_end")?.(turn, context);
+	assert.equal(sent.length, 1);
+
+	enabled = false;
+	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	assert.equal(compactCalls.length, 0);
+
+	// Re-enabling re-arms: the next boundary crossing sends a fresh request.
+	enabled = true;
+	handlers.get("turn_end")?.(turn, context);
+	assert.equal(sent.length, 2);
+	assert.equal(
+		(sent[1]?.message as { customType?: string } | undefined)?.customType,
+		"handoff-request",
+	);
 });
 
 test("extracts the handoff body and continuation choice", () => {

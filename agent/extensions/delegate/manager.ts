@@ -23,6 +23,7 @@ import {
 	createChild,
 	modelName,
 	resolveDelegateModel,
+	resolveRequestedModel,
 	shutdownChild,
 	thinkingForEffort,
 } from "./runtime.ts";
@@ -35,6 +36,7 @@ export const MAX_CONCURRENT_WAITS_PER_CHILD = 4;
 
 export interface DelegateRequest {
 	task: string;
+	model?: string;
 	effort?: string;
 	outputFormat?: string;
 	background?: boolean;
@@ -181,7 +183,10 @@ export class DelegateManager {
 			throw new Error(`Delegate cwd is not a directory: ${cwd}`);
 		}
 
-		const modelChoice = resolveDelegateModel(request.ctx);
+		const modelChoice =
+			request.model !== undefined
+				? resolveRequestedModel(request.ctx, request.model)
+				: resolveDelegateModel(request.ctx);
 		const effort = request.effort === "thorough" ? "thorough" : "fast";
 		const job: Job = {
 			id: `delegate-${++this.nextId}`,

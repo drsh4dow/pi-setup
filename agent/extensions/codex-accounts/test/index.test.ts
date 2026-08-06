@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import codexAccounts, { codexAliasProvider } from "../index.ts";
 
 test("alias provider re-stamps the built-in codex catalog", () => {
-	const base = openaiCodexProvider();
+	const base = builtinProviders().find(
+		(provider) => provider.id === "openai-codex",
+	);
+	assert.ok(base);
 	const alias = codexAliasProvider("cyber");
 
 	assert.equal(alias.id, "openai-codex-cyber");

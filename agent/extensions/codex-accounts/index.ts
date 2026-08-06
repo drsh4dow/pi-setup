@@ -1,4 +1,7 @@
-import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+// Pi's extension loader only resolves the whitelisted pi-ai entrypoints
+// (root, /compat, /oauth, /providers/all); deep provider imports break under
+// the globally installed pi.
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // Each label is a Codex Account Alias: the built-in openai-codex provider
@@ -9,7 +12,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const ACCOUNT_LABELS = ["cyber"];
 
 export function codexAliasProvider(label: string) {
-	const base = openaiCodexProvider();
+	const base = builtinProviders().find(
+		(provider) => provider.id === "openai-codex",
+	);
+	if (!base) {
+		throw new Error("No built-in openai-codex provider to alias.");
+	}
 	const id = `openai-codex-${label}`;
 	const oauth = base.auth.oauth;
 	if (!oauth) {

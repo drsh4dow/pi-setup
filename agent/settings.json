@@ -1,8 +1,8 @@
 {
   "lastChangelogVersion": "0.84.0",
   "packages": [],
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultProvider": "opencode-go",
+  "defaultModel": "kimi-k3",
   "enabledModels": [
     "openai-codex/gpt-5.6-sol",
     "opencode-go/kimi-k3",
@@ -13,8 +13,8 @@
   "delegate": {
     "model": "openai-codex/gpt-5.6-sol"
   },
-  "defaultThinkingLevel": "high",
-  "hideThinkingBlock": true,
+  "defaultThinkingLevel": "max",
+  "hideThinkingBlock": false,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",
   "terminal": {

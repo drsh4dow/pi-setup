@@ -27,7 +27,7 @@ ${HANDOFF_STRUCTURE}
 
 Carry everything not recoverable from files: constraints, preferences, decisions and their rationale. Reference artifacts (paths, commits, issues) instead of duplicating their contents. Never include credentials, tokens, or personal data.`;
 
-export const FALLBACK_SUMMARY_INSTRUCTIONS = `Write a dense handoff of only the compacted prefix, addressed to the assistant that will resume this conversation. A newer raw conversation tail remains after this summary and always overrides it. Describe only what the transcript evidences; never claim work or verification it does not show.
+export const FALLBACK_SUMMARY_INSTRUCTIONS = `Write a handoff of only the compacted prefix, addressed to the assistant that will resume this conversation. A newer raw conversation tail remains after this summary and always overrides it. Describe only what the transcript evidences; never claim work or verification it does not show.
 
 Carry forward the goal in the user's own framing, constraints and preferences, decisions and rationale, completed and in-progress work, failed approaches worth not repeating, verification evidence, and exact files or symbols that matter. Reference durable artifacts (plans, issues, commits, files) instead of duplicating their contents. Use stable identifiers, never credentials, personal data, or secret-file paths.
 
@@ -178,6 +178,9 @@ export function extractHandoff(
 	const heading = /^#{1,3} Handoff\s*$/m.exec(text);
 	if (!heading) return;
 	const body = text.slice(heading.index);
+	// A heading without an Objective is a skeletal reply; the summarizer
+	// fallback beats persisting an empty handoff as the summary.
+	if (!/Objective/i.test(body)) return;
 	const choice = /Continuation[*:\s`]*\b(continue|done|ask[- ]user)\b/i
 		.exec(body)?.[1]
 		?.toLowerCase()
@@ -318,7 +321,10 @@ export default function compactionExtension(
 
 	pi.on("turn_end", (event, ctx) => {
 		if (!autoCompactionEnabled(ctx)) {
-			if (phase === "awaiting-handoff") phase = "idle";
+			if (phase === "awaiting-handoff") {
+				phase = "idle";
+				armed = true;
+			}
 			return;
 		}
 		if (phase === "compacting") return;

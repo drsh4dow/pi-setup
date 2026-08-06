@@ -50,8 +50,7 @@ const chooseSkillVisibility = Effect.fn("chooseSkillVisibility")(function* (
 	skills: SkillVisibility[],
 ) {
 	let changed = false;
-	let skill = yield* selectSkill(ctx, skills);
-	while (skill) {
+	for (let skill = yield* selectSkill(ctx, skills); skill; ) {
 		const hidden = !skill.hidden;
 		const saved = yield* writeSkillVisibility(skill.filePath, hidden).pipe(
 			Effect.result,
@@ -78,26 +77,19 @@ const selectSkill = Effect.fn("selectSkill")(function* (
 	ctx: ExtensionCommandContext,
 	skills: SkillVisibility[],
 ) {
-	const choices = skillChoices(skills);
+	const choices = new Map(
+		skills.map((skill) => [
+			`${skill.hidden ? "○" : "●"} ${skill.name} — ${skill.hidden ? "hidden" : "discoverable"}`,
+			skill,
+		]),
+	);
 	const selected = yield* Effect.promise(() =>
 		ctx.ui.select("Skill visibility", [...choices.keys(), DONE_LABEL]),
 	);
-	return !selected || selected === DONE_LABEL
-		? undefined
-		: choices.get(selected);
+	return selected && selected !== DONE_LABEL
+		? choices.get(selected)
+		: undefined;
 });
-
-function skillChoices(skills: SkillVisibility[]): Map<string, SkillVisibility> {
-	const choices = new Map<string, SkillVisibility>();
-
-	for (const skill of skills) {
-		const marker = skill.hidden ? "○" : "●";
-		const status = skill.hidden ? "hidden" : "discoverable";
-		choices.set(`${marker} ${skill.name} — ${status}`, skill);
-	}
-
-	return choices;
-}
 
 const listLoadedSkills = Effect.fn("listLoadedSkills")(function* (
 	skills: Skill[],

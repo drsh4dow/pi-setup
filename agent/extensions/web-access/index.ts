@@ -242,16 +242,14 @@ function normalizeSearch(
 	};
 }
 
-function formatSources(item: SearchItem): string {
-	return item.sources.length === 0
-		? ""
-		: `\n\nSources:\n${item.sources
-				.map((source) => `- [${source.title}](${source.url})`)
-				.join("\n")}`;
-}
-
 function formatSearchItem(item: SearchItem, includeContent: boolean): string {
 	if (item.error) return `## ${item.query}\n\nError: ${item.error}`;
+	const sources =
+		item.sources.length === 0
+			? ""
+			: `\n\nSources:\n${item.sources
+					.map((source) => `- [${source.title}](${source.url})`)
+					.join("\n")}`;
 	const fullContent =
 		includeContent && item.content.length > 0
 			? `\n\nRetrieved content:\n${item.content
@@ -261,7 +259,7 @@ function formatSearchItem(item: SearchItem, includeContent: boolean): string {
 					)
 					.join("\n")}`
 			: "";
-	return `## ${item.query}\n\n${item.answer || "No answer returned."}${formatSources(item)}${fullContent}`;
+	return `## ${item.query}\n\n${item.answer || "No answer returned."}${sources}${fullContent}`;
 }
 
 function formatFetchedItem(item: ExtractedContent, initial: boolean): string {

@@ -33,7 +33,7 @@ const ArchivedResponse = Schema.Struct({
 type ArchivedResponse = typeof ArchivedResponse.Type;
 const ArchivedResponseJson = Schema.fromJsonString(ArchivedResponse);
 
-export type ArchiveLookup =
+type ArchiveLookup =
 	| { status: "found"; text: string; itemCount: number }
 	| { status: "not-found" }
 	| { status: "item-index-out-of-range"; itemCount: number };

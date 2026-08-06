@@ -340,7 +340,7 @@ export class DelegateManager {
 								`Delegate ${id} settled before the queued message could be sent.`,
 							);
 						}
-						yield* this.steerOwned(job, child, text);
+						yield* this.untilOwnershipEnds(job, child.steer(text));
 					}.bind(this),
 				),
 			)
@@ -661,10 +661,6 @@ export class DelegateManager {
 
 	private endOwnership(job: Job, reason: Error) {
 		if (!job.ownership.signal.aborted) job.ownership.abort(reason);
-	}
-
-	private steerOwned(job: Job, child: ChildSession, text: string) {
-		return this.untilOwnershipEnds(job, child.steer(text));
 	}
 
 	private untilOwnershipEnds(job: Job, operation: Promise<unknown>) {

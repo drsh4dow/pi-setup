@@ -15,18 +15,13 @@ import {
 	DEFAULT_GEMINI_MODEL,
 	type VideoFile,
 } from "./gemini-video.ts";
+import { runCommand } from "./subprocess.ts";
 import type {
 	ExtractedContent,
 	FetchOptions,
 	FrameResult,
 	VideoFrame,
 } from "./types.ts";
-import {
-	extractLocalFrame,
-	extractYouTubeFrame,
-	getLocalDuration,
-	getYouTubeStream,
-} from "./video-frames.ts";
 
 const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 
@@ -176,7 +171,7 @@ function parseSeconds(value: string): number | null {
 	);
 }
 
-export type TimestampSpec =
+type TimestampSpec =
 	| { type: "single"; seconds: number }
 	| { type: "range"; start: number; end: number };
 
@@ -459,4 +454,123 @@ export const extractMedia = Effect.fn("extractMedia")(function* (
 			}),
 		),
 	);
+});
+
+function processError(
+	tool: "ffmpeg" | "ffprobe" | "yt-dlp",
+	error: unknown,
+): string {
+	const wrapped = error as { cause?: unknown };
+	const item = (wrapped.cause ?? error) as {
+		code?: string;
+		killed?: boolean;
+		stderr?: Buffer | string;
+		message?: string;
+	};
+	const tagged = item as { _tag?: string; reason?: string };
+	if (item.code === "ABORT_ERR") return "Aborted";
+	if (item.code === "ENOENT" || tagged.reason === "NotFound") {
+		return `${tool} is not installed`;
+	}
+	if (
+		item.killed ||
+		item.code === "ETIMEDOUT" ||
+		tagged._tag === "TimeoutException"
+	) {
+		return `${tool} timed out`;
+	}
+	const stderr = Buffer.isBuffer(item.stderr)
+		? item.stderr.toString("utf8")
+		: (item.stderr ?? "");
+	const detail = (stderr || item.message || errorMessage(error))
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 200);
+	return detail ? `${tool} failed: ${detail}` : `${tool} failed`;
+}
+
+const getYouTubeStream = Effect.fn("getYouTubeStream")(function* (
+	videoId: string,
+) {
+	const output = yield* runCommand(
+		"yt-dlp",
+		["--print", "duration", "-g", `https://www.youtube.com/watch?v=${videoId}`],
+		{ timeoutMs: 15_000, maxBuffer: 5 * 1024 * 1024 },
+	).pipe(
+		Effect.mapError((error) => webAccessError(processError("yt-dlp", error))),
+	);
+	const lines = output.toString("utf8").trim().split(/\r?\n/);
+	const streamUrl = lines[1]?.trim();
+	if (!streamUrl) return yield* webAccessError("yt-dlp returned no stream URL");
+	const duration = Number.parseFloat(lines[0] ?? "");
+	return {
+		streamUrl,
+		duration: Number.isFinite(duration) ? duration : null,
+	};
+});
+
+function extractFrame(
+	input: string,
+	seconds: number,
+	timeoutMs: number,
+): Effect.Effect<FrameResult> {
+	return runCommand(
+		"ffmpeg",
+		[
+			"-v",
+			"error",
+			"-ss",
+			String(seconds),
+			"-i",
+			input,
+			"-frames:v",
+			"1",
+			"-f",
+			"image2pipe",
+			"-vcodec",
+			"mjpeg",
+			"pipe:1",
+		],
+		{ timeoutMs, maxBuffer: 5 * 1024 * 1024 },
+	).pipe(
+		Effect.map(
+			(output): FrameResult =>
+				output.length > 0
+					? { data: output.toString("base64"), mimeType: "image/jpeg" }
+					: { error: "ffmpeg returned an empty frame" },
+		),
+		Effect.catch((error) =>
+			Effect.succeed({ error: processError("ffmpeg", error) }),
+		),
+	);
+}
+
+function extractYouTubeFrame(
+	streamUrl: string,
+	seconds: number,
+): Effect.Effect<FrameResult> {
+	return extractFrame(streamUrl, seconds, 30_000);
+}
+
+function extractLocalFrame(
+	path: string,
+	seconds: number,
+): Effect.Effect<FrameResult> {
+	return extractFrame(path, seconds, 10_000);
+}
+
+const getLocalDuration = Effect.fn("getLocalDuration")(function* (
+	path: string,
+) {
+	const output = yield* runCommand(
+		"ffprobe",
+		["-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+		{ timeoutMs: 10_000, maxBuffer: 1024 * 1024 },
+	).pipe(
+		Effect.mapError((error) => webAccessError(processError("ffprobe", error))),
+	);
+	const duration = Number.parseFloat(output.toString("utf8").trim());
+	return Number.isFinite(duration)
+		? duration
+		: yield* webAccessError("ffprobe failed: invalid duration output");
 });

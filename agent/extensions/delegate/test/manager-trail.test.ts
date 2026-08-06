@@ -2,133 +2,14 @@
 import assert from "node:assert/strict";
 
 import test from "node:test";
-import type {
-	AgentSessionEvent,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { Deferred, Effect, Fiber } from "effect";
 
 import type { DelegateSnapshot } from "../contract.ts";
-import { DelegateManager, type DelegateRequest } from "../manager.ts";
+import { DelegateManager } from "../manager.ts";
 import type { ChildSession } from "../runtime.ts";
 import { deferredPromise, eventually, yieldImmediate } from "./eventually.ts";
-
-const context = {
-	cwd: process.cwd(),
-	model: { provider: "test", id: "model" },
-	modelRegistry: {
-		find: () => undefined,
-		hasConfiguredAuth: () => true,
-	},
-} as unknown as ExtensionContext;
-
-class FakeChild {
-	readonly model = { provider: "test", id: "child" };
-	readonly prompts: string[] = [];
-	isStreaming = false;
-	disposed = false;
-	abortGate?: Deferred.Deferred<void>;
-	private listeners = new Set<(event: AgentSessionEvent) => void>();
-	private promptCompletion?: Deferred.Deferred<void>;
-
-	prompt(text: string) {
-		this.prompts.push(text);
-		this.isStreaming = true;
-		this.promptCompletion = Deferred.makeUnsafe<void>();
-		return deferredPromise(this.promptCompletion);
-	}
-
-	steer() {
-		return Promise.resolve();
-	}
-
-	abort() {
-		return (
-			this.abortGate ? deferredPromise(this.abortGate) : Promise.resolve()
-		).then(() => this.completePrompt());
-	}
-
-	disposeNow() {
-		this.disposed = true;
-		this.completePrompt();
-	}
-
-	dispose() {
-		this.disposeNow();
-	}
-
-	emitAssistant(
-		output: string,
-		totalTokens: number,
-		stopReason: "stop" | "toolUse" = "toolUse",
-	) {
-		this.emit({
-			type: "message_end",
-			message: {
-				role: "assistant",
-				content: [{ type: "text", text: output }],
-				stopReason,
-				usage: {
-					input: 10,
-					output: 5,
-					cacheRead: 0,
-					cacheWrite: 0,
-					totalTokens,
-					cost: { total: 0.001 },
-				},
-			},
-		} as AgentSessionEvent);
-	}
-
-	finish(output: string, totalTokens = 15) {
-		this.emitAssistant(output, totalTokens, "stop");
-		this.completePrompt();
-	}
-
-	subscribe(listener: (event: AgentSessionEvent) => void) {
-		this.listeners.add(listener);
-		return () => this.listeners.delete(listener);
-	}
-
-	emit(event: AgentSessionEvent) {
-		for (const listener of this.listeners) listener(event);
-	}
-
-	private completePrompt() {
-		this.isStreaming = false;
-		if (this.promptCompletion) {
-			Effect.runSync(Deferred.succeed(this.promptCompletion, undefined));
-			this.promptCompletion = undefined;
-		}
-	}
-}
-
-function harness(
-	onSettled?: (snapshot: DelegateSnapshot) => void,
-	beforeShutdown?: (child: FakeChild) => Effect.Effect<void>,
-) {
-	const sessions: FakeChild[] = [];
-	const requests: DelegateRequest[] = [];
-	const manager = new DelegateManager({
-		onSettled,
-		createSession(request) {
-			requests.push(request);
-			const child = new FakeChild();
-			setImmediate(() => sessions.push(child));
-			return Promise.resolve(child as unknown as ChildSession);
-		},
-		shutdownSession(child) {
-			const fake = child as unknown as FakeChild;
-			return Effect.runPromise(
-				Effect.gen(function* () {
-					if (beforeShutdown) yield* beforeShutdown(fake);
-					fake.disposeNow();
-				}),
-			);
-		},
-	});
-	return { manager, sessions, requests };
-}
+import { context, FakeChild, harness } from "./manager-fixture.ts";
 
 function disposeAfter(gate: Deferred.Deferred<void>, child: ChildSession) {
 	return deferredPromise(gate).then(() =>

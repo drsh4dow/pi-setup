@@ -9,7 +9,6 @@ import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { isAutoCompactionEnabled } from "../../lib/settings.ts";
 import {
 	type ProcessStatusView,
-	processStatusCost,
 	processStatusUsage,
 	processStatusView,
 	sessionCost,
@@ -67,7 +66,7 @@ export default function processStatus(
 					if (property === "getEntries") {
 						return () => {
 							const entries = target.getEntries();
-							const workerCost = processStatusCost(pi);
+							const workerCost = processStatusUsage(pi).cost;
 							if (workerCost === 0) return entries;
 							return [
 								{

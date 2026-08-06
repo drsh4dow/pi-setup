@@ -12,9 +12,9 @@ const MAX_ACTIVITIES_PER_KIND = 64;
 const MAX_SUMMARY_CHARACTERS = 240;
 const MAX_DETAIL_BYTES = 64 * 1024;
 
-export type ProcessStatusKind = "subagents" | "terminals";
+type ProcessStatusKind = "subagents" | "terminals";
 
-export interface ProcessStatusUsage {
+interface ProcessStatusUsage {
 	tokens: number;
 	cost: number;
 }
@@ -38,7 +38,7 @@ export function sessionCost(entries: readonly SessionEntry[]): number {
 	return total;
 }
 
-export interface ProcessStatusActivity {
+interface ProcessStatusActivity {
 	id: string;
 	kind: ProcessStatusKind;
 	active: boolean;
@@ -137,9 +137,8 @@ function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 			loadUsage?: ProcessStatusUsageSource,
 		) {
 			if (!activeRequests.has(request)) return;
-			sourceCount += 1;
-			if (sourceCount > MAX_SOURCES) {
-				omittedSources += 1;
+			if (++sourceCount > MAX_SOURCES) {
+				omittedSources++;
 				return;
 			}
 			try {
@@ -232,10 +231,6 @@ export function processStatusUsage(
 	pi: Pick<ExtensionAPI, "events">,
 ): ProcessStatusUsage {
 	return collect(pi, false).usage;
-}
-
-export function processStatusCost(pi: Pick<ExtensionAPI, "events">): number {
-	return processStatusUsage(pi).cost;
 }
 
 export function processStatusView(

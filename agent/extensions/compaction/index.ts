@@ -56,6 +56,8 @@ const SENSITIVE_LINE_PATTERNS = [
 ] as const;
 
 const MAX_BOUNDARY_TOKENS = 250_000;
+// No `g` flag: a sticky lastIndex would leak between calls.
+const HANDOFF_HEADING = /^#{1,3} Handoff\s*$/m;
 
 type FileDetails = { readFiles: string[]; modifiedFiles: string[] };
 type HandoffDetails = FileDetails & {
@@ -175,7 +177,7 @@ export function extractHandoff(
 	const text = message.content
 		.flatMap((block) => (block.type === "text" ? [block.text] : []))
 		.join("\n");
-	const heading = /^#{1,3} Handoff\s*$/m.exec(text);
+	const heading = HANDOFF_HEADING.exec(text);
 	if (!heading) return;
 	const body = text.slice(heading.index);
 	// A heading without an Objective is a skeletal reply; the summarizer
@@ -269,7 +271,7 @@ export function createFallbackHandoff(
 				undefined,
 				auth.env,
 			).then(({ text, usage }) => {
-				const handoffText = /^#{1,3} Handoff\s*$/m.test(text)
+				const handoffText = HANDOFF_HEADING.test(text)
 					? text
 					: `${text.trim()}\n\n${UNKNOWN_HANDOFF}`;
 				const scope = `## Scope\nThis summary was generated from the compacted prefix only (before retained entry \`${event.preparation.firstKeptEntryId}\`). Newer retained messages take precedence.`;
@@ -361,6 +363,9 @@ export default function compactionExtension(
 				onComplete: () => {
 					if (generation !== activeGeneration) return;
 					phase = "idle";
+					// Normally consumed by session_before_compact; cleared here too so a
+					// pending handoff never outlives the compaction it was captured for.
+					pendingHandoff = undefined;
 					if (handoff && handoff.continuation !== "continue") return;
 					pi.sendMessage(
 						{

@@ -183,20 +183,27 @@ test("extracts the handoff body and continuation choice", () => {
 
 	assert.equal(
 		extractHandoff(
-			assistantTurn("## Handoff\n- **Continuation:** **done**").message,
+			assistantTurn("## Handoff\n- Objective: x\n- **Continuation:** **done**")
+				.message,
 		)?.continuation,
 		"done",
 	);
 	assert.equal(
 		extractHandoff(
-			assistantTurn("## Handoff\n- Continuation: ask user").message,
+			assistantTurn("## Handoff\n- Objective: x\n- Continuation: ask user")
+				.message,
 		)?.continuation,
 		"ask-user",
 	);
 	assert.equal(
-		extractHandoff(assistantTurn("## Handoff\nno choice line").message)
+		extractHandoff(assistantTurn("## Handoff\n- Objective: x").message)
 			?.continuation,
 		"continue",
+	);
+	// A skeletal heading without an Objective routes to the summarizer fallback.
+	assert.equal(
+		extractHandoff(assistantTurn("## Handoff\nno sections").message),
+		undefined,
 	);
 	assert.equal(extractHandoff(assistantTurn("just prose").message), undefined);
 });
@@ -279,7 +286,9 @@ test("honors the model's done and ask-user continuation choices", () => {
 		handlers.get("session_start")?.({}, context);
 		handlers.get("turn_end")?.(turn, context);
 		handlers.get("turn_end")?.(
-			assistantTurn(`## Handoff\n- **Continuation:** ${choice}`),
+			assistantTurn(
+				`## Handoff\n- **Objective:** x\n- **Continuation:** ${choice}`,
+			),
 			context,
 		);
 		handlers.get("session_before_compact")?.(compactEvent(), context);

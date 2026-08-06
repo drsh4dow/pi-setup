@@ -23,7 +23,7 @@ The per-artifact label in a Model Handoff — editing, reviewing, executing, or 
 _Avoid_: Role, file mode
 
 **Compaction Continuation**:
-At most one automatic recovery turn after boundary-triggered compaction, sent only when the Model Handoff chose continue; done and ask-user suppress it and leave the session waiting for the user. Summarizer and native fallbacks always continue. Manual compaction remains user-controlled, while overflow recovery remains a retry of the interrupted turn.
+At most one automatic recovery turn after boundary-triggered compaction, sent only when the Model Handoff chose continue; done and ask-user suppress it and leave the session waiting for the user. Boundary compactions that fell back to a summarizer always continue. Manual compaction remains user-controlled, while overflow recovery remains a retry of the interrupted turn.
 _Avoid_: Auto-retry, automatic handoff
 
 **Retained Conversation Tail**:

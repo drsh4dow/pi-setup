@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "0.83.0",
+  "lastChangelogVersion": "0.84.0",
   "packages": [],
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-fable-5",
   "enabledModels": [
     "openai-codex/gpt-5.6-sol",
     "opencode-go/kimi-k3",
@@ -14,7 +14,7 @@
     "model": "openai-codex/gpt-5.6-sol"
   },
   "defaultThinkingLevel": "high",
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",
   "terminal": {

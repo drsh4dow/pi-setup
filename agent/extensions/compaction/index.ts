@@ -232,7 +232,9 @@ export function createDenseHandoff(
 				model,
 				event.preparation.settings.reserveTokens,
 				auth.apiKey,
-				auth.headers,
+				// generateSummaryWithUsage's headers annotation is stale: at runtime they
+				// pass through to pi-ai stream options, which accept ProviderHeaders' nulls.
+				auth.headers as Record<string, string> | undefined,
 				event.signal,
 				instructions,
 				event.preparation.previousSummary,

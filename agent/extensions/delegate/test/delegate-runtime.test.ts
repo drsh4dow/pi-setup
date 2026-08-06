@@ -82,7 +82,14 @@ test("covers delegated runtime behavior", () =>
 				undefined,
 				"low",
 			).pipe(
-				Effect.provideService(ConfigProvider.ConfigProvider, childConfig()),
+				Effect.provideService(
+					ConfigProvider.ConfigProvider,
+					childConfig(
+						fileURLToPath(
+							new URL("../../process-status/index.ts", import.meta.url),
+						),
+					),
+				),
 			);
 			assert.match(
 				promptChild.systemPrompt,

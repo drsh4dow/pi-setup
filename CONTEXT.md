@@ -7,15 +7,23 @@ Opinionated configuration and extensions that define how Pi behaves and exposes 
 ### Session continuity
 
 **Compaction Boundary**:
-The earlier of 85% of the active model's context window and 250,000 tokens. Crossing it starts one context compaction at the end of the current model/tool turn, before the agent's next turn; another cannot start until observed usage first falls below the boundary.
+The earlier of 85% of the active model's context window and 250,000 tokens. Crossing it triggers one Handoff Turn followed by compaction at the end of the current model/tool turn; another cannot start until observed usage first falls below the boundary.
 _Avoid_: Overflow threshold, fixed context limit
 
-**Dense Handoff**:
-The active conversation model's internal summary of the compacted prefix, written so the same model can recover before resuming. Its Resume Contract records the prefix's active controller and branches, canonical authority, mutation lease, economics interval, invocation-level completion gate, and latest next-action. Newer retained messages and canonical state override it. It creates no external file; deterministic best-effort filtering removes recognized credentials, personal data, and secret paths from the durable summary and file metadata. Manual compaction instructions add focus without replacing these rules.
-_Avoid_: Transcript summary, handoff document, current-state snapshot
+**Handoff Turn**:
+The single extra turn injected when the Compaction Boundary is crossed, in which the acting model writes its own Model Handoff before compaction runs.
+_Avoid_: Summarization pass, pre-compaction hook
+
+**Model Handoff**:
+The handoff the acting model writes to its future self during the Handoff Turn, embedded verbatim as the compaction summary: objective, Stance Labels, state, next action, and continuation choice. Newer retained messages override it; deterministic filtering removes recognized credentials, personal data, and secret paths. When no Model Handoff exists — manual compaction, overflow, or a malformed reply — a summarizer produces the same structure from the transcript alone.
+_Avoid_: Dense handoff, resume contract, transcript summary
+
+**Stance Label**:
+The per-artifact label in a Model Handoff — editing, reviewing, executing, or reference — recording the session's relationship to a file or skill so a resumed model does not mistake a work object for instructions to follow.
+_Avoid_: Role, file mode
 
 **Compaction Continuation**:
-Exactly one automatic recovery turn after boundary-triggered compaction, including after a normal model stop. It reconciles the newer retained tail, reloads the active controller, recovers bounded canonical state, reconciles mutation authority, and reruns the liveness gate before acting or applying the invocation-level completion gate. Native fallback uses the same recovery sequence without assuming a Resume Contract exists. Manual compaction remains user-controlled, while overflow recovery remains a retry of the interrupted turn.
+At most one automatic recovery turn after boundary-triggered compaction, sent only when the Model Handoff chose continue; done and ask-user suppress it and leave the session waiting for the user. Summarizer and native fallbacks always continue. Manual compaction remains user-controlled, while overflow recovery remains a retry of the interrupted turn.
 _Avoid_: Auto-retry, automatic handoff
 
 **Retained Conversation Tail**:

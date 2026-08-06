@@ -20,6 +20,7 @@ import delegateExtension, {
 	BackgroundDelivery,
 	readDelegateModelSetting,
 	resolveDelegateModel,
+	resolveRequestedModel,
 } from "../index.ts";
 import {
 	renderDelegateResult,
@@ -169,6 +170,23 @@ test("covers delegate configuration and rendering", () => {
 		fallbackReason: undefined,
 	});
 
+	const requested = resolveRequestedModel(fakeContext(), " opencode/fable ");
+	assert.equal(requested.model, configuredModel);
+	assert.equal(requested.requestedModel, "opencode/fable");
+	assert.equal(requested.fallbackReason, undefined);
+	assert.throws(
+		() => resolveRequestedModel(fakeContext(), "opencode/unknown"),
+		/Requested delegate model "opencode\/unknown" was not found in the model registry/,
+	);
+	assert.throws(
+		() => resolveRequestedModel(fakeContext({ auth: false }), "opencode/fable"),
+		/Requested delegate model "opencode\/fable" has no auth configured/,
+	);
+	assert.throws(
+		() => resolveRequestedModel(fakeContext(), "fable"),
+		/must be a "provider\/model-id" string/,
+	);
+
 	const orphan = resolveDelegateModel(fakeContext({ parent: false }), {
 		problem: "Could not parse settings.json.",
 	});
@@ -221,6 +239,7 @@ test("covers delegate configuration and rendering", () => {
 		"task",
 		"background",
 		"cwd",
+		"model",
 		"effort",
 		"output_format",
 	]);

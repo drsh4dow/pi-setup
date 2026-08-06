@@ -92,6 +92,20 @@ _Avoid_: Partial result, crash dump, flush
 A caller-prepared directory that a Delegate Run executes in. The parent creates, populates, and integrates it; delegation only points the child at it.
 _Avoid_: Isolation mode, managed worktree, sandbox
 
+### Codex accounts
+
+**Codex Account**:
+One ChatGPT subscription login for the OpenAI Codex provider — a user-given label plus its OAuth credential set — selectable independently of the plan that bills it.
+_Avoid_: Profile, subscription, auth entry
+
+**Primary Codex Account**:
+The Codex Account held by the built-in Codex provider identity. It needs no alias and is the ambient default.
+_Avoid_: Main account, default login
+
+**Codex Account Alias**:
+A distinct provider identity carrying exactly one non-primary Codex Account, making that account selectable anywhere a model is chosen — the model selector, the model cycle, and the delegate model setting alike.
+_Avoid_: Secondary profile, credential slot, sub-account
+
 ### Local tools
 
 **Session Usage**:

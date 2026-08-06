@@ -97,11 +97,43 @@ export interface DelegateModelChoice {
 	fallbackReason?: string;
 }
 
+type DelegateModelContext = {
+	model: ExtensionContext["model"];
+	modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
+};
+
+function findConfiguredModel(
+	registry: DelegateModelContext["modelRegistry"],
+	spec: string,
+): { model: NonNullable<ExtensionContext["model"]> } | { problem: string } {
+	const slash = spec.indexOf("/");
+	if (slash <= 0 || slash === spec.length - 1) {
+		return { problem: `"${spec}" must be a "provider/model-id" string.` };
+	}
+	const model = registry.find(spec.slice(0, slash), spec.slice(slash + 1));
+	if (!model) {
+		return { problem: `"${spec}" was not found in the model registry.` };
+	}
+	if (!registry.hasConfiguredAuth(model)) {
+		return { problem: `"${spec}" has no auth configured.` };
+	}
+	return { model };
+}
+
+export function resolveRequestedModel(
+	ctx: DelegateModelContext,
+	spec: string,
+): DelegateModelChoice {
+	const requested = spec.trim();
+	const found = findConfiguredModel(ctx.modelRegistry, requested);
+	if ("problem" in found) {
+		throw new Error(`Requested delegate model ${found.problem}`);
+	}
+	return { model: found.model, requestedModel: requested };
+}
+
 export function resolveDelegateModel(
-	ctx: {
-		model: ExtensionContext["model"];
-		modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
-	},
+	ctx: DelegateModelContext,
 	setting: DelegateModelSetting = readDelegateModelSetting(),
 ): DelegateModelChoice {
 	const parentModel = (
@@ -124,30 +156,14 @@ export function resolveDelegateModel(
 	if (setting.problem) return parentModel("parent model", setting.problem);
 	if (!setting.model) return parentModel("parent model");
 
-	const slash = setting.model.indexOf("/");
-	if (slash <= 0 || slash === setting.model.length - 1) {
+	const found = findConfiguredModel(ctx.modelRegistry, setting.model);
+	if ("problem" in found) {
 		return parentModel(
 			setting.model,
-			`Configured delegate model "${setting.model}" must be a "provider/model-id" string.`,
+			`Configured delegate model ${found.problem}`,
 		);
 	}
-	const model = ctx.modelRegistry.find(
-		setting.model.slice(0, slash),
-		setting.model.slice(slash + 1),
-	);
-	if (!model) {
-		return parentModel(
-			setting.model,
-			`Configured delegate model "${setting.model}" was not found in the model registry.`,
-		);
-	}
-	if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
-		return parentModel(
-			setting.model,
-			`Configured delegate model "${setting.model}" has no auth configured.`,
-		);
-	}
-	return { model, requestedModel: setting.model };
+	return { model: found.model, requestedModel: setting.model };
 }
 
 export function childExtensionPaths(

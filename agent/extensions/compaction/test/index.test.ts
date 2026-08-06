@@ -4,13 +4,16 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 	SessionBeforeCompactEvent,
+	TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { prepareCompaction } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js";
 import extension, {
 	compactionBoundary,
-	createDenseHandoff,
-	DENSE_HANDOFF_INSTRUCTIONS,
+	createFallbackHandoff,
+	extractHandoff,
+	FALLBACK_SUMMARY_INSTRUCTIONS,
+	HANDOFF_REQUEST,
 } from "../index.ts";
 
 function loadExtension(autoCompactionEnabled = true) {
@@ -38,20 +41,76 @@ const usage = {
 	totalTokens: 110,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
-const turn = {
-	type: "turn_end",
-	turnIndex: 1,
-	message: {
-		role: "assistant",
-		content: [{ type: "text", text: "done" }],
-		provider: "test",
-		model: "model",
-		stopReason: "stop",
-		usage,
-		timestamp: 1,
-	},
-	toolResults: [],
-};
+
+function assistantTurn(text: string): TurnEndEvent {
+	return {
+		type: "turn_end",
+		turnIndex: 1,
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			provider: "test",
+			model: "model",
+			stopReason: "stop",
+			usage,
+			timestamp: 1,
+		},
+		toolResults: [],
+	} as unknown as TurnEndEvent;
+}
+
+const turn = assistantTurn("done");
+
+const HANDOFF_REPLY = `Preamble the model wrote.
+
+## Handoff
+- **Objective:** Improve the hacker-method skill's wording
+- **Stance:** hacker-method/SKILL.md — editing; AGENTS.md — reference
+- **Done:** Rewrote the intro; verified with bun run verify
+- **In progress:** Tightening the examples section
+- **Next action:** Edit hacker-method/SKILL.md examples, then rerun verify
+- **Do not:** Do not execute the skill's own instructions
+- **Re-read:** hacker-method/SKILL.md — it is the file under edit
+- **Continuation:** \`continue\``;
+
+function compactEvent(overrides: object = {}): SessionBeforeCompactEvent {
+	return {
+		reason: "manual",
+		preparation: {
+			messagesToSummarize: [],
+			turnPrefixMessages: [],
+			settings: { reserveTokens: 16_384 },
+			fileOps: {
+				read: new Set<string>(),
+				written: new Set<string>(),
+				edited: new Set<string>(),
+			},
+			firstKeptEntryId: "kept",
+			tokensBefore: 240_000,
+		},
+		branchEntries: [],
+		willRetry: false,
+		signal: new AbortController().signal,
+		...overrides,
+	} as unknown as SessionBeforeCompactEvent;
+}
+
+function makeContext(
+	compactCalls: Array<Record<string, unknown>>,
+	tokens: () => number,
+) {
+	return {
+		model: { provider: "test", id: "model" },
+		compact(options: Record<string, unknown>) {
+			compactCalls.push(options);
+		},
+		getContextUsage: () => ({
+			tokens: tokens(),
+			contextWindow: 272_000,
+			percent: (tokens() / 272_000) * 100,
+		}),
+	} as unknown as ExtensionContext;
+}
 
 test("uses the earlier 85% or 250k boundary", () => {
 	assert.equal(compactionBoundary(128_000), 108_800);
@@ -72,12 +131,7 @@ test("can compact when a large tool result is the last session entry", () => {
 			message: {
 				role: "assistant",
 				content: [
-					{
-						type: "toolCall",
-						id: "search",
-						name: "web_search",
-						arguments: {},
-					},
+					{ type: "toolCall", id: "search", name: "web_search", arguments: {} },
 				],
 				timestamp: 2,
 			},
@@ -110,186 +164,296 @@ test("can compact when a large tool result is the last session entry", () => {
 });
 
 test("does not compact automatically when auto-compaction is disabled", () => {
-	const { handlers } = loadExtension(false);
-	let compactCalls = 0;
-	const context = {
-		compact() {
-			compactCalls += 1;
-		},
-		getContextUsage: () => ({
-			tokens: 250_000,
-			contextWindow: 272_000,
-			percent: 92,
-		}),
-	} as unknown as ExtensionContext;
+	const { handlers, sent } = loadExtension(false);
+	const compactCalls: Array<Record<string, unknown>> = [];
+	const context = makeContext(compactCalls, () => 250_000);
 
 	handlers.get("session_start")?.({}, context);
 	handlers.get("turn_end")?.(turn, context);
-	assert.equal(compactCalls, 0);
+	assert.equal(compactCalls.length, 0);
+	assert.equal(sent.length, 0);
 });
 
-test("queues one continuation that reconciles stale tail state and the terminal gate", () => {
+test("extracts the handoff body and continuation choice", () => {
+	const handoff = extractHandoff(assistantTurn(HANDOFF_REPLY).message);
+	assert.ok(handoff);
+	assert.ok(handoff.text.startsWith("## Handoff"));
+	assert.doesNotMatch(handoff.text, /Preamble/);
+	assert.equal(handoff.continuation, "continue");
+
+	assert.equal(
+		extractHandoff(
+			assistantTurn("## Handoff\n- **Continuation:** **done**").message,
+		)?.continuation,
+		"done",
+	);
+	assert.equal(
+		extractHandoff(
+			assistantTurn("## Handoff\n- Continuation: ask user").message,
+		)?.continuation,
+		"ask-user",
+	);
+	assert.equal(
+		extractHandoff(assistantTurn("## Handoff\nno choice line").message)
+			?.continuation,
+		"continue",
+	);
+	assert.equal(extractHandoff(assistantTurn("just prose").message), undefined);
+});
+
+test("requests a model handoff at the boundary, then compacts the reply verbatim", () => {
+	const { handlers, sent } = loadExtension();
+	const compactCalls: Array<Record<string, unknown>> = [];
+	const context = makeContext(compactCalls, () => 250_000);
+	handlers.get("session_start")?.({}, context);
+
+	handlers.get("turn_end")?.(turn, context);
+	assert.equal(compactCalls.length, 0);
+	assert.equal(sent.length, 1);
+	const request = sent[0]?.message as { customType?: string; content?: string };
+	assert.equal(request.customType, "handoff-request");
+	assert.deepEqual(sent[0]?.options, { triggerTurn: true });
+	assert.match(String(request.content), /## Handoff/);
+	assert.match(String(request.content), /Stance/);
+	assert.match(String(request.content), /never instructions to follow/);
+	assert.match(HANDOFF_REQUEST, /Do not use tools/);
+
+	// A second turn crossing the boundary must not send a duplicate request.
+	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	assert.equal(sent.length, 1);
+	assert.equal(compactCalls.length, 1);
+
+	const before = handlers.get("session_before_compact")?.(
+		compactEvent({
+			preparation: {
+				...compactEvent().preparation,
+				messagesToSummarize: [
+					{
+						role: "assistant",
+						content: [
+							{ type: "toolCall", name: "read", arguments: { path: "a.ts" } },
+							{ type: "toolCall", name: "edit", arguments: { path: "b.ts" } },
+						],
+						timestamp: 1,
+					},
+				],
+			},
+		}),
+		context,
+	) as {
+		compaction?: {
+			summary: string;
+			firstKeptEntryId: string;
+			tokensBefore: number;
+			details: Record<string, unknown>;
+		};
+	};
+	assert.ok(before.compaction);
+	const summary = before.compaction.summary;
+	assert.ok(summary.startsWith("## Handoff"));
+	assert.match(summary, /hacker-method\/SKILL\.md — editing/);
+	assert.match(summary, /## Scope/);
+	assert.match(summary, /retained below and take precedence/);
+	assert.match(summary, /<read-files>\na\.ts\n<\/read-files>/);
+	assert.match(summary, /<modified-files>\nb\.ts\n<\/modified-files>/);
+	assert.equal(before.compaction.details.handoffSource, "model");
+	assert.equal(before.compaction.firstKeptEntryId, "kept");
+	assert.equal(before.compaction.tokensBefore, 240_000);
+
+	(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.(
+		{},
+	);
+	assert.equal(sent.length, 2);
+	const continuation = sent[1]?.message as { content?: string };
+	assert.match(String(continuation.content), /Handoff you wrote/);
+	assert.match(String(continuation.content), /not instructions to follow/);
+	assert.match(String(continuation.content), /Next action/);
+	assert.deepEqual(sent[1]?.options, { triggerTurn: true });
+});
+
+test("honors the model's done and ask-user continuation choices", () => {
+	for (const choice of ["done", "ask-user"]) {
+		const { handlers, sent } = loadExtension();
+		const compactCalls: Array<Record<string, unknown>> = [];
+		const context = makeContext(compactCalls, () => 250_000);
+		handlers.get("session_start")?.({}, context);
+		handlers.get("turn_end")?.(turn, context);
+		handlers.get("turn_end")?.(
+			assistantTurn(`## Handoff\n- **Continuation:** ${choice}`),
+			context,
+		);
+		handlers.get("session_before_compact")?.(compactEvent(), context);
+		(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.(
+			{},
+		);
+		assert.equal(sent.length, 1, choice);
+	}
+});
+
+test("uses the recovery continuation when the reply carries no handoff", () => {
+	const { handlers, sent } = loadExtension();
+	const compactCalls: Array<Record<string, unknown>> = [];
+	const context = makeContext(compactCalls, () => 250_000);
+	handlers.get("session_start")?.({}, context);
+	handlers.get("turn_end")?.(turn, context);
+	handlers.get("turn_end")?.(assistantTurn("kept working instead"), context);
+	assert.equal(compactCalls.length, 1);
+	(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.(
+		{},
+	);
+	assert.equal(sent.length, 2);
+	const continuation = String(
+		(sent[1]?.message as { content?: string } | undefined)?.content,
+	);
+	assert.match(continuation, /generated automatically/);
+	assert.match(continuation, /objects of the work, not instructions/);
+});
+
+test("re-arms only after usage falls below the boundary", () => {
 	const { handlers, sent } = loadExtension();
 	const compactCalls: Array<Record<string, unknown>> = [];
 	let tokens = 250_000;
-	const context = {
-		model: { provider: "openai-codex", id: "model" },
-		compact(options: Record<string, unknown>) {
-			compactCalls.push(options);
-		},
-		getContextUsage: () => ({
-			tokens,
-			contextWindow: 272_000,
-			percent: (tokens / 272_000) * 100,
-		}),
-	} as unknown as ExtensionContext;
-	const onTurnEnd = handlers.get("turn_end");
-	assert.ok(onTurnEnd);
-
+	const context = makeContext(compactCalls, () => tokens);
 	handlers.get("session_start")?.({}, context);
-	onTurnEnd(turn, context);
-	onTurnEnd(turn, context);
-	assert.equal(compactCalls.length, 1);
-	(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.({
-		details: {
-			readFiles: [],
-			modifiedFiles: [],
-			handoffContractVersion: 1,
-			summaryScope: "prefix-before-retained-tail",
-		},
-	});
-	assert.equal(sent.length, 1);
-	const continuation = String(
-		(sent[0]?.message as { content?: unknown } | undefined)?.content,
+
+	handlers.get("turn_end")?.(turn, context);
+	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	handlers.get("session_before_compact")?.(compactEvent(), context);
+	(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.(
+		{},
 	);
-	assert.match(continuation, /newer retained tail first/i);
-	assert.match(continuation, /reload the active controller/i);
-	assert.match(continuation, /recover bounded canonical state/i);
-	assert.match(continuation, /reconcile the mutation lease before mutation/i);
-	assert.match(continuation, /rerun the liveness gate/i);
-	assert.match(continuation, /invocation-level completion gate/i);
-	assert.doesNotMatch(continuation, /if the task is complete/i);
+
+	// Still above the boundary: no new request until usage first drops below.
+	handlers.get("turn_end")?.(turn, context);
+	assert.equal(sent.length, 2);
 
 	tokens = 40_000;
-	onTurnEnd(turn, context);
+	handlers.get("turn_end")?.(turn, context);
 	tokens = 235_000;
-	onTurnEnd(turn, context);
-	assert.equal(compactCalls.length, 2);
+	handlers.get("turn_end")?.(turn, context);
+	assert.equal(sent.length, 3);
+	assert.equal(
+		(sent[2]?.message as { customType?: string } | undefined)?.customType,
+		"handoff-request",
+	);
+});
+
+test("skips the pending compaction when a manual compaction interleaves", () => {
+	const { handlers, sent } = loadExtension();
+	const compactCalls: Array<Record<string, unknown>> = [];
+	let tokens = 250_000;
+	const context = makeContext(compactCalls, () => tokens);
+	handlers.get("session_start")?.({}, context);
+
+	handlers.get("turn_end")?.(turn, context);
+	assert.equal(sent.length, 1);
+	// User ran /compact before the handoff reply landed; usage is fresh again.
+	tokens = 30_000;
+	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	assert.equal(compactCalls.length, 0);
+
+	// The state machine is back to idle and re-armed.
+	tokens = 250_000;
+	handlers.get("turn_end")?.(turn, context);
+	assert.equal(sent.length, 2);
 });
 
 test("leaves overflow recovery and fixed threshold compaction to the intended paths", () => {
-	const { handlers } = loadExtension();
-	let compactCalls = 0;
-	const context = {
-		model: { provider: "test", id: "model" },
-		compact() {
-			compactCalls += 1;
+	const { handlers, sent } = loadExtension();
+	const compactCalls: Array<Record<string, unknown>> = [];
+	const context = makeContext(compactCalls, () => 250_000);
+	handlers.get("session_start")?.({}, context);
+
+	const overflowTurn = {
+		...turn,
+		message: {
+			...turn.message,
+			stopReason: "error",
+			errorMessage: "This request exceeds the context window",
+			usage: { ...usage, input: 300_000, totalTokens: 300_010 },
 		},
-		getContextUsage: () => ({
-			tokens: 250_000,
-			contextWindow: 272_000,
-			percent: 92,
-		}),
-	} as unknown as ExtensionContext;
+	};
+	handlers.get("turn_end")?.(overflowTurn, context);
+	assert.equal(sent.length, 0);
+
+	// Overflow from a previous model is not the active model's overflow.
 	handlers.get("turn_end")?.(
 		{
-			...turn,
-			message: {
-				...turn.message,
-				stopReason: "error",
-				errorMessage: "This request exceeds the context window",
-				usage: { ...usage, input: 300_000, totalTokens: 300_010 },
-			},
+			...overflowTurn,
+			message: { ...overflowTurn.message, provider: "previous-provider" },
 		},
 		context,
 	);
-	assert.equal(compactCalls, 0);
-	handlers.get("turn_end")?.(
-		{
-			...turn,
-			message: {
-				...turn.message,
-				provider: "previous-provider",
-				stopReason: "error",
-				errorMessage: "This request exceeds the context window",
-				usage: { ...usage, input: 300_000, totalTokens: 300_010 },
-			},
-		},
-		context,
-	);
-	assert.equal(compactCalls, 1);
+	assert.equal(sent.length, 1);
+
+	// The handoff turn itself overflowing hands control to native recovery.
+	handlers.get("turn_end")?.(overflowTurn, context);
+	assert.equal(compactCalls.length, 0);
+
 	assert.deepEqual(
 		handlers.get("session_before_compact")?.({ reason: "threshold" }, context),
 		{ cancel: true },
 	);
 });
 
-test("writes a prefix-scoped Resume Contract with fresh branches and continuous economics", () =>
+test("redacts sensitive lines and file paths from the model handoff", () => {
+	const { handlers } = loadExtension();
+	const compactCalls: Array<Record<string, unknown>> = [];
+	const context = makeContext(compactCalls, () => 250_000);
+	handlers.get("session_start")?.({}, context);
+	handlers.get("turn_end")?.(turn, context);
+	handlers.get("turn_end")?.(
+		assistantTurn(`## Handoff
+- **Objective:** Account stable-lab-7 setup
+- Authorization: Bearer secret-token-value
+- Owner: person@example.com
+- Credential store: /home/person/.pi/agent/auth.json
+- **Continuation:** continue`),
+		context,
+	);
+	const before = handlers.get("session_before_compact")?.(
+		compactEvent({
+			preparation: {
+				...compactEvent().preparation,
+				messagesToSummarize: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "toolCall",
+								name: "edit",
+								arguments: { path: ".env.local" },
+							},
+						],
+						timestamp: 1,
+					},
+				],
+			},
+		}),
+		context,
+	) as { compaction?: { summary: string; details: Record<string, unknown> } };
+	assert.ok(before.compaction);
+	const summary = before.compaction.summary;
+	assert.match(summary, /stable-lab-7/);
+	for (const sensitive of [
+		"secret-token-value",
+		"person@example.com",
+		"auth.json",
+		".env.local",
+	]) {
+		assert.equal(summary.includes(sensitive), false, sensitive);
+	}
+	assert.ok(Number(before.compaction.details.redactionCount) >= 3);
+});
+
+test("fallback summarizer asks for the same handoff structure and appends a stub when missing", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const calls: unknown[][] = [];
 			const summarize = ((...args: unknown[]) => {
 				calls.push(args);
-				return Promise.resolve({
-					text: `handoff
-
-## Resume Contract
-- **Active controller skill:** hacker-method/SKILL.md
-- **Active branches (reload):** credential-archaeology.md
-- **Canonical authority:** workspace next-action
-- **Mutation lease:** resume-lease-2
-- **Economics interval:** last closed interval endpoint usage-41; open work tag archaeology at snapshot 7.0; latest usage snapshot 7.5
-- **Invocation-level completion gate:** canonical may_stop
-- **Latest next-action:** resume_mutation_lease; may_stop false`,
-					usage,
-				});
+				return Promise.resolve({ text: "prose without a heading", usage });
 			}) as typeof import("@earendil-works/pi-coding-agent").generateSummaryWithUsage;
-			const event = {
-				reason: "manual",
-				customInstructions: "focus on the parser",
-				preparation: {
-					messagesToSummarize: [
-						{
-							role: "assistant",
-							content: [
-								{
-									type: "toolCall",
-									name: "read",
-									arguments: { path: "new-read.ts" },
-								},
-								{
-									type: "toolCall",
-									name: "edit",
-									arguments: { path: "new-write.ts" },
-								},
-							],
-							timestamp: 1,
-						},
-					],
-					turnPrefixMessages: [
-						{ role: "user", content: "turn prefix", timestamp: 2 },
-					],
-					settings: { reserveTokens: 16_384 },
-					previousSummary: "previous",
-					fileOps: {
-						read: new Set(["old-native-read.ts", "new-read.ts"]),
-						written: new Set<string>(),
-						edited: new Set(["new-write.ts"]),
-					},
-					firstKeptEntryId: "kept",
-					tokensBefore: 240_000,
-				},
-				branchEntries: [
-					{
-						type: "compaction",
-						details: {
-							readFiles: ["old-read.ts"],
-							modifiedFiles: ["old-write.ts"],
-						},
-					},
-				],
-				signal: new AbortController().signal,
-			} as unknown as SessionBeforeCompactEvent;
 			const context = {
 				model: { id: "model", provider: "test" },
 				modelRegistry: {
@@ -298,162 +462,43 @@ test("writes a prefix-scoped Resume Contract with fresh branches and continuous 
 				},
 				thinkingLevel: "high",
 			} as unknown as ExtensionContext;
-			const result = yield* Effect.promise(() =>
-				Promise.resolve(createDenseHandoff(event, context, summarize)),
-			);
-			assert.equal((calls[0]?.[0] as unknown[] | undefined)?.length, 2);
-			assert.equal(calls[0]?.[2], 16_384);
-			const instructions = String(calls[0]?.[6]);
-			assert.match(instructions, /## Resume Contract/);
-			assert.match(instructions, /Active controller skill/);
-			assert.match(instructions, /Active branches.*reload/i);
-			assert.match(instructions, /Canonical authority/);
-			assert.match(instructions, /Mutation lease/);
-			assert.match(instructions, /last closed interval endpoint/i);
-			assert.match(instructions, /open work tag and start snapshot/i);
-			assert.match(instructions, /latest usage snapshot/i);
-			assert.match(instructions, /Invocation-level completion gate/);
-			assert.match(instructions, /Latest next-action/);
-			assert.match(instructions, /focus on the parser/);
-			assert.equal(calls[0]?.[7], "previous");
-			assert.equal(
-				DENSE_HANDOFF_INSTRUCTIONS.includes("## Suggested Skills"),
-				false,
-			);
-			const summary = result?.compaction.summary ?? "";
-			assert.match(summary, /## Resume Contract/);
-			assert.match(summary, /credential-archaeology\.md/);
-			assert.match(summary, /resume-lease-2/);
-			assert.match(summary, /usage-41/);
-			assert.match(summary, /resume_mutation_lease/);
-			assert.match(summary, /prefix before retained tail entry `kept`/i);
-			assert.deepEqual(result?.compaction.details, {
-				readFiles: ["new-read.ts"],
-				modifiedFiles: ["new-write.ts", "old-write.ts"],
-				handoffContractVersion: 1,
-				summaryScope: "prefix-before-retained-tail",
-				redactionCount: 0,
-				summarizerProvider: "test",
-				summarizerModel: "model",
-				summarizedMessageCount: 2,
-				reason: "manual",
-			});
-		}),
-	));
 
-test("redacts sensitive summary lines and file paths but preserves stable IDs", () =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const summarize = (() =>
-				Promise.resolve({
-					text: `Account: stable-lab-7
-Authorization: Bearer secret-token-value
-Owner: person@example.com
-Phone: +1 415-555-0199
-Credential store: /home/person/.pi/agent/auth.json
------BEGIN PRIVATE KEY-----
-supersecretbase64
------END PRIVATE KEY-----`,
-					usage,
-				})) as typeof import("@earendil-works/pi-coding-agent").generateSummaryWithUsage;
 			const result = yield* Effect.promise(() =>
 				Promise.resolve(
-					createDenseHandoff(
-						{
-							reason: "manual",
+					createFallbackHandoff(
+						compactEvent({
+							customInstructions: "focus on the parser",
 							preparation: {
-								messagesToSummarize: [
-									{
-										role: "assistant",
-										content: [
-											{
-												type: "toolCall",
-												name: "read",
-												arguments: {
-													path: "/home/person/.pi/agent/auth.json",
-												},
-											},
-											{
-												type: "toolCall",
-												name: "edit",
-												arguments: { path: ".env.local" },
-											},
-										],
-										timestamp: 1,
-									},
-								],
-								turnPrefixMessages: [],
-								settings: { reserveTokens: 16_384 },
-								fileOps: {
-									read: new Set<string>(),
-									written: new Set<string>(),
-									edited: new Set<string>(),
-								},
-								firstKeptEntryId: "kept",
-								tokensBefore: 240_000,
+								...compactEvent().preparation,
+								previousSummary: "previous",
 							},
-							branchEntries: [],
-							signal: new AbortController().signal,
-						} as unknown as SessionBeforeCompactEvent,
-						{
-							model: { id: "model", provider: "test" },
-							modelRegistry: {
-								getApiKeyAndHeaders: () =>
-									Promise.resolve({ ok: true, apiKey: "key" }),
-							},
-						} as unknown as ExtensionContext,
+						}),
+						context,
 						summarize,
 					),
 				),
 			);
-			const summary = result?.compaction.summary ?? "";
-			assert.match(summary, /stable-lab-7/);
-			for (const sensitive of [
-				"secret-token-value",
-				"person@example.com",
-				"415-555-0199",
-				"auth.json",
-				"PRIVATE KEY",
-				"supersecretbase64",
-				".env.local",
-			]) {
-				assert.equal(summary.includes(sensitive), false, sensitive);
-			}
-			const details = result?.compaction.details;
-			assert.ok(details);
-			assert.deepEqual(details.readFiles, []);
-			assert.deepEqual(details.modifiedFiles, []);
-			assert.ok(details.redactionCount >= 7);
+
+			const instructions = String(calls[0]?.[6]);
+			assert.match(instructions, /## Handoff/);
+			assert.match(instructions, /Stance/);
+			assert.match(instructions, /Continuation/);
+			assert.match(instructions, /focus on the parser/);
+			assert.equal(calls[0]?.[7], "previous");
+			assert.match(FALLBACK_SUMMARY_INSTRUCTIONS, /never claim work/);
+
+			assert.ok(result?.compaction);
+			assert.match(result.compaction.summary, /prose without a heading/);
+			assert.match(result.compaction.summary, /## Handoff/);
+			assert.match(
+				result.compaction.summary,
+				/re-derive from the retained messages/i,
+			);
+			assert.match(result.compaction.summary, /## Scope/);
+			assert.equal(result.compaction.details?.handoffSource, "summarizer");
+			assert.equal(result.compaction.usage, usage);
 		}),
 	));
-
-test("uses recovery-safe continuation after native fallback", () => {
-	const { handlers, sent } = loadExtension();
-	const compactCalls: Array<Record<string, unknown>> = [];
-	const context = {
-		compact(options: Record<string, unknown>) {
-			compactCalls.push(options);
-		},
-		getContextUsage: () => ({
-			tokens: 250_000,
-			contextWindow: 272_000,
-			percent: 92,
-		}),
-	} as unknown as ExtensionContext;
-	handlers.get("session_start")?.({}, context);
-	handlers.get("turn_end")?.(turn, context);
-	(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.({
-		details: { readFiles: [], modifiedFiles: [] },
-	});
-	const continuation = String(
-		(sent[0]?.message as { content?: unknown } | undefined)?.content,
-	);
-	assert.match(continuation, /native compaction/i);
-	assert.match(continuation, /recover bounded canonical state/i);
-	assert.match(continuation, /reconcile the mutation lease before mutation/i);
-	assert.match(continuation, /invocation-level completion gate/i);
-	assert.doesNotMatch(continuation, /dense handoff/i);
-});
 
 test("falls back to Pi when custom handoff generation fails", () =>
 	Effect.runPromise(
@@ -464,21 +509,8 @@ test("falls back to Pi when custom handoff generation fails", () =>
 				)) as typeof import("@earendil-works/pi-coding-agent").generateSummaryWithUsage;
 			const result = yield* Effect.promise(() =>
 				Promise.resolve(
-					createDenseHandoff(
-						{
-							preparation: {
-								messagesToSummarize: [],
-								turnPrefixMessages: [],
-								settings: { reserveTokens: 16_384 },
-								fileOps: {
-									read: new Set<string>(),
-									written: new Set<string>(),
-									edited: new Set<string>(),
-								},
-							},
-							branchEntries: [],
-							signal: new AbortController().signal,
-						} as unknown as SessionBeforeCompactEvent,
+					createFallbackHandoff(
+						compactEvent(),
 						{
 							model: { id: "model", provider: "test" },
 							modelRegistry: {

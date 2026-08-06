@@ -480,16 +480,11 @@ export default function delegateExtension(pi: ExtensionAPI) {
 					if (ids.length === 0) {
 						throw new Error("Provide at least one delegate id.");
 					}
-					if (params.action === "wait") {
-						const snapshots = yield* manager.wait(ids, signal);
-						delivery.consume(snapshots);
-						return {
-							content: [textContent(yield* resultText(snapshots))],
-							details: { results: snapshots },
-						};
-					}
-					if (params.action === "cancel") {
-						const snapshots = yield* manager.cancel(ids);
+					if (params.action === "wait" || params.action === "cancel") {
+						const snapshots =
+							params.action === "wait"
+								? yield* manager.wait(ids, signal)
+								: yield* manager.cancel(ids);
 						delivery.consume(snapshots);
 						return {
 							content: [textContent(yield* resultText(snapshots))],

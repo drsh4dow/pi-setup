@@ -329,12 +329,8 @@ const requestToken = Effect.fn("requestToken")(function* (
 	const encodedBody = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(
 		body,
 	).pipe(
-		Effect.mapError(
-			(cause) =>
-				new OAuthRequestError({
-					message: `Anthropic ${operation} request encoding failed`,
-					cause,
-				}),
+		Effect.mapError((cause) =>
+			flowError(`Anthropic ${operation} request encoding failed`, cause),
 		),
 	);
 	const request = HttpClientRequest.post(TOKEN_URL).pipe(
@@ -344,52 +340,39 @@ const requestToken = Effect.fn("requestToken")(function* (
 			"Content-Type": "application/json",
 		}),
 	);
-	const response = yield* client.execute(request).pipe(
-		Effect.mapError(
-			(cause) =>
-				new OAuthRequestError({
-					message: `Anthropic ${operation} request failed`,
-					cause,
-				}),
-		),
-	);
+	const response = yield* client
+		.execute(request)
+		.pipe(
+			Effect.mapError((cause) =>
+				flowError(`Anthropic ${operation} request failed`, cause),
+			),
+		);
 	if (response.status < 200 || response.status >= 300) {
-		return yield* new OAuthRequestError({
-			message: `Anthropic ${operation} failed with HTTP ${response.status}`,
-		});
+		return yield* flowError(
+			`Anthropic ${operation} failed with HTTP ${response.status}`,
+		);
 	}
 	const contentLength = Number(response.headers["content-length"]);
 	if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
-		return yield* new OAuthRequestError({
-			message: "Anthropic OAuth response exceeded 64 KiB",
-		});
+		return yield* flowError("Anthropic OAuth response exceeded 64 KiB");
 	}
 	const bytes = yield* response.stream.pipe(
 		Stream.flattenIterable,
 		Stream.take(MAX_RESPONSE_BYTES + 1),
 		Stream.runCollect,
 		Effect.map((bytes) => Uint8Array.from(bytes)),
-		Effect.mapError(
-			(cause) =>
-				new OAuthRequestError({
-					message: `Anthropic ${operation} response read failed`,
-					cause,
-				}),
+		Effect.mapError((cause) =>
+			flowError(`Anthropic ${operation} response read failed`, cause),
 		),
 	);
 	if (bytes.byteLength > MAX_RESPONSE_BYTES) {
-		return yield* new OAuthRequestError({
-			message: "Anthropic OAuth response exceeded 64 KiB",
-		});
+		return yield* flowError("Anthropic OAuth response exceeded 64 KiB");
 	}
 	const token = yield* Schema.decodeEffect(
 		Schema.fromJsonString(TokenResponseJson),
 	)(new TextDecoder().decode(bytes)).pipe(
-		Effect.mapError(
-			() =>
-				new OAuthRequestError({
-					message: `Anthropic ${operation} returned invalid JSON`,
-				}),
+		Effect.mapError(() =>
+			flowError(`Anthropic ${operation} returned invalid JSON`),
 		),
 	);
 	return {
@@ -409,10 +392,7 @@ const runTokenRequest = (
 		Effect.mapError((cause) =>
 			Schema.is(OAuthRequestError)(cause)
 				? cause
-				: new OAuthRequestError({
-						message: `Anthropic ${operation} request failed`,
-						cause,
-					}),
+				: flowError(`Anthropic ${operation} request failed`, cause),
 		),
 		Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
 		Effect.provide(Layer.fresh(FetchHttpClient.layer)),

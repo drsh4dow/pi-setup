@@ -16,8 +16,8 @@ const GROUP_CHECK_MS = 100;
 const schedule = (delayMs: number, action: () => void) =>
 	Effect.runFork(Effect.delay(Effect.sync(action), delayMs));
 
-export type TerminalState = "running" | "done" | "failed" | "killed";
-export interface OutputTail {
+type TerminalState = "running" | "done" | "failed" | "killed";
+interface OutputTail {
 	text: string;
 	totalBytes: number;
 	truncatedBytes: number;
@@ -37,14 +37,6 @@ export interface TerminalSnapshot {
 	stdout: OutputTail;
 	stderr: OutputTail;
 }
-export interface KillResult {
-	id: string;
-	title: string;
-	state: TerminalState;
-	wasRunning: boolean;
-	killed: boolean;
-}
-
 class Tail {
 	private chunks: Buffer[] = [];
 	private headOffset = 0;
@@ -292,6 +284,7 @@ export class BackgroundTerminalManager {
 	}
 
 	private signalTree(entry: Entry, force: boolean): Effect.Effect<void> {
+		const signal = force ? "SIGKILL" : "SIGTERM";
 		if (process.platform === "win32" && entry.child.pid) {
 			return Effect.gen(function* () {
 				const killer = spawn(
@@ -315,20 +308,15 @@ export class BackgroundTerminalManager {
 				if (result === 0) return;
 				yield* Effect.try(() => killer.kill()).pipe(Effect.ignore);
 				entry.snapshot.error = `taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`;
-				yield* Effect.try(() =>
-					entry.child.kill(force ? "SIGKILL" : "SIGTERM"),
-				).pipe(Effect.ignore);
+				yield* Effect.try(() => entry.child.kill(signal)).pipe(Effect.ignore);
 			});
 		}
 		return Effect.try(() => {
-			if (entry.child.pid)
-				process.kill(-entry.child.pid, force ? "SIGKILL" : "SIGTERM");
-			else entry.child.kill(force ? "SIGKILL" : "SIGTERM");
+			if (entry.child.pid) process.kill(-entry.child.pid, signal);
+			else entry.child.kill(signal);
 		}).pipe(
 			Effect.catch(() =>
-				Effect.try(() => entry.child.kill(force ? "SIGKILL" : "SIGTERM")).pipe(
-					Effect.ignore,
-				),
+				Effect.try(() => entry.child.kill(signal)).pipe(Effect.ignore),
 			),
 			Effect.asVoid,
 		);

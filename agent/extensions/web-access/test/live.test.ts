@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Config, Effect, Option } from "effect";
 import { fetchExaContents, searchExa } from "../exa.ts";
-import { clearCloneCache, extractGitHub } from "../github.ts";
-import { fetchViaApi } from "../github-api.ts";
+import { clearCloneCache, extractGitHub, fetchViaApi } from "../github.ts";
 
 const live = Effect.runSync(
 	Config.option(Config.nonEmptyString("PI_WEB_ACCESS_LIVE")),

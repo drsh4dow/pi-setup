@@ -5,7 +5,11 @@ const { unlinkSync } = process.getBuiltinModule("fs");
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { truncateUtf8Head, truncateUtf8Window } from "../../lib/text.ts";
 import { type DelegateUsageStats, MAX_CHILD_OUTPUT_BYTES } from "./contract.ts";
-import { extractAssistantText, saveDelegateOutput } from "./output.ts";
+import {
+	extractAssistantText,
+	extractMessageText,
+	saveDelegateOutput,
+} from "./output.ts";
 
 const MAX_TRAIL_MESSAGES = 6;
 const MAX_TRAIL_TOOLS = 12;
@@ -26,18 +30,6 @@ interface ToolEntry {
 interface MessageEntry {
 	seq: number;
 	text: string;
-}
-
-function messageText(event: AgentSessionEvent & { type: "message_end" }) {
-	if (!("content" in event.message)) return "";
-	const content = event.message.content;
-	if (typeof content === "string") return content.trim();
-	if (!Array.isArray(content)) return "";
-	return content
-		.flatMap((part) =>
-			part.type === "text" && part.text.trim() ? [part.text.trim()] : [],
-		)
-		.join("\n");
 }
 
 function progressLine(text: string) {
@@ -183,7 +175,7 @@ export class ChildState {
 		}
 		if (event.type !== "message_end") return;
 
-		const text = messageText(event);
+		const text = extractMessageText(event.message);
 		if (event.message.role === "user") {
 			if (this.omitInitialUserMessage) {
 				this.omitInitialUserMessage = false;

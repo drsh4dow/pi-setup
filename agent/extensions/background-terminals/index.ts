@@ -260,15 +260,13 @@ export class BackgroundTerminalDelivery {
 			this.flushState = "idle";
 		}
 	});
-	clear(): TerminalSnapshot[] {
+	clear() {
 		this.lifecycle = "closed";
 		this.context = undefined;
 		this.retryGeneration++;
-		const pending = [...this.pending.values()];
 		this.pending.clear();
 		this.attempts.clear();
 		this.failed.clear();
-		return pending;
 	}
 }
 
@@ -491,15 +489,6 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 	pi.on("agent_settled", () => Effect.runPromise(delivery.flush));
 	pi.on("session_shutdown", () => Effect.runPromise(leaveSession(false)));
 
-	const listText = (entries: TerminalSnapshot[]) => {
-		const terminals = entries.length
-			? entries.map(summary).join("\n")
-			: "No background terminals.";
-		return delivery.problem ? `${terminals}\n${delivery.problem}` : terminals;
-	};
-	const runSynchronous = <A>(evaluate: () => A) =>
-		Effect.runPromise(Effect.sync(evaluate));
-
 	pi.registerTool({
 		name: "bg_start",
 		label: "Start Background Terminal",
@@ -569,20 +558,22 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
 		executionMode: "parallel",
 		execute(_id, params) {
-			return runSynchronous(() => {
-				const terminalSession = currentSession();
-				const snapshot = terminalSession.get(clientId, params.id);
-				if (!snapshot)
-					throw new Error(
-						`Unknown terminal id "${sanitizeInline(params.id)}".`,
-					);
-				if (snapshot.state !== "running")
-					terminalSession.consume([snapshot.id]);
-				return {
-					content: [{ type: "text", text: formatTerminalReport(snapshot) }],
-					details: terminalMetadata(snapshot),
-				};
-			});
+			return Effect.runPromise(
+				Effect.sync(() => {
+					const terminalSession = currentSession();
+					const snapshot = terminalSession.get(clientId, params.id);
+					if (!snapshot)
+						throw new Error(
+							`Unknown terminal id "${sanitizeInline(params.id)}".`,
+						);
+					if (snapshot.state !== "running")
+						terminalSession.consume([snapshot.id]);
+					return {
+						content: [{ type: "text", text: formatTerminalReport(snapshot) }],
+						details: terminalMetadata(snapshot),
+					};
+				}),
+			);
 		},
 	});
 	pi.registerTool({
@@ -593,18 +584,25 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 		executionMode: "parallel",
 		execute() {
-			return runSynchronous(() => {
-				const entries = currentSession().list(clientId);
-				return {
-					content: [
-						{
-							type: "text",
-							text: listText(entries),
-						},
-					],
-					details: { terminals: entries.map(terminalMetadata) },
-				};
-			});
+			return Effect.runPromise(
+				Effect.sync(() => {
+					const entries = currentSession().list(clientId);
+					const terminals = entries.length
+						? entries.map(summary).join("\n")
+						: "No background terminals.";
+					return {
+						content: [
+							{
+								type: "text",
+								text: delivery.problem
+									? `${terminals}\n${delivery.problem}`
+									: terminals,
+							},
+						],
+						details: { terminals: entries.map(terminalMetadata) },
+					};
+				}),
+			);
 		},
 	});
 	pi.registerTool({

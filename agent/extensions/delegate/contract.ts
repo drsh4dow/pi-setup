@@ -30,6 +30,13 @@ export const DelegateRunParams = Type.Object({
 				"Existing directory the child runs in, absolute or relative to the parent's. Defaults to the parent's. Delegation only points the child at it; preparing and integrating it stays with the caller.",
 		}),
 	),
+	model: Type.Optional(
+		Type.String({
+			maxLength: 256,
+			description:
+				'Exact "provider/model-id" for the child, overriding the configured delegate default. An unknown or unauthenticated model fails the run instead of substituting another.',
+		}),
+	),
 	effort: Type.Optional(
 		StringEnum(["fast", "thorough"], {
 			description:

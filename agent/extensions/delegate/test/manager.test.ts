@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 const { readFile } = process.getBuiltinModule("fs/promises");
 
 import test from "node:test";
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Cause, Deferred, Effect, Fiber } from "effect";
 
 import { type DelegateSnapshot, MAX_CHILD_OUTPUT_BYTES } from "../contract.ts";
@@ -36,6 +36,29 @@ test("wait admission is atomic, bounded per child, and releases capacity", () =>
 	const available = yield* Effect.forkChild(manager.wait([first.id, second.id]));
 	sessions[1].finish("done");
 	yield* Fiber.join(available);
+	yield* manager.shutdown();
+})));
+
+test("per-run model override resolves strictly or fails the spawn", () => Effect.runPromise(Effect.gen(function* () {
+	const { manager, sessions } = harness();
+	const overrideContext = {
+		...context,
+		modelRegistry: {
+			find: (provider: string, id: string) =>
+				provider === "test" && id === "other" ? { provider, id } : undefined,
+			hasConfiguredAuth: () => true,
+		},
+	} as unknown as ExtensionContext;
+	const job = manager.spawn({ task: "override", model: " test/other ", ctx: overrideContext });
+	assert.equal(job.requestedModel, "test/other");
+	assert.equal(job.fallbackReason, undefined);
+	assert.throws(
+		() => manager.spawn({ task: "bad", model: "test/missing", ctx: overrideContext }),
+		/Requested delegate model "test\/missing" was not found in the model registry/,
+	);
+	yield* eventually(() => sessions.length === 1);
+	sessions[0].finish("done");
+	yield* manager.wait([job.id]);
 	yield* manager.shutdown();
 })));
 

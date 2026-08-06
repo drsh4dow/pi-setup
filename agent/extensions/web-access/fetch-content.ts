@@ -21,17 +21,11 @@ export interface RawFetchParams {
 	model?: unknown;
 }
 
-export type NormalizedFetchParams =
-	| { urls: string[]; options: FetchOptions; error?: undefined }
-	| { urls?: undefined; options?: undefined; error: string };
-
 function optionalString(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-export function normalizeFetchParams(
-	params: RawFetchParams,
-): NormalizedFetchParams {
+export function normalizeFetchParams(params: RawFetchParams) {
 	if (
 		Array.isArray(params.urls) &&
 		params.urls.some(

@@ -16,13 +16,8 @@ import {
 import { Clock, Config, Effect } from "effect";
 import { delegateError } from "./errors.ts";
 
-export function extractAssistantText(message: {
-	role?: unknown;
-	content?: unknown;
-}): string {
-	if (message.role !== "assistant") return "";
-	const content = message.content;
-
+export function extractMessageText(message: unknown): string {
+	const content = (message as { content?: unknown } | null)?.content;
 	if (typeof content === "string") return content.trim();
 	if (!Array.isArray(content)) return "";
 
@@ -37,6 +32,13 @@ export function extractAssistantText(message: {
 			return text ? [text] : [];
 		})
 		.join("\n");
+}
+
+export function extractAssistantText(message: {
+	role?: unknown;
+	content?: unknown;
+}): string {
+	return message.role === "assistant" ? extractMessageText(message) : "";
 }
 
 function delegateOutputPath(directory = tmpdir()) {

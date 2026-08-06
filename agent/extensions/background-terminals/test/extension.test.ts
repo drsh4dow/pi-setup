@@ -31,7 +31,9 @@ const eventually = Effect.fn("eventually")(function* (condition: () => boolean |
 	throw new Error("condition not met within 5 seconds");
 });
 
-function registeredTools() {
+function registeredExtension(
+	sendMessage?: (message: unknown, options: unknown) => void,
+) {
 	const tools: ToolDefinition[] = [];
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	extension({
@@ -43,7 +45,13 @@ function registeredTools() {
 		registerTool(tool: ToolDefinition) {
 			tools.push(tool);
 		},
+		...(sendMessage ? { sendMessage } : {}),
 	} as unknown as ExtensionAPI);
+	return { tools, handlers };
+}
+
+function registeredTools() {
+	const { tools, handlers } = registeredExtension();
 	handlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		{
@@ -58,53 +66,25 @@ function registeredTools() {
 }
 
 test("registers four parallel tools and lifecycle hooks", () => {
-	const tools: ToolDefinition[] = [];
-	const events = new Set<string>();
-	extension({
-		events: noEvents,
-		on(name: string) {
-			events.add(name);
-		},
-		registerTool(tool: ToolDefinition) {
-			tools.push(tool);
-		},
-		registerCommand() {},
-	} as unknown as ExtensionAPI);
+	const { tools, handlers } = registeredExtension();
 	assert.deepEqual(
 		tools.map((tool) => tool.name),
 		["bg_start", "bg_status", "bg_list", "bg_kill"],
 	);
 	assert.ok(tools.every((tool) => tool.executionMode === "parallel"));
 	assert.ok(
-		events.has("session_start") &&
-			events.has("agent_end") &&
-			events.has("agent_settled") &&
-			events.has("session_shutdown"),
+		handlers.has("session_start") &&
+			handlers.has("agent_end") &&
+			handlers.has("agent_settled") &&
+			handlers.has("session_shutdown"),
 	);
 });
 
 test("child terminals die with the child and stay out of the parent's list", () => Effect.runPromise(Effect.gen(function* () {
-	const parentTools: ToolDefinition[] = [];
-	const childTools: ToolDefinition[] = [];
-	const parentHandlers = new Map<string, (...args: unknown[]) => unknown>();
-	const childHandlers = new Map<string, (...args: unknown[]) => unknown>();
-	const api = (
-		tools: ToolDefinition[],
-		handlers: Map<string, (...args: unknown[]) => unknown>,
-	) =>
-		({
-			events: noEvents,
-			on(name: string, handler: (...args: unknown[]) => unknown) {
-				handlers.set(name, handler);
-			},
-			registerCommand() {},
-			registerTool(tool: ToolDefinition) {
-				tools.push(tool);
-			},
-			sendMessage() {},
-		}) as unknown as ExtensionAPI;
-	extension(api(parentTools, parentHandlers));
-	extension(api(childTools, childHandlers));
+	const { tools: parentTools, handlers: parentHandlers } =
+		registeredExtension(() => {});
+	const { tools: childTools, handlers: childHandlers } =
+		registeredExtension(() => {});
 	const parentContext = {
 		cwd: process.cwd(),
 		hasUI: true,
@@ -176,27 +156,10 @@ test("child terminals die with the child and stay out of the parent's list", () 
 })));
 
 test("a saturated child cannot exhaust the parent's terminal slots", () => Effect.runPromise(Effect.gen(function* () {
-	const parentTools: ToolDefinition[] = [];
-	const childTools: ToolDefinition[] = [];
-	const parentHandlers = new Map<string, (...args: unknown[]) => unknown>();
-	const childHandlers = new Map<string, (...args: unknown[]) => unknown>();
-	const api = (
-		tools: ToolDefinition[],
-		handlers: Map<string, (...args: unknown[]) => unknown>,
-	) =>
-		({
-			events: noEvents,
-			on(name: string, handler: (...args: unknown[]) => unknown) {
-				handlers.set(name, handler);
-			},
-			registerCommand() {},
-			registerTool(tool: ToolDefinition) {
-				tools.push(tool);
-			},
-			sendMessage() {},
-		}) as unknown as ExtensionAPI;
-	extension(api(parentTools, parentHandlers));
-	extension(api(childTools, childHandlers));
+	const { tools: parentTools, handlers: parentHandlers } =
+		registeredExtension(() => {});
+	const { tools: childTools, handlers: childHandlers } =
+		registeredExtension(() => {});
 	const context = {
 		cwd: process.cwd(),
 		hasUI: false,
@@ -259,18 +222,7 @@ test("a saturated child cannot exhaust the parent's terminal slots", () => Effec
 })));
 
 test("no-UI runs stop terminals before release and can start another run", () => Effect.runPromise(Effect.gen(function* () {
-	const tools: ToolDefinition[] = [];
-	const handlers = new Map<string, (...args: unknown[]) => unknown>();
-	extension({
-		events: noEvents,
-		on(name: string, handler: (...args: unknown[]) => unknown) {
-			handlers.set(name, handler);
-		},
-		registerCommand() {},
-		registerTool(tool: ToolDefinition) {
-			tools.push(tool);
-		},
-	} as unknown as ExtensionAPI);
+	const { tools, handlers } = registeredExtension();
 	const context = {
 		cwd: process.cwd(),
 		hasUI: false,
@@ -317,19 +269,8 @@ test("no-UI runs stop terminals before release and can start another run", () =>
 })));
 
 test("session shutdown clears status, kills processes, and permits restart", () => Effect.runPromise(Effect.gen(function* () {
-	const tools: ToolDefinition[] = [];
-	const handlers = new Map<string, (...args: unknown[]) => unknown>();
+	const { tools, handlers } = registeredExtension();
 	const statuses: Array<string | undefined> = [];
-	extension({
-		events: noEvents,
-		on(name: string, handler: (...args: unknown[]) => unknown) {
-			handlers.set(name, handler);
-		},
-		registerCommand() {},
-		registerTool(tool: ToolDefinition) {
-			tools.push(tool);
-		},
-	} as unknown as ExtensionAPI);
 	const context = {
 		cwd: process.cwd(),
 		hasUI: true,
@@ -382,21 +323,9 @@ test("session shutdown clears status, kills processes, and permits restart", () 
 
 test("successful completions are passive while failures trigger a turn", () => Effect.runPromise(Effect.gen(function* () {
 	const deliveries: Array<{ options: { triggerTurn: boolean } }> = [];
-	const tools: ToolDefinition[] = [];
-	const handlers = new Map<string, (...args: unknown[]) => unknown>();
-	extension({
-		events: noEvents,
-		on(name: string, handler: (...args: unknown[]) => unknown) {
-			handlers.set(name, handler);
-		},
-		registerCommand() {},
-		registerTool(tool: ToolDefinition) {
-			tools.push(tool);
-		},
-		sendMessage(_message: unknown, options: unknown) {
-			deliveries.push({ options: options as { triggerTurn: boolean } });
-		},
-	} as unknown as ExtensionAPI);
+	const { tools, handlers } = registeredExtension((_message, options) => {
+		deliveries.push({ options: options as { triggerTurn: boolean } });
+	});
 	const context = {
 		cwd: process.cwd(),
 		hasUI: true,

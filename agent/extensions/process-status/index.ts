@@ -97,11 +97,16 @@ export default function processStatus(
 					return typeof value === "function" ? value.bind(target) : value;
 				},
 			});
+			const isUsingOAuth = (providerId: string) =>
+				currentModel !== undefined &&
+				currentModel.provider === providerId &&
+				ctx.modelRegistry.isUsingOAuth(currentModel);
 			const modelRuntime = {
-				isUsingOAuth: (providerId: string) =>
-					currentModel !== undefined &&
-					currentModel.provider === providerId &&
-					ctx.modelRegistry.isUsingOAuth(currentModel),
+				isUsingOAuth,
+				isUsingSubscription: (providerId: string) =>
+					isUsingOAuth(providerId) &&
+					ctx.modelRegistry.getProvider(providerId)?.auth.oauth
+						?.isSubscription === true,
 			};
 			const session = {
 				get state() {

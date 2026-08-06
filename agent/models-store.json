@@ -244,7 +244,7 @@
         }
       }
     ],
-    "checkedAt": 1785961815647,
+    "checkedAt": 1786020225168,
     "lastModified": 1785495292000,
     "etag": "W/\"400cac2d73673d9fff4c7d0ed22691b0\""
   },
@@ -381,6 +381,28 @@
           "supportsDeveloperRole": false
         },
         "contextWindow": 40960,
+        "maxTokens": 16384
+      },
+      {
+        "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+        "name": "Qwen3 235B-A22B Instruct 2507",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": false,
+        "input": [
+          "text"
+        ],
+        "cost": {
+          "input": 0.855,
+          "output": 2.565,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "compat": {
+          "supportsDeveloperRole": false
+        },
+        "contextWindow": 262144,
         "maxTokens": 16384
       },
       {
@@ -834,6 +856,50 @@
         },
         "contextWindow": 163840,
         "maxTokens": 163840
+      },
+      {
+        "id": "deepseek-ai/DeepSeek-V3",
+        "name": "DeepSeek-V3",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": false,
+        "input": [
+          "text"
+        ],
+        "cost": {
+          "input": 0.4,
+          "output": 1.3,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "compat": {
+          "supportsDeveloperRole": false
+        },
+        "contextWindow": 64000,
+        "maxTokens": 8192
+      },
+      {
+        "id": "deepseek-ai/DeepSeek-V3.1",
+        "name": "DeepSeek-V3.1",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "input": [
+          "text"
+        ],
+        "cost": {
+          "input": 0.27,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0
+        },
+        "compat": {
+          "supportsDeveloperRole": false
+        },
+        "contextWindow": 131072,
+        "maxTokens": 8192
       },
       {
         "id": "deepseek-ai/DeepSeek-V3.2",
@@ -1578,9 +1644,9 @@
         "maxTokens": 131072
       }
     ],
-    "checkedAt": 1785962359168,
-    "lastModified": 1785841797000,
-    "etag": "W/\"35b9bf40cd7968f511206ebf23ce37b0\""
+    "checkedAt": 1786020225742,
+    "lastModified": 1786008940000,
+    "etag": "W/\"a508615ea67fd437968799e9714303ae\""
   },
   "opencode": {
     "models": [
@@ -3294,7 +3360,7 @@
         "maxTokens": 65536
       }
     ],
-    "checkedAt": 1785962353332,
+    "checkedAt": 1786020225009,
     "lastModified": 1785917085000,
     "etag": "W/\"eb53c016e608c41c0c79b534e7b1c40a\""
   },
@@ -4508,7 +4574,7 @@
         }
       }
     ],
-    "checkedAt": 1785961815651,
+    "checkedAt": 1786020225311,
     "lastModified": 1785502726000,
     "etag": "W/\"f1f6f2e8493b001e6b8e24ca0e98ac6d\""
   },
@@ -4585,52 +4651,6 @@
         },
         "contextWindow": 200000,
         "maxTokens": 64000,
-        "compat": {
-          "supportsStrictTools": true
-        }
-      },
-      {
-        "id": "claude-opus-4-1",
-        "name": "Claude Opus 4.1 (latest)",
-        "api": "anthropic-messages",
-        "provider": "anthropic",
-        "baseUrl": "https://api.anthropic.com",
-        "reasoning": true,
-        "input": [
-          "text",
-          "image"
-        ],
-        "cost": {
-          "input": 15,
-          "output": 75,
-          "cacheRead": 1.5,
-          "cacheWrite": 18.75
-        },
-        "contextWindow": 200000,
-        "maxTokens": 32000,
-        "compat": {
-          "supportsStrictTools": true
-        }
-      },
-      {
-        "id": "claude-opus-4-1-20250805",
-        "name": "Claude Opus 4.1",
-        "api": "anthropic-messages",
-        "provider": "anthropic",
-        "baseUrl": "https://api.anthropic.com",
-        "reasoning": true,
-        "input": [
-          "text",
-          "image"
-        ],
-        "cost": {
-          "input": 15,
-          "output": 75,
-          "cacheRead": 1.5,
-          "cacheWrite": 18.75
-        },
-        "contextWindow": 200000,
-        "maxTokens": 32000,
         "compat": {
           "supportsStrictTools": true
         }
@@ -4897,9 +4917,9 @@
         }
       }
     ],
-    "checkedAt": 1785961815624,
-    "lastModified": 1785146159000,
-    "etag": "W/\"2955a0a2593d701973abef2d80e4a8e0\""
+    "checkedAt": 1786020376578,
+    "lastModified": 1786008924000,
+    "etag": "W/\"2174ed7392c0d5376beba2c4ee0b170f\""
   },
   "opencode-go": {
     "models": [
@@ -5394,7 +5414,7 @@
         "maxTokens": 131072
       }
     ],
-    "checkedAt": 1785962353074,
+    "checkedAt": 1786020225311,
     "lastModified": 1785751544000,
     "etag": "W/\"9acd354f1fe084eec04a65a7ad727beb\""
   }

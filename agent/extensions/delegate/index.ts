@@ -50,6 +50,7 @@ export {
 	DELEGATION_TOOL_DENYLIST,
 	readDelegateModelSetting,
 	resolveDelegateModel,
+	resolveRequestedModel,
 	selectChildToolNames,
 	thinkingForEffort,
 } from "./runtime.ts";
@@ -362,6 +363,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 						try: () => {
 							const spawned = manager.spawn({
 								task: params.task,
+								model: params.model,
 								effort: params.effort,
 								outputFormat: params.output_format,
 								background: params.background,

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
-const { mkdtempSync, rmSync, writeFileSync } = process.getBuiltinModule("fs");
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } =
+	process.getBuiltinModule("fs");
 
 import { tmpdir } from "node:os";
 
@@ -27,6 +28,7 @@ import {
 	renderDelegateSessionCall,
 	renderDelegateSessionResult,
 } from "../render.ts";
+import { readProjectDelegateModelSetting } from "../runtime.ts";
 import { eventually } from "./eventually.ts";
 import { snapshot } from "./snapshot.ts";
 
@@ -81,6 +83,13 @@ function settingsFile(content: string): string {
 	return path;
 }
 
+function projectFile(content: string): string {
+	const cwd = join(settingsDir, `project-${settingsNumber++}`);
+	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	writeFileSync(join(cwd, ".pi", "delegate.json"), content, "utf8");
+	return cwd;
+}
+
 function delegateSnapshot(overrides: Partial<DelegateSnapshot> = {}) {
 	return snapshot({
 		status: "done",
@@ -104,9 +113,23 @@ function delegateSnapshot(overrides: Partial<DelegateSnapshot> = {}) {
 }
 
 test("covers delegate configuration and rendering", () => {
+	const globalSettings = settingsFile(
+		'{"delegate": {"model": " opencode/fable "}}',
+	);
+	assert.deepEqual(readDelegateModelSetting(globalSettings), {
+		model: "opencode/fable",
+	});
 	assert.deepEqual(
-		readDelegateModelSetting(
-			settingsFile('{"delegate": {"model": " opencode/fable "}}'),
+		readProjectDelegateModelSetting(
+			projectFile('{"model": " test/project "}'),
+			globalSettings,
+		),
+		{ model: "test/project" },
+	);
+	assert.deepEqual(
+		readProjectDelegateModelSetting(
+			join(settingsDir, "project-without-config"),
+			globalSettings,
 		),
 		{ model: "opencode/fable" },
 	);
@@ -135,6 +158,13 @@ test("covers delegate configuration and rendering", () => {
 		readDelegateModelSetting(settingsFile('{"delegate": {"model": 42}}'))
 			.problem ?? "",
 		/must be a "provider\/model-id" string/,
+	);
+	assert.match(
+		readProjectDelegateModelSetting(
+			projectFile('{"model": 42}'),
+			globalSettings,
+		).problem ?? "",
+		/"model".*must be a "provider\/model-id" string/,
 	);
 
 	const choice = resolveDelegateModel(fakeContext(), {
@@ -421,6 +451,27 @@ test("covers background delivery behavior", (t) =>
 				} finally {
 					if (shutdown) yield* Effect.promise(shutdown);
 				}
+			}
+
+			{
+				const messages: unknown[] = [];
+				const delivery = new BackgroundDelivery(
+					{
+						sendMessage(message: unknown) {
+							messages.push(message);
+						},
+					} as unknown as ExtensionAPI,
+					() => Effect.succeed("background result"),
+				);
+				delivery.setContext({ isIdle: () => true } as ExtensionContext);
+				delivery.setPaused(true);
+				delivery.enqueue(delegateSnapshot());
+				yield* delivery.flush();
+				assert.equal(messages.length, 0);
+
+				delivery.setPaused(false);
+				yield* Effect.yieldNow;
+				assert.equal(messages.length, 1);
 			}
 
 			{

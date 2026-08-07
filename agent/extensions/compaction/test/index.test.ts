@@ -9,6 +9,7 @@ import type {
 import { Effect } from "effect";
 import { prepareCompaction } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/compaction/compaction.js";
 import extension, {
+	COMPACTION_DELIVERY_PAUSE_CHANNEL,
 	compactionBoundary,
 	createFallbackHandoff,
 	extractHandoff,
@@ -21,10 +22,16 @@ function loadExtension(
 ) {
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	const sent: Array<{ message: unknown; options: unknown }> = [];
+	const events: Array<{ channel: string; data: unknown }> = [];
 	extension(
 		{
 			on(name: string, handler: (...args: unknown[]) => unknown) {
 				handlers.set(name, handler);
+			},
+			events: {
+				emit(channel: string, data: unknown) {
+					events.push({ channel, data });
+				},
 			},
 			sendMessage(message: unknown, options: unknown) {
 				sent.push({ message, options });
@@ -34,7 +41,7 @@ function loadExtension(
 			? autoCompactionEnabled
 			: () => autoCompactionEnabled,
 	);
-	return { handlers, sent };
+	return { handlers, sent, events };
 }
 
 const usage = {
@@ -237,7 +244,7 @@ test("extracts the handoff body and continuation choice", () => {
 });
 
 test("requests a model handoff at the boundary, then compacts the reply verbatim", () => {
-	const { handlers, sent } = loadExtension();
+	const { handlers, sent, events } = loadExtension();
 	const compactCalls: Array<Record<string, unknown>> = [];
 	const context = makeContext(compactCalls, () => 250_000);
 	handlers.get("session_start")?.({}, context);
@@ -252,6 +259,9 @@ test("requests a model handoff at the boundary, then compacts the reply verbatim
 	assert.match(String(request.content), /Stance/);
 	assert.match(String(request.content), /never instructions to follow/);
 	assert.match(HANDOFF_REQUEST, /Do not use tools/);
+	assert.deepEqual(events, [
+		{ channel: COMPACTION_DELIVERY_PAUSE_CHANNEL, data: true },
+	]);
 
 	// A second turn crossing the boundary must not send a duplicate request.
 	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
@@ -304,6 +314,10 @@ test("requests a model handoff at the boundary, then compacts the reply verbatim
 	assert.match(String(continuation.content), /not instructions to follow/);
 	assert.match(String(continuation.content), /Next action/);
 	assert.deepEqual(sent[1]?.options, { triggerTurn: true });
+	assert.deepEqual(events, [
+		{ channel: COMPACTION_DELIVERY_PAUSE_CHANNEL, data: true },
+		{ channel: COMPACTION_DELIVERY_PAUSE_CHANNEL, data: false },
+	]);
 });
 
 test("honors the model's done and ask-user continuation choices", () => {

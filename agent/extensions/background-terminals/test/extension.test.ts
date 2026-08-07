@@ -379,14 +379,15 @@ test("successful completions are passive while failures trigger a turn", () => E
 	}
 })));
 
-test("completion delivery is suppressible and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
+test("completion delivery pauses without dropping results and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
 	const messages: unknown[] = [];
+	let idle = false;
 	const delivery = new BackgroundTerminalDelivery({
 		sendMessage(message: unknown) {
 			messages.push(message);
 		},
 	} as ExtensionAPI);
-	delivery.setContext({ isIdle: () => false } as ExtensionContext);
+	delivery.setContext({ isIdle: () => idle } as ExtensionContext);
 	const snapshot = {
 		id: "bt-1",
 		title: "x",
@@ -403,10 +404,21 @@ test("completion delivery is suppressible and closed delivery stays closed", () 
 	delivery.consume([snapshot.id]);
 	yield* delivery.flush;
 	assert.equal(messages.length, 0);
+
+	delivery.setPaused(true);
+	idle = true;
+	delivery.enqueue(snapshot);
+	yield* delivery.flush;
+	assert.equal(messages.length, 0);
+	delivery.setPaused(false);
+	yield* Effect.yieldNow;
+	assert.equal(messages.length, 1);
+
+	idle = false;
 	delivery.enqueue(snapshot);
 	delivery.clear();
 	yield* delivery.flush;
-	assert.equal(messages.length, 0);
+	assert.equal(messages.length, 1);
 })));
 
 test("bounds complete delivery batches with worst-case metadata", () => Effect.runPromise(Effect.gen(function* () {

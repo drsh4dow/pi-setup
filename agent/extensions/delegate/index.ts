@@ -4,6 +4,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Cause, Effect } from "effect";
 import { truncateUtf8Window } from "../../lib/text.ts";
+import { COMPACTION_DELIVERY_PAUSE_CHANNEL } from "../compaction/index.ts";
 import {
 	MAX_ACTIVITIES_PER_SOURCE,
 	registerProcessStatusSource,
@@ -123,6 +124,7 @@ export class BackgroundDelivery {
 	private readonly acknowledge: (ids: readonly string[]) => void;
 	private retryTimer: ReturnType<typeof scheduleTimer> | undefined;
 	private flushing: boolean = false;
+	private paused = false;
 	private version = 0;
 
 	constructor(
@@ -137,10 +139,18 @@ export class BackgroundDelivery {
 
 	setContext(context: ExtensionContext) {
 		this.context = context;
+		this.paused = false;
 		if (this.retryTimer) cancelTimer(this.retryTimer);
 		this.retryTimer = undefined;
 		this.version++;
 		if (context.isIdle()) Effect.runFork(this.flush());
+	}
+
+	setPaused(paused: boolean) {
+		if (this.paused === paused) return;
+		this.paused = paused;
+		this.version++;
+		if (!paused && this.context?.isIdle()) Effect.runFork(this.flush());
 	}
 
 	clear() {
@@ -149,6 +159,7 @@ export class BackgroundDelivery {
 		this.retryTimer = undefined;
 		this.pending.clear();
 		this.reservations.clear();
+		this.paused = false;
 		this.version++;
 	}
 
@@ -203,7 +214,13 @@ export class BackgroundDelivery {
 
 	flush() {
 		const context = this.context;
-		if (this.flushing || this.retryTimer || !context || this.pending.size === 0)
+		if (
+			this.flushing ||
+			this.paused ||
+			this.retryTimer ||
+			!context ||
+			this.pending.size === 0
+		)
 			return Effect.void;
 		const entries = [...this.pending.values()].filter(
 			(entry) => !entry.exhausted,
@@ -220,6 +237,7 @@ export class BackgroundDelivery {
 							try: () => {
 								if (
 									this.context !== context ||
+									this.paused ||
 									entries.some(
 										(entry) => this.pending.get(entry.snapshot.id) !== entry,
 									)
@@ -288,6 +306,7 @@ export class BackgroundDelivery {
 					if (
 						!this.retryTimer &&
 						this.version !== startVersion &&
+						!this.paused &&
 						this.context?.isIdle() &&
 						[...this.pending.values()].some((entry) => !entry.exhausted)
 					) {
@@ -330,6 +349,9 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		() => manager.sessionUsage(),
 	);
 
+	pi.events.on(COMPACTION_DELIVERY_PAUSE_CHANNEL, (paused) => {
+		if (typeof paused === "boolean") delivery.setPaused(paused);
+	});
 	pi.on("session_start", (_event, ctx) => delivery.setContext(ctx));
 	pi.on("agent_settled", () => Effect.runPromise(delivery.flush()));
 	pi.on("session_shutdown", () => {

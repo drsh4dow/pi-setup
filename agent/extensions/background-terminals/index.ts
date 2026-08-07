@@ -11,6 +11,7 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { truncateUtf8Tail } from "../../lib/text.ts";
+import { COMPACTION_DELIVERY_PAUSE_CHANNEL } from "../compaction/index.ts";
 import { registerProcessStatusSource } from "../process-status/status.ts";
 import {
 	BackgroundTerminalManager,
@@ -123,6 +124,7 @@ export class BackgroundTerminalDelivery {
 	private retryGeneration = 0;
 	private flushState: "idle" | "flushing" = "idle";
 	private lifecycle: "open" | "closed" = "closed";
+	private paused = false;
 	private readonly pi: Pick<ExtensionAPI, "sendMessage">;
 	private readonly reportError: (message: string) => void;
 	constructor(
@@ -139,6 +141,12 @@ export class BackgroundTerminalDelivery {
 	setContext(context: ExtensionContext) {
 		this.context = context;
 		this.lifecycle = "open";
+		this.paused = false;
+	}
+	setPaused(paused: boolean) {
+		if (this.paused === paused) return;
+		this.paused = paused;
+		if (!paused && this.context?.isIdle()) Effect.runFork(this.flush);
 	}
 	private markFailed(id: string) {
 		this.failed.add(id);
@@ -214,6 +222,7 @@ export class BackgroundTerminalDelivery {
 		if (
 			this.flushState === "flushing" ||
 			this.lifecycle === "closed" ||
+			this.paused ||
 			!this.context
 		)
 			return;
@@ -267,6 +276,7 @@ export class BackgroundTerminalDelivery {
 		this.pending.clear();
 		this.attempts.clear();
 		this.failed.clear();
+		this.paused = false;
 	}
 }
 
@@ -468,6 +478,9 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		}
 	});
 
+	pi.events.on(COMPACTION_DELIVERY_PAUSE_CHANNEL, (paused) => {
+		if (typeof paused === "boolean") delivery.setPaused(paused);
+	});
 	pi.on("session_start", (_event, ctx) => {
 		context = ctx;
 		delivery.setContext(ctx);

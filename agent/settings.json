@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.84.0",
   "packages": [],
-  "defaultProvider": "openai-codex-cyber",
+  "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
   "enabledModels": [
     "openai-codex/gpt-5.6-sol",

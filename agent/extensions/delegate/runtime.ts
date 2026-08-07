@@ -60,35 +60,64 @@ export function modelName(
 
 type DelegateModelSetting = { model?: string; problem?: string };
 
+function readDelegateModelSources(
+	sources: readonly { path: string; project: boolean }[],
+): DelegateModelSetting {
+	for (const source of sources) {
+		let settings: unknown;
+		try {
+			settings = JSON.parse(readFileSync(source.path, "utf8"));
+		} catch (error) {
+			if (
+				error instanceof Error &&
+				"code" in error &&
+				error.code === "ENOENT"
+			) {
+				continue;
+			}
+			const action = error instanceof SyntaxError ? "parse" : "read";
+			return {
+				problem: `Could not ${action} ${source.path}: ${errorMessage(error)}.`,
+			};
+		}
+
+		const delegate = source.project
+			? settings
+			: (settings as { delegate?: unknown } | null)?.delegate;
+		if (delegate === undefined) continue;
+		if (!delegate || typeof delegate !== "object" || Array.isArray(delegate)) {
+			return {
+				problem: source.project
+					? `${source.path} must contain an object.`
+					: `"delegate" in ${source.path} must be an object.`,
+			};
+		}
+		const model = (delegate as { model?: unknown }).model;
+		if (model === undefined) continue;
+		if (typeof model !== "string" || model.trim() === "") {
+			return {
+				problem: `"${source.project ? "model" : "delegate.model"}" in ${source.path} must be a "provider/model-id" string.`,
+			};
+		}
+		return { model: model.trim() };
+	}
+	return {};
+}
+
 export function readDelegateModelSetting(
 	settingsPath = join(getAgentDir(), "settings.json"),
 ): DelegateModelSetting {
-	let settings: unknown;
-	try {
-		settings = JSON.parse(readFileSync(settingsPath, "utf8"));
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-			return {};
-		}
-		const action = error instanceof SyntaxError ? "parse" : "read";
-		return {
-			problem: `Could not ${action} ${settingsPath}: ${errorMessage(error)}.`,
-		};
-	}
+	return readDelegateModelSources([{ path: settingsPath, project: false }]);
+}
 
-	const delegate = (settings as { delegate?: unknown } | null)?.delegate;
-	if (delegate === undefined) return {};
-	if (!delegate || typeof delegate !== "object" || Array.isArray(delegate)) {
-		return { problem: `"delegate" in ${settingsPath} must be an object.` };
-	}
-	const model = (delegate as { model?: unknown }).model;
-	if (model === undefined) return {};
-	if (typeof model !== "string" || model.trim() === "") {
-		return {
-			problem: `"delegate.model" in ${settingsPath} must be a "provider/model-id" string.`,
-		};
-	}
-	return { model: model.trim() };
+export function readProjectDelegateModelSetting(
+	cwd: string,
+	settingsPath = join(getAgentDir(), "settings.json"),
+): DelegateModelSetting {
+	return readDelegateModelSources([
+		{ path: join(cwd, ".pi", "delegate.json"), project: true },
+		{ path: settingsPath, project: false },
+	]);
 }
 
 export interface DelegateModelChoice {

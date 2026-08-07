@@ -1,7 +1,12 @@
 // biome-ignore-all format: Effect test boundaries stay compact to keep the conversion deletion-first.
 import assert from "node:assert/strict";
 
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = process.getBuiltinModule("fs");
 const { readFile } = process.getBuiltinModule("fs/promises");
+
+import { tmpdir } from "node:os";
+
+const { join } = process.getBuiltinModule("path");
 
 import test from "node:test";
 import type { AgentSessionEvent, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -60,6 +65,34 @@ test("per-run model override resolves strictly or fails the spawn", () => Effect
 	sessions[0].finish("done");
 	yield* manager.wait([job.id]);
 	yield* manager.shutdown();
+})));
+
+test("project delegate config selects the model for the effective cwd", () => Effect.runPromise(Effect.gen(function* () {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-delegate-project-"));
+	mkdirSync(join(cwd, ".pi"));
+	writeFileSync(join(cwd, ".pi", "delegate.json"), '{"model":"test/project"}', "utf8");
+	const { manager, sessions } = harness();
+	const projectContext = {
+		...context,
+		cwd,
+		modelRegistry: {
+			find: (provider: string, id: string) =>
+				provider === "test" && id === "project" ? { provider, id } : undefined,
+			hasConfiguredAuth: () => true,
+		},
+	} as unknown as ExtensionContext;
+
+	try {
+		const job = manager.spawn({ task: "project model", ctx: projectContext });
+		assert.equal(job.requestedModel, "test/project");
+		assert.equal(job.model, "test/project");
+		yield* eventually(() => sessions.length === 1);
+		sessions[0].finish("done");
+		yield* manager.wait([job.id]);
+	} finally {
+		yield* manager.shutdown();
+		rmSync(cwd, { recursive: true, force: true });
+	}
 })));
 
 test("starts every run immediately without aggregate scheduling", () => Effect.runPromise(Effect.gen(function* () {

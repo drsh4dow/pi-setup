@@ -22,6 +22,7 @@ import {
 	type ChildSession,
 	createChild,
 	modelName,
+	readProjectDelegateModelSetting,
 	resolveDelegateModel,
 	resolveRequestedModel,
 	shutdownChild,
@@ -186,7 +187,10 @@ export class DelegateManager {
 		const modelChoice =
 			request.model !== undefined
 				? resolveRequestedModel(request.ctx, request.model)
-				: resolveDelegateModel(request.ctx);
+				: resolveDelegateModel(
+						request.ctx,
+						readProjectDelegateModelSetting(cwd),
+					);
 		const effort = request.effort === "thorough" ? "thorough" : "fast";
 		const job: Job = {
 			id: `delegate-${++this.nextId}`,

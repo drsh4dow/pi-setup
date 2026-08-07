@@ -56,6 +56,7 @@ const SENSITIVE_LINE_PATTERNS = [
 ] as const;
 
 const MAX_BOUNDARY_TOKENS = 250_000;
+export const COMPACTION_DELIVERY_PAUSE_CHANNEL = "compaction:delivery-pause";
 // No `g` flag: a sticky lastIndex would leak between calls.
 const HANDOFF_HEADING = /^#{1,3} Handoff\s*$/m;
 
@@ -304,11 +305,15 @@ export default function compactionExtension(
 	// session_before_compact it triggers; any other compaction sees undefined.
 	let pendingHandoff: Handoff | undefined;
 
+	const pauseDelivery = (paused: boolean) =>
+		pi.events.emit(COMPACTION_DELIVERY_PAUSE_CHANNEL, paused);
 	const reset = () => {
 		generation += 1;
 		armed = true;
+		const wasPaused = phase !== "idle";
 		phase = "idle";
 		pendingHandoff = undefined;
+		if (wasPaused) pauseDelivery(false);
 	};
 	pi.on("session_start", reset);
 	pi.on("session_shutdown", reset);
@@ -326,6 +331,7 @@ export default function compactionExtension(
 			if (phase === "awaiting-handoff") {
 				phase = "idle";
 				armed = true;
+				pauseDelivery(false);
 			}
 			return;
 		}
@@ -343,6 +349,7 @@ export default function compactionExtension(
 				// The handoff turn itself overflowed; native overflow recovery
 				// compacts (via the summarizer fallback) and retries the turn.
 				phase = "idle";
+				pauseDelivery(false);
 				return;
 			}
 			if (
@@ -353,6 +360,7 @@ export default function compactionExtension(
 				// compacting again on a fresh context would be spurious.
 				phase = "idle";
 				armed = true;
+				pauseDelivery(false);
 				return;
 			}
 			const handoff = extractHandoff(event.message);
@@ -366,23 +374,26 @@ export default function compactionExtension(
 					// Normally consumed by session_before_compact; cleared here too so a
 					// pending handoff never outlives the compaction it was captured for.
 					pendingHandoff = undefined;
-					if (handoff && handoff.continuation !== "continue") return;
-					pi.sendMessage(
-						{
-							customType: "compaction-continuation",
-							content: handoff
-								? CONTINUATION_INSTRUCTION
-								: FALLBACK_CONTINUATION,
-							display: false,
-						},
-						{ triggerTurn: true },
-					);
+					if (!handoff || handoff.continuation === "continue") {
+						pi.sendMessage(
+							{
+								customType: "compaction-continuation",
+								content: handoff
+									? CONTINUATION_INSTRUCTION
+									: FALLBACK_CONTINUATION,
+								display: false,
+							},
+							{ triggerTurn: true },
+						);
+					}
+					pauseDelivery(false);
 				},
 				onError: () => {
 					if (generation !== activeGeneration) return;
 					phase = "idle";
 					armed = true;
 					pendingHandoff = undefined;
+					pauseDelivery(false);
 				},
 			});
 			return;
@@ -397,6 +408,7 @@ export default function compactionExtension(
 		if (!armed || overflowFromActiveModel) return;
 		armed = false;
 		phase = "awaiting-handoff";
+		pauseDelivery(true);
 		pi.sendMessage(
 			{
 				customType: "handoff-request",

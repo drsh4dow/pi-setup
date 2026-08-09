@@ -9,10 +9,10 @@ const LINUX = process.platform === "linux";
 
 // The group redirection also silences the shell's redirection-failure message on
 // read-only /proc mounts.
-export const SACRIFICE_TAG = `{ echo ${OOM_SCORE_ADJ} > /proc/self/oom_score_adj; } 2>/dev/null`;
+export const SACRIFICE_COMMAND_PREFIX = `{ echo ${OOM_SCORE_ADJ} > /proc/self/oom_score_adj; } 2>/dev/null`;
 
 export function tagCommand(command: string): string {
-	return LINUX ? `${SACRIFICE_TAG}\n${command}` : command;
+	return LINUX ? `${SACRIFICE_COMMAND_PREFIX}\n${command}` : command;
 }
 
 export function tagPid(pid: number): void {
@@ -53,4 +53,19 @@ export function earlyoomKillSince(sinceEpochMs: number): boolean {
 	} catch {
 		return false;
 	}
+}
+
+// Post-mortem pid correlation is impossible (the process tree is gone), so a
+// journal-confirmed kill inside the window yields a "likely" diagnosis, not a fact.
+export function sacrificeKillNote(
+	death: { exitCode: number | undefined; signal: string | undefined },
+	sinceEpochMs: number,
+): string | undefined {
+	const signalish =
+		death.signal === "SIGTERM" ||
+		death.signal === "SIGKILL" ||
+		death.exitCode === 137 ||
+		death.exitCode === 143;
+	if (!signalish || !earlyoomKillSince(sinceEpochMs)) return undefined;
+	return "likely killed by earlyoom under system memory pressure; pi-spawned work dies before the session";
 }

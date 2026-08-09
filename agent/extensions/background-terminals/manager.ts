@@ -1,4 +1,5 @@
 import { Clock, Config, Deferred, Effect } from "effect";
+import { earlyoomKillSince, tagCommand } from "../../lib/sacrifice.ts";
 
 const { spawn } = process.getBuiltinModule("node:child_process");
 type ChildProcess = ReturnType<typeof spawn>;
@@ -177,7 +178,7 @@ export class BackgroundTerminalManager {
 						),
 						args: ["/d", "/s", "/c", options.command],
 					}
-				: { file: "/bin/sh", args: ["-c", options.command] };
+				: { file: "/bin/sh", args: ["-c", tagCommand(options.command)] };
 		const child = spawn(invocation.file, invocation.args, {
 			cwd: options.cwd,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -263,6 +264,17 @@ export class BackgroundTerminalManager {
 		if (entry.snapshot.state !== "running") return;
 		entry.pipeGeneration++;
 		entry.groupGeneration++;
+		if (
+			!entry.killSignaled &&
+			!entry.snapshot.error &&
+			(entry.snapshot.signal === "SIGTERM" ||
+				entry.snapshot.signal === "SIGKILL" ||
+				entry.snapshot.exitCode === 137 ||
+				entry.snapshot.exitCode === 143) &&
+			earlyoomKillSince(entry.snapshot.createdAt)
+		)
+			entry.snapshot.error =
+				"likely killed by earlyoom under system memory pressure; pi-spawned work dies before the session";
 		entry.snapshot.state = entry.killSignaled
 			? "killed"
 			: entry.snapshot.error || entry.snapshot.exitCode !== 0

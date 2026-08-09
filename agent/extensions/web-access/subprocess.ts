@@ -1,7 +1,7 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { Effect, type PlatformError, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { tagPid } from "../../lib/sacrifice.ts";
+import { tagInvocation } from "../../lib/sacrifice.ts";
 import { asError, webAccessError } from "./errors.ts";
 
 export const runCommand = Effect.fn("runCommand")(
@@ -12,8 +12,10 @@ export const runCommand = Effect.fn("runCommand")(
 	) {
 		return yield* Effect.gen(function* () {
 			const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-			const handle = yield* spawner.spawn(ChildProcess.make(command, args));
-			yield* Effect.sync(() => tagPid(handle.pid));
+			const tagged = tagInvocation(command, args);
+			const handle = yield* spawner.spawn(
+				ChildProcess.make(tagged.command, tagged.args),
+			);
 			const collect = (
 				stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
 			) =>

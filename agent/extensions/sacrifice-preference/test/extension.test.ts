@@ -10,13 +10,13 @@ import {
 	SACRIFICE_COMMAND_PREFIX,
 	sacrificeKillNote,
 	tagCommand,
-	tagPid,
+	tagInvocation,
 } from "../../../lib/sacrifice.ts";
 import { BackgroundTerminalManager } from "../../background-terminals/manager.ts";
 import sacrificePreference from "../index.ts";
 
-const { execFileSync, spawn } = process.getBuiltinModule("node:child_process");
-const { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } =
+const { execFileSync } = process.getBuiltinModule("node:child_process");
+const { chmodSync, mkdtempSync, rmSync, writeFileSync } =
 	process.getBuiltinModule("node:fs");
 const { tmpdir } = process.getBuiltinModule("node:os");
 const { join } = process.getBuiltinModule("node:path");
@@ -72,18 +72,19 @@ test("tag statement produces no output or failure", { skip: !linux }, () => {
 	assert.equal(output, "ok\n");
 });
 
-test("tagPid raises a live process's score", { skip: !linux }, () => {
-	const child = spawn("sleep", ["5"], { stdio: "ignore" });
-	try {
-		assert.ok(child.pid);
-		tagPid(child.pid);
-		assert.equal(
-			readFileSync(`/proc/${child.pid}/oom_score_adj`, "utf8").trim(),
-			"500",
-		);
-	} finally {
-		child.kill("SIGKILL");
-	}
+test("tagInvocation tags before exec and preserves argv", {
+	skip: !linux,
+}, () => {
+	const score = tagInvocation("cat", ["/proc/self/oom_score_adj"]);
+	assert.equal(
+		execFileSync(score.command, score.args, { encoding: "utf8" }).trim(),
+		"500",
+	);
+	const argv = tagInvocation("printf", ["%s|", "a b", "$HOME", "'q'"]);
+	assert.equal(
+		execFileSync(argv.command, argv.args, { encoding: "utf8" }),
+		"a b|$HOME|'q'|",
+	);
 });
 
 test("earlyoomKillSince reads journal evidence", { skip: !linux }, () => {

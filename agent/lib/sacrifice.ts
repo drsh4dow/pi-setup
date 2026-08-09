@@ -1,5 +1,4 @@
 const { execFileSync } = process.getBuiltinModule("node:child_process");
-const { writeFileSync } = process.getBuiltinModule("node:fs");
 
 // Sacrifice Preference: pi-spawned work raises its own oom_score_adj so that under
 // system memory pressure earlyoom kills the task, never the session. Unprivileged
@@ -15,13 +14,23 @@ export function tagCommand(command: string): string {
 	return LINUX ? `${SACRIFICE_COMMAND_PREFIX}\n${command}` : command;
 }
 
-export function tagPid(pid: number): void {
-	if (!LINUX) return;
-	try {
-		writeFileSync(`/proc/${pid}/oom_score_adj`, String(OOM_SCORE_ADJ));
-	} catch {
-		// The process may already be gone; the tag is best-effort.
-	}
+// exec-ing through "$@" keeps the original argv untouched by shell quoting and
+// guarantees the tag lands before the target can run or fork.
+export function tagInvocation(
+	command: string,
+	args: string[],
+): { command: string; args: string[] } {
+	if (!LINUX) return { command, args };
+	return {
+		command: "/bin/sh",
+		args: [
+			"-c",
+			`${SACRIFICE_COMMAND_PREFIX}; exec "$@"`,
+			"sh",
+			command,
+			...args,
+		],
+	};
 }
 
 const JOURNAL_TIMEOUT_MS = 1_500;

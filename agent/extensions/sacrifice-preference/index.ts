@@ -1,7 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
+import {
+	createBashToolDefinition,
+	getAgentDir,
+	SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { Clock, Effect } from "effect";
-import { earlyoomKillSince, SACRIFICE_TAG } from "../../lib/sacrifice.ts";
+import {
+	SACRIFICE_COMMAND_PREFIX,
+	sacrificeKillNote,
+} from "../../lib/sacrifice.ts";
 
 // Replaces the built-in bash tool with an identically surfaced one whose commands
 // carry the Sacrifice Preference tag, so earlyoom kills the command's processes
@@ -13,21 +20,32 @@ export default function sacrificePreference(pi: ExtensionAPI) {
 		...template,
 		execute(toolCallId, params, signal, onUpdate, ctx) {
 			const startedAt = Effect.runSync(Clock.currentTimeMillis);
+			const settings = SettingsManager.create(ctx.cwd, getAgentDir(), {
+				projectTrusted: ctx.isProjectTrusted(),
+			});
+			const userPrefix = settings.getShellCommandPrefix();
+			const shellPath = settings.getShellPath();
 			const tool = createBashToolDefinition(ctx.cwd, {
-				commandPrefix: SACRIFICE_TAG,
+				commandPrefix: userPrefix
+					? `${SACRIFICE_COMMAND_PREFIX}\n${userPrefix}`
+					: SACRIFICE_COMMAND_PREFIX,
+				...(shellPath ? { shellPath } : {}),
 			});
 			return tool
 				.execute(toolCallId, params, signal, onUpdate, ctx)
 				.catch((error) => {
-					if (
-						error instanceof Error &&
-						/Command exited with code (137|143)$/.test(error.message) &&
-						earlyoomKillSince(startedAt)
-					) {
-						throw new Error(
-							`${error.message}\nA process in this command was likely killed by earlyoom under system memory pressure; pi-spawned work dies before the session.`,
-						);
-					}
+					const match =
+						error instanceof Error
+							? error.message.match(/Command exited with code (\d+)$/)
+							: null;
+					const note = match
+						? sacrificeKillNote(
+								{ exitCode: Number(match[1]), signal: undefined },
+								startedAt,
+							)
+						: undefined;
+					if (note && error instanceof Error)
+						throw new Error(`${error.message}\n${note}`);
 					throw error;
 				});
 		},

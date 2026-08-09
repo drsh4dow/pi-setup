@@ -116,6 +116,10 @@ _Avoid_: Running cost, live cost, token budget
 A bounded collection of text responses retained for later retrieval within one Pi session, including resumed use of that same session.
 _Avoid_: Response cache, response storage
 
+**Sacrifice Preference**:
+The standing choice that work a session spawns dies before the session itself when system memory runs out. Spawned work is marked for sacrifice at spawn; no memory ceiling constrains how much it may use.
+_Avoid_: Memory cap, resource limit, OOM guard
+
 **Terminal Ownership**:
 The session that started a background terminal holds it: the terminal, its output, its completion notice, and its share of concurrency capacity belong to that session and end with it. No session's usage can exhaust another's.
 _Avoid_: Shared terminal pool, inherited terminal, global slot budget

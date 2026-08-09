@@ -117,7 +117,7 @@ A bounded collection of text responses retained for later retrieval within one P
 _Avoid_: Response cache, response storage
 
 **Sacrifice Preference**:
-The standing choice that work a session spawns dies before the session itself when system memory runs out. Spawned work is marked for sacrifice at spawn; no memory ceiling constrains how much it may use.
+The standing choice that work a session spawns dies before the session itself when system memory runs out. No memory ceiling constrains spawned work.
 _Avoid_: Memory cap, resource limit, OOM guard
 
 **Terminal Ownership**:

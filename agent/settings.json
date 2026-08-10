@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.84.0",
+  "lastChangelogVersion": "0.84.1",
   "packages": [],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
@@ -26,5 +26,6 @@
     "enabled": true,
     "reserveTokens": 16384,
     "keepRecentTokens": 30000
-  }
+  },
+  "tuiMode": "fullscreen"
 }

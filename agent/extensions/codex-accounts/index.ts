@@ -30,8 +30,21 @@ export function codexAliasProvider(label: string) {
 		id,
 		name: `OpenAI Codex (${label})`,
 		auth: { oauth: { ...oauth, name: `${oauth.name} — ${label}` } },
-		getModels: () =>
-			base.getModels().map((model) => ({ ...model, provider: id })),
+		getModels: () => {
+			const models = [...base.getModels()];
+			if (label === "cyber") {
+				const template = models.find((model) => model.id === "gpt-5.6-sol");
+				if (!template) {
+					throw new Error("No gpt-5.6-sol model to template Daybreak Blue.");
+				}
+				models.push({
+					...template,
+					id: "gpt-daybreak-blue-latest",
+					name: "Daybreak Blue",
+				});
+			}
+			return models.map((model) => ({ ...model, provider: id }));
+		},
 	};
 }
 

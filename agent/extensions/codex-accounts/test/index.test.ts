@@ -4,7 +4,7 @@ import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import codexAccounts, { codexAliasProvider } from "../index.ts";
 
-test("alias provider re-stamps the built-in codex catalog", () => {
+test("cyber alias adds Daybreak Blue and re-stamps model providers", () => {
 	const base = builtinProviders().find(
 		(provider) => provider.id === "openai-codex",
 	);
@@ -21,7 +21,16 @@ test("alias provider re-stamps the built-in codex catalog", () => {
 		assert.equal(model.provider, "openai-codex-cyber");
 	}
 	assert.deepEqual(
-		models.map((model) => model.id),
+		models.slice(0, -1).map((model) => model.id),
+		base.getModels().map((model) => model.id),
+	);
+	const daybreak = models.at(-1);
+	assert.equal(daybreak?.id, "gpt-daybreak-blue-latest");
+	assert.equal(daybreak?.name, "Daybreak Blue");
+	assert.deepEqual(
+		codexAliasProvider("other")
+			.getModels()
+			.map((model) => model.id),
 		base.getModels().map((model) => model.id),
 	);
 

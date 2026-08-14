@@ -3,8 +3,22 @@ description: Implement the task end to end
 argument-hint: "Issue URL or Number"
 ---
 
-Implement the work described in $1 . Read the involved ticket and spec.
+Implement the work described in $1 , work on a different git worktree directory.
+Read the involved ticket and spec (if any).
 Use tdd skill where possible, at pre-agreed seams.
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 
-You are a planner and orchestrator, you implement through subagents smartly and parallelizing when possible using git worktrees. When you are done spawn a subagent with the code-review skill to review the implementation. After addressing all valid findings create a PR against main. Your subagents don't have your context so make their prompt self-contained and reference the things they need to read before going for the task.
+Act as a planner and orchestrator. Delegate implementation to subagents intelligently, parallelizing when useful. Use separate Git worktrees/directories for parallel work to avoid interfering with the current working tree.
+
+After implementation:
+
+1. Spawn a subagent with the `code-review` skill to review the changes.
+2. Address all valid findings.
+3. Create a PR against `main`.
+4. Wait for CodeRabbit to review the PR.
+5. Review every CodeRabbit comment:
+
+   - Fix all valid and applicable findings, then push the changes.
+   - If a suggestion is invalid, not applicable, or already covered by another issue, reply with a clear explanation.
+
+6. Respond to every CodeRabbit comment, either directly in its thread or by tagging `@coderabbitai`.

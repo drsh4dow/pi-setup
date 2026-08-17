@@ -22,3 +22,5 @@ After implementation:
    - If a suggestion is invalid, not applicable, or already covered by another issue, reply with a clear explanation.
 
 6. Respond to every CodeRabbit comment, either directly in its thread or by tagging `@coderabbitai`.
+
+${@:2}

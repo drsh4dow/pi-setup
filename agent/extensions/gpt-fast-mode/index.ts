@@ -134,7 +134,7 @@ export function normalizeShortcutSetting(value: unknown): string[] {
 export const loadShortcuts = Effect.fn("loadShortcuts")(
 	function* () {
 		const fs = yield* FileSystem.FileSystem;
-		const parsed = yield* Schema.decodeUnknownEffect(Keybindings)(
+		const parsed = yield* Schema.decodeEffect(Keybindings)(
 			yield* fs.readFileString(yield* resolvePiFilePath("keybindings.json")),
 		);
 		return normalizeShortcutSetting(parsed[KEYBINDING_FIELD]);
@@ -145,7 +145,7 @@ export const loadShortcuts = Effect.fn("loadShortcuts")(
 export const loadEnabled = Effect.fn("loadEnabled")(
 	function* () {
 		const fs = yield* FileSystem.FileSystem;
-		const parsed = yield* Schema.decodeUnknownEffect(FastModeSettings)(
+		const parsed = yield* Schema.decodeEffect(FastModeSettings)(
 			yield* fs.readFileString(yield* resolveFastModeSettingsPath()),
 		);
 		return parsed.enabled === true;

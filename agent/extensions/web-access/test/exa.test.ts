@@ -94,9 +94,9 @@ test("filtered search uses Exa search and bounds inline content", () =>
 					if (typeof init?.body !== "string") {
 						throw new Error("Expected a JSON request body");
 					}
-					body = Schema.decodeUnknownSync(
-						Schema.fromJsonString(SearchRequestBody),
-					)(init.body);
+					body = Schema.decodeSync(Schema.fromJsonString(SearchRequestBody))(
+						init.body,
+					);
 					return Promise.resolve(
 						Response.json({
 							results: [

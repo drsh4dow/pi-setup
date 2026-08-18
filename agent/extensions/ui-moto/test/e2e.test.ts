@@ -142,7 +142,7 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 			assert.notEqual(second.modelId, first.modelId);
 			assert.equal(second.project, first.project);
 			assert.equal(second.line.length, first.line.length);
-			const settings = yield* Schema.decodeUnknownEffect(Settings)(
+			const settings = yield* Schema.decodeEffect(Settings)(
 				yield* fs.readFileString(path.join(session.agentDir, "settings.json")),
 			);
 			assert.equal(settings.defaultModel, second.modelId);

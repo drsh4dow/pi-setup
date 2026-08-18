@@ -21,16 +21,16 @@
     "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:compaction && bun run test:aoauth && bun run test:codex-accounts && bun run test:skill-visibility && bun run test:web-access && bun run test:gpt-fast-mode && bun run test:sacrifice-preference"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.84.0",
-    "@earendil-works/pi-coding-agent": "^0.84.0",
-    "@earendil-works/pi-tui": "^0.84.0",
-    "@effect/platform-bun": "4.0.0-beta.102",
-    "effect": "4.0.0-beta.102"
+    "@earendil-works/pi-ai": "^0.84.2",
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@earendil-works/pi-tui": "^0.84.2",
+    "@effect/platform-bun": "4.0.0-rc.110",
+    "effect": "4.0.0-rc.110"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.6",
-    "@effect/tsgo": "0.26.7",
-    "@types/node": "^26.1.2",
+    "@biomejs/biome": "2.5.9",
+    "@effect/tsgo": "0.36.5",
+    "@types/node": "^26.2.0",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2"
   },
@@ -39,6 +39,6 @@
     "protobufjs"
   ],
   "patchedDependencies": {
-    "@earendil-works/pi-coding-agent@0.84.0": "patches/@earendil-works%2Fpi-coding-agent@0.84.0.patch"
+    "@earendil-works/pi-coding-agent@0.84.2": "patches/@earendil-works%2Fpi-coding-agent@0.84.2.patch"
   }
 }

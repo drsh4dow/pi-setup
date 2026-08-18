@@ -69,7 +69,7 @@ test("Gemini video request uses API-key auth and fileData", () =>
 			if (typeof request.init.body !== "string") {
 				throw new Error("Expected a JSON request body");
 			}
-			const body = yield* Schema.decodeUnknownEffect(
+			const body = yield* Schema.decodeEffect(
 				Schema.fromJsonString(GeminiRequest),
 			)(request.init.body);
 			assert.deepEqual(body.contents[0].parts[0], {

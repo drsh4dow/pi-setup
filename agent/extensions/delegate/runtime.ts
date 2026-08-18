@@ -112,11 +112,20 @@ export function readDelegateModelSetting(
 
 export function readProjectDelegateModelSetting(
 	cwd: string,
-	settingsPath = join(getAgentDir(), "settings.json"),
+	options: { parentCwd?: string; settingsPath?: string } = {},
 ): DelegateModelSetting {
+	const projectCwds = [
+		...new Set(options.parentCwd ? [cwd, options.parentCwd] : [cwd]),
+	];
 	return readDelegateModelSources([
-		{ path: join(cwd, ".pi", "delegate.json"), project: true },
-		{ path: settingsPath, project: false },
+		...projectCwds.map((projectCwd) => ({
+			path: join(projectCwd, ".pi", "delegate.json"),
+			project: true,
+		})),
+		{
+			path: options.settingsPath ?? join(getAgentDir(), "settings.json"),
+			project: false,
+		},
 	]);
 }
 

@@ -189,7 +189,9 @@ export class DelegateManager {
 				? resolveRequestedModel(request.ctx, request.model)
 				: resolveDelegateModel(
 						request.ctx,
-						readProjectDelegateModelSetting(cwd),
+						readProjectDelegateModelSetting(cwd, {
+							parentCwd: request.ctx.cwd,
+						}),
 					);
 		const effort = request.effort === "thorough" ? "thorough" : "fast";
 		const job: Job = {

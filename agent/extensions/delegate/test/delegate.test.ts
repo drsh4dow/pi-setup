@@ -119,17 +119,25 @@ test("covers delegate configuration and rendering", () => {
 	assert.deepEqual(readDelegateModelSetting(globalSettings), {
 		model: "opencode/fable",
 	});
+	const parentProject = projectFile('{"model": " test/parent "}');
 	assert.deepEqual(
 		readProjectDelegateModelSetting(
 			projectFile('{"model": " test/project "}'),
-			globalSettings,
+			{ parentCwd: parentProject, settingsPath: globalSettings },
 		),
 		{ model: "test/project" },
 	);
 	assert.deepEqual(
 		readProjectDelegateModelSetting(
 			join(settingsDir, "project-without-config"),
-			globalSettings,
+			{ parentCwd: parentProject, settingsPath: globalSettings },
+		),
+		{ model: "test/parent" },
+	);
+	assert.deepEqual(
+		readProjectDelegateModelSetting(
+			join(settingsDir, "project-without-config"),
+			{ settingsPath: globalSettings },
 		),
 		{ model: "opencode/fable" },
 	);
@@ -160,10 +168,9 @@ test("covers delegate configuration and rendering", () => {
 		/must be a "provider\/model-id" string/,
 	);
 	assert.match(
-		readProjectDelegateModelSetting(
-			projectFile('{"model": 42}'),
-			globalSettings,
-		).problem ?? "",
+		readProjectDelegateModelSetting(projectFile('{"model": 42}'), {
+			settingsPath: globalSettings,
+		}).problem ?? "",
 		/"model".*must be a "provider\/model-id" string/,
 	);
 

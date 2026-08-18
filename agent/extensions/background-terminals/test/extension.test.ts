@@ -573,7 +573,10 @@ test("sanitizes displayed data and list details omit process output", () => Effe
 	));
 })));
 
-test("pre-aborted bg_kill still starts termination", () => Effect.runPromise(Effect.gen(function* () {
+test("pre-aborted bg_kill still starts termination", () => {
+	const controller = new AbortController();
+	controller.abort();
+	return Effect.runPromise(Effect.gen(function* () {
 	const tools = registeredTools();
 	const started = (yield* fromPromise(tools[0].execute(
 		"1",
@@ -582,8 +585,6 @@ test("pre-aborted bg_kill still starts termination", () => Effect.runPromise(Eff
 		undefined,
 		{ cwd: process.cwd() },
 	))) as { details: { id: string } };
-	const controller = new AbortController();
-	controller.abort();
 	yield* fromPromise(assert.rejects(
 		tools[3].execute("2", { ids: [started.details.id] }, controller.signal),
 		/termination continues/,
@@ -591,9 +592,12 @@ test("pre-aborted bg_kill still starts termination", () => Effect.runPromise(Eff
 	yield* eventually(() => tools[1].execute("3", { id: started.details.id }).then(
 		(status) => (status as { content: [{ text: string }] }).content[0].text.includes("[killed]"),
 	));
-})));
+	}));
+});
 
-test("aborted bg_kill wait does not cancel termination", () => Effect.runPromise(Effect.gen(function* () {
+test("aborted bg_kill wait does not cancel termination", () => {
+	const controller = new AbortController();
+	return Effect.runPromise(Effect.gen(function* () {
 	const tools = registeredTools();
 	const start = tools[0];
 	const kill = tools[3];
@@ -611,7 +615,6 @@ test("aborted bg_kill wait does not cancel termination", () => Effect.runPromise
 		(result) => (result as { content: [{ text: string }] }).content[0].text.includes("child:"),
 	));
 	yield* Effect.sleep(100);
-	const controller = new AbortController();
 	const waiting = kill.execute("2", { ids: [id] }, controller.signal);
 	yield* Effect.sleep(25);
 	controller.abort();
@@ -619,4 +622,5 @@ test("aborted bg_kill wait does not cancel termination", () => Effect.runPromise
 	yield* eventually(() => status.execute("3", { id }).then(
 		(result) => (result as { content: [{ text: string }] }).content[0].text.includes("[killed]"),
 	));
-})));
+	}));
+});

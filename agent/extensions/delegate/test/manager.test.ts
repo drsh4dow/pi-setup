@@ -349,11 +349,12 @@ test("rejected child prompt settles, remains inspectable, and releases capacity"
 	yield* manager.shutdown();
 })));
 
-test("interrupted waits leave children running and explicit cancel stops them", () => Effect.runPromise(Effect.gen(function* () {
+test("interrupted waits leave children running and explicit cancel stops them", () => {
+	const controller = new AbortController();
+	return Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const job = manager.spawn({ task: "long", ctx: context });
 	yield* eventually(() => sessions.length === 1);
-	const controller = new AbortController();
 	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
 	controller.abort(new Error("stop waiting"));
 	const interrupted = yield* failureMessage(Fiber.join(waiting));
@@ -363,9 +364,12 @@ test("interrupted waits leave children running and explicit cancel stops them", 
 	const [cancelled] = yield* manager.cancel([job.id]);
 	assert.equal(cancelled.status, "cancelled");
 	yield* manager.shutdown();
-})));
+	}));
+});
 
-test("an interrupted background wait restores delivery for the same run", () => Effect.runPromise(Effect.gen(function* () {
+test("an interrupted background wait restores delivery for the same run", () => {
+	const controller = new AbortController();
+	return Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
 	const job = manager.spawn({
@@ -374,7 +378,6 @@ test("an interrupted background wait restores delivery for the same run", () => 
 		ctx: context,
 	});
 	yield* eventually(() => sessions.length === 1);
-	const controller = new AbortController();
 	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
 	controller.abort(new Error("stop waiting"));
 	sessions[0].finish("raced result");
@@ -385,9 +388,12 @@ test("an interrupted background wait restores delivery for the same run", () => 
 	assert.equal(delivered[0].output, "raced result");
 	assert.equal(manager.list([job.id])[0].status, "done");
 	yield* manager.shutdown();
-})));
+	}));
+});
 
-test("a successful concurrent wait prevents an aborted wait from restoring delivery", () => Effect.runPromise(Effect.gen(function* () {
+test("a successful concurrent wait prevents an aborted wait from restoring delivery", () => {
+	const controller = new AbortController();
+	return Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
 	const job = manager.spawn({
@@ -396,7 +402,6 @@ test("a successful concurrent wait prevents an aborted wait from restoring deliv
 		ctx: context,
 	});
 	yield* eventually(() => sessions.length === 1);
-	const controller = new AbortController();
 	const aborted = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
 	const successful = yield* manager.wait([job.id]).pipe(Effect.forkChild);
 	yield* yieldImmediate;
@@ -408,9 +413,12 @@ test("a successful concurrent wait prevents an aborted wait from restoring deliv
 	yield* Fiber.join(successful);
 	assert.equal(delivered.length, 0);
 	yield* manager.shutdown();
-})));
+	}));
+});
 
-test("cancel consumption wins over an aborted concurrent wait", () => Effect.runPromise(Effect.gen(function* () {
+test("cancel consumption wins over an aborted concurrent wait", () => {
+	const controller = new AbortController();
+	return Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
 	const job = manager.spawn({
@@ -421,7 +429,6 @@ test("cancel consumption wins over an aborted concurrent wait", () => Effect.run
 	yield* eventually(() => sessions.length === 1);
 	const abortGate = yield* Deferred.make<void>();
 	sessions[0].abortGate = abortGate;
-	const controller = new AbortController();
 	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
 	const cancelling = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
 	controller.abort(new Error("stop waiting"));
@@ -433,7 +440,8 @@ test("cancel consumption wins over an aborted concurrent wait", () => Effect.run
 	assert.equal(cancelled.status, "cancelled");
 	assert.equal(delivered.length, 0);
 	yield* manager.shutdown();
-})));
+	}));
+});
 
 test("concurrent shutdown joins gated child disposal", () => Effect.runPromise(Effect.gen(function* () {
 	const disposalGate = yield* Deferred.make<void>();

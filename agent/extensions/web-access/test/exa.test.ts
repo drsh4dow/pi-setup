@@ -55,7 +55,7 @@ test("default search uses Exa answer with citations", () =>
 				throw new Error("Expected a JSON request body");
 			}
 			assert.deepEqual(
-				yield* Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)(
+				yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
 					request.init.body,
 				),
 				{ query: "a focused question", text: true },

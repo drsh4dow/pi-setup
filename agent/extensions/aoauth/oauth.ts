@@ -45,7 +45,7 @@ const TokenResponseJson = Schema.Struct({
 	expires_in: Schema.Finite.check(Schema.isGreaterThan(0)),
 });
 
-class OAuthRequestError extends Schema.TaggedErrorClass<OAuthRequestError>()(
+class OAuthRequestError extends Schema.TaggedError<OAuthRequestError>()(
 	"OAuthRequestError",
 	{
 		message: Schema.String,
@@ -326,9 +326,9 @@ const requestToken = Effect.fn("requestToken")(function* (
 	headers?: Record<string, string>,
 ): Effect.fn.Return<TokenResponse, OAuthRequestError, HttpClient.HttpClient> {
 	const client = yield* HttpClient.HttpClient;
-	const encodedBody = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(
-		body,
-	).pipe(
+	const encodedBody = yield* Schema.encodeEffect(
+		Schema.fromJsonString(Schema.Unknown),
+	)(body).pipe(
 		Effect.mapError((cause) =>
 			flowError(`Anthropic ${operation} request encoding failed`, cause),
 		),

@@ -63,7 +63,7 @@ const ExaContentsResponse = Schema.Struct({
 });
 type ExaContentsResponse = typeof ExaContentsResponse.Type;
 
-const encodeJson = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const apiKey: Effect.Effect<string, WebAccessError> = Config.string(
 	"EXA_API_KEY",

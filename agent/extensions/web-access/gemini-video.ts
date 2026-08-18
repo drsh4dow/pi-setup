@@ -55,7 +55,7 @@ const GeminiFileStateResponse = Schema.Struct({
 	state: Schema.optionalKey(Schema.String),
 });
 
-const encodeJson = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export interface VideoFile {
 	absolutePath: string;

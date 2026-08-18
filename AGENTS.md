@@ -6,7 +6,7 @@ Run `bun run verify` before reporting a change to `agent/extensions`, `agent/lib
 
 Every decision made in the code/output of this repository should increase the AX (Agent Experience) of the harness.
 
-Before writing effect code read `.repos/effect-smol/LLMS.md` for examples of idiomatic usage, tests, module structure, and API design. Treat it as the source of truth for Effect patterns.
+Before writing Effect code, read `.repos/effect/LLMS.md` and inspect its source and tests for idiomatic usage, module structure, and API design. Use the submodule as read-only reference and keep application imports on the installed `effect` and `@effect/*` packages. If it is absent, initialize it with `git submodule update --init --recursive`.
 
 ## Agent skills
 

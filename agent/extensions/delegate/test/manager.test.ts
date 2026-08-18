@@ -67,8 +67,9 @@ test("per-run model override resolves strictly or fails the spawn", () => Effect
 	yield* manager.shutdown();
 })));
 
-test("project delegate config selects the model for the effective cwd", () => Effect.runPromise(Effect.gen(function* () {
+test("project delegate config survives an external child cwd", () => Effect.runPromise(Effect.gen(function* () {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-delegate-project-"));
+	const childCwd = mkdtempSync(join(tmpdir(), "pi-delegate-child-"));
 	mkdirSync(join(cwd, ".pi"));
 	writeFileSync(join(cwd, ".pi", "delegate.json"), '{"model":"test/project"}', "utf8");
 	const { manager, sessions } = harness();
@@ -83,7 +84,11 @@ test("project delegate config selects the model for the effective cwd", () => Ef
 	} as unknown as ExtensionContext;
 
 	try {
-		const job = manager.spawn({ task: "project model", ctx: projectContext });
+		const job = manager.spawn({
+			task: "project model",
+			cwd: childCwd,
+			ctx: projectContext,
+		});
 		assert.equal(job.requestedModel, "test/project");
 		assert.equal(job.model, "test/project");
 		yield* eventually(() => sessions.length === 1);
@@ -92,6 +97,7 @@ test("project delegate config selects the model for the effective cwd", () => Ef
 	} finally {
 		yield* manager.shutdown();
 		rmSync(cwd, { recursive: true, force: true });
+		rmSync(childCwd, { recursive: true, force: true });
 	}
 })));
 

@@ -1,13 +1,11 @@
 ---
 name: web-search
-description: Use for searching the web.
+description: Use for web search.
 ---
 
-# Web search
+Choose one route before retrieving anything. Use the first match:
 
-Read one primary route before retrieval, in precedence order:
-
-1. Any vulnerability, bug-bounty policy, authorization contract, security version delta, or historical security evidence: [SECURITY-RESEARCH.md](SECURITY-RESEARCH.md)
-2. Library, framework, package, or API documentation lookup: [DOCUMENTATION.md](DOCUMENTATION.md)
-3. Non-security multi-source investigation or scientific literature: [RESEARCH.md](RESEARCH.md)
-4. Ordinary discovery, a known page, developer sources, or a bounded site search: [GENERAL.md](GENERAL.md)
+1. Vulnerabilities, bug-bounty policies, authorization contracts, security version changes, or historical security evidence: [SECURITY-RESEARCH.md](SECURITY-RESEARCH.md)
+2. Library, framework, package, or API documentation: [DOCUMENTATION.md](DOCUMENTATION.md)
+3. Non-security questions that need multiple source types or scientific literature: [RESEARCH.md](RESEARCH.md)
+4. Known pages, developer sources, bounded site searches, or ordinary discovery: [GENERAL.md](GENERAL.md)

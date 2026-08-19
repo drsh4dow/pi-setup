@@ -1,33 +1,27 @@
 ---
 name: bounded-code
-description: Runtime discipline for production code. Use when writing or editing code that will run in production, when a change introduces a loop, retry, queue, cache, buffer, spawn, or concurrent access, or when reviewing code for runtime robustness.
+description: Use for production loops, retries, resources, concurrency, or failures.
 user-invokable: false
 ---
 
-Production code is **bounded**: every loop, allocation, retry, and lifetime has a limit a reader can point at, and every failure path is visible in source. The lineage is NASA/JPL's Power of Ten - rules built so that code can be verified by analysis rather than trusted by intent. This skill owns runtime discipline only; `seam-mapping` chooses the design, `abstraction-economics` prices the names, `beauty-gate` audits the diff.
+Production code is bounded when a reader can point to the limit on repeated work and resource growth, the owner of mutable state, and the handling for each failure.
 
 ## Rules
 
-Flat reference - apply every rule the change touches. Criterion: every loop, retry, queue, cache, buffer, spawn, and shared state in the change names its bound or its owner; every fallible operation names its handling.
+Apply every rule the change touches.
 
-1. **Explicit control flow.** Behavior reads top-down in source: direct calls, boring branches, explicit state machines. Recursion carries a depth bound enforced by construction or a guard. Dispatch is visible - reflection, dynamic imports, metaclasses, and decorators stay at framework boundaries, out of core logic. Exceptions signal failure; normal flow uses returns.
+1. **Keep control flow visible.** Prefer direct calls, ordinary branches, and explicit state machines. Keep reflection, dynamic imports, metaclasses, and decorators at framework boundaries. Bound recursion by construction or with a guard. Use exceptions for failures, not routine branches.
 
-2. **Bounded loops.** Every loop names its finite bound. Collection iteration counts when the collection size is bounded by construction or validated at entry. Retries carry max attempts with backoff; polling carries a deadline; service loops carry a shutdown path. A reviewer can point at the line where each loop ends.
+2. **Bound repeated work.** Every loop stops by input size, count, deadline, or shutdown signal. Iteration over a collection counts only when construction or input validation limits its size. Retries need a maximum attempt count and backoff. Polling needs a deadline. Service loops need a shutdown path.
 
-3. **Bounded resources.** Growth is capped and the cap is visible: queues, caches, buffers, connections, cursors, subprocesses, tasks, threads, fanout. Producers meet backpressure, caches meet eviction, spawns meet a limit. Work amplification (one request spawning N) states its N.
+3. **Bound resource growth.** Put visible caps on queues, caches, buffers, connections, cursors, subprocesses, tasks, threads, and fanout. Producers need backpressure, caches need eviction, and spawns need a concurrency limit. When one request creates more work, state the maximum multiplier.
 
-4. **Assertions for impossible states, typed handling for expected failure.** Assertions are side-effect-free and guard invariants only. Expected failures travel through the language's explicit channel: typed errors or boundary throws in TypeScript, `Result`/`Option` in Rust, checked `error` in Go, explicit exceptions in Python.
+4. **Make failure handling explicit.** Use side-effect-free assertions only for impossible states. Send expected failures through the language's normal explicit channel, such as typed errors, `Result`, checked errors, or explicit exceptions. At each fallible call, handle the failure, propagate it, or convert it. Await promises or mark intentional detachment with a reason. Narrow optionals and inspect failure-signaling return values.
 
-5. **Every fallible operation is handled.** Handled immediately, propagated, or converted to a typed failure - at the call site. Go errors checked, Rust `Result`s consumed, promises awaited or explicitly detached with a reason, optionals narrowed, failure-signaling return values read.
+5. **Keep ownership obvious.** Give data the narrowest useful scope and shortest useful lifetime. Default to immutable bindings and private visibility. Shared mutable state needs one named owner and one synchronization strategy. Mutate inputs only when the contract permits it. Keep `unsafe` and interior-mutability escape hatches out of core logic.
 
-6. **Smallest scope, least mutability, obvious ownership.** Data lives at the narrowest useful scope with the shortest useful lifetime; bindings default immutable, visibility defaults private. Shared mutable state has one named owner and one synchronization story; inputs are mutated only when the contract says so. `unsafe` and interior-mutability escape hatches stay out of core logic.
+6. **Keep configured checks clean.** Run the repository's strict formatter, type, lint, and static-analysis checks. Rewrite confusing code until they pass without new warnings. Put the reason beside any necessary suppression.
 
-7. **Zero warnings.** The strictest available toolchain runs clean: TypeScript `strict` + Biome, Rust `cargo fmt` + `clippy -D warnings`, Go `gofmt` + `go vet` + `staticcheck`, Python `ruff` + `pyright`. Confusing code gets rewritten until the tools are quiet - suppressions carry a reason at the site.
+The pass is complete when every changed loop, retry, queue, cache, buffer, spawn, and shared state has a visible bound or owner, and every fallible operation has visible handling.
 
-## Bending a rule
-
-A rule bends only with the bound or reason named where the violation lives - a comment, type, or guard a reviewer finds at the site. An unstated violation is a blocker: fix it before building on it, and fix related violations in touched code rather than extending them. When a request requires an unbounded design, surface the tradeoff and recommend the bounded alternative - the user decides with the cost visible.
-
-## Not owned here
-
-Function size, wrappers, constants, and configuration options - `abstraction-economics`. Design selection and blast radius - `seam-mapping`. Post-implementation audit - `beauty-gate`.
+If a system constraint prevents one of these rules, put the bound or reason beside the code in a type, guard, or constraint comment. Fix related violations in code already touched instead of extending them. If the requested behavior truly requires an unbounded design, explain the cost and recommend the bounded alternative before implementation.

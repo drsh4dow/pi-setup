@@ -1,6 +1,6 @@
 # Atomic command capture
 
-Define these Bash functions before a route writes command output. They remove failed temporary output and promote only nonempty completed artifacts:
+Define these Bash functions before a route writes command output. A successful command moves a nonempty temporary file into place. A failed command leaves no partial result.
 
 ```bash
 capture() {
@@ -34,4 +34,4 @@ capture_json() {
 }
 ```
 
-Use `capture_json` for JSON and `capture` for text or Markdown. Assign a new final path for every attempt; these functions prevent partial files, not intentional replacement.
+Use `capture_json` for JSON and `capture` for text or Markdown. Give every attempt a new final path and one writer. These functions reject replacement and remove partial files. Exit status 2 means the final path already exists. Exit status 1 means the command failed, produced empty output, or produced invalid JSON.

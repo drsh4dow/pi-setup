@@ -1,8 +1,7 @@
 .env
 node_modules/
 sessions
-web-search.json
-exa-usage.json
+.firecrawl/
 update-cache.json
 run-history.jsonl
 codex.md

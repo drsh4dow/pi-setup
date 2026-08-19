@@ -10,10 +10,7 @@ const { delimiter, join } = process.getBuiltinModule("path");
 
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-	DEFAULT_MAX_LINES,
-	type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { ConfigProvider, Effect } from "effect";
 import {
 	childExtensionPaths,
@@ -170,32 +167,6 @@ test("covers delegated runtime behavior", () =>
 				["bg_kill", "bg_list", "bg_start", "bg_status"],
 			);
 			yield* shutdownChild(backgroundChild);
-
-			const webExtension = fileURLToPath(
-				new URL("../../web-access/index.ts", import.meta.url),
-			);
-			const webChild = yield* createChild(settingsDir, undefined, "low").pipe(
-				Effect.provideService(
-					ConfigProvider.ConfigProvider,
-					childConfig(webExtension),
-				),
-			);
-			const retrieval = webChild.getToolDefinition("get_search_content");
-			assert.ok(retrieval);
-			const result = yield* Effect.promise(() =>
-				retrieval.execute(
-					"call-1",
-					{ responseId: "missing-response" },
-					undefined,
-					undefined,
-					{} as ExtensionContext,
-				),
-			);
-			const text =
-				result.content.find((item) => item.type === "text")?.text ?? "";
-			assert.match(text, /Response not found: missing-response/);
-			assert.doesNotMatch(text, /Session Response Archive is unavailable/);
-			webChild.dispose();
 
 			const failingExtension = join(
 				settingsDir,

@@ -41,7 +41,6 @@ When saving full command output fails with `EDQUOT`, Pi remains running and remo
 
 | Extension | What it adds |
 | --- | --- |
-| `questions` | `ask_questions`, an interactive questionnaire with predefined or free-form answers |
 | `compaction` | Writes a dense handoff, retains about 30k recent tokens, and continues automatically after proactive compaction; Pi's overflow retry remains the fallback |
 | `delegate` | `delegate_run` creates one blocking or background child; independent calls can run in parallel, while `delegate_session` inspects, steers, waits for, or cancels existing children |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked processes, each owned by the session that started it |

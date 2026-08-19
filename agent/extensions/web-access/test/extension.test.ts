@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { ConfigProvider, Effect, FileSystem, Path } from "effect";
+import { clearStaleCloneCaches } from "../clone-cache.ts";
 import extension from "../index.ts";
 
 const fs = Effect.runSync(
@@ -16,6 +17,7 @@ const testConfig = ConfigProvider.fromUnknown({ EXA_API_KEY: "test-exa-key" });
 const sessionId = `extension-test-${process.pid}`;
 const failedSessionId = `extension-test-failed-${process.pid}`;
 const writeFailureSessionId = `extension-test-write-failed-${process.pid}`;
+const staleCloneTestRoot = `/tmp/pi-web-access-stale-test-${process.pid}`;
 
 function archivePath(id: string): string {
 	const hash = createHash("sha256").update(id).digest("hex");
@@ -105,9 +107,32 @@ afterEach(() =>
 			for (const id of [sessionId, failedSessionId, writeFailureSessionId]) {
 				yield* fs.remove(archivePath(id), { recursive: true, force: true });
 			}
+			yield* fs.remove(staleCloneTestRoot, { recursive: true, force: true });
 		}),
 	),
 );
+
+test("stale clone caches from crashed Pi processes are removed", () =>
+	run(
+		Effect.gen(function* () {
+			const cacheRoot = path.join(staleCloneTestRoot, "pi-web-access-repos");
+			const active = path.join(cacheRoot, String(process.pid));
+			const stale = path.join(cacheRoot, "99999999");
+			yield* fs.makeDirectory(active, { recursive: true });
+			yield* fs.makeDirectory(stale, { recursive: true });
+
+			const removed = yield* clearStaleCloneCaches().pipe(
+				Effect.provideService(
+					ConfigProvider.ConfigProvider,
+					ConfigProvider.fromUnknown({ TMPDIR: staleCloneTestRoot }),
+				),
+			);
+
+			assert.equal(removed, 1);
+			assert.equal(yield* fs.exists(active), true);
+			assert.equal(yield* fs.exists(stale), false);
+		}),
+	));
 
 test("extension registers only the three agreed tools", () => {
 	const { tools } = loadExtension();

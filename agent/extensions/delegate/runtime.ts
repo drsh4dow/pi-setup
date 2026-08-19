@@ -30,7 +30,6 @@ export const DELEGATION_TOOL_DENYLIST = [
 	"subagent_wait",
 	"subagent_cancel",
 	"ask_user",
-	"ask_questions",
 ] as const;
 
 export type ChildSession = Awaited<

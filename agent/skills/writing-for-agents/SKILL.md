@@ -1,6 +1,8 @@
 ---
 name: writing-for-agents
-description: Writing documents for agents. Use when creating or editing skills, or modifying AGENTS.md.
+description: Use for agent-facing instructions and recurring agent corrections.
+disable-model-invocation: false
+user-invokable: false
 ---
 
 Reference for writing any document an agent consumes — a skill, an `AGENTS.md` / `CLAUDE.md`, a doc reached by a pointer. The packaging differs; the writing does not: the same levers make each one predictable — the agent taking the same _process_ every run, not producing the same output.
@@ -72,6 +74,21 @@ Hunt for opportunities to refactor with leading words. A triad spelled out at th
 You win twice: fewer tokens, and a sharper hook for the agent to hang its thinking on. Assume every document is carrying restatements that leading words retire — go find them.
 
 **Negation** is the failure mode beside this lever: steering by prohibition drags the forbidden behaviour into context and makes it _more_ available, not less. _Don't think of an elephant_, and the elephant is all there is; the negation is a weak modifier the strongly-activated concept overruns, so the ban half-reads as an instruction to do the thing. Prompt the **positive** — state the target behaviour ("write one-line comments") so the banned one is never spoken. A prohibition earns its place only as a hard guardrail you cannot phrase positively; even then, pair it with the positive target so attention lands on what to do.
+
+## Recurring corrections
+
+Treat a correction as recurring only after concrete evidence of a second occurrence. A single failure may be incidental; fix the instance without turning it into a general rule.
+
+When the same agent instruction or correction appears again during the current authoring task, route it to the strongest rung that can enforce it:
+
+1. Make the invalid state unrepresentable in a type or schema.
+2. Reject it with static analysis, a banned API, or a CI check.
+3. Put the right behaviour in the canonical helper or template agents copy.
+4. Reject it at runtime at the boundary that owns the invariant.
+5. Encode it in metadata or configuration that the consumer reads.
+6. Keep it as prose only when enforcement genuinely depends on judgment. Make that instruction prominent and include one representative failure example.
+
+Use the strongest rung authorized by the current task, not a weaker mechanism that is merely easier to add. Stay within the task's owned behavior and files: when the proper rung lies outside scope, hand back the concrete structural change instead of implementing unrelated machinery. Once structure enforces the rule, remove prose that merely repeats it; retain only a pointer needed to discover or explain the mechanism.
 
 ## Pruning
 

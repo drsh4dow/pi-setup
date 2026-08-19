@@ -1,16 +1,19 @@
 ---
 name: delegate-worktrees
-description: Use when parallel delegates write.
+description: Use when parallel delegates write or share mutable state.
+disable-model-invocation: false
 user-invokable: false
 ---
 
 A wave is one batch of `delegate_run` calls started together. Its children share the selected worktree and build artifacts. They do not share conversation or memory.
 
-## Prefer file ownership
+## Separate writes first
 
-Most waves need no worktree isolation. Assign each child files that no sibling can edit, keep integration in the parent, and use the main worktree.
+List every mutable target the children can share, including source files, branches, state files, generated files, and build outputs. Prefer separation over coordination. Assign each target to one child, let children publish independent files or patches, and keep integration in the parent. Splitting fields inside one state file is still a shared write.
 
-Separate worktrees are necessary when disjoint source files still produce the same build outputs, such as `target/`, `node_modules/.cache/`, `dist/`, or `pkg/`. Shared outputs can lock or overwrite each other.
+Most waves can use the main worktree when file ownership is disjoint and checks do not mutate shared outputs. Use one worktree per child when source ownership overlaps or disjoint source files still produce the same outputs, such as `target/`, `node_modules/.cache/`, `dist/`, or `pkg/`. A worktree separates repository files and copied artifacts, but not external services, databases, or paths outside it. Give those targets separate keys or directories too.
+
+If one shared mutable target is a real requirement, do not rely on instructions to take turns. Keep one writer, run the dependent children in sequential waves, or use the target's existing lock or atomic update mechanism. Choose serialization only after ruling out separate targets.
 
 ## Create one worktree per child
 

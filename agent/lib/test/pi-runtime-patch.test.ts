@@ -111,3 +111,17 @@ try {
 		/Failed to save full command output to \/dev\/full\/pi-output-[a-f0-9]+\.log:/,
 	);
 });
+
+test("patch sync permits dependency installation without an active Pi", () => {
+	const child = spawnSync(
+		process.execPath,
+		["agent/scripts/sync-pi-patches.mjs"],
+		{
+			encoding: "utf8",
+			env: { ...process.env, PATH: "" },
+		},
+	);
+
+	assert.equal(child.status, 0, child.stderr);
+	assert.match(child.stdout, /No external pi executable found on PATH/);
+});

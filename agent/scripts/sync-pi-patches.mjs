@@ -64,7 +64,6 @@ function activePiPackage(localRoot) {
 			if (realpathSync(target) !== realpathSync(localRoot)) return target;
 		} catch {}
 	}
-	throw new Error("No external pi executable found on PATH");
 }
 
 if (
@@ -73,10 +72,17 @@ if (
 ) {
 	const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 	const local = join(root, "node_modules/@earendil-works/pi-coding-agent");
-	const copied = syncPiPatches(local, activePiPackage(local));
-	console.log(
-		copied === 0
-			? "Verified active Pi patches"
-			: `Patched ${copied} active Pi files`,
-	);
+	const active = activePiPackage(local);
+	if (!active) {
+		console.log(
+			"No external pi executable found on PATH; skipped active Pi patch sync",
+		);
+	} else {
+		const copied = syncPiPatches(local, active);
+		console.log(
+			copied === 0
+				? "Verified active Pi patches"
+				: `Patched ${copied} active Pi files`,
+		);
+	}
 }

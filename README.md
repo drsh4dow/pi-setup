@@ -29,7 +29,7 @@ pi
 
 Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exists, move or merge it before cloning.
 
-`bun install` also applies the repository's runtime patches to the local dependency and the active `pi` executable on `PATH`. Rerun it after updating Pi; installation fails rather than silently skipping the patch if Pi changes the affected code.
+`bun install` applies the repository's runtime patches to the local dependency and, when present, the active `pi` executable on `PATH`. Rerun it after updating Pi. Installation reports when no active Pi is available and still fails when the active version differs or a patched source file is missing.
 
 Pi automatically discovers the extensions, skills, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
 

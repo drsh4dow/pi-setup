@@ -1,3 +1,124 @@
+diff --git a/dist/core/bash-executor.js b/dist/core/bash-executor.js
+index 46a438fb39fb4b9bdf033fd26b09d84db8311ea6..8b7f996b9f210969fc94e77e4e05e5a9ae882231 100644
+--- a/dist/core/bash-executor.js
++++ b/dist/core/bash-executor.js
+@@ -6,9 +6,10 @@
+  * - Direct calls from modes that need bash execution
+  */
+ import { randomBytes } from "node:crypto";
+-import { createWriteStream } from "node:fs";
++import { createWriteStream, rmSync } from "node:fs";
+ import { tmpdir } from "node:os";
+ import { join } from "node:path";
++import { formatStorageQuotaError, recoverStorageQuota } from "./diagnostics.js";
+ import { stripAnsi } from "../utils/ansi.js";
+ import { sanitizeBinaryOutput } from "../utils/shell.js";
+ import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.js";
+@@ -25,6 +26,8 @@ export async function executeBashWithOperations(command, cwd, operations, option
+     const maxOutputBytes = DEFAULT_MAX_BYTES * 2;
+     let tempFilePath;
+     let tempFileStream;
++    let tempFileError;
++    let tempFileRecovery;
+     let totalBytes = 0;
+     const ensureTempFile = () => {
+         if (tempFilePath) {
+@@ -33,10 +36,62 @@ export async function executeBashWithOperations(command, cwd, operations, option
+         const id = randomBytes(8).toString("hex");
+         tempFilePath = join(tmpdir(), `pi-bash-${id}.log`);
+         tempFileStream = createWriteStream(tempFilePath);
++        tempFileStream.on("error", (error) => {
++            if (tempFileError)
++                return;
++            tempFileError = error;
++            try {
++                if (tempFilePath)
++                    rmSync(tempFilePath, { force: true });
++            }
++            catch { }
++            tempFileRecovery = recoverStorageQuota(error, {
++                requiredBytes: totalBytes,
++                protectedPaths: tempFilePath ? [tempFilePath] : [],
++            });
++        });
+         for (const chunk of outputChunks) {
+             tempFileStream.write(chunk);
+         }
+     };
++    const closeTempFile = async () => {
++        if (!tempFileStream)
++            return;
++        const stream = tempFileStream;
++        const path = tempFilePath;
++        tempFileStream = undefined;
++        let writeError = tempFileError;
++        if (!writeError) {
++            writeError = await new Promise((resolve) => {
++                const onError = (error) => {
++                    stream.off("finish", onFinish);
++                    resolve(error);
++                };
++                const onFinish = () => {
++                    stream.off("error", onError);
++                    resolve(undefined);
++                };
++                stream.once("error", onError);
++                stream.once("finish", onFinish);
++                stream.end();
++            });
++        }
++        if (!writeError)
++            return;
++        try {
++            if (path)
++                rmSync(path, { force: true });
++        }
++        catch { }
++        tempFilePath = undefined;
++        const detail = formatStorageQuotaError(writeError) ??
++            (writeError instanceof Error ? writeError.message : String(writeError));
++        const recovery = tempFileRecovery ?? recoverStorageQuota(writeError, {
++            requiredBytes: totalBytes,
++            protectedPaths: path ? [path] : [],
++        });
++        throw new Error(`Failed to save full command output to ${path}: ${detail}${recovery ? ` ${recovery}` : ""}`, { cause: writeError });
++    };
+     const decoder = new TextDecoder();
+     const onData = (data) => {
+         totalBytes += data.length;
+@@ -71,9 +126,7 @@ export async function executeBashWithOperations(command, cwd, operations, option
+         if (truncationResult.truncated) {
+             ensureTempFile();
+         }
+-        if (tempFileStream) {
+-            tempFileStream.end();
+-        }
++        await closeTempFile();
+         const cancelled = options?.signal?.aborted ?? false;
+         return {
+             output: truncationResult.truncated ? truncationResult.content : fullOutput,
+@@ -91,9 +144,7 @@ export async function executeBashWithOperations(command, cwd, operations, option
+             if (truncationResult.truncated) {
+                 ensureTempFile();
+             }
+-            if (tempFileStream) {
+-                tempFileStream.end();
+-            }
++            await closeTempFile();
+             return {
+                 output: truncationResult.truncated ? truncationResult.content : fullOutput,
+                 exitCode: undefined,
+@@ -102,9 +153,7 @@ export async function executeBashWithOperations(command, cwd, operations, option
+                 fullOutputPath: tempFilePath,
+             };
+         }
+-        if (tempFileStream) {
+-            tempFileStream.end();
+-        }
++        await closeTempFile();
+         throw err;
+     }
+ }
 diff --git a/dist/core/compaction/compaction.js b/dist/core/compaction/compaction.js
 index e7ffee7a8566a7556f75e3f3edd228af3d93b141..01376369b15be87a1f1936d7d0b1282f450d5158 100644
 --- a/dist/core/compaction/compaction.js
@@ -12,3 +133,227 @@ index e7ffee7a8566a7556f75e3f3edd228af3d93b141..01376369b15be87a1f1936d7d0b1282f
              for (let c = 0; c < cutPoints.length; c++) {
                  if (cutPoints[c] >= i) {
                      cutIndex = cutPoints[c];
+diff --git a/dist/core/diagnostics.d.ts b/dist/core/diagnostics.d.ts
+index f8ebee065112bdc6071220d20ad1357d919cac81..f2f06bcd3256886423c6d1c96f0728abc21ba525 100644
+--- a/dist/core/diagnostics.d.ts
++++ b/dist/core/diagnostics.d.ts
+@@ -12,4 +12,11 @@ export interface ResourceDiagnostic {
+     path?: string;
+     collision?: ResourceCollision;
+ }
++export declare function formatStorageQuotaError(error: unknown): string | undefined;
++export interface StorageQuotaRecoveryOptions {
++    directory?: string;
++    requiredBytes: number;
++    protectedPaths?: readonly string[];
++}
++export declare function recoverStorageQuota(error: unknown, options: StorageQuotaRecoveryOptions): string | undefined;
+ //# sourceMappingURL=diagnostics.d.ts.map
+\ No newline at end of file
+diff --git a/dist/core/diagnostics.js b/dist/core/diagnostics.js
+index 09bdbfc45bdeb811a5601ce0f8fa2e700fec196c..7c0eb96dc3f6fe47f58c70cd520c14606f003544 100644
+--- a/dist/core/diagnostics.js
++++ b/dist/core/diagnostics.js
+@@ -1,2 +1,66 @@
+-export {};
++import { spawnSync } from "node:child_process";
++import { existsSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { getAgentDir } from "../config.js";
++export function formatStorageQuotaError(error) {
++    let current = error;
++    for (let depth = 0; depth < 5 && current && typeof current === "object"; depth++) {
++        const code = "code" in current ? current.code : undefined;
++        const errno = "errno" in current ? current.errno : undefined;
++        if (code === "EDQUOT" || errno === -122) {
++            const errnoDetail = typeof errno === "number" ? `; errno ${errno}` : "";
++            return `Storage quota exceeded while writing data (EDQUOT${errnoDetail}). Free space or raise the per-user quota on the affected filesystem. If this was temporary output, clear stale files under ${tmpdir()} or set TMPDIR to a filesystem with available quota, then retry.`;
++        }
++        current = "cause" in current ? current.cause : undefined;
++    }
++    return undefined;
++}
++function formatBytes(bytes) {
++    if (bytes < 1024)
++        return `${bytes} B`;
++    const units = ["KiB", "MiB", "GiB", "TiB"];
++    let value = bytes;
++    let unit = -1;
++    do {
++        value /= 1024;
++        unit++;
++    } while (value >= 1024 && unit < units.length - 1);
++    return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[unit]}`;
++}
++export function recoverStorageQuota(error, options) {
++    if (!formatStorageQuotaError(error))
++        return undefined;
++    const script = join(getAgentDir(), "scripts", "recover-temp-space.mjs");
++    if (!existsSync(script))
++        return `Automatic temporary-space recovery is unavailable because ${script} is missing.`;
++    const recovery = spawnSync(process.execPath, [script, JSON.stringify({
++            directory: options.directory ?? tmpdir(),
++            requiredBytes: options.requiredBytes,
++            protectedPaths: options.protectedPaths ?? [],
++        })], {
++        encoding: "utf8",
++        maxBuffer: 1024 * 1024,
++        timeout: 120_000,
++    });
++    if (recovery.error)
++        return `Automatic temporary-space recovery failed: ${recovery.error.message}`;
++    if (recovery.status !== 0)
++        return `Automatic temporary-space recovery failed: ${recovery.stderr.trim().slice(0, 500) || `exit code ${recovery.status}`}`;
++    let result;
++    try {
++        result = JSON.parse(recovery.stdout);
++    }
++    catch {
++        return "Automatic temporary-space recovery returned an invalid result.";
++    }
++    if (!result.supported)
++        return `Automatic temporary-space recovery is unavailable: ${result.reason ?? "unsupported platform"}.`;
++    const summary = `Automatic cleanup deleted ${result.deletedCount} oldest temporary ${result.deletedCount === 1 ? "entry" : "entries"} and freed ${formatBytes(result.freedBytes)}.`;
++    if (result.enough) {
++        const escalation = result.escalated ? " Cleanup escalated beyond disposable Pi artifacts as configured." : "";
++        return `${summary}${escalation} The new-output allowance and 30% safety reserve are available; retry the command to regenerate its full output.`;
++    }
++    return `${summary} It could not free the required ${formatBytes(result.targetBytes)}. Pi remains running; choose another TMPDIR or clear more space before retrying.`;
++}
+ //# sourceMappingURL=diagnostics.js.map
+\ No newline at end of file
+diff --git a/dist/core/tools/output-accumulator.d.ts b/dist/core/tools/output-accumulator.d.ts
+index fbd581f6067c98771dc6a29272a5bab2b2653dcd..811928db0b549284a32a759225a63fc8275e8324 100644
+--- a/dist/core/tools/output-accumulator.d.ts
++++ b/dist/core/tools/output-accumulator.d.ts
+@@ -35,6 +35,8 @@ export declare class OutputAccumulator {
+     private finished;
+     private tempFilePath;
+     private tempFileStream;
++    private tempFileError;
++    private tempFileRecovery;
+     constructor(options?: OutputAccumulatorOptions);
+     append(data: Buffer): void;
+     finish(): void;
+diff --git a/dist/core/tools/output-accumulator.js b/dist/core/tools/output-accumulator.js
+index 72416680b6307108ffeace36e45fa7076cc8b7e5..00565994c8468b80ee191ee88f00f4febcfe42b8 100644
+--- a/dist/core/tools/output-accumulator.js
++++ b/dist/core/tools/output-accumulator.js
+@@ -1,7 +1,8 @@
+ import { randomBytes } from "node:crypto";
+-import { createWriteStream } from "node:fs";
++import { createWriteStream, rmSync } from "node:fs";
+ import { tmpdir } from "node:os";
+ import { join } from "node:path";
++import { formatStorageQuotaError, recoverStorageQuota } from "../diagnostics.js";
+ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "./truncate.js";
+ function defaultTempFilePath(prefix) {
+     const id = randomBytes(8).toString("hex");
+@@ -36,6 +37,8 @@ export class OutputAccumulator {
+     finished = false;
+     tempFilePath;
+     tempFileStream;
++    tempFileError;
++    tempFileRecovery;
+     constructor(options = {}) {
+         this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
+         this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+@@ -98,20 +101,40 @@ export class OutputAccumulator {
+             return;
+         }
+         const stream = this.tempFileStream;
++        const tempFilePath = this.tempFilePath;
+         this.tempFileStream = undefined;
+-        await new Promise((resolve, reject) => {
+-            const onError = (error) => {
+-                stream.off("finish", onFinish);
+-                reject(error);
+-            };
+-            const onFinish = () => {
+-                stream.off("error", onError);
+-                resolve();
+-            };
+-            stream.once("error", onError);
+-            stream.once("finish", onFinish);
+-            stream.end();
++        let writeError = this.tempFileError;
++        if (!writeError) {
++            writeError = await new Promise((resolve) => {
++                const onError = (error) => {
++                    stream.off("finish", onFinish);
++                    resolve(error);
++                };
++                const onFinish = () => {
++                    stream.off("error", onError);
++                    resolve(undefined);
++                };
++                stream.once("error", onError);
++                stream.once("finish", onFinish);
++                stream.end();
++            });
++        }
++        if (!writeError) {
++            return;
++        }
++        try {
++            if (tempFilePath)
++                rmSync(tempFilePath, { force: true });
++        }
++        catch { }
++        this.tempFilePath = undefined;
++        const detail = formatStorageQuotaError(writeError) ??
++            (writeError instanceof Error ? writeError.message : String(writeError));
++        const recovery = this.tempFileRecovery ?? recoverStorageQuota(writeError, {
++            requiredBytes: this.totalRawBytes,
++            protectedPaths: tempFilePath ? [tempFilePath] : [],
+         });
++        throw new Error(`Failed to save full command output to ${tempFilePath}: ${detail}${recovery ? ` ${recovery}` : ""}`, { cause: writeError });
+     }
+     getLastLineBytes() {
+         return this.currentLineBytes;
+@@ -175,6 +198,20 @@ export class OutputAccumulator {
+         }
+         this.tempFilePath = defaultTempFilePath(this.tempFilePrefix);
+         this.tempFileStream = createWriteStream(this.tempFilePath);
++        this.tempFileStream.on("error", (error) => {
++            if (this.tempFileError)
++                return;
++            this.tempFileError = error;
++            try {
++                if (this.tempFilePath)
++                    rmSync(this.tempFilePath, { force: true });
++            }
++            catch { }
++            this.tempFileRecovery = recoverStorageQuota(error, {
++                requiredBytes: this.totalRawBytes,
++                protectedPaths: this.tempFilePath ? [this.tempFilePath] : [],
++            });
++        });
+         for (const chunk of this.rawChunks) {
+             this.tempFileStream.write(chunk);
+         }
+diff --git a/dist/modes/interactive/interactive-mode.js b/dist/modes/interactive/interactive-mode.js
+index 6a88679e03161d2c048e2abab0041e96d214e67b..491159248a2bada9066fcafc70227d65b37fc2e8 100644
+--- a/dist/modes/interactive/interactive-mode.js
++++ b/dist/modes/interactive/interactive-mode.js
+@@ -14,6 +14,7 @@ import { APP_NAME, APP_TITLE, CONFIG_DIR_NAME, getAgentDir, getAuthPath, getDebu
+ import { parseSkillBlock } from "../../core/agent-session.js";
+ import { SessionImportFileNotFoundError } from "../../core/agent-session-runtime.js";
+ import { CACHE_TTL_MS, collectCacheMisses, computeCacheWaste, detectCacheMiss, } from "../../core/cache-stats.js";
++import { formatStorageQuotaError } from "../../core/diagnostics.js";
+ import { FooterDataProvider } from "../../core/footer-data-provider.js";
+ import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.js";
+ import { KeybindingsManager } from "../../core/keybindings.js";
+@@ -3183,7 +3184,10 @@ export class InteractiveMode {
+             this.ui.stop();
+         }
+         catch { }
+-        console.error(`${APP_NAME} exiting due to uncaughtException:`);
++        console.error(`${APP_NAME} stopped after an unrecoverable error:`);
++        const storageQuotaError = formatStorageQuotaError(error);
++        if (storageQuotaError)
++            console.error(storageQuotaError);
+         console.error(error);
+         process.exit(1);
+     }

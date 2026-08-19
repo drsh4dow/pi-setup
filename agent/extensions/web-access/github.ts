@@ -1,12 +1,13 @@
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunHttpClient from "@effect/platform-bun/BunHttpClient";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { Config, Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import {
 	HttpClient,
 	HttpClientRequest,
 	HttpClientResponse,
 } from "effect/unstable/http";
+import { cloneCacheRoot } from "./clone-cache.ts";
 import { asError, type WebAccessError } from "./errors.ts";
 import { runCommand } from "./subprocess.ts";
 import type { ExtractedContent } from "./types.ts";
@@ -595,14 +596,9 @@ const cloneDir = Effect.fn("cloneDir")(function* (
 	repo: string,
 	ref?: string,
 ) {
-	const tempDirectory = yield* Config.string("TMPDIR").pipe(
-		Config.withDefault("/tmp"),
-		Effect.mapError(asError),
-	);
 	const dirName = ref ? `${repo}@${ref}` : repo;
 	return path.join(
-		tempDirectory,
-		"pi-web-access-repos",
+		yield* cloneCacheRoot(),
 		String(process.pid),
 		owner,
 		dirName,

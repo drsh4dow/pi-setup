@@ -1,6 +1,6 @@
 # UI Prototype
 
-Generate **several radically different UI variations** on a single route, switchable from a floating bottom bar. The user flips between variants in the browser, picks one (or steals bits from each), then throws the rest away.
+Build a throwaway UI on one route. When the empirical question requires competing shapes, generate radically different variations switchable from a floating bottom bar. The user tests them in the same context, selects a base by the declared rules, and may graft a compatible part from another before throwing the rest away.
 
 If the question is about logic/state rather than what something looks like — wrong branch. Use [LOGIC.md](LOGIC.md).
 
@@ -29,23 +29,23 @@ Create a **throwaway route** following whatever routing convention the project a
 
 Before committing to sub-shape B, sanity-check: is there really no existing page this could be embedded in? An empty route hides design problems that a populated one would expose.
 
-In both sub-shapes the floating bottom bar is identical.
+When comparing variants, both sub-shapes use the same floating bottom bar.
 
 ## Process
 
-### 1. State the question and pick N
+### 1. State the question and choose the size
 
-Default to **3 variants**. More than 5 stops being radically different and starts being noise — cap there.
+Apply the experiment-size gate in [SKILL.md](SKILL.md). Build one variant for a concrete direction. Use 2-3 variants only when comparison will answer an unresolved empirical question. Cap a user-requested broader comparison at 5.
 
-Write down the plan in one line, in the prototype's location or a top-of-file comment:
+Write down the question, plan, and any declared selection rules in the prototype's location or a top-of-file comment. For example:
 
-> "Three variants of the settings page, switchable via `?variant=`, on the existing `/settings` route."
+> "Compare three settings layouts on `/settings` using task steps and whether account status stays visible; switch with `?variant=`."
 
-This works whether the user is here to push back or not.
+When building one variant, omit the variant switcher and URL parameter.
 
-### 2. Generate radically different variants
+### 2. Generate variants when comparison earned them
 
-Draft each variant. Hold each one to:
+Draft each variant against the same representative data and scenarios. Hold each one to:
 
 - The page's purpose and the data it has access to.
 - The project's component library / styling system (TailwindCSS, shadcn, MUI, plain CSS, whatever).
@@ -53,9 +53,9 @@ Draft each variant. Hold each one to:
 
 Variants must be **structurally different** — different layout, different information hierarchy, different primary affordance, not just different colours. Three slightly-tweaked card grids isn't a UI prototype, it's wallpaper. If two drafts come out too similar, redo one with explicit "do not use a card grid" guidance.
 
-### 3. Wire them together
+### 3. Wire competing variants together
 
-Create a single switcher component on the route:
+When comparing variants, create a single switcher component on the route:
 
 ```tsx
 // pseudo-code — adapt to the project's framework
@@ -97,12 +97,12 @@ Surface the URL (and the `?variant=` keys). The user will flip through whenever 
 
 ### 6. Capture the answer and clean up
 
-Once a variant has won, capture the answer — which variant and why — then capture the prototype the way the [SKILL](SKILL.md) describes. Fold the winner into the real code and move the rest onto the throwaway branch, not into main:
+Once testing identifies a base, record how each candidate performed against the declared rules. Graft only compatible parts that improve those results, then test the combined variant. Capture which base won, each graft or rejection, and why. Fold the result into real code and remove the prototype from the production change:
 
 - **Sub-shape A** — fold the winner into the existing page; drop the losing variants and the switcher from main.
 - **Sub-shape B** — promote the winning variant to a real route; drop the throwaway route and the switcher from main.
 
-The full set of variants is the primary source, so it lands on the throwaway branch, not the bin — variant components and the switcher left in the main branch rot fast and confuse the next reader.
+Keep the full set of variants locally as the primary source until the user chooses whether to retain it. With explicit approval, preserve it on a throwaway branch. Variant components and the switcher left in the main branch rot fast and confuse the next reader.
 
 ## Anti-patterns
 

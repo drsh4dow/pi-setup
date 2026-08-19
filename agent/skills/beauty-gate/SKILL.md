@@ -1,6 +1,7 @@
 ---
 name: beauty-gate
 description: Use for final code-diff review.
+disable-model-invocation: false
 user-invokable: false
 ---
 
@@ -8,15 +9,15 @@ A working implementation is still a draft. Tests establish behavior. This final 
 
 ## Steps
 
-1. **Run the relevant checks.** Inspect their output. Fix failures before continuing. The audit starts only when the implementation works.
+1. **Prove the result.** Run the relevant checks and inspect their output. Then verify the changed behavior against the direct artifact or actual feature path. A build, derived value, cached output, or delegated report is not proof when the real result can be inspected. Fix failures before continuing. The audit starts only when the implementation works.
 
 2. **Read the complete change.** Include its staged changes, unstaged changes, and new files. Read every assigned hunk, including files changed early in the task. Treat unrelated worktree changes as user data, not part of the audit.
 
-3. **Judge every hunk.** Mark it internally as keep, simplify, or delete. For each additive hunk you keep, name the concrete behavior or constraint that requires it.
+3. **Judge every hunk.** Mark it internally as keep, simplify, or delete. For each additive hunk you keep, name the concrete behavior or constraint that requires it. Find the obsolete, redundant, or speculative parts that can be removed before accepting additions built around them.
 
-4. **Simplify the seam.** Apply every simplify and delete verdict without changing behavior. Rerun the checks from step 1 and inspect the result. If simplification changes the design enough to create new decisions, read the diff again.
+4. **Simplify the seam.** Apply every simplify and delete verdict without changing behavior. Prefer the design that leaves a tired maintainer with fewer states, decisions, and files to trace. Rerun the proof from step 1 and inspect the result. If simplification changes the design enough to create new decisions, read the diff again.
 
-5. **Report what survived.** State what you deleted, merged, or inlined, why the remaining additions are necessary, and what the final check run verified.
+5. **Report what survived.** State what you deleted, merged, or inlined, why the remaining additions are necessary, and what the final proof directly verified.
 
 ## Questions for every hunk
 

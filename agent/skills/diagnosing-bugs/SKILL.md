@@ -1,6 +1,8 @@
 ---
 name: diagnosing-bugs
-description: Diagnosis loop for hard bugs and performance regressions. Use when the user says "diagnose"/"debug this", or reports something broken/throwing/failing/slow.
+description: Use when debugging broken, failing, or slow behavior.
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Diagnosing Bugs
@@ -95,6 +97,10 @@ Each hypothesis must be **falsifiable**: state the prediction it makes.
 
 If you cannot state the prediction, the hypothesis is a vibe — discard or sharpen it.
 
+Trace each plausible cause backward through the causal chain. Keep asking why the invalid value, state, or transition arose until the proposed fix restores the violated invariant at its source. A guard that only suppresses the crash, retry, or bad output is not a root-cause hypothesis.
+
+For failures that appear only after a restart, rank persistent state ahead of unchanged code. Inspect config, caches, lock files, migrations, and serialized state. Clearing state is a diagnostic probe, not the fix. If it restores behavior, test why the application accepted or produced stale state and where validation or migration belongs.
+
 **Show the ranked list to the user before testing.** They often have domain knowledge that re-ranks instantly ("we just deployed a change to #3"), or know hypotheses they've already ruled out. Cheap checkpoint, big time saver. Don't block on it — proceed with your ranking if the user is AFK.
 
 ## Phase 4 — Instrument
@@ -123,9 +129,10 @@ If a correct seam exists:
 
 1. Turn the minimised repro into a failing test at that seam.
 2. Watch it fail.
-3. Apply the fix.
-4. Watch it pass.
-5. Re-run the Phase 1 feedback loop against the original (un-minimised) scenario.
+3. Search for every occurrence of the confirmed failure pattern, not only the reported instance. Use the causal mechanism to define the search, then inspect each match before changing it.
+4. Apply the fix at the source of the violated invariant. Avoid guards that merely silence the symptom.
+5. Watch the regression test pass, and run focused checks for every affected occurrence.
+6. Re-run the Phase 1 feedback loop against the original, un-minimised scenario.
 
 ## Phase 6 — Cleanup
 

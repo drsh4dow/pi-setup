@@ -1,6 +1,8 @@
 ---
 name: codebase-design
-description: Shared vocabulary for designing deep modules. Use when the user wants to design or improve a module's interface, find deepening opportunities, decide where a seam goes, make code more testable or AI-navigable, or when another skill needs the deep-module vocabulary.
+description: Use for deep-module and interface design.
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Codebase Design
@@ -59,10 +61,33 @@ When designing an interface, ask:
 
 ## Principles
 
-- **Depth is a property of the interface, not the implementation.** A deep module can be internally composed of small, mockable, swappable parts — they just aren't part of the interface. A module can have **internal seams** (private to its implementation, used by its own tests) as well as the **external seam** at its interface.
+- **Depth is a property of the interface, not the implementation.** A deep module can be internally composed of small, mockable, swappable parts. They just aren't part of the interface. A module can have **internal seams** private to its implementation and the **external seam** at its interface.
 - **The deletion test.** Imagine deleting the module. If complexity vanishes, it was a pass-through. If complexity reappears across N callers, it was earning its keep.
 - **The interface is the test surface.** Callers and tests cross the same seam. If you want to test *past* the interface, the module is probably the wrong shape.
-- **One adapter means a hypothetical seam. Two adapters means a real one.** Don't introduce a seam unless something actually varies across it.
+- **One adapter means a hypothetical seam. Two adapters means a real one.** Introduce a seam when something actually varies across it.
+
+## Shape the domain before the logic
+
+Start with the data shape when it can remove downstream coordination. Identify the states the module may represent, the states it must reject, and the dominant reads and writes. Then choose the simplest structure that makes those facts visible:
+
+- a state machine or discriminated union for exclusive lifecycle states
+- a typed object for invariants now repeated across loose parameters
+- a map, table, registry, index, tree, graph, queue, cache, or normalized collection when its access pattern calls for one
+- a reducer or command/event model when ad hoc mutations obscure legal transitions
+- one module organized around a body of domain knowledge rather than phase-named modules such as load, validate, transform, and save
+
+The warning signs are booleans that must stay synchronized, another branch added to a chain spread across files, repeated shape assumptions, or the same invariant enforced by several callers. A better structure should delete branches, duplicated rules, invalid states, or lifecycle risk. If it only adds types, wrappers, or indirection, keep the boring local code.
+
+Data-structure-first is a design probe, not a demand for setup work. Define core types early only when their shape constrains the implementation. Trace actual access patterns before choosing a collection. Similar statements can remain explicit. Add shared infrastructure only when the current task proves that later work depends on it. For shared mutable state, ask what another actor can change concurrently; isolate ownership when the answer affects correctness.
+
+## Test reader load
+
+Maintainability has two independent costs:
+
+1. **Layers to trace.** Count the hops between a question and its answer. Collapse one-caller wrappers, pass-through adapters, and adjacent layers that repeat the same methods and arguments. Each retained layer should change the abstraction or hide meaningful decisions.
+2. **State to hold.** Count the mutable or implicit facts a reader must remember. Keep state in the narrowest useful scope, derive values instead of synchronizing copies, and put each invariant at the interface that owns it.
+
+Use concrete questions against the proposed module: "Where does this value come from?", "What can change it?", and "Where is this invariant enforced?" A reader should answer from the interface and one cohesive implementation path. Do not flatten a module merely to reduce hops if its interface compresses real complexity. Before adding a layer or state, verify that it removes at least as much reader load elsewhere.
 
 ## Designing for testability
 

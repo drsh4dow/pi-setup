@@ -6,6 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { ConfigProvider, Effect } from "effect";
+import { clearStaleCloneCaches } from "./clone-cache.ts";
 import { errorMessage } from "./errors.ts";
 import { searchExa } from "./exa.ts";
 import {
@@ -308,19 +309,29 @@ export default function webAccessExtension(
 	pi.on("session_start", (_event, context) => {
 		responseArchive = null;
 		return run(
-			openSessionResponseArchive(context.sessionManager.getSessionId()).pipe(
-				Effect.tap((archive) =>
-					Effect.sync(() => {
-						responseArchive = archive;
-					}),
-				),
-				Effect.catch((error) =>
-					Effect.logError(
-						`[pi-web-access] Could not open Session Response Archive: ${errorMessage(error)}`,
+			Effect.gen(function* () {
+				yield* clearStaleCloneCaches().pipe(
+					Effect.catch((error) =>
+						Effect.logError(
+							`[pi-web-access] Could not clear stale clone caches: ${errorMessage(error)}`,
+						),
 					),
-				),
-				Effect.asVoid,
-			),
+				);
+				yield* openSessionResponseArchive(
+					context.sessionManager.getSessionId(),
+				).pipe(
+					Effect.tap((archive) =>
+						Effect.sync(() => {
+							responseArchive = archive;
+						}),
+					),
+					Effect.catch((error) =>
+						Effect.logError(
+							`[pi-web-access] Could not open Session Response Archive: ${errorMessage(error)}`,
+						),
+					),
+				);
+			}),
 		);
 	});
 

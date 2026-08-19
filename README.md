@@ -29,9 +29,13 @@ pi
 
 Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exists, move or merge it before cloning.
 
-`bun install` also applies the repository's bounded stdout recovery patch to the local dependency and the active `pi` executable on `PATH`. Rerun it after updating Pi; installation fails rather than silently skipping the patch if Pi changes the affected code.
+`bun install` also applies the repository's runtime patches to the local dependency and the active `pi` executable on `PATH`. Rerun it after updating Pi; installation fails rather than silently skipping the patch if Pi changes the affected code.
 
 Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
+
+### Temporary quota recovery
+
+When saving full command output fails with `EDQUOT`, Pi remains running and removes oldest temporary entries until it has freed the output observed at failure plus a 30% per-user quota reserve. It deletes disposable Pi output logs and dead-process GitHub clone caches first. If those are insufficient, it deletes oldest user-owned top-level entries under `/tmp`, including unrelated checkouts or build trees. Paths visible through `/proc` as a working directory or open file of a live process are protected, and entries containing files owned by another user are skipped. The failed command must be retried because its complete output cannot be reconstructed after the write failure.
 
 ## Included tools and extensions
 

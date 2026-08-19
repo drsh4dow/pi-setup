@@ -31,11 +31,11 @@ Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exist
 
 `bun install` also applies the repository's runtime patches to the local dependency and the active `pi` executable on `PATH`. Rerun it after updating Pi; installation fails rather than silently skipping the patch if Pi changes the affected code.
 
-Pi automatically discovers the extensions, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
+Pi automatically discovers the extensions, skills, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
 
 ### Temporary quota recovery
 
-When saving full command output fails with `EDQUOT`, Pi remains running and removes oldest temporary entries until it has freed the output observed at failure plus a 30% per-user quota reserve. It deletes disposable Pi output logs and dead-process GitHub clone caches first. If those are insufficient, it deletes oldest user-owned top-level entries under `/tmp`, including unrelated checkouts or build trees. Paths visible through `/proc` as a working directory or open file of a live process are protected, and entries containing files owned by another user are skipped. The failed command must be retried because its complete output cannot be reconstructed after the write failure.
+When saving full command output fails with `EDQUOT`, Pi remains running and removes oldest temporary entries until it has freed the output observed at failure plus a 30% per-user quota reserve. It deletes disposable Pi output logs first. If those are insufficient, it deletes oldest user-owned top-level entries under `/tmp`, including unrelated checkouts or build trees. Paths visible through `/proc` as a working directory or open file of a live process are protected, and entries containing files owned by another user are skipped. The failed command must be retried because its complete output cannot be reconstructed after the write failure.
 
 ## Included tools and extensions
 
@@ -46,7 +46,6 @@ When saving full command output fails with `EDQUOT`, Pi remains running and remo
 | `delegate` | `delegate_run` creates one blocking or background child; independent calls can run in parallel, while `delegate_session` inspects, steers, waits for, or cancels existing children |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked processes, each owned by the session that started it |
 | `process-status` | `/ps` shows active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded details, with delegate tasks and their last six plain-text conversation messages |
-| `web-access` | `web_search`, `fetch_content`, and `get_search_content` for Exa search, pages and PDFs, GitHub repositories, and video analysis |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle Fast mode for supported OpenAI API and Codex models |
 | `shake-images` | `/shake-images` to retain only the newest two images in model context for the current session |
 | `skill-visibility` | `/skill-visibility` to choose which loaded skills are discoverable by the model |
@@ -56,18 +55,15 @@ When saving full command output fails with `EDQUOT`, Pi remains running and remo
 
 Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). A project's `.pi/delegate.json` can override that default with `{"model":"provider/model-id"}`; lookup checks the run's effective `cwd`, then the parent session's project, so an external worktree does not discard the session's choice. An explicit `delegate_run.model` overrides every file. Invalid, unavailable, or unauthenticated configured models fall back to the parent model, while an invalid explicit override fails the run. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort; a run that settles abnormally hands back the child's last messages so it can be re-briefed. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation unless `cwd` points them at one the caller prepared, so parallel mutations can otherwise conflict. A child's background terminals are its own: they never appear in the parent's list and are terminated when the child settles.
 
-## Web access
+## Web search
 
-Set credentials in the environment before starting Pi:
+The `web-search` skill uses the external [Firecrawl CLI](https://www.firecrawl.dev/). Install and authenticate it once, then verify that Pi can reach it:
 
 ```bash
-export EXA_API_KEY="..."       # web search and ordinary URL/PDF extraction
-export GEMINI_API_KEY="..."    # YouTube and local-video analysis
+bun add --global firecrawl-cli
+firecrawl config
+firecrawl --status
 ```
-
-GitHub access works without Exa. `git` enables shallow public-repository clones, while an authenticated `gh` CLI adds private-repository access. Video frame extraction can also use `ffmpeg`, `ffprobe`, and `yt-dlp` when installed.
-
-See [`agent/extensions/web-access/README.md`](agent/extensions/web-access/README.md) for limits and implementation details.
 
 ## Prompts and shortcuts
 
@@ -90,6 +86,7 @@ agent/
 ├── settings.json      # models, thinking level, theme, and delegate model
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions
+├── skills/            # reusable agent workflows and references
 ├── prompts/           # prompt templates
 └── themes/            # Catppuccin and Gruvbox themes
 ```
@@ -105,11 +102,7 @@ bun install
 bun run verify
 ```
 
-`verify` runs TypeScript type checking, Effect diagnostics, Biome, compaction, delegate, background-terminal, and web-access tests. GitHub Actions runs the same command on pushes and pull requests. Live web-access smoke tests are opt-in:
-
-```bash
-PI_WEB_ACCESS_LIVE=1 node --test agent/extensions/web-access/test/live.test.ts
-```
+`verify` runs TypeScript type checking, Effect diagnostics, Biome, and the extension test suites. GitHub Actions runs the same command on pushes and pull requests.
 
 ## License
 

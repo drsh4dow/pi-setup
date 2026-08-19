@@ -15,11 +15,10 @@
     "test:aoauth": "node --test agent/extensions/aoauth/test/*.test.ts",
     "test:codex-accounts": "node --test agent/extensions/codex-accounts/test/*.test.ts",
     "test:skill-visibility": "node --test agent/extensions/skill-visibility/test/*.test.ts",
-    "test:web-access": "node --test agent/extensions/web-access/test/*.test.ts",
     "test:gpt-fast-mode": "node --test agent/extensions/gpt-fast-mode/test/*.test.ts",
     "test:sacrifice-preference": "node --test agent/extensions/sacrifice-preference/test/*.test.ts",
     "test:e2e": "PI_E2E=1 node --test --test-concurrency=1 --test-timeout=900000 agent/extensions/*/test/e2e.test.ts",
-    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:runtime-patches && bun run test:compaction && bun run test:aoauth && bun run test:codex-accounts && bun run test:skill-visibility && bun run test:web-access && bun run test:gpt-fast-mode && bun run test:sacrifice-preference"
+    "verify": "bun run typecheck && bun run check && bun run test:delegate && bun run test:background-terminals && bun run test:process-status && bun run test:runtime-patches && bun run test:compaction && bun run test:aoauth && bun run test:codex-accounts && bun run test:skill-visibility && bun run test:gpt-fast-mode && bun run test:sacrifice-preference"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.84.2",

@@ -34,19 +34,6 @@ function recordLivePath(paths, directory, target) {
 	paths.add(target);
 }
 
-function processIsRunning(pid) {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		return !(
-			error instanceof Error &&
-			"code" in error &&
-			error.code === "ESRCH"
-		);
-	}
-}
-
 function livePaths(directory, uid, explicitPaths) {
 	const paths = new Set();
 	for (const entry of explicitPaths)
@@ -145,10 +132,8 @@ function measureTree(target, uid, globalInodes, budget) {
 function protectedEntries(directory, paths) {
 	const entries = new Set();
 	for (const target of paths) {
-		const parts = relative(directory, target).split(sep);
-		if (parts[0] === "pi-web-access-repos" && parts[1])
-			entries.add(join(directory, parts[0], parts[1]));
-		else if (parts[0]) entries.add(join(directory, parts[0]));
+		const [entry] = relative(directory, target).split(sep);
+		if (entry) entries.add(join(directory, entry));
 	}
 	return entries;
 }
@@ -174,27 +159,6 @@ function scan(directory, uid, protectedPaths, collectCandidates) {
 		const measured = measureTree(target, uid, globalInodes, budget);
 		if (!collectCandidates || !measured.allOwned) continue;
 		const stat = lstatSync(target);
-		if (name === "pi-web-access-repos" && stat.isDirectory()) {
-			const cloneEntries = readdirSync(target);
-			if (cloneEntries.length > MAX_CANDIDATES)
-				throw new Error(
-					`Pi clone cache exceeds the ${MAX_CANDIDATES}-candidate recovery limit`,
-				);
-			for (const child of cloneEntries) {
-				const childPath = join(target, child);
-				const childMeasured = measureTree(childPath, uid, globalInodes, budget);
-				if (!childMeasured.allOwned) continue;
-				const pid = /^\d+$/.test(child) ? Number(child) : undefined;
-				if (pid !== undefined && processIsRunning(pid)) continue;
-				candidates.push({
-					path: childPath,
-					bytes: childMeasured.bytes,
-					mtimeMs: lstatSync(childPath).mtimeMs,
-					tier: pid === undefined ? 1 : 0,
-				});
-			}
-			continue;
-		}
 		candidates.push({
 			path: target,
 			bytes: measured.bytes,

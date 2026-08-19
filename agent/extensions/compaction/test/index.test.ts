@@ -142,7 +142,7 @@ test("can compact when a large tool result is the last session entry", () => {
 			message: {
 				role: "assistant",
 				content: [
-					{ type: "toolCall", id: "search", name: "web_search", arguments: {} },
+					{ type: "toolCall", id: "lookup", name: "lookup", arguments: {} },
 				],
 				timestamp: 2,
 			},
@@ -152,8 +152,8 @@ test("can compact when a large tool result is the last session entry", () => {
 			id: "result",
 			message: {
 				role: "toolResult",
-				toolCallId: "search",
-				toolName: "web_search",
+				toolCallId: "lookup",
+				toolName: "lookup",
 				content: [{ type: "text", text: "x".repeat(100) }],
 				timestamp: 3,
 			},

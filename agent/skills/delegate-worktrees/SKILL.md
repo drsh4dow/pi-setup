@@ -1,41 +1,39 @@
 ---
 name: delegate-worktrees
-description: Use when fanning out delegate_run children that write to the same repo, when parallel children collide over build artifacts, or when briefing a wave of children on shared context.
+description: Use when parallel delegates write.
 user-invokable: false
 ---
 
-# Delegating a wave
+A wave is one batch of `delegate_run` calls started together. Its children share the selected worktree and build artifacts. They do not share conversation or memory.
 
-A **wave** is one batch of `delegate_run` calls issued together. Children in a wave share your worktree, your build artifacts, and nothing else — no conversation, no memory of each other.
+## Prefer file ownership
 
-## Assign disjoint files first
+Most waves need no worktree isolation. Assign each child files that no sibling can edit, keep integration in the parent, and use the main worktree.
 
-Most waves need no isolation. Give each child a file set no sibling touches, keep integration yourself, and stop here.
+Separate worktrees are necessary when disjoint source files still produce the same build outputs, such as `target/`, `node_modules/.cache/`, `dist/`, or `pkg/`. Shared outputs can lock or overwrite each other.
 
-Isolation is for the case disjoint files cannot fix: children running builds that write the *same* artifact directory — `target/`, `node_modules/.cache/`, `dist/`, `pkg/`. Two cargo builds in one `target/` block on the same lock; two bundlers race over the same output.
+## Create one worktree per child
 
-## Prepare a worktree per child
-
-The caller prepares, the caller integrates. `delegate_run` only points a child at a directory via `cwd`.
+The parent creates and integrates worktrees. `delegate_run` only selects one through `cwd`.
 
 ```sh
 git worktree add ../wave-1-parser HEAD
-cp -al node_modules ../wave-1-parser/node_modules   # hardlink, not copy
-cp -al target ../wave-1-parser/target
+test ! -d node_modules || cp -a --reflink=auto node_modules ../wave-1-parser/
+test ! -d target || cp -a --reflink=auto target ../wave-1-parser/
 ```
 
-Hardlinks cannot cross filesystems, so the worktree lives beside the repo. `/tmp` is tmpfs on this machine: `cp -al` into it fails with `EXDEV` for every file, and a large `node_modules` turns that into thousands of error lines.
+Copy only artifact directories that exist and are expensive to rebuild. `--reflink=auto` uses copy-on-write when the filesystem supports it and a full copy otherwise, so child writes cannot mutate the parent's files. Keep worktrees beside the repository. On this machine `/tmp` is tmpfs, where a fallback copy can waste memory and disk-backed caches lose their benefit.
 
-Then `delegate_run(task, cwd: "../wave-1-parser")`, and afterwards you merge each worktree back and run `git worktree remove`. Children never touch the mainline worktree.
+Run the child with `cwd: "../wave-1-parser"`. When it finishes, inspect and integrate its patch or commit before removing the worktree with `git worktree remove`. A correctly briefed child does not touch the main worktree.
 
-## Brief the wave once
+## Write one wave brief
 
-Repo-permanent rules belong in `AGENTS.md`, which every child already loads from its own cwd upward.
+Permanent repository rules belong in `AGENTS.md`, which each child loads from its own `cwd` and parent directories.
 
-Wave-specific context — this refactor's design rationale, the interface the wave is converging on, decisions you made before fanning out — belongs in a brief file you write, cited by path in every task. Rewrite the file for the next wave rather than versioning it inside the tasks.
+Put wave-specific decisions in one brief file and cite its path in every child task. Include the design being implemented, interfaces siblings must agree on, file ownership, mutation permission, and expected result. Rewrite the brief before the next wave instead of copying its contents into every task.
 
-## Gate once, after integration
+## Verify after integration
 
-Children report the verbatim commands they ran and the results. Read those to spot a child that skipped a gate; re-running each child's checks yourself is paying twice.
+Require each child to report the exact checks it ran and their results. Use those reports to find skipped checks, not as final evidence.
 
-Run the project's full check once, after you have integrated the wave. That is the run whose result you can actually claim.
+After integrating every child, remove its worktree and any temporary brief. Run the project's full check once from the parent worktree and inspect its output. The wave is complete when all child changes are integrated, temporary worktrees are gone, and this integrated check passes. Only that run supports the final verification claim.

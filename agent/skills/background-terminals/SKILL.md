@@ -1,15 +1,17 @@
 ---
 name: background-terminals
-description: Run and manage long-lived, non-interactive shell commands while continuing other work.
+description: Use for long-running, non-interactive commands.
 user-invokable: false
 ---
 
-# Background Terminals
+Use `bg_start` for servers, watchers, and other commands that will outlive the current step. Use `bash` for quick commands and checks. A background terminal has no stdin, so its command must run without prompts or interaction.
 
-Use `bg_start` for long-running commands such as servers and watchers. Use `bash` for quick commands and checks. Background commands receive no stdin: never start an interactive command or anything that prompts.
+Before starting a server or watcher, check `bg_list` for an existing copy. Give each new terminal a distinct title. After it starts, return to useful work. Pi queues a best-effort completion notice. Call `bg_status` only when you need current output or state, and call `bg_kill` when the process is stuck or no longer needed. `/ps` lists active terminals and subagents.
 
-Give each terminal a meaningful, distinct title and check `bg_list` before starting a server or watcher to avoid duplicates. After starting one, continue useful work rather than polling. Pi queues a best-effort completion follow-up; use `bg_status` only when current state or output is needed, and `bg_kill` when work is no longer needed or stuck. `/ps` cheaply lists active terminals alongside subagents.
+## Limits
 
-Only the newest 256 KiB of stdout and stderr is retained per stream. At most eight terminals run concurrently and 32 are tracked; starting another after the history is full evicts the oldest settled terminal, never a running one. Redirect output explicitly to a suitable file when durable or full logs matter; the bg tools make no full-log promise.
+Each stream retains only its newest 256 KiB. Redirect output to a file when the full log must survive. The session can run eight terminals and track 32. Once history is full, a new terminal evicts the oldest settled entry, never a running one.
 
-Terminals are scoped to the current parent Pi session and are stopped on shutdown, reload, resume, fork, or new session. A terminal started by a delegated child remains visible and running for the parent until explicitly killed or the parent session closes. On Windows, descendant cleanup is best effort after the tracked shell PID has already exited. Background commands and delegated children share the same worktree without write isolation; do not run overlapping mutations unless their file ownership is known to be disjoint.
+Terminals belong to the current parent Pi session. Shutdown, reload, resume, fork, or a new session stops them. A terminal started by a delegated child remains visible to the parent until it is killed or the parent session ends. Windows cleanup is best effort after the tracked shell exits.
+
+Background commands and delegated children share one worktree. Run concurrent mutations only when each process owns disjoint files and build artifacts. Before finishing the task, keep each live terminal for a stated current need or stop it with `bg_kill`.

@@ -1,39 +1,35 @@
 ---
 name: abstraction-economics
-description: Use when working with code always. Teaches you when to abstract correctly.
+description: Use when adding or changing abstractions.
 user-invokable: false
 ---
 
-Every name is a loan. A helper, wrapper, interface, or module borrows attention from every future reader: one more place to look, one more hop between intent and behavior. **Rent** is the ongoing cost - reading, testing, debugging, migration, ownership. The economics are blunt: an abstraction lives only while it pays rent, and the cheapest abstraction is the one never introduced.
+Every abstraction charges rent. Future readers must learn its name, find its definition, test it, debug it, and migrate it. Add one only when it repays that cost.
 
-This skill fires at design time, at the moment of naming. Its post-implementation counterpart is `beauty-gate`, which audits the finished diff; the earning criteria below are the single source of truth both passes judge against.
+## What earns a name
 
-## The earning criteria
+Before adding a name, identify at least one concrete benefit:
 
-An abstraction pays rent through at least one of four earnings. Name the earning before writing the name.
+1. The caller now tracks fewer concepts, paths, or states. Moving code elsewhere does not count.
+2. One place now enforces an invariant that callers could previously violate.
+3. A small interface hides substantial implementation complexity. A wrapper that repeats the wrapped signature hides nothing.
+4. Multiple call sites use it now. A possible second caller is speculation.
 
-1. **Cognitive load** - the caller now holds fewer concepts, paths, or states in mind. Moving code between files changes its location, not its load.
-2. **Invariant** - the abstraction makes an illegal state unrepresentable, or centralizes enforcement that was scattered.
-3. **Hidden complexity** - a deep module: an interface much simpler than the implementation it conceals. Depth is the ratio, so a wrapper whose signature mirrors what it wraps has depth zero.
-4. **Real reuse** - multiple call sites exist today. A second caller that might arrive is speculation, and speculation pays no rent.
+A single-use name can also earn its place by stating domain meaning, such as `grace_period`, or by defining a contract at a boundary the project owns.
 
-A single-use name earns one extra way: when it states domain meaning (`grace_period`) or defines a contract at a boundary you own. Relocating an obvious expression under a label is a move, not an earning.
+If none applies, inline it. Explicit local code is the baseline.
 
-Default verdict when no earning can be named: **inline**. Boring, explicit, local code is the baseline every abstraction must beat.
+## Common rulings
 
-## Rulings
+Apply each ruling the change touches.
 
-Flat reference - apply every ruling the change touches. Criterion: every named thing the change introduces carries a named earning, or is inlined.
+- A getter or setter earns its place by enforcing an invariant or hiding a representation that varies. Otherwise expose the field.
+- A single-use helper must name a domain operation or hide real complexity. If the caller still requires reading the helper to understand the flow, inline it.
+- A pass-through wrapper is useful when it protects a boundary the project owns from one it does not, such as an SDK, wire format, or process edge. Otherwise it is another hop.
+- A constant should carry domain meaning, recur, or need one-point changes. Keep a one-off, self-evident value literal.
+- A configuration option multiplies runtime states and test paths. Add one only when live deployments need different values now.
+- An interface or generic with one implementation usually predicts the wrong second implementation. Wait for that implementation to reveal the shared shape.
+- A long function may remain whole when it tells one coherent story. Split it only when the extracted function names a domain step, removes duplication, or hides complexity.
+- A module or layer must give callers a simpler contract. If callers still reach through it, delete the hop.
 
-- **Getter/setter over a plain field**: earns only by enforcing an invariant or hiding a representation that actually varies. Otherwise the field is the interface.
-- **Single-use helper**: earns via domain meaning or a real contract. Extracted "for readability" while the caller must still read it to understand behavior - inline it.
-- **Wrapper / pass-through**: depth zero by construction. Earns only by pinning a boundary you own against one you don't (an external SDK, a wire format, a process edge).
-- **Constant**: earns when the value carries meaning (`MAX_RETRIES`), recurs, or must change everywhere at once. A value used once and self-evident in context stays literal.
-- **Configuration option**: the most expensive abstraction - it multiplies states and test paths forever. Earns only when two live deployments need different values today. A hardcoded decision is a feature.
-- **Interface / generic with one implementation**: speculation. Introduce it with the second implementation, which will also reveal the right shape.
-- **Function split**: a function may stay long while it reads as one coherent story. Split when the extracted piece earns as its own abstraction - hides real complexity, removes real duplication, or names a domain step - and keep it whole when the split would only satisfy a length rule.
-- **New module / layer**: earns only as a deep module. When callers still reach around or through it, it is a hop, not a layer.
-
-## Verdict discipline
-
-State the earning where the abstraction appears - design note, review comment, or commit message; one clause suffices ("wrapper pins the Stripe SDK boundary"). Criterion: a reviewer can find, for every introduced name, which earning it claims. Inlining needs no defense.
+This pass is complete when every new named unit has one of these benefits. Keep the reasoning in the design or review record, not in a code comment unless the code cannot show the constraint itself.

@@ -3,11 +3,7 @@ import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { Effect } from "effect";
-import {
-	boundaryValue,
-	extensionTestAdapter,
-	testContext,
-} from "../../test/adapter.ts";
+import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import uiMoto from "../index.ts";
 
 function plain(text: string): string {
@@ -28,10 +24,10 @@ test("installs, updates, and removes the session header", () =>
 			let headerFactory: ((tui: TUI) => Component) | undefined;
 			let renders = 0;
 			const setHeaders: Array<"factory" | "cleared"> = [];
-			const context = testContext({
+			const context = unsafeFixture<ExtensionContext>({
 				hasUI: true,
-				model: boundaryValue<ExtensionContext["model"]>({ id: "model-one" }),
-				ui: boundaryValue<ExtensionContext["ui"]>({
+				model: unsafeFixture<ExtensionContext["model"]>({ id: "model-one" }),
+				ui: unsafeFixture<ExtensionContext["ui"]>({
 					setHeader: (factory: typeof headerFactory) => {
 						headerFactory = factory;
 						setHeaders.push(factory ? "factory" : "cleared");
@@ -51,7 +47,7 @@ test("installs, updates, and removes the session header", () =>
 			assert.equal(setHeaders.at(-1), "factory");
 			assert.ok(headerFactory);
 			const component = headerFactory(
-				boundaryValue<TUI>({ requestRender: () => renders++ }),
+				unsafeFixture<TUI>({ requestRender: () => renders++ }),
 			);
 			const project = process.cwd().split("/").at(-1);
 			assert.ok(project);
@@ -66,7 +62,7 @@ test("installs, updates, and removes the session header", () =>
 			yield* Effect.promise(() =>
 				adapter.emit(
 					"model_select",
-					boundaryValue({
+					unsafeFixture({
 						type: "model_select",
 						model: { id: "model-two" },
 						previousModel: { id: "model-one" },
@@ -92,7 +88,7 @@ test("installs, updates, and removes the session header", () =>
 			yield* Effect.promise(() =>
 				adapter.emit(
 					"model_select",
-					boundaryValue({
+					unsafeFixture({
 						type: "model_select",
 						model: { id: "model-three" },
 						previousModel: { id: "model-two" },

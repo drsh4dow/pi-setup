@@ -90,7 +90,7 @@ Custom keybindings:
 
 ```text
 agent/
-├── SYSTEM.md          # agent behavior contract
+├── APPEND_SYSTEM.md   # active system-prompt addition
 ├── settings.json      # models, thinking level, theme, and delegate model
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions

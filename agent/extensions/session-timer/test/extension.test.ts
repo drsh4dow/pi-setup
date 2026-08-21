@@ -7,7 +7,7 @@ import {
 	extensionTestAdapter,
 	testContext,
 } from "../../test/adapter.ts";
-import { createSessionTimer } from "../index.ts";
+import sessionTimer from "../index.ts";
 
 test("reports deterministic run and session time and stops each ticker", () =>
 	Effect.runPromise(
@@ -25,7 +25,7 @@ test("reports deterministic run and session time and stops each ticker", () =>
 				}),
 			});
 			const adapter = extensionTestAdapter();
-			createSessionTimer({
+			sessionTimer(adapter.api, {
 				now: () => now,
 				everySecond: (callback) => {
 					tick = callback;
@@ -33,7 +33,7 @@ test("reports deterministic run and session time and stops each ticker", () =>
 						stops += 1;
 					};
 				},
-			})(adapter.api);
+			});
 
 			yield* Effect.promise(() =>
 				adapter.emit("agent_start", { type: "agent_start" }, context),

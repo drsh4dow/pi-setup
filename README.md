@@ -45,14 +45,14 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 
 | Extension | What it adds |
 | --- | --- |
-| `aoauth` | OAuth support for configured providers |
+| `aoauth` | Anthropic OAuth login support |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes |
 | `codex-accounts` | Named Codex account selection |
 | `compaction` | Dense handoffs and automatic continuation after proactive compaction |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
 | `process-status` | `/ps` views for active work, worker tokens, and cost |
-| `sacrifice-preference` | Model preference handling for sacrifice mode |
+| `sacrifice-preference` | Marks spawned work as the preferred target under Linux memory pressure |
 | `session-timer` | Per-run and cumulative session timing in the status bar |
 | `skill-visibility` | `/skill-visibility` controls which loaded skills the model can discover |
 | `tps-tracker` | Live and final output-token throughput |

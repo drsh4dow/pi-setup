@@ -7,21 +7,17 @@ import type {
 	MessageUpdateEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import {
-	boundaryValue,
-	extensionTestAdapter,
-	testContext,
-} from "../../test/adapter.ts";
+import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import tpsTracker from "../index.ts";
 
 const assistant = (output: number) =>
-	boundaryValue<MessageStartEvent["message"]>({
+	unsafeFixture<MessageStartEvent["message"]>({
 		role: "assistant",
 		usage: { output },
 	});
 
 const update = (output: number, delta: string): MessageUpdateEvent =>
-	boundaryValue<MessageUpdateEvent>({
+	unsafeFixture<MessageUpdateEvent>({
 		type: "message_update",
 		message: assistant(output),
 		assistantMessageEvent: { type: "text_delta", delta },
@@ -33,10 +29,10 @@ test("reports live and completed throughput from assistant stream timing", () =>
 			let now = 0;
 			const statuses: string[] = [];
 			const notifications: Array<[string, string]> = [];
-			const context = testContext({
+			const context = unsafeFixture<ExtensionContext>({
 				hasUI: true,
 				model: undefined,
-				ui: boundaryValue<ExtensionContext["ui"]>({
+				ui: unsafeFixture<ExtensionContext["ui"]>({
 					theme: { fg: (_color: string, text: string) => text },
 					setStatus: (_key: string, value: string) => statuses.push(value),
 					notify: (message: string, level: string) =>
@@ -72,7 +68,7 @@ test("reports live and completed throughput from assistant stream timing", () =>
 			yield* Effect.promise(() =>
 				adapter.emit(
 					"message_end",
-					boundaryValue<MessageEndEvent>({
+					unsafeFixture<MessageEndEvent>({
 						type: "message_end",
 						message: assistant(40),
 					}),

@@ -8,7 +8,8 @@
     "opencode-go/kimi-k3",
     "anthropic/claude-fable-5",
     "openai-codex-cyber/gpt-daybreak-blue-latest",
-    "anthropic/claude-opus-5"
+    "anthropic/claude-opus-5",
+    "openai-codex-cyber/gpt-5.6-sol"
   ],
   "delegate": {
     "model": "openai-codex/gpt-5.6-sol"

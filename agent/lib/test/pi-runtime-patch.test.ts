@@ -29,7 +29,16 @@ test("Linux EDQUOT errors name the quota and recovery path", () => {
 	assert.equal(formatStorageQuotaError(new Error("other failure")), undefined);
 });
 
-test("EDQUOT invokes oldest-first temporary-space recovery", () => {
+test("EDQUOT invokes oldest-first temporary-space recovery", (t) => {
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(process.cwd(), "agent");
+	t.after(() => {
+		if (previousAgentDir === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
 	const root = mkdtempSync(join(tmpdir(), "pi-runtime-recovery-test-"));
 	try {
 		writeFileSync(join(root, "pi-output-old.log"), Buffer.alloc(128 * 1024));

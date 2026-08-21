@@ -12,7 +12,7 @@ import {
 	extensionTestAdapter,
 	testContext,
 } from "../../test/adapter.ts";
-import { createTpsTracker } from "../index.ts";
+import tpsTracker from "../index.ts";
 
 const assistant = (output: number) =>
 	boundaryValue<MessageStartEvent["message"]>({
@@ -44,7 +44,7 @@ test("reports live and completed throughput from assistant stream timing", () =>
 				}),
 			});
 			const adapter = extensionTestAdapter();
-			createTpsTracker({ now: () => now })(adapter.api);
+			tpsTracker(adapter.api, { now: () => now });
 
 			yield* Effect.promise(() =>
 				adapter.emit("agent_start", { type: "agent_start" }, context),

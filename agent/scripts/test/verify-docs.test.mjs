@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,6 +12,7 @@ function repository(readme, extraFiles = {}) {
 	const files = {
 		"README.md": readme,
 		"agent/extensions/example/index.ts": "",
+		"agent/extensions/example/test/extension.test.ts": "",
 		"agent/skills/example/SKILL.md": "# Example\n",
 		"agent/prompts/example.md": "# Example\n",
 		"agent/themes/example.json": "{}\n",
@@ -68,6 +69,43 @@ test("reports a broken link in any tracked Markdown file", () => {
 	const result = run(root);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /docs\/guide\.md.*nested\/nope\.md/);
+});
+
+test("reports broken same-file and cross-file Markdown anchors", () => {
+	const root = repository(`${validReadme}\n[Missing](#absent)\n`, {
+		"docs/guide.md": "# Present\n\n[Missing](../README.md#also-absent)\n",
+	});
+	const result = run(root);
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /README\.md.*#absent/);
+	assert.match(result.stderr, /docs\/guide\.md.*README\.md#also-absent/);
+});
+
+test("ignores tracked Markdown removed from the working tree", () => {
+	const root = repository(validReadme, { "docs/removed.md": "# Removed\n" });
+	rmSync(join(root, "docs/removed.md"));
+	const result = run(root);
+	assert.equal(result.status, 0, result.stderr);
+});
+
+test("reports a shipped extension without a credential-free test", () => {
+	const root = repository(validReadme);
+	rmSync(join(root, "agent/extensions/example/test/extension.test.ts"));
+	const result = run(root);
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /example.*credential-free behavioral test/);
+});
+
+test("includes directly tracked extension files in the inventory", () => {
+	const root = repository(
+		validReadme.replace("- `example`", "- `direct`\n- `example`"),
+		{
+			"agent/extensions/direct.ts": "",
+			"agent/extensions/test/direct.test.ts": "",
+		},
+	);
+	const result = run(root);
+	assert.equal(result.status, 0, result.stderr);
 });
 
 test("reports README inventory drift from tracked components", () => {

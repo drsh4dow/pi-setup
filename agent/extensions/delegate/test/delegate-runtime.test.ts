@@ -94,16 +94,19 @@ test("covers delegated runtime behavior", () =>
 			);
 			assert.match(
 				promptChild.systemPrompt,
-				/The assignment is your briefing packet/,
+				/The parent assigned you one bounded task/,
 			);
 			assert.match(
 				promptChild.systemPrompt,
-				/Honor the mutation authority the assignment states/,
+				/Deliver the assigned outcome within its stated scope, permissions, and output contract/,
 			);
-			assert.match(promptChild.systemPrompt, /# Code economy/);
 			assert.match(
 				promptChild.systemPrompt,
-				/one hard execution ceiling: 60 minutes of wall time or 60,000,000 reported tokens/,
+				/## Principle: Type System Discipline/,
+			);
+			assert.match(
+				promptChild.systemPrompt,
+				/## Principle: Never Block on the Human/,
 			);
 			assert.doesNotMatch(
 				promptChild.systemPrompt,

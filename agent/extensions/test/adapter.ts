@@ -47,25 +47,22 @@ export function extensionTestAdapter(): ExtensionTestAdapter {
 	};
 
 	return {
-		api: registration as unknown as ExtensionAPI,
+		api: unsafeFixture<ExtensionAPI>(registration),
 		emit(name, event, context) {
 			const registered = handlers[name];
 			if (!registered)
 				return Promise.reject(new Error(`No handler registered for ${name}`));
 			const handler =
-				boundaryValue<ExtensionHandler<TestEvents[typeof name]>>(registered);
+				unsafeFixture<ExtensionHandler<TestEvents[typeof name]>>(registered);
 			return Promise.resolve(handler(event, context)).then(() => undefined);
 		},
 	};
 }
 
-export function testContext(
-	context: Pick<ExtensionContext, "hasUI" | "model" | "ui"> &
-		Partial<ExtensionContext>,
-): ExtensionContext {
-	return context as ExtensionContext;
-}
-
-export function boundaryValue<T>(value: unknown): T {
+/**
+ * Marks intentionally partial SDK fixtures at the test boundary. Production code
+ * never receives these values; each test supplies the fields its handler reads.
+ */
+export function unsafeFixture<T>(value: unknown): T {
 	return value as T;
 }

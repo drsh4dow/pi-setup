@@ -2,11 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import {
-	boundaryValue,
-	extensionTestAdapter,
-	testContext,
-} from "../../test/adapter.ts";
+import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import sessionTimer from "../index.ts";
 
 test("reports deterministic run and session time and stops each ticker", () =>
@@ -16,10 +12,10 @@ test("reports deterministic run and session time and stops each ticker", () =>
 			let tick: (() => void) | undefined;
 			let stops = 0;
 			const statuses: string[] = [];
-			const context = testContext({
+			const context = unsafeFixture<ExtensionContext>({
 				hasUI: true,
 				model: undefined,
-				ui: boundaryValue<ExtensionContext["ui"]>({
+				ui: unsafeFixture<ExtensionContext["ui"]>({
 					theme: { fg: (_color: string, text: string) => text },
 					setStatus: (_key: string, value: string) => statuses.push(value),
 				}),

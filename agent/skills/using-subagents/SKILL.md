@@ -1,7 +1,6 @@
 ---
 name: using-subagents
 description: Use before creating subagents.
-disable-model-invocation: false
 user-invokable: false
 ---
 

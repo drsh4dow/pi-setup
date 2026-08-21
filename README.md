@@ -13,7 +13,7 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 - Dense handoff compaction at 85% context usage or 250k tokens, whichever comes first
 - GPT Fast mode enabled
 
-The agent's behavior and engineering standards are defined in [`agent/SYSTEM.md`](agent/SYSTEM.md). In short: act autonomously, investigate before editing, prefer simple and deep designs, verify before claiming success, and preserve user-owned work.
+Pi loads [`agent/APPEND_SYSTEM.md`](agent/APPEND_SYSTEM.md) as this setup's active system-prompt addition. It defines the agent's behavior and engineering standards.
 
 ## Install
 
@@ -37,39 +37,48 @@ Pi automatically discovers the extensions, skills, prompts, and themes under `~/
 
 When saving full command output fails with `EDQUOT`, Pi remains running and removes oldest temporary entries until it has freed the output observed at failure plus a 30% per-user quota reserve. It deletes disposable Pi output logs first. If those are insufficient, it deletes oldest user-owned top-level entries under `/tmp`, including unrelated checkouts or build trees. Paths visible through `/proc` as a working directory or open file of a live process are protected, and entries containing files owned by another user are skipped. The failed command must be retried because its complete output cannot be reconstructed after the write failure.
 
-## Included tools and extensions
+## Installed components
+
+The inventories below are checked against git-tracked setup files by `agent/scripts/verify-docs.mjs`.
+
+### Installed extensions
 
 | Extension | What it adds |
 | --- | --- |
-| `compaction` | Writes a dense handoff, retains about 30k recent tokens, and continues automatically after proactive compaction; Pi's overflow retry remains the fallback |
-| `delegate` | `delegate_run` creates one blocking or background child; independent calls can run in parallel, while `delegate_session` inspects, steers, waits for, or cancels existing children |
-| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for up to eight running and 32 tracked processes, each owned by the session that started it |
-| `process-status` | `/ps` shows active work, worker tokens, and cost (Ctrl+O includes tracked entries); `/ps <id>` shows bounded details, with delegate tasks and their last six plain-text conversation messages |
-| `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` to toggle Fast mode for supported OpenAI API and Codex models |
-| `shake-images` | `/shake-images` to retain only the newest two images in model context for the current session |
-| `skill-visibility` | `/skill-visibility` to choose which loaded skills are discoverable by the model |
+| `aoauth` | OAuth support for configured providers |
+| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes |
+| `codex-accounts` | Named Codex account selection |
+| `compaction` | Dense handoffs and automatic continuation after proactive compaction |
+| `delegate` | Blocking and background child-agent runs plus session inspection and control |
+| `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
+| `process-status` | `/ps` views for active work, worker tokens, and cost |
+| `sacrifice-preference` | Model preference handling for sacrifice mode |
 | `session-timer` | Per-run and cumulative session timing in the status bar |
+| `skill-visibility` | `/skill-visibility` controls which loaded skills the model can discover |
 | `tps-tracker` | Live and final output-token throughput |
-| `ui-moto` | A compact model and project header |
+| `ui-moto` | Compact model and project status header |
 
 Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). A project's `.pi/delegate.json` can override that default with `{"model":"provider/model-id"}`; lookup checks the run's effective `cwd`, then the parent session's project, so an external worktree does not discard the session's choice. An explicit `delegate_run.model` overrides every file. Invalid, unavailable, or unauthenticated configured models fall back to the parent model, while an invalid explicit override fails the run. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort; a run that settles abnormally hands back the child's last messages so it can be re-briefed. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation unless `cwd` points them at one the caller prepared, so parallel mutations can otherwise conflict. A child's background terminals are its own: they never appear in the parent's list and are terminated when the child settles.
 
-## Web search
+### Installed skills
 
-The `web-search` skill uses the external [Firecrawl CLI](https://www.firecrawl.dev/). Install and authenticate it once, then verify that Pi can reach it:
+- `create-verification-skill`
+- `maintain-verification-skill`
+- `using-subagents`
 
-```bash
-bun add --global firecrawl-cli
-firecrawl config
-firecrawl --status
-```
+### Installed prompts
 
-## Prompts and shortcuts
+- `beautify-dirty-worktree`
+- `coderabbit`
+- `handoff`
+- `implement-orchestrator`
 
-Prompt templates:
+### Installed themes
 
-- `/beautify-dirty-worktree` — audit uncommitted code for simpler, more native structure without changing behavior
-- `/handoff [focus]` — write a redacted handoff document to the operating system's temporary directory
+- `catppuccin-mocha`
+- `gruvbox-dark-hard`
+
+## Shortcuts
 
 Custom keybindings:
 
@@ -101,7 +110,7 @@ bun install
 bun run verify
 ```
 
-`verify` runs TypeScript type checking, Effect diagnostics, Biome, and the extension test suites. GitHub Actions runs the same command on pushes and pull requests.
+`verify` and GitHub Actions run credential-free type checks, diagnostics, formatting checks, and behavioral tests. They exclude the live Pi integration tests. Run those separately, with configured provider credentials, using `bun run test:e2e`.
 
 ## License
 

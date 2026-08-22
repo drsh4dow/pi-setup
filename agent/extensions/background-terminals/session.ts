@@ -120,9 +120,9 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 		const joined = this.clients.get(id);
 		if (!joined) return;
 		if (id !== this.owner) {
-			this.clients.delete(id);
 			joined.delivery.clear();
 			yield* joined.manager.shutdown();
+			if (this.clients.get(id) === joined) this.clients.delete(id);
 			return;
 		}
 

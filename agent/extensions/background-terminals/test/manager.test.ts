@@ -15,6 +15,7 @@ import {
 	MAX_TRACKED,
 	RETAINED_BYTES,
 	type SettledTerminalSnapshot,
+	terminalResultFields,
 } from "../manager.ts";
 
 const cwd = mkdtempSync(join(tmpdir(), "pi-bg-test-"));
@@ -52,7 +53,7 @@ test("captures stdout and stderr and classifies success and nonzero", () => Effe
 	assert.equal((yield* settled(manager, ok.id)).state, "done");
 	const failed = yield* settled(manager, bad.id);
 	assert.equal(failed.state, "failed");
-	assert.equal(failed.exitCode, 7);
+	assert.equal(terminalResultFields(failed).exitCode, 7);
 	const completed = manager.get(ok.id);
 	assert.ok(completed);
 	assert.equal(completed.stdout.text, "out");
@@ -112,6 +113,23 @@ test("prunes to the tracked bound without evicting running entries", () => Effec
 	const tracked = new Set(manager.list().map((entry) => entry.id));
 	assert.ok(running.every((run) => tracked.has(run.id)));
 	yield* manager.shutdown();
+})));
+
+test("kill returns every result when active terminals exceed retention", () => Effect.runPromise(Effect.gen(function* () {
+	const manager = new BackgroundTerminalManager();
+	const runs = Array.from({ length: MAX_TRACKED + 1 }, (_, index) =>
+		manager.start({ command: "sleep 30", title: `active-${index}`, cwd }),
+	);
+	try {
+		const results = yield* manager.kill(runs.map((run) => run.id));
+		assert.deepEqual(
+			results.map((result) => result.id),
+			runs.map((run) => run.id),
+		);
+		assert.ok(results.every((result) => result.state === "killed"));
+	} finally {
+		yield* manager.shutdown();
+	}
 })));
 
 test("repeated and overlapping kills settle once", () => Effect.runPromise(Effect.gen(function* () {
@@ -244,7 +262,7 @@ test("releases inherited pipe handles after bounded termination", {
 		escapedPid = Number(/escaped:(\d+)/.exec(snapshot.stdout.text)?.[1]);
 		assert.ok(escapedPid);
 		assert.equal(processIsGone(escapedPid), false);
-		assert.match(snapshot.error ?? "", /stdio did not close/);
+		assert.match(terminalResultFields(snapshot).error ?? "", /stdio did not close/);
 		assert.ok(snapshot.settledAt - snapshot.createdAt < 5_000);
 	} finally {
 		yield* manager.shutdown();

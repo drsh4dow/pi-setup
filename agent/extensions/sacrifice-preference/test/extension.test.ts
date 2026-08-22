@@ -12,7 +12,10 @@ import {
 	tagCommand,
 	tagInvocation,
 } from "../../../lib/sacrifice.ts";
-import { BackgroundTerminalManager } from "../../background-terminals/manager.ts";
+import {
+	BackgroundTerminalManager,
+	terminalResultFields,
+} from "../../background-terminals/manager.ts";
 import sacrificePreference from "../index.ts";
 
 const { execFileSync } = process.getBuiltinModule("node:child_process");
@@ -210,7 +213,10 @@ test("manager annotates a journal-confirmed kill", { skip: !linux }, () =>
 					const snapshot = manager.get(started.id);
 					if (snapshot && snapshot.state !== "running") {
 						assert.equal(snapshot.state, "failed");
-						assert.match(snapshot.error ?? "", /earlyoom/);
+						assert.match(
+							terminalResultFields(snapshot).error ?? "",
+							/earlyoom/,
+						);
 						assert.equal(snapshot.command, started.command);
 						return;
 					}

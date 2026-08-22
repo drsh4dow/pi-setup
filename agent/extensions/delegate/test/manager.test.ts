@@ -247,6 +247,41 @@ test("all effort modes stop at sixty million reported tokens", () => Effect.runP
 	}
 })));
 
+test("a child is disposed when subscription throws", () => Effect.runPromise(Effect.gen(function* () {
+	class ThrowingSubscribeChild extends FakeChild {
+		disposeCalls = 0;
+
+		override subscribe(
+			_listener: (event: AgentSessionEvent) => void,
+		): ReturnType<FakeChild["subscribe"]> {
+			throw new Error("subscription failed");
+		}
+
+		override disposeNow() {
+			this.disposeCalls++;
+			super.disposeNow();
+		}
+	}
+
+	const child = new ThrowingSubscribeChild();
+	const manager = new DelegateManager({
+		createSession: () => Promise.resolve(child as unknown as ChildSession),
+		shutdownSession() {
+			child.disposeNow();
+			return Promise.resolve();
+		},
+	});
+	const job = manager.spawn({ task: "subscription failure", ctx: context });
+
+	const [failed] = yield* manager.wait([job.id]);
+	assert.equal(failed.status, "error");
+	assert.match(failed.error ?? "", /subscription failed/);
+	yield* eventually(() => child.disposeCalls === 1);
+	assert.equal(child.disposeCalls, 1);
+	yield* manager.shutdown();
+	assert.equal(child.disposeCalls, 1);
+})));
+
 test("a ceiling event delivered during subscription cannot revive a stopped run", () => Effect.runPromise(Effect.gen(function* () {
 	class EventDuringSubscribeChild extends FakeChild {
 		override subscribe(listener: (event: AgentSessionEvent) => void) {

@@ -17,27 +17,37 @@ const GROUP_CHECK_MS = 100;
 const schedule = (delayMs: number, action: () => void) =>
 	Effect.runFork(Effect.delay(Effect.sync(action), delayMs));
 
-type TerminalState = "running" | "done" | "failed" | "killed";
+type SettledTerminalState = "done" | "failed" | "killed";
 interface OutputTail {
 	text: string;
 	totalBytes: number;
 	truncatedBytes: number;
 }
-export interface TerminalSnapshot {
+interface TerminalSnapshotBase {
 	id: string;
 	command: string;
 	title: string;
 	cwd: string;
 	pid?: number;
-	state: TerminalState;
 	createdAt: number;
-	settledAt?: number;
 	exitCode?: number;
 	signal?: string;
 	error?: string;
 	stdout: OutputTail;
 	stderr: OutputTail;
 }
+export type RunningTerminalSnapshot = TerminalSnapshotBase & {
+	state: "running";
+	settledAt?: never;
+};
+export type SettledTerminalSnapshot = TerminalSnapshotBase & {
+	state: SettledTerminalState;
+	settledAt: number;
+};
+export type TerminalSnapshot =
+	| RunningTerminalSnapshot
+	| SettledTerminalSnapshot;
+
 class Tail {
 	private chunks: Buffer[] = [];
 	private headOffset = 0;
@@ -104,32 +114,95 @@ class Tail {
 	}
 }
 
-interface Entry {
-	snapshot: Omit<TerminalSnapshot, "stdout" | "stderr">;
+type ProcessExit =
+	| { kind: "code"; code: number }
+	| { kind: "signal"; signal: string }
+	| { kind: "unknown" };
+type ProcessObservation =
+	| { kind: "executing" }
+	| { kind: "draining-after-exit"; exit: ProcessExit }
+	| { kind: "reaping-after-pipe-close"; exit: ProcessExit };
+type TerminationPhase = "graceful" | "forceful" | "closing-pipes";
+type TerminationIntent = "automatic" | "kill";
+
+interface ActiveTerminal {
+	id: string;
+	command: string;
+	title: string;
+	cwd: string;
+	pid?: number;
+	createdAt: number;
 	child: ChildProcess;
 	stdout: Tail;
 	stderr: Tail;
-	exited: boolean;
-	closed: boolean;
-	killSignaled: boolean;
-	pipeGeneration: number;
-	groupGeneration: number;
-	termination?: Deferred.Deferred<void>;
-	settled: Deferred.Deferred<void>;
+	observation: ProcessObservation;
+	processError?: string;
+	settlement: Deferred.Deferred<void>;
+}
+type ActiveEntry =
+	| { kind: "running"; terminal: ActiveTerminal }
+	| {
+			kind: "terminating";
+			terminal: ActiveTerminal;
+			intent: TerminationIntent;
+			phase: TerminationPhase;
+	  };
+type Entry =
+	| ActiveEntry
+	| { kind: "settled"; snapshot: SettledTerminalSnapshot };
+
+function assertNever(value: never): never {
+	throw new Error(`Unexpected terminal lifecycle variant: ${String(value)}`);
+}
+function processExit(
+	code: number | null,
+	signal: NodeJS.Signals | null,
+): ProcessExit {
+	if (signal !== null) return { kind: "signal", signal };
+	if (code !== null) return { kind: "code", code };
+	return { kind: "unknown" };
+}
+function exitSnapshot(exit: ProcessExit): {
+	exitCode: number | undefined;
+	signal: string | undefined;
+} {
+	switch (exit.kind) {
+		case "code":
+			return { exitCode: exit.code, signal: undefined };
+		case "signal":
+			return { exitCode: undefined, signal: exit.signal };
+		case "unknown":
+			return { exitCode: undefined, signal: undefined };
+		default:
+			return assertNever(exit);
+	}
+}
+function observedExit(observation: ProcessObservation): {
+	exitCode: number | undefined;
+	signal: string | undefined;
+} {
+	switch (observation.kind) {
+		case "executing":
+			return { exitCode: undefined, signal: undefined };
+		case "draining-after-exit":
+		case "reaping-after-pipe-close":
+			return exitSnapshot(observation.exit);
+		default:
+			return assertNever(observation);
+	}
 }
 
 export class BackgroundTerminalManager {
 	private readonly entries = new Map<string, Entry>();
 	private counter = 0;
 	private lifecycle: "running" | "stopping" | "stopped" = "running";
-	private readonly killInterest = new Map<string, number>();
 	private readonly onSettled?: (
-		snapshot: TerminalSnapshot,
+		snapshot: SettledTerminalSnapshot,
 		consumed: boolean,
 	) => void;
 	private readonly allocateId: () => string;
 	constructor(
-		onSettled?: (snapshot: TerminalSnapshot, consumed: boolean) => void,
+		onSettled?: (snapshot: SettledTerminalSnapshot, consumed: boolean) => void,
 		allocateId?: () => string,
 	) {
 		this.onSettled = onSettled;
@@ -144,19 +217,40 @@ export class BackgroundTerminalManager {
 		return entry ? this.snapshot(entry) : undefined;
 	}
 	private snapshot(entry: Entry): TerminalSnapshot {
+		switch (entry.kind) {
+			case "running":
+			case "terminating":
+				return this.activeSnapshot(entry);
+			case "settled":
+				return entry.snapshot;
+			default:
+				return assertNever(entry);
+		}
+	}
+	private activeSnapshot(entry: ActiveEntry): RunningTerminalSnapshot {
+		const terminal = entry.terminal;
 		return {
-			...entry.snapshot,
-			stdout: entry.stdout.view(),
-			stderr: entry.stderr.view(),
+			id: terminal.id,
+			command: terminal.command,
+			title: terminal.title,
+			cwd: terminal.cwd,
+			pid: terminal.pid,
+			state: "running",
+			createdAt: terminal.createdAt,
+			...observedExit(terminal.observation),
+			...(terminal.processError ? { error: terminal.processError } : {}),
+			stdout: terminal.stdout.view(),
+			stderr: terminal.stderr.view(),
 		};
 	}
 	private prune(limit = MAX_TRACKED) {
 		while (this.entries.size > limit) {
 			const oldest = [...this.entries.values()]
-				.filter((entry) => entry.snapshot.state !== "running")
-				.sort(
-					(a, b) => (a.snapshot.settledAt ?? 0) - (b.snapshot.settledAt ?? 0),
-				)[0];
+				.filter(
+					(entry): entry is Extract<Entry, { kind: "settled" }> =>
+						entry.kind === "settled",
+				)
+				.sort((a, b) => a.snapshot.settledAt - b.snapshot.settledAt)[0];
 			if (!oldest) return;
 			this.entries.delete(oldest.snapshot.id);
 		}
@@ -166,7 +260,7 @@ export class BackgroundTerminalManager {
 		command: string;
 		title: string;
 		cwd: string;
-	}): TerminalSnapshot {
+	}): RunningTerminalSnapshot {
 		if (this.lifecycle !== "running")
 			throw new Error("Background terminal manager is shutting down.");
 		this.prune(MAX_TRACKED - 1);
@@ -186,118 +280,186 @@ export class BackgroundTerminalManager {
 			windowsHide: true,
 		});
 		const id = this.allocateId();
-		const settled = Deferred.makeUnsafe<void>();
-		const entry: Entry = {
-			snapshot: {
-				id,
-				command: options.command,
-				title: options.title,
-				cwd: options.cwd,
-				pid: child.pid,
-				state: "running",
-				createdAt: Effect.runSync(Clock.currentTimeMillis),
-			},
+		const terminal: ActiveTerminal = {
+			id,
+			command: options.command,
+			title: options.title,
+			cwd: options.cwd,
+			pid: child.pid,
+			createdAt: Effect.runSync(Clock.currentTimeMillis),
 			child,
 			stdout: new Tail(),
 			stderr: new Tail(),
-			exited: false,
-			closed: false,
-			killSignaled: false,
-			pipeGeneration: 0,
-			groupGeneration: 0,
-			settled,
+			observation: { kind: "executing" },
+			settlement: Deferred.makeUnsafe<void>(),
 		};
+		const entry: Entry = { kind: "running", terminal };
 		this.entries.set(id, entry);
-		child.stdout?.on("data", (chunk: Buffer) => entry.stdout.append(chunk));
-		child.stderr?.on("data", (chunk: Buffer) => entry.stderr.append(chunk));
-		child.once("error", (error) => {
-			entry.snapshot.error = String(error.message).slice(0, 4096);
-		});
-		child.once("exit", (code, signal) => {
-			entry.exited = true;
-			entry.snapshot.exitCode = code ?? undefined;
-			entry.snapshot.signal = signal ?? undefined;
-			const generation = ++entry.pipeGeneration;
-			schedule(PIPE_GRACE_MS, () => {
-				if (
-					entry.pipeGeneration === generation &&
-					!entry.closed &&
-					entry.snapshot.state === "running"
-				)
-					Effect.runFork(this.terminate(entry, false));
-			});
-		});
-		child.once("close", (code, signal) => {
-			entry.closed = true;
-			entry.pipeGeneration++;
-			entry.snapshot.exitCode ??= code ?? undefined;
-			entry.snapshot.signal ??= signal ?? undefined;
-			this.settleWhenProcessGroupExits(entry);
-		});
-		return this.snapshot(entry);
+		child.stdout?.on("data", (chunk: Buffer) =>
+			this.appendOutput(id, "stdout", chunk),
+		);
+		child.stderr?.on("data", (chunk: Buffer) =>
+			this.appendOutput(id, "stderr", chunk),
+		);
+		child.once("error", (error) => this.observeError(id, error));
+		child.once("exit", (code, signal) =>
+			this.observeExit(id, processExit(code, signal)),
+		);
+		child.once("close", (code, signal) =>
+			this.observePipeClose(id, processExit(code, signal)),
+		);
+		return this.activeSnapshot(entry);
 	}
 
-	private processGroupExists(entry: Entry): boolean {
-		if (process.platform === "win32" || !entry.child.pid) return false;
+	private active(id: string): ActiveEntry | undefined {
+		const entry = this.entries.get(id);
+		return entry?.kind === "running" || entry?.kind === "terminating"
+			? entry
+			: undefined;
+	}
+	private replaceTerminal(entry: ActiveEntry, terminal: ActiveTerminal) {
+		this.entries.set(
+			terminal.id,
+			entry.kind === "running"
+				? { kind: "running", terminal }
+				: {
+						kind: "terminating",
+						terminal,
+						intent: entry.intent,
+						phase: entry.phase,
+					},
+		);
+	}
+	private appendOutput(id: string, stream: "stdout" | "stderr", chunk: Buffer) {
+		const entry = this.active(id);
+		if (entry) entry.terminal[stream].append(chunk);
+	}
+	private observeError(id: string, error: Error) {
+		const entry = this.active(id);
+		if (!entry) return;
+		this.replaceTerminal(entry, {
+			...entry.terminal,
+			processError: String(error.message).slice(0, 4096),
+		});
+	}
+	private observeExit(id: string, exit: ProcessExit) {
+		const entry = this.active(id);
+		if (entry?.terminal.observation.kind !== "executing") return;
+		this.replaceTerminal(entry, {
+			...entry.terminal,
+			observation: { kind: "draining-after-exit", exit },
+		});
+		schedule(PIPE_GRACE_MS, () => this.onPipeTimeout(id));
+	}
+	private onPipeTimeout(id: string) {
+		const entry = this.active(id);
+		if (entry?.terminal.observation.kind !== "draining-after-exit") return;
+		Effect.runFork(this.terminate(id, "automatic"));
+	}
+	private observePipeClose(id: string, closeExit: ProcessExit) {
+		const entry = this.active(id);
+		if (!entry) return;
+		const exit =
+			entry.terminal.observation.kind === "executing"
+				? closeExit
+				: entry.terminal.observation.exit;
+		this.replaceTerminal(entry, {
+			...entry.terminal,
+			observation: { kind: "reaping-after-pipe-close", exit },
+		});
+		this.settleWhenProcessGroupExits(id);
+	}
+
+	private processGroupExists(entry: ActiveEntry): boolean {
+		if (process.platform === "win32" || !entry.terminal.pid) return false;
 		try {
-			process.kill(-entry.child.pid, 0);
+			process.kill(-entry.terminal.pid, 0);
 			return true;
 		} catch (error) {
-			return (error as NodeJS.ErrnoException).code === "EPERM";
+			return (
+				error instanceof Error && "code" in error && error.code === "EPERM"
+			);
 		}
 	}
-
-	private settleWhenProcessGroupExits(entry: Entry) {
-		if (entry.snapshot.state !== "running") return;
+	private settleWhenProcessGroupExits(id: string) {
+		const entry = this.active(id);
+		if (entry?.terminal.observation.kind !== "reaping-after-pipe-close") return;
 		if (!this.processGroupExists(entry)) {
-			this.settle(entry);
+			this.settle(id);
 			return;
 		}
-		const generation = ++entry.groupGeneration;
-		schedule(GROUP_CHECK_MS, () => {
-			if (entry.groupGeneration === generation)
-				this.settleWhenProcessGroupExits(entry);
-		});
+		schedule(GROUP_CHECK_MS, () => this.settleWhenProcessGroupExits(id));
 	}
 
-	private settle(entry: Entry) {
-		if (entry.snapshot.state !== "running") return;
-		entry.pipeGeneration++;
-		entry.groupGeneration++;
-		if (!entry.killSignaled && !entry.snapshot.error) {
-			const note = sacrificeKillNote(
-				{ exitCode: entry.snapshot.exitCode, signal: entry.snapshot.signal },
-				entry.snapshot.createdAt,
-			);
-			if (note) entry.snapshot.error = note;
+	private settle(id: string) {
+		const entry = this.active(id);
+		if (!entry) return;
+		const terminal = entry.terminal;
+		const exit = observedExit(terminal.observation);
+		let error = terminal.processError;
+		if (entry.kind === "running" && !error) {
+			const note = sacrificeKillNote(exit, terminal.createdAt);
+			if (note) error = note;
 		}
-		entry.snapshot.state = entry.killSignaled
-			? "killed"
-			: entry.snapshot.error || entry.snapshot.exitCode !== 0
-				? "failed"
-				: "done";
-		entry.snapshot.settledAt = Effect.runSync(Clock.currentTimeMillis);
-		const snapshot = this.snapshot(entry);
+		const state: SettledTerminalState =
+			entry.kind === "terminating" && entry.intent === "kill"
+				? "killed"
+				: error || exit.exitCode !== 0
+					? "failed"
+					: "done";
+		const snapshot: SettledTerminalSnapshot = {
+			id: terminal.id,
+			command: terminal.command,
+			title: terminal.title,
+			cwd: terminal.cwd,
+			pid: terminal.pid,
+			state,
+			createdAt: terminal.createdAt,
+			settledAt: Effect.runSync(Clock.currentTimeMillis),
+			...exit,
+			...(error ? { error } : {}),
+			stdout: terminal.stdout.view(),
+			stderr: terminal.stderr.view(),
+		};
+		this.entries.set(id, { kind: "settled", snapshot });
 		try {
 			if (this.lifecycle === "running")
 				this.onSettled?.(
 					snapshot,
-					(this.killInterest.get(snapshot.id) ?? 0) > 0,
+					entry.kind === "terminating" && entry.intent === "kill",
 				);
 		} catch {
 			// Notification failures do not own process lifecycle state.
 		}
 		this.prune();
-		Effect.runSync(Deferred.succeed(entry.settled, undefined));
+		Effect.runSync(Deferred.succeed(terminal.settlement, undefined));
 	}
 
-	private signalTree(entry: Entry, force: boolean): Effect.Effect<void> {
+	private setProcessError(id: string, message: string) {
+		const entry = this.active(id);
+		if (!entry) return;
+		this.replaceTerminal(entry, {
+			...entry.terminal,
+			processError: message,
+		});
+	}
+	private signalTree(id: string, force: boolean): Effect.Effect<void> {
+		const entry = this.active(id);
+		if (!entry) return Effect.void;
 		const signal = force ? "SIGKILL" : "SIGTERM";
-		if (process.platform === "win32" && entry.child.pid) {
+		if (process.platform === "win32" && entry.terminal.pid) {
+			const self = this;
 			return Effect.gen(function* () {
+				const current = self.active(id);
+				if (!current?.terminal.pid) return;
 				const killer = spawn(
 					"taskkill",
-					["/pid", String(entry.child.pid), "/T", ...(force ? ["/F"] : [])],
+					[
+						"/pid",
+						String(current.terminal.pid),
+						"/T",
+						...(force ? ["/F"] : []),
+					],
 					{ stdio: "ignore", windowsHide: true },
 				);
 				const result = yield* Effect.race(
@@ -315,58 +477,84 @@ export class BackgroundTerminalManager {
 				);
 				if (result === 0) return;
 				yield* Effect.try(() => killer.kill()).pipe(Effect.ignore);
-				entry.snapshot.error = `taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`;
-				yield* Effect.try(() => entry.child.kill(signal)).pipe(Effect.ignore);
+				self.setProcessError(
+					id,
+					`taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`,
+				);
+				const latest = self.active(id);
+				if (latest)
+					yield* Effect.try(() => latest.terminal.child.kill(signal)).pipe(
+						Effect.ignore,
+					);
 			});
 		}
 		return Effect.try(() => {
-			if (entry.child.pid) process.kill(-entry.child.pid, signal);
-			else entry.child.kill(signal);
+			const current = this.active(id);
+			if (!current) return;
+			if (current.terminal.pid) process.kill(-current.terminal.pid, signal);
+			else current.terminal.child.kill(signal);
 		}).pipe(
 			Effect.catch(() =>
-				Effect.try(() => entry.child.kill(signal)).pipe(Effect.ignore),
+				Effect.try(() => this.active(id)?.terminal.child.kill(signal)).pipe(
+					Effect.ignore,
+				),
 			),
 			Effect.asVoid,
 		);
 	}
 
-	private waitForSettlement(entry: Entry, timeoutMs: number) {
-		return Effect.race(Deferred.await(entry.settled), Effect.sleep(timeoutMs));
+	private waitForSettlement(
+		settlement: Deferred.Deferred<void>,
+		timeoutMs: number,
+	) {
+		return Effect.race(Deferred.await(settlement), Effect.sleep(timeoutMs));
 	}
-
-	private terminate(entry: Entry, owned: boolean): Effect.Effect<void> {
-		const self = this;
-		return Effect.suspend(() => {
-			if (entry.termination) return Deferred.await(entry.termination);
-			const termination = Deferred.makeUnsafe<void>();
-			entry.termination = termination;
-			// Uninterruptible: an interrupted terminator must not leave the
-			// Deferred forever incomplete for concurrent callers awaiting it.
-			return Deferred.complete(
-				termination,
-				Effect.gen(function* () {
-					if (entry.snapshot.state !== "running") return;
-					if (owned) entry.killSignaled = true;
-					yield* self.signalTree(entry, false);
-					yield* self.waitForSettlement(entry, TERM_GRACE_MS);
-					if (entry.snapshot.state === "running") {
-						yield* self.signalTree(entry, true);
-						yield* self.waitForSettlement(entry, CLOSE_GRACE_MS);
-					}
-					if (entry.snapshot.state === "running") {
-						entry.snapshot.error ??=
-							"stdio did not close after termination; output may be incomplete";
-						entry.child.stdout?.destroy();
-						entry.child.stderr?.destroy();
-						entry.child.unref();
-						self.settle(entry);
-					}
-				}),
-			).pipe(
-				Effect.uninterruptible,
-				Effect.andThen(Deferred.await(termination)),
-			);
+	private setTerminationPhase(id: string, phase: TerminationPhase) {
+		const entry = this.entries.get(id);
+		if (entry?.kind !== "terminating") return;
+		this.entries.set(id, { ...entry, phase });
+	}
+	private terminate(
+		id: string,
+		intent: TerminationIntent,
+	): Effect.Effect<void> {
+		const current = this.entries.get(id);
+		if (!current || current.kind === "settled") return Effect.void;
+		if (current.kind === "terminating") {
+			if (intent === "kill" && current.intent === "automatic")
+				this.entries.set(id, { ...current, intent: "kill" });
+			return Deferred.await(current.terminal.settlement);
+		}
+		const settlement = current.terminal.settlement;
+		this.entries.set(id, {
+			kind: "terminating",
+			terminal: current.terminal,
+			intent,
+			phase: "graceful",
 		});
+		const self = this;
+		return Effect.gen(function* () {
+			yield* self.signalTree(id, false);
+			yield* self.waitForSettlement(settlement, TERM_GRACE_MS);
+			if (!self.active(id)) return;
+			self.setTerminationPhase(id, "forceful");
+			yield* self.signalTree(id, true);
+			yield* self.waitForSettlement(settlement, CLOSE_GRACE_MS);
+			const active = self.active(id);
+			if (!active) return;
+			self.setTerminationPhase(id, "closing-pipes");
+			self.setProcessError(
+				id,
+				active.terminal.processError ??
+					"stdio did not close after termination; output may be incomplete",
+			);
+			const latest = self.active(id);
+			if (!latest) return;
+			latest.terminal.child.stdout?.destroy();
+			latest.terminal.child.stderr?.destroy();
+			latest.terminal.child.unref();
+			self.settle(id);
+		}).pipe(Effect.uninterruptible);
 	}
 
 	kill = Effect.fn("BackgroundTerminalManager.kill")(function* (
@@ -377,36 +565,23 @@ export class BackgroundTerminalManager {
 		const entries = unique.map((id) => {
 			const entry = this.entries.get(id);
 			if (!entry) throw new Error(`Unknown terminal id "${id}".`);
-			return entry;
+			return { id, wasRunning: entry.kind !== "settled" };
 		});
-		const wasRunning = new Set(
-			entries
-				.filter((entry) => entry.snapshot.state === "running")
-				.map((entry) => entry.snapshot.id),
+		yield* Effect.all(
+			entries.map(({ id }) => this.terminate(id, "kill")),
+			{ concurrency: "unbounded" },
 		);
-		for (const id of wasRunning)
-			this.killInterest.set(id, (this.killInterest.get(id) ?? 0) + 1);
-		try {
-			yield* Effect.all(
-				entries.map((entry) => this.terminate(entry, true)),
-				{ concurrency: "unbounded" },
-			);
-			return entries.map((entry) => ({
-				id: entry.snapshot.id,
-				title: entry.snapshot.title,
-				state: entry.snapshot.state,
-				wasRunning: wasRunning.has(entry.snapshot.id),
-				killed:
-					wasRunning.has(entry.snapshot.id) &&
-					entry.snapshot.state === "killed",
-			}));
-		} finally {
-			for (const id of wasRunning) {
-				const count = (this.killInterest.get(id) ?? 1) - 1;
-				if (count === 0) this.killInterest.delete(id);
-				else this.killInterest.set(id, count);
-			}
-		}
+		return entries.map(({ id, wasRunning }) => {
+			const snapshot = this.get(id);
+			if (!snapshot) throw new Error(`Unknown terminal id "${id}".`);
+			return {
+				id,
+				title: snapshot.title,
+				state: snapshot.state,
+				wasRunning,
+				killed: wasRunning && snapshot.state === "killed",
+			};
+		});
 	});
 
 	shutdown = Effect.fn("BackgroundTerminalManager.shutdown")(function* (
@@ -415,9 +590,9 @@ export class BackgroundTerminalManager {
 		if (this.lifecycle !== "running") return;
 		this.lifecycle = "stopping";
 		yield* Effect.all(
-			[...this.entries.values()]
-				.filter((entry) => entry.snapshot.state === "running")
-				.map((entry) => this.terminate(entry, true)),
+			[...this.entries.entries()]
+				.filter(([, entry]) => entry.kind !== "settled")
+				.map(([id]) => this.terminate(id, "kill")),
 			{ concurrency: "unbounded" },
 		);
 		this.entries.clear();

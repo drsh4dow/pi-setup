@@ -550,10 +550,11 @@ export class DelegateManager {
 			}
 		}
 		if (!job.state.isStopping()) return;
+		const settledAt = yield* Clock.currentTimeMillis;
 		const settlementOrder = this.nextSettlementOrder + 1;
 		const transition = job.state.settleStopping(
 			this.checkpoint(job),
-			yield* Clock.currentTimeMillis,
+			settledAt,
 			settlementOrder,
 		);
 		this.publishSettlement(job, settlementOrder, transition);

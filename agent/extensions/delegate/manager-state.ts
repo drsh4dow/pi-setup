@@ -321,12 +321,6 @@ export class RunState {
 		return true;
 	}
 
-	consumeClaimedDelivery(): void {
-		if (this.delivery.kind === "pending") {
-			this.delivery = { kind: "consumed" };
-		}
-	}
-
 	releaseDeliveryClaim(): boolean {
 		if (this.delivery.kind !== "pending" || this.delivery.waiters === 0) {
 			return false;
@@ -336,7 +330,7 @@ export class RunState {
 		return waiters === 0 && this.lifecycle.kind === "settled";
 	}
 
-	consumePendingDelivery(): void {
+	consumeDelivery(): void {
 		if (this.delivery.kind === "pending") {
 			this.delivery = { kind: "consumed" };
 		}

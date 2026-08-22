@@ -475,6 +475,44 @@ test("cancel consumption wins over an aborted concurrent wait", () => {
 	}));
 });
 
+test("shutdown wins once child settlement races an owned stop", () => Effect.runPromise(Effect.gen(function* () {
+	const delivered: DelegateSnapshot[] = [];
+	const terminalNotifications: DelegateSnapshot[] = [];
+	let disposals = 0;
+	const { manager, sessions } = harness(
+		(snapshot) => delivered.push(snapshot),
+		() => Effect.sync(() => {
+			disposals++;
+		}),
+	);
+	manager.subscribe((snapshot) => {
+		if (snapshot.status !== "running") terminalNotifications.push(snapshot);
+	});
+	const job = manager.spawn({
+		task: "settle during shutdown",
+		background: true,
+		ctx: context,
+	});
+	yield* eventually(() => sessions.length === 1);
+	const abortGate = yield* Deferred.make<void>();
+	sessions[0].abortGate = abortGate;
+
+	const shutdown = yield* manager.shutdown().pipe(Effect.forkChild);
+	yield* eventually(() => sessions[0].abortCalls === 1);
+	sessions[0].finish("too late");
+	yield* Deferred.succeed(abortGate, undefined);
+	yield* Fiber.join(shutdown);
+
+	const [snapshot] = manager.list([job.id]);
+	assert.equal(snapshot.status, "cancelled");
+	assert.equal(snapshot.output, "too late");
+	assert.equal(delivered.length, 1);
+	assert.equal(delivered[0].status, "cancelled");
+	assert.equal(terminalNotifications.length, 1);
+	assert.equal(terminalNotifications[0].status, "cancelled");
+	assert.equal(disposals, 1);
+})));
+
 test("concurrent shutdown joins gated child disposal", () => Effect.runPromise(Effect.gen(function* () {
 	const disposalGate = yield* Deferred.make<void>();
 	let disposalStarted = false;

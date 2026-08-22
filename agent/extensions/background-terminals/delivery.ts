@@ -42,7 +42,9 @@ export function sanitizeErrorForDisplay(error: unknown): Error {
 	return new Error(sanitizeInline(message));
 }
 function tail(text: string, maxBytes = MAX_TEXT): string {
-	return truncateUtf8Tail(sanitizeMultiline(text), maxBytes)
+	// Sanitization can expand each replaced character to three bytes.
+	const bounded = truncateUtf8Tail(text, maxBytes * 3);
+	return truncateUtf8Tail(sanitizeMultiline(bounded), maxBytes)
 		.split("\n")
 		.slice(-MAX_LINES)
 		.join("\n");

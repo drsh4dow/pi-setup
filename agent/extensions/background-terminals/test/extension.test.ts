@@ -185,7 +185,7 @@ test("parent shutdown awaits a child shutdown already escalating", {
 	const started = yield* fromPromise(start.execute(
 		"start-stubborn-child",
 		{
-			command: "trap '' TERM; echo ready; sleep 30 & wait",
+			command: "trap '' TERM; echo ready; while true; do sleep 1; done",
 			title: "stubborn child",
 		},
 		undefined,
@@ -212,6 +212,10 @@ test("parent shutdown awaits a child shutdown already escalating", {
 		));
 		assert.ok(processIsGone(started.details.pid));
 	} finally {
+		yield* fromPromise(parentHandlers.get("session_shutdown")?.(
+			{ type: "session_shutdown", reason: "quit" },
+			context,
+		));
 		yield* fromPromise(childShutdown);
 	}
 })));

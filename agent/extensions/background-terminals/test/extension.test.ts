@@ -9,10 +9,7 @@ import type {
 import { Effect } from "effect";
 import { processIsGone } from "../../test/process.ts";
 import extension, { BackgroundTerminalDelivery } from "../index.ts";
-import {
-	MAX_RUNNING_PER_OWNER,
-	MAX_TRACKED,
-} from "../manager.ts";
+import { MAX_RUNNING_PER_OWNER, MAX_TRACKED } from "../manager.ts";
 
 const noEvents = {
 	emit() {},
@@ -150,6 +147,71 @@ test("child terminals die with the child and stay out of the parent's list", () 
 		yield* fromPromise(parentHandlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },
 			parentContext,
+		));
+	}
+})));
+
+test("child completions cannot evict a parent's retained result", () => Effect.runPromise(Effect.gen(function* () {
+	const { tools: parentTools, handlers: parentHandlers } =
+		registeredExtension(() => {});
+	const { tools: childTools, handlers: childHandlers } =
+		registeredExtension(() => {});
+	const context = {
+		cwd: process.cwd(),
+		hasUI: false,
+		isIdle: () => false,
+	} as ExtensionContext;
+	yield* fromPromise(parentHandlers.get("session_start")?.(
+		{ type: "session_start", reason: "startup" },
+		context,
+	));
+	yield* fromPromise(childHandlers.get("session_start")?.(
+		{ type: "session_start", reason: "startup" },
+		context,
+	));
+	const parentStart = parentTools[0] as unknown as {
+		execute: (...args: unknown[]) => Promise<{ details: { id: string } }>;
+	};
+	const parentStatus = parentTools[1] as unknown as {
+		execute: (...args: unknown[]) => Promise<{ content: [{ text: string }] }>;
+	};
+	const childStart = childTools[0] as unknown as typeof parentStart;
+	const childStatus = childTools[1] as unknown as typeof parentStatus;
+	try {
+		const parent = yield* fromPromise(parentStart.execute(
+			"parent",
+			{ command: "printf parent-result", title: "parent result" },
+			undefined,
+			undefined,
+			context,
+		));
+		yield* eventually(() => parentStatus.execute("parent-ready", { id: parent.details.id }).then(
+			(result) => result.content[0].text.includes("[done]"),
+		));
+		for (let index = 0; index < MAX_TRACKED; index++) {
+			const child = yield* fromPromise(childStart.execute(
+				`child-${index}`,
+				{ command: "true", title: `child ${index}` },
+				undefined,
+				undefined,
+				context,
+			));
+			yield* eventually(() => childStatus.execute(`child-ready-${index}`, { id: child.details.id }).then(
+				(result) => result.content[0].text.includes("[done]"),
+			));
+		}
+		const retained = yield* fromPromise(parentStatus.execute("parent-retained", {
+			id: parent.details.id,
+		}));
+		assert.match(retained.content[0].text, /parent-result/);
+	} finally {
+		yield* fromPromise(childHandlers.get("session_shutdown")?.(
+			{ type: "session_shutdown", reason: "quit" },
+			context,
+		));
+		yield* fromPromise(parentHandlers.get("session_shutdown")?.(
+			{ type: "session_shutdown", reason: "quit" },
+			context,
 		));
 	}
 })));
@@ -395,7 +457,7 @@ test("completion delivery pauses without dropping results and closed delivery st
 		state: "done",
 		createdAt: 0,
 		settledAt: 1,
-		exitCode: 0,
+		result: { kind: "success" },
 		stdout: { text: "", totalBytes: 0, truncatedBytes: 0 },
 		stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
 	} as const;
@@ -440,7 +502,11 @@ test("bounds complete delivery batches with worst-case metadata", () => Effect.r
 			state: "failed",
 			createdAt: 0,
 			settledAt: 1,
-			error: "e".repeat(4_096),
+			result: {
+				kind: "error",
+				error: "e".repeat(4_096),
+				exit: { kind: "unknown" },
+			},
 			stdout: {
 				text: "é".repeat(20_000),
 				totalBytes: 40_000,
@@ -489,7 +555,10 @@ test("retries completion delivery three times and exposes final failure", () => 
 			state: "failed",
 			createdAt: 0,
 			settledAt: 1,
-			exitCode: 1,
+			result: {
+				kind: "process-failure",
+				exit: { kind: "signal", signal: "SIGTERM" },
+			},
 			stdout: { text: "", totalBytes: 0, truncatedBytes: 0 },
 			stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
 		});

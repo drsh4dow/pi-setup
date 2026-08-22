@@ -8,6 +8,7 @@ import {
 	MAX_TRACKED,
 	type SettledTerminalSnapshot,
 	type TerminalSnapshot,
+	terminalResultFields,
 } from "./manager.ts";
 
 const MAX_LINES = 80;
@@ -54,27 +55,29 @@ function elapsed(snapshot: TerminalSnapshot): string {
 	return `${Math.max(0, Math.round((end - snapshot.createdAt) / 1000))}s`;
 }
 export function statusSummary(snapshot: TerminalSnapshot): string {
+	const fields = terminalResultFields(snapshot);
 	const exit =
 		snapshot.state === "running"
 			? "running"
-			: (snapshot.signal ??
-				(snapshot.exitCode === undefined
+			: (fields.signal ??
+				(fields.exitCode === undefined
 					? snapshot.state
-					: `exit ${snapshot.exitCode}`));
+					: `exit ${fields.exitCode}`));
 	return `[${snapshot.state}] ${sanitizeInline(snapshot.title)} · ${exit} · ${elapsed(snapshot)}`;
 }
 export function summary(snapshot: TerminalSnapshot): string {
 	return `${sanitizeInline(snapshot.id)} ${statusSummary(snapshot)}`;
 }
 export function terminalMetadata(snapshot: TerminalSnapshot) {
+	const fields = terminalResultFields(snapshot);
 	return {
 		id: sanitizeInline(snapshot.id),
 		title: sanitizeInline(snapshot.title),
 		cwd: sanitizeInline(snapshot.cwd),
 		pid: snapshot.pid,
 		state: snapshot.state,
-		exitCode: snapshot.exitCode,
-		signal: snapshot.signal,
+		exitCode: fields.exitCode,
+		signal: fields.signal,
 		stdoutBytes: snapshot.stdout.totalBytes,
 		stderrBytes: snapshot.stderr.totalBytes,
 	};
@@ -98,8 +101,8 @@ export function formatTerminalDetails(
 				: "";
 		sections.push(`\n${name}${omitted}:\n${tail(output.text, outputBytes)}`);
 	}
-	if (snapshot.error)
-		sections.push(`\nerror: ${sanitizeInline(snapshot.error)}`);
+	const error = terminalResultFields(snapshot).error;
+	if (error) sections.push(`\nerror: ${sanitizeInline(error)}`);
 	if (snapshot.stdout.truncatedBytes || snapshot.stderr.truncatedBytes)
 		sections.push("\noutput-retention: bounded-tail");
 	return sections.join("\n");

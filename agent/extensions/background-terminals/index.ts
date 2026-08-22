@@ -188,7 +188,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 							`Unknown terminal id "${sanitizeInline(params.id)}".`,
 						);
 					if (snapshot.state !== "running")
-						terminalSession.consume([snapshot.id]);
+						terminalSession.consume(clientId, [snapshot.id]);
 					return {
 						content: [{ type: "text", text: formatTerminalReport(snapshot) }],
 						details: terminalMetadata(snapshot),
@@ -251,7 +251,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			return Effect.runPromise(
 				Effect.promise(() => work).pipe(
 					Effect.map((results) => {
-						terminalSession.consume(ids);
+						terminalSession.consume(clientId, ids);
 						return {
 							content: [
 								{

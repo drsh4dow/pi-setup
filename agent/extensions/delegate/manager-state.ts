@@ -1,30 +1,20 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Deferred, Fiber, Semaphore } from "effect";
-import type { ChildState } from "./child-state.ts";
-import type {
-	DelegateEffort,
-	DelegateSnapshot,
-	DelegateStatus,
-	DelegateThinking,
-} from "./contract.ts";
-import type { scheduleTimer } from "./host-timers.ts";
+import { Deferred, Effect, Fiber } from "effect";
+import type { DelegateStatus } from "./contract.ts";
+import { cancelTimer, type scheduleTimer } from "./host-timers.ts";
 import type { ChildSession } from "./runtime.ts";
 
 type ExecutionTimer = ReturnType<typeof scheduleTimer>;
 
-export type OwnedChild = {
-	readonly kind: "owned";
+type OwnedChild = {
 	readonly child: ChildSession;
 	readonly unsubscribe: () => void;
 };
 
-export type StoppingChild = { readonly kind: "none" } | OwnedChild;
-
-export type StopReason =
+type StopReason =
 	| { readonly kind: "cancel" }
 	| { readonly kind: "execution-ceiling"; readonly error: string };
 
-export type SettledOutcome =
+type SettledOutcome =
 	| { readonly kind: "done" }
 	| {
 			readonly kind: "error";
@@ -37,19 +27,18 @@ export type SettledOutcome =
 			readonly checkpoint: string;
 	  };
 
-export type RunLifecycle =
+type RunLifecycle =
 	| { readonly kind: "creating"; readonly timer: ExecutionTimer }
 	| {
 			readonly kind: "running";
-			readonly child: ChildSession;
-			readonly unsubscribe: () => void;
+			readonly ownership: OwnedChild;
 			readonly timer: ExecutionTimer;
 	  }
 	| {
 			readonly kind: "stopping";
 			readonly task: Fiber.Fiber<void>;
 			readonly reason: StopReason;
-			readonly child: StoppingChild;
+			readonly ownership?: OwnedChild;
 	  }
 	| {
 			readonly kind: "settled";
@@ -58,91 +47,321 @@ export type RunLifecycle =
 			readonly outcome: SettledOutcome;
 	  };
 
-export type Delivery =
+type Delivery =
 	| { readonly kind: "foreground" }
 	| { readonly kind: "pending"; readonly waiters: number }
 	| { readonly kind: "consumed" };
 
-export interface Run {
-	readonly id: string;
-	readonly task: string;
-	readonly cwd: string;
-	readonly effort: DelegateEffort;
-	readonly thinking: DelegateThinking;
-	readonly outputFormat?: string;
-	readonly ctx: ExtensionContext;
-	readonly requestedModel: string;
-	readonly fallbackReason?: string;
-	readonly modelChoice: ExtensionContext["model"];
-	model?: string;
-	readonly createdAt: number;
-	readonly childState: ChildState;
-	readonly completion: Deferred.Deferred<DelegateSnapshot>;
-	readonly ownership: AbortController;
-	readonly sendSemaphore: Semaphore.Semaphore;
-	pendingSends: number;
-	waiters: number;
-	delivery: Delivery;
-	lifecycle: RunLifecycle;
-}
+export type RunStateView =
+	| { readonly status: "running" }
+	| {
+			readonly status: "done";
+			readonly settledAt: number;
+			readonly settlementOrder: number;
+	  }
+	| {
+			readonly status: "error" | "cancelled";
+			readonly settledAt: number;
+			readonly settlementOrder: number;
+			readonly error: string;
+			readonly checkpoint: string;
+	  };
 
-export function assertNever(value: never): never {
+export type SettlementTransition =
+	| { readonly kind: "unchanged" }
+	| { readonly kind: "settled"; readonly child?: ChildSession };
+
+function assertNever(value: never): never {
 	throw new Error(`Unhandled delegate state: ${String(value)}`);
 }
 
-export function lifecycleStatus(lifecycle: RunLifecycle): DelegateStatus {
-	switch (lifecycle.kind) {
-		case "creating":
-		case "running":
-		case "stopping":
-			return "running";
-		case "settled":
-			return lifecycle.outcome.kind;
-		default:
-			return assertNever(lifecycle);
-	}
-}
+export class RunState {
+	private lifecycle: RunLifecycle;
+	private delivery: Delivery;
 
-export function isActive(lifecycle: RunLifecycle): boolean {
-	switch (lifecycle.kind) {
-		case "creating":
-		case "running":
-		case "stopping":
-			return true;
-		case "settled":
+	private constructor(lifecycle: RunLifecycle, delivery: Delivery) {
+		this.lifecycle = lifecycle;
+		this.delivery = delivery;
+	}
+
+	static creating(timer: ExecutionTimer, background: boolean): RunState {
+		return new RunState(
+			{ kind: "creating", timer },
+			background ? { kind: "pending", waiters: 0 } : { kind: "foreground" },
+		);
+	}
+
+	view(): RunStateView {
+		const lifecycle = this.lifecycle;
+		switch (lifecycle.kind) {
+			case "creating":
+			case "running":
+			case "stopping":
+				return { status: "running" };
+			case "settled":
+				switch (lifecycle.outcome.kind) {
+					case "done":
+						return {
+							status: "done",
+							settledAt: lifecycle.settledAt,
+							settlementOrder: lifecycle.settlementOrder,
+						};
+					case "error":
+					case "cancelled":
+						return {
+							status: lifecycle.outcome.kind,
+							settledAt: lifecycle.settledAt,
+							settlementOrder: lifecycle.settlementOrder,
+							error: lifecycle.outcome.error,
+							checkpoint: lifecycle.outcome.checkpoint,
+						};
+					default:
+						return assertNever(lifecycle.outcome);
+				}
+			default:
+				return assertNever(lifecycle);
+		}
+	}
+
+	status(): DelegateStatus {
+		return this.view().status;
+	}
+
+	isActive(): boolean {
+		return this.lifecycle.kind !== "settled";
+	}
+
+	settlementOrder(): number {
+		const view = this.view();
+		return view.status === "running" ? 0 : view.settlementOrder;
+	}
+
+	startRunning(child: ChildSession, unsubscribe: () => void): boolean {
+		const lifecycle = this.lifecycle;
+		if (lifecycle.kind !== "creating") return false;
+		this.lifecycle = {
+			kind: "running",
+			ownership: { child, unsubscribe },
+			timer: lifecycle.timer,
+		};
+		return true;
+	}
+
+	runningChild(): ChildSession | undefined {
+		return this.lifecycle.kind === "running"
+			? this.lifecycle.ownership.child
+			: undefined;
+	}
+
+	ownsRunningChild(child: ChildSession): boolean {
+		return (
+			this.lifecycle.kind === "running" &&
+			this.lifecycle.ownership.child === child
+		);
+	}
+
+	isRunning(): boolean {
+		return this.lifecycle.kind === "running";
+	}
+
+	isStopping(): boolean {
+		return this.lifecycle.kind === "stopping";
+	}
+
+	stopForCancellation(
+		stop: () => Effect.Effect<void>,
+		onStarted: () => void,
+	): Effect.Effect<void> {
+		return this.stop({ kind: "cancel" }, stop, onStarted);
+	}
+
+	stopAtExecutionCeiling(
+		error: string,
+		stop: () => Effect.Effect<void>,
+		onStarted: () => void,
+	): Effect.Effect<void> {
+		return this.stop({ kind: "execution-ceiling", error }, stop, onStarted);
+	}
+
+	stoppingChild(): ChildSession | undefined {
+		return this.lifecycle.kind === "stopping"
+			? this.lifecycle.ownership?.child
+			: undefined;
+	}
+
+	releaseStoppingChild(child: ChildSession): boolean {
+		const lifecycle = this.lifecycle;
+		if (lifecycle.kind !== "stopping" || lifecycle.ownership?.child !== child) {
 			return false;
-		default:
-			return assertNever(lifecycle);
+		}
+		lifecycle.ownership.unsubscribe();
+		this.lifecycle = {
+			kind: "stopping",
+			task: lifecycle.task,
+			reason: lifecycle.reason,
+		};
+		return true;
 	}
-}
 
-export function settlementOrder(lifecycle: RunLifecycle): number {
-	switch (lifecycle.kind) {
-		case "creating":
-		case "running":
-		case "stopping":
-			return 0;
-		case "settled":
-			return lifecycle.settlementOrder;
-		default:
-			return assertNever(lifecycle);
+	settleDone(settledAt: number, settlementOrder: number): SettlementTransition {
+		if (this.lifecycle.kind !== "running") return { kind: "unchanged" };
+		return this.settle(
+			settledAt,
+			settlementOrder,
+			{ kind: "done" },
+			this.lifecycle.ownership,
+			this.lifecycle.timer,
+		);
 	}
-}
 
-export function ownedChild(lifecycle: RunLifecycle): OwnedChild | undefined {
-	switch (lifecycle.kind) {
-		case "creating":
-		case "settled":
-			return undefined;
-		case "running":
-			return {
-				kind: "owned",
-				child: lifecycle.child,
-				unsubscribe: lifecycle.unsubscribe,
+	settleError(
+		error: string,
+		checkpoint: string,
+		settledAt: number,
+		settlementOrder: number,
+	): SettlementTransition {
+		const lifecycle = this.lifecycle;
+		if (lifecycle.kind === "creating") {
+			return this.settle(
+				settledAt,
+				settlementOrder,
+				{ kind: "error", error, checkpoint },
+				undefined,
+				lifecycle.timer,
+			);
+		}
+		if (lifecycle.kind === "running") {
+			return this.settle(
+				settledAt,
+				settlementOrder,
+				{ kind: "error", error, checkpoint },
+				lifecycle.ownership,
+				lifecycle.timer,
+			);
+		}
+		return { kind: "unchanged" };
+	}
+
+	settleCancelled(
+		error: string,
+		checkpoint: string,
+		settledAt: number,
+		settlementOrder: number,
+	): SettlementTransition {
+		if (this.lifecycle.kind !== "running") return { kind: "unchanged" };
+		return this.settle(
+			settledAt,
+			settlementOrder,
+			{ kind: "cancelled", error, checkpoint },
+			this.lifecycle.ownership,
+			this.lifecycle.timer,
+		);
+	}
+
+	settleStopping(
+		checkpoint: string,
+		settledAt: number,
+		settlementOrder: number,
+	): SettlementTransition {
+		const lifecycle = this.lifecycle;
+		if (lifecycle.kind !== "stopping") return { kind: "unchanged" };
+		const outcome: SettledOutcome =
+			lifecycle.reason.kind === "execution-ceiling"
+				? {
+						kind: "error",
+						error: lifecycle.reason.error,
+						checkpoint,
+					}
+				: {
+						kind: "cancelled",
+						error: "Delegation cancelled",
+						checkpoint,
+					};
+		return this.settle(
+			settledAt,
+			settlementOrder,
+			outcome,
+			lifecycle.ownership,
+		);
+	}
+
+	claimDelivery(): boolean {
+		if (this.delivery.kind !== "pending") return false;
+		this.delivery = {
+			kind: "pending",
+			waiters: this.delivery.waiters + 1,
+		};
+		return true;
+	}
+
+	consumeClaimedDelivery(): void {
+		if (this.delivery.kind === "pending") {
+			this.delivery = { kind: "consumed" };
+		}
+	}
+
+	releaseDeliveryClaim(): boolean {
+		if (this.delivery.kind !== "pending" || this.delivery.waiters === 0) {
+			return false;
+		}
+		const waiters = this.delivery.waiters - 1;
+		this.delivery = { kind: "pending", waiters };
+		return waiters === 0 && this.lifecycle.kind === "settled";
+	}
+
+	consumePendingDelivery(): void {
+		if (this.delivery.kind === "pending") {
+			this.delivery = { kind: "consumed" };
+		}
+	}
+
+	shouldDeliverSettlement(): boolean {
+		return this.delivery.kind === "pending" && this.delivery.waiters === 0;
+	}
+
+	private stop(
+		reason: StopReason,
+		stop: () => Effect.Effect<void>,
+		onStarted: () => void,
+	): Effect.Effect<void> {
+		return Effect.suspend(() => {
+			const lifecycle = this.lifecycle;
+			if (lifecycle.kind === "settled") return Effect.void;
+			if (lifecycle.kind === "stopping") return Fiber.join(lifecycle.task);
+
+			cancelTimer(lifecycle.timer);
+			const start = Deferred.makeUnsafe<void>();
+			const task = Effect.runFork(
+				Deferred.await(start).pipe(Effect.andThen(stop())),
+			);
+			this.lifecycle = {
+				kind: "stopping",
+				task,
+				reason,
+				ownership:
+					lifecycle.kind === "running" ? lifecycle.ownership : undefined,
 			};
-		case "stopping":
-			return lifecycle.child.kind === "owned" ? lifecycle.child : undefined;
-		default:
-			return assertNever(lifecycle);
+			onStarted();
+			Effect.runSync(Deferred.succeed(start, undefined));
+			return Fiber.join(task);
+		});
+	}
+
+	private settle(
+		settledAt: number,
+		settlementOrder: number,
+		outcome: SettledOutcome,
+		ownership?: OwnedChild,
+		timer?: ExecutionTimer,
+	): SettlementTransition {
+		if (timer !== undefined) cancelTimer(timer);
+		this.lifecycle = {
+			kind: "settled",
+			settledAt,
+			settlementOrder,
+			outcome,
+		};
+		ownership?.unsubscribe();
+		return { kind: "settled", child: ownership?.child };
 	}
 }

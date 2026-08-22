@@ -12,7 +12,6 @@ import extension, { BackgroundTerminalDelivery } from "../index.ts";
 import {
 	MAX_RUNNING_PER_OWNER,
 	MAX_TRACKED,
-	type TerminalSnapshot,
 } from "../manager.ts";
 
 const noEvents = {
@@ -440,6 +439,7 @@ test("bounds complete delivery batches with worst-case metadata", () => Effect.r
 			cwd: `/${"w".repeat(4_094)}`,
 			state: "failed",
 			createdAt: 0,
+			settledAt: 1,
 			error: "e".repeat(4_096),
 			stdout: {
 				text: "é".repeat(20_000),
@@ -451,7 +451,7 @@ test("bounds complete delivery batches with worst-case metadata", () => Effect.r
 				totalBytes: 40_000,
 				truncatedBytes: 0,
 			},
-		} as TerminalSnapshot);
+		});
 	yield* delivery.flush;
 	assert.ok(messages.length > 1);
 	assert.ok(
@@ -488,6 +488,7 @@ test("retries completion delivery three times and exposes final failure", () => 
 			cwd: "/",
 			state: "failed",
 			createdAt: 0,
+			settledAt: 1,
 			exitCode: 1,
 			stdout: { text: "", totalBytes: 0, truncatedBytes: 0 },
 			stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },

@@ -3,9 +3,6 @@ import assert from "node:assert/strict";
 import { Clock, Effect } from "effect";
 
 const { mkdtempSync, rmSync } = process.getBuiltinModule("node:fs");
-type ChildProcess = ReturnType<
-	ReturnType<typeof process.getBuiltinModule<"node:child_process">>["spawn"]
->;
 
 import { tmpdir } from "node:os";
 
@@ -17,7 +14,7 @@ import {
 	BackgroundTerminalManager,
 	MAX_TRACKED,
 	RETAINED_BYTES,
-	type TerminalSnapshot,
+	type SettledTerminalSnapshot,
 } from "../manager.ts";
 
 const cwd = mkdtempSync(join(tmpdir(), "pi-bg-test-"));
@@ -30,7 +27,7 @@ const killProcess = (pid: number) => Effect.sync(() => {
 			process.kill(pid, "SIGKILL");
 		} catch {}
 });
-const settled = Effect.fn("settled")(function* (manager: BackgroundTerminalManager, id: string, timeout = 6_000): Effect.fn.Return<TerminalSnapshot> {
+const settled = Effect.fn("settled")(function* (manager: BackgroundTerminalManager, id: string, timeout = 6_000): Effect.fn.Return<SettledTerminalSnapshot> {
 	const deadline = now() + timeout;
 	while (now() < deadline) {
 		const snapshot = manager.get(id);
@@ -131,6 +128,38 @@ test("repeated and overlapping kills settle once", () => Effect.runPromise(Effec
 	yield* manager.shutdown();
 })));
 
+test("a user kill takes ownership of stalled-pipe termination already in flight", {
+	skip: process.platform === "win32",
+}, () => Effect.runPromise(Effect.gen(function* () {
+	const manager = new BackgroundTerminalManager();
+	const run = manager.start({
+		command:
+			`sh -c 'trap "echo automatic-termination-started" TERM; while true; do sleep 30; done' & exit 0`,
+		title: "stalled pipes",
+		cwd,
+	});
+	try {
+		const deadline = now() + 4_000;
+		while (
+			now() < deadline &&
+			!manager
+				.get(run.id)
+				?.stdout.text.includes("automatic-termination-started")
+		)
+			yield* wait(20);
+		assert.match(
+			manager.get(run.id)?.stdout.text ?? "",
+			/automatic-termination-started/,
+		);
+		const [result] = yield* manager.kill([run.id]);
+		assert.equal(result.state, "killed");
+		assert.equal(result.killed, true);
+		assert.equal(manager.get(run.id)?.state, "killed");
+	} finally {
+		yield* manager.shutdown();
+	}
+})));
+
 test("escalates SIGTERM and cleans the POSIX process group", {
 	skip: process.platform === "win32",
 }, () => Effect.runPromise(Effect.gen(function* () {
@@ -214,11 +243,9 @@ test("releases inherited pipe handles after bounded termination", {
 		const snapshot = yield* settled(manager, run.id, 6_000);
 		escapedPid = Number(/escaped:(\d+)/.exec(snapshot.stdout.text)?.[1]);
 		assert.ok(escapedPid);
-		const entries = (
-			manager as unknown as { entries: Map<string, { child: ChildProcess }> }
-		).entries;
-		assert.equal(entries.get(run.id)?.child.stdout?.destroyed, true);
-		assert.equal(entries.get(run.id)?.child.stderr?.destroyed, true);
+		assert.equal(processIsGone(escapedPid), false);
+		assert.match(snapshot.error ?? "", /stdio did not close/);
+		assert.ok(snapshot.settledAt - snapshot.createdAt < 5_000);
 	} finally {
 		yield* manager.shutdown();
 		yield* killProcess(escapedPid);
@@ -236,6 +263,6 @@ test("bounds settlement when descendants retain inherited pipes", {
 	});
 	const snapshot = yield* settled(manager, run.id, 5_000);
 	assert.equal(snapshot.state, "done");
-	assert.ok((snapshot.settledAt ?? 0) - snapshot.createdAt < 4_500);
+	assert.ok(snapshot.settledAt - snapshot.createdAt < 4_500);
 	yield* manager.shutdown();
 })));

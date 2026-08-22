@@ -419,6 +419,10 @@ export class DelegateManager {
 			return;
 		}
 		job.model = modelName(child.model ?? job.modelChoice);
+		if (!job.state.startSubscribing(child)) {
+			yield* this.disposeOwned(child, job.id);
+			return;
+		}
 		const unsubscribe = child.subscribe((event) => {
 			if (isAssistantResponse(event)) receivedAssistantResponse = true;
 			this.onEvent(job, event);

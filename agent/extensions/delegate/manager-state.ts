@@ -5,10 +5,17 @@ import type { ChildSession } from "./runtime.ts";
 
 type ExecutionTimer = ReturnType<typeof scheduleTimer>;
 
-type OwnedChild = {
+type SubscribingChild = {
 	readonly child: ChildSession;
+};
+
+type OwnedChild = SubscribingChild & {
 	readonly unsubscribe: () => void;
 };
+
+type StoppingOwnership =
+	| { readonly kind: "subscribing"; readonly child: ChildSession }
+	| ({ readonly kind: "running" } & OwnedChild);
 
 type StopReason =
 	| { readonly kind: "cancel" }
@@ -30,6 +37,11 @@ type SettledOutcome =
 type RunLifecycle =
 	| { readonly kind: "creating"; readonly timer: ExecutionTimer }
 	| {
+			readonly kind: "subscribing";
+			readonly ownership: SubscribingChild;
+			readonly timer: ExecutionTimer;
+	  }
+	| {
 			readonly kind: "running";
 			readonly ownership: OwnedChild;
 			readonly timer: ExecutionTimer;
@@ -38,7 +50,7 @@ type RunLifecycle =
 			readonly kind: "stopping";
 			readonly task: Fiber.Fiber<void>;
 			readonly reason: StopReason;
-			readonly ownership?: OwnedChild;
+			readonly ownership?: StoppingOwnership;
 	  }
 	| {
 			readonly kind: "settled";
@@ -95,6 +107,7 @@ export class RunState {
 		const lifecycle = this.lifecycle;
 		switch (lifecycle.kind) {
 			case "creating":
+			case "subscribing":
 			case "running":
 			case "stopping":
 				return { status: "running" };
@@ -136,9 +149,21 @@ export class RunState {
 		return view.status === "running" ? 0 : view.settlementOrder;
 	}
 
-	startRunning(child: ChildSession, unsubscribe: () => void): boolean {
+	startSubscribing(child: ChildSession): boolean {
 		const lifecycle = this.lifecycle;
 		if (lifecycle.kind !== "creating") return false;
+		this.lifecycle = {
+			kind: "subscribing",
+			ownership: { child },
+			timer: lifecycle.timer,
+		};
+		return true;
+	}
+
+	startRunning(child: ChildSession, unsubscribe: () => void): boolean {
+		const lifecycle = this.lifecycle;
+		if (lifecycle.kind !== "subscribing" || lifecycle.ownership.child !== child)
+			return false;
 		this.lifecycle = {
 			kind: "running",
 			ownership: { child, unsubscribe },
@@ -194,7 +219,9 @@ export class RunState {
 		if (lifecycle.kind !== "stopping" || lifecycle.ownership?.child !== child) {
 			return false;
 		}
-		lifecycle.ownership.unsubscribe();
+		if (lifecycle.ownership.kind === "running") {
+			lifecycle.ownership.unsubscribe();
+		}
 		this.lifecycle = {
 			kind: "stopping",
 			task: lifecycle.task,
@@ -230,7 +257,7 @@ export class RunState {
 				lifecycle.timer,
 			);
 		}
-		if (lifecycle.kind === "running") {
+		if (lifecycle.kind === "subscribing" || lifecycle.kind === "running") {
 			return this.settle(
 				settledAt,
 				settlementOrder,
@@ -339,7 +366,11 @@ export class RunState {
 				task,
 				reason,
 				ownership:
-					lifecycle.kind === "running" ? lifecycle.ownership : undefined,
+					lifecycle.kind === "running"
+						? { kind: "running", ...lifecycle.ownership }
+						: lifecycle.kind === "subscribing"
+							? { kind: "subscribing", ...lifecycle.ownership }
+							: undefined,
 			};
 			onStarted();
 			Effect.runSync(Deferred.succeed(start, undefined));
@@ -351,7 +382,7 @@ export class RunState {
 		settledAt: number,
 		settlementOrder: number,
 		outcome: SettledOutcome,
-		ownership?: OwnedChild,
+		ownership?: SubscribingChild | OwnedChild | StoppingOwnership,
 		timer?: ExecutionTimer,
 	): SettlementTransition {
 		if (timer !== undefined) cancelTimer(timer);
@@ -361,7 +392,7 @@ export class RunState {
 			settlementOrder,
 			outcome,
 		};
-		ownership?.unsubscribe();
+		if (ownership && "unsubscribe" in ownership) ownership.unsubscribe();
 		return { kind: "settled", child: ownership?.child };
 	}
 }

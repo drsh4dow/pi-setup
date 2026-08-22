@@ -283,7 +283,7 @@ export class DelegateManager {
 			Effect.tap((snapshots) =>
 				Effect.sync(() => {
 					completed = true;
-					for (const job of claims) job.state.consumeClaimedDelivery();
+					for (const job of claims) job.state.consumeDelivery();
 					return snapshots;
 				}),
 			),
@@ -348,7 +348,7 @@ export class DelegateManager {
 		ids: readonly string[],
 	) {
 		const jobs = [...new Set(ids)].map((id) => this.requireJob(id));
-		for (const job of jobs) job.state.consumePendingDelivery();
+		for (const job of jobs) job.state.consumeDelivery();
 		yield* Effect.all(
 			jobs.map((job) => this.stopOwned(job)),
 			{
@@ -360,7 +360,7 @@ export class DelegateManager {
 
 	acknowledge(ids: readonly string[]) {
 		for (const id of new Set(ids)) {
-			this.jobs.get(id)?.state.consumePendingDelivery();
+			this.jobs.get(id)?.state.consumeDelivery();
 		}
 	}
 

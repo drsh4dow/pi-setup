@@ -17,7 +17,6 @@ const GROUP_CHECK_MS = 100;
 const schedule = (delayMs: number, action: () => void) =>
 	Effect.runFork(Effect.delay(Effect.sync(action), delayMs));
 
-type SettledTerminalState = "done" | "failed" | "killed";
 interface OutputTail {
 	text: string;
 	totalBytes: number;
@@ -30,23 +29,61 @@ interface TerminalSnapshotBase {
 	cwd: string;
 	pid?: number;
 	createdAt: number;
-	exitCode?: number;
-	signal?: string;
-	error?: string;
 	stdout: OutputTail;
 	stderr: OutputTail;
 }
+
+declare const NonZeroExitCodeType: unique symbol;
+type NonZeroExitCode = number & {
+	readonly [NonZeroExitCodeType]: "NonZeroExitCode";
+};
+type ProcessExit =
+	| { kind: "success" }
+	| { kind: "nonzero-exit"; code: NonZeroExitCode }
+	| { kind: "signal"; signal: string }
+	| { kind: "unknown" };
+type NonSuccessProcessExit = Exclude<ProcessExit, { kind: "success" }>;
+
+function makeNonZeroExitCode(code: number): NonZeroExitCode {
+	if (!Number.isInteger(code) || code === 0)
+		throw new Error(`Expected a nonzero integer exit code, received ${code}.`);
+	return code as NonZeroExitCode;
+}
+
 export type RunningTerminalSnapshot = TerminalSnapshotBase & {
 	state: "running";
 	settledAt?: never;
+	process:
+		| { kind: "executing"; error?: string }
+		| { kind: "observed-exit"; exit: ProcessExit; error?: string };
 };
-export type SettledTerminalSnapshot = TerminalSnapshotBase & {
-	state: SettledTerminalState;
-	settledAt: number;
-};
+export type SettledTerminalSnapshot =
+	| (TerminalSnapshotBase & {
+			state: "done";
+			settledAt: number;
+			result: { kind: "success" };
+	  })
+	| (TerminalSnapshotBase & {
+			state: "failed";
+			settledAt: number;
+			result:
+				| { kind: "process-failure"; exit: NonSuccessProcessExit }
+				| { kind: "error"; error: string; exit: ProcessExit };
+	  })
+	| (TerminalSnapshotBase & {
+			state: "killed";
+			settledAt: number;
+			result: { kind: "killed"; exit: ProcessExit; error?: string };
+	  });
 export type TerminalSnapshot =
 	| RunningTerminalSnapshot
 	| SettledTerminalSnapshot;
+
+export interface TerminalResultFields {
+	exitCode: number | undefined;
+	signal: string | undefined;
+	error: string | undefined;
+}
 
 class Tail {
 	private chunks: Buffer[] = [];
@@ -114,16 +151,12 @@ class Tail {
 	}
 }
 
-type ProcessExit =
-	| { kind: "code"; code: number }
-	| { kind: "signal"; signal: string }
-	| { kind: "unknown" };
 type ProcessObservation =
 	| { kind: "executing" }
 	| { kind: "draining-after-exit"; exit: ProcessExit }
 	| { kind: "reaping-after-pipe-close"; exit: ProcessExit };
 type TerminationPhase = "graceful" | "forceful" | "closing-pipes";
-type TerminationIntent = "automatic" | "kill";
+type TerminationIntent = "automatic" | "kill" | "shutdown";
 
 interface ActiveTerminal {
 	id: string;
@@ -137,7 +170,7 @@ interface ActiveTerminal {
 	stderr: Tail;
 	observation: ProcessObservation;
 	processError?: string;
-	settlement: Deferred.Deferred<void>;
+	settlement: Deferred.Deferred<SettledTerminalSnapshot>;
 }
 type ActiveEntry =
 	| { kind: "running"; terminal: ActiveTerminal }
@@ -159,15 +192,18 @@ function processExit(
 	signal: NodeJS.Signals | null,
 ): ProcessExit {
 	if (signal !== null) return { kind: "signal", signal };
-	if (code !== null) return { kind: "code", code };
+	if (code === 0) return { kind: "success" };
+	if (code !== null)
+		return { kind: "nonzero-exit", code: makeNonZeroExitCode(code) };
 	return { kind: "unknown" };
 }
-function exitSnapshot(exit: ProcessExit): {
-	exitCode: number | undefined;
-	signal: string | undefined;
-} {
+function processExitFields(
+	exit: ProcessExit,
+): Omit<TerminalResultFields, "error"> {
 	switch (exit.kind) {
-		case "code":
+		case "success":
+			return { exitCode: 0, signal: undefined };
+		case "nonzero-exit":
 			return { exitCode: exit.code, signal: undefined };
 		case "signal":
 			return { exitCode: undefined, signal: exit.signal };
@@ -177,19 +213,64 @@ function exitSnapshot(exit: ProcessExit): {
 			return assertNever(exit);
 	}
 }
-function observedExit(observation: ProcessObservation): {
-	exitCode: number | undefined;
-	signal: string | undefined;
-} {
+function observationExit(observation: ProcessObservation): ProcessExit {
 	switch (observation.kind) {
 		case "executing":
-			return { exitCode: undefined, signal: undefined };
+			return { kind: "unknown" };
 		case "draining-after-exit":
 		case "reaping-after-pipe-close":
-			return exitSnapshot(observation.exit);
+			return observation.exit;
 		default:
 			return assertNever(observation);
 	}
+}
+function snapshotExit(snapshot: TerminalSnapshot): ProcessExit | undefined {
+	if (snapshot.state === "running")
+		return snapshot.process.kind === "executing"
+			? undefined
+			: snapshot.process.exit;
+	switch (snapshot.state) {
+		case "done":
+			return { kind: "success" };
+		case "failed":
+			return snapshot.result.exit;
+		case "killed":
+			return snapshot.result.exit;
+		default:
+			return assertNever(snapshot);
+	}
+}
+function snapshotError(snapshot: TerminalSnapshot): string | undefined {
+	switch (snapshot.state) {
+		case "running":
+			return snapshot.process.error;
+		case "done":
+			return undefined;
+		case "failed":
+			switch (snapshot.result.kind) {
+				case "process-failure":
+					return undefined;
+				case "error":
+					return snapshot.result.error;
+				default:
+					return assertNever(snapshot.result);
+			}
+		case "killed":
+			return snapshot.result.error;
+		default:
+			return assertNever(snapshot);
+	}
+}
+export function terminalResultFields(
+	snapshot: TerminalSnapshot,
+): TerminalResultFields {
+	const exit = snapshotExit(snapshot);
+	return {
+		...(exit
+			? processExitFields(exit)
+			: { exitCode: undefined, signal: undefined }),
+		error: snapshotError(snapshot),
+	};
 }
 
 export class BackgroundTerminalManager {
@@ -229,6 +310,17 @@ export class BackgroundTerminalManager {
 	}
 	private activeSnapshot(entry: ActiveEntry): RunningTerminalSnapshot {
 		const terminal = entry.terminal;
+		const process: RunningTerminalSnapshot["process"] =
+			terminal.observation.kind === "executing"
+				? {
+						kind: "executing",
+						...(terminal.processError ? { error: terminal.processError } : {}),
+					}
+				: {
+						kind: "observed-exit",
+						exit: terminal.observation.exit,
+						...(terminal.processError ? { error: terminal.processError } : {}),
+					};
 		return {
 			id: terminal.id,
 			command: terminal.command,
@@ -237,8 +329,7 @@ export class BackgroundTerminalManager {
 			pid: terminal.pid,
 			state: "running",
 			createdAt: terminal.createdAt,
-			...observedExit(terminal.observation),
-			...(terminal.processError ? { error: terminal.processError } : {}),
+			process,
 			stdout: terminal.stdout.view(),
 			stderr: terminal.stderr.view(),
 		};
@@ -291,7 +382,7 @@ export class BackgroundTerminalManager {
 			stdout: new Tail(),
 			stderr: new Tail(),
 			observation: { kind: "executing" },
-			settlement: Deferred.makeUnsafe<void>(),
+			settlement: Deferred.makeUnsafe<SettledTerminalSnapshot>(),
 		};
 		const entry: Entry = { kind: "running", terminal };
 		this.entries.set(id, entry);
@@ -391,36 +482,54 @@ export class BackgroundTerminalManager {
 		schedule(GROUP_CHECK_MS, () => this.settleWhenProcessGroupExits(id));
 	}
 
-	private settle(id: string) {
+	private settle(id: string): SettledTerminalSnapshot | undefined {
 		const entry = this.active(id);
 		if (!entry) return;
 		const terminal = entry.terminal;
-		const exit = observedExit(terminal.observation);
+		const exit = observationExit(terminal.observation);
 		let error = terminal.processError;
 		if (entry.kind === "running" && !error) {
-			const note = sacrificeKillNote(exit, terminal.createdAt);
+			const note = sacrificeKillNote(
+				processExitFields(exit),
+				terminal.createdAt,
+			);
 			if (note) error = note;
 		}
-		const state: SettledTerminalState =
-			entry.kind === "terminating" && entry.intent === "kill"
-				? "killed"
-				: error || exit.exitCode !== 0
-					? "failed"
-					: "done";
-		const snapshot: SettledTerminalSnapshot = {
+		const base = {
 			id: terminal.id,
 			command: terminal.command,
 			title: terminal.title,
 			cwd: terminal.cwd,
 			pid: terminal.pid,
-			state,
 			createdAt: terminal.createdAt,
 			settledAt: Effect.runSync(Clock.currentTimeMillis),
-			...exit,
-			...(error ? { error } : {}),
 			stdout: terminal.stdout.view(),
 			stderr: terminal.stderr.view(),
 		};
+		const killed = entry.kind === "terminating" && entry.intent !== "automatic";
+		const snapshot: SettledTerminalSnapshot = killed
+			? {
+					...base,
+					state: "killed",
+					result: {
+						kind: "killed",
+						exit,
+						...(error ? { error } : {}),
+					},
+				}
+			: error
+				? {
+						...base,
+						state: "failed",
+						result: { kind: "error", error, exit },
+					}
+				: exit.kind === "success"
+					? { ...base, state: "done", result: { kind: "success" } }
+					: {
+							...base,
+							state: "failed",
+							result: { kind: "process-failure", exit },
+						};
 		this.entries.set(id, { kind: "settled", snapshot });
 		try {
 			if (this.lifecycle === "running")
@@ -431,8 +540,9 @@ export class BackgroundTerminalManager {
 		} catch {
 			// Notification failures do not own process lifecycle state.
 		}
+		Effect.runSync(Deferred.succeed(terminal.settlement, snapshot));
 		this.prune();
-		Effect.runSync(Deferred.succeed(terminal.settlement, undefined));
+		return snapshot;
 	}
 
 	private setProcessError(id: string, message: string) {
@@ -443,23 +553,15 @@ export class BackgroundTerminalManager {
 			processError: message,
 		});
 	}
-	private signalTree(id: string, force: boolean): Effect.Effect<void> {
-		const entry = this.active(id);
-		if (!entry) return Effect.void;
-		const signal = force ? "SIGKILL" : "SIGTERM";
-		if (process.platform === "win32" && entry.terminal.pid) {
-			const self = this;
-			return Effect.gen(function* () {
-				const current = self.active(id);
-				if (!current?.terminal.pid) return;
+	private signalTree = Effect.fn("BackgroundTerminalManager.signalTree")(
+		function* (this: BackgroundTerminalManager, id: string, force: boolean) {
+			const entry = this.active(id);
+			if (!entry) return;
+			const signal = force ? "SIGKILL" : "SIGTERM";
+			if (process.platform === "win32" && entry.terminal.pid) {
 				const killer = spawn(
 					"taskkill",
-					[
-						"/pid",
-						String(current.terminal.pid),
-						"/T",
-						...(force ? ["/F"] : []),
-					],
+					["/pid", String(entry.terminal.pid), "/T", ...(force ? ["/F"] : [])],
 					{ stdio: "ignore", windowsHide: true },
 				);
 				const result = yield* Effect.race(
@@ -477,85 +579,100 @@ export class BackgroundTerminalManager {
 				);
 				if (result === 0) return;
 				yield* Effect.try(() => killer.kill()).pipe(Effect.ignore);
-				self.setProcessError(
+				this.setProcessError(
 					id,
 					`taskkill ${result === undefined ? "timed out" : result === null ? "failed to start" : `exited with code ${result}`}; process tree termination may be incomplete`,
 				);
-				const latest = self.active(id);
+				const latest = this.active(id);
 				if (latest)
 					yield* Effect.try(() => latest.terminal.child.kill(signal)).pipe(
 						Effect.ignore,
 					);
-			});
-		}
-		return Effect.try(() => {
-			const current = this.active(id);
-			if (!current) return;
-			if (current.terminal.pid) process.kill(-current.terminal.pid, signal);
-			else current.terminal.child.kill(signal);
-		}).pipe(
-			Effect.catch(() =>
-				Effect.try(() => this.active(id)?.terminal.child.kill(signal)).pipe(
-					Effect.ignore,
+				return;
+			}
+			yield* Effect.try(() => {
+				const current = this.active(id);
+				if (!current) return;
+				if (current.terminal.pid) process.kill(-current.terminal.pid, signal);
+				else current.terminal.child.kill(signal);
+			}).pipe(
+				Effect.catch(() =>
+					Effect.try(() => this.active(id)?.terminal.child.kill(signal)).pipe(
+						Effect.ignore,
+					),
 				),
-			),
-			Effect.asVoid,
-		);
-	}
+				Effect.asVoid,
+			);
+		},
+	);
 
-	private waitForSettlement(
-		settlement: Deferred.Deferred<void>,
+	private waitForSettlement = Effect.fn(
+		"BackgroundTerminalManager.waitForSettlement",
+	)(function* (
+		settlement: Deferred.Deferred<SettledTerminalSnapshot>,
 		timeoutMs: number,
 	) {
-		return Effect.race(Deferred.await(settlement), Effect.sleep(timeoutMs));
-	}
+		return yield* Effect.race(
+			Deferred.await(settlement),
+			Effect.sleep(timeoutMs),
+		);
+	});
 	private setTerminationPhase(id: string, phase: TerminationPhase) {
 		const entry = this.entries.get(id);
 		if (entry?.kind !== "terminating") return;
 		this.entries.set(id, { ...entry, phase });
 	}
-	private terminate(
-		id: string,
-		intent: TerminationIntent,
-	): Effect.Effect<void> {
-		const current = this.entries.get(id);
-		if (!current || current.kind === "settled") return Effect.void;
-		if (current.kind === "terminating") {
-			if (intent === "kill" && current.intent === "automatic")
-				this.entries.set(id, { ...current, intent: "kill" });
-			return Deferred.await(current.terminal.settlement);
-		}
-		const settlement = current.terminal.settlement;
-		this.entries.set(id, {
-			kind: "terminating",
-			terminal: current.terminal,
-			intent,
-			phase: "graceful",
-		});
-		const self = this;
-		return Effect.gen(function* () {
-			yield* self.signalTree(id, false);
-			yield* self.waitForSettlement(settlement, TERM_GRACE_MS);
-			if (!self.active(id)) return;
-			self.setTerminationPhase(id, "forceful");
-			yield* self.signalTree(id, true);
-			yield* self.waitForSettlement(settlement, CLOSE_GRACE_MS);
-			const active = self.active(id);
-			if (!active) return;
-			self.setTerminationPhase(id, "closing-pipes");
-			self.setProcessError(
+	private terminate = Effect.fn("BackgroundTerminalManager.terminate")(
+		function* (
+			this: BackgroundTerminalManager,
+			id: string,
+			intent: TerminationIntent,
+		): Effect.fn.Return<SettledTerminalSnapshot> {
+			const current = this.entries.get(id);
+			if (!current) throw new Error(`Unknown terminal id "${id}".`);
+			if (current.kind === "settled") return current.snapshot;
+			if (current.kind === "terminating") {
+				const promotedIntent =
+					intent === "shutdown"
+						? "shutdown"
+						: intent === "kill" && current.intent === "automatic"
+							? "kill"
+							: current.intent;
+				if (promotedIntent !== current.intent)
+					this.entries.set(id, { ...current, intent: promotedIntent });
+				return yield* Deferred.await(current.terminal.settlement);
+			}
+			const settlement = current.terminal.settlement;
+			this.entries.set(id, {
+				kind: "terminating",
+				terminal: current.terminal,
+				intent,
+				phase: "graceful",
+			});
+			yield* this.signalTree(id, false);
+			yield* this.waitForSettlement(settlement, TERM_GRACE_MS);
+			if (!this.active(id)) return yield* Deferred.await(settlement);
+			this.setTerminationPhase(id, "forceful");
+			yield* this.signalTree(id, true);
+			yield* this.waitForSettlement(settlement, CLOSE_GRACE_MS);
+			const active = this.active(id);
+			if (!active) return yield* Deferred.await(settlement);
+			this.setTerminationPhase(id, "closing-pipes");
+			this.setProcessError(
 				id,
 				active.terminal.processError ??
 					"stdio did not close after termination; output may be incomplete",
 			);
-			const latest = self.active(id);
-			if (!latest) return;
+			const latest = this.active(id);
+			if (!latest) return yield* Deferred.await(settlement);
 			latest.terminal.child.stdout?.destroy();
 			latest.terminal.child.stderr?.destroy();
 			latest.terminal.child.unref();
-			self.settle(id);
-		}).pipe(Effect.uninterruptible);
-	}
+			const snapshot = this.settle(id);
+			return snapshot ?? (yield* Deferred.await(settlement));
+		},
+		Effect.uninterruptible,
+	);
 
 	kill = Effect.fn("BackgroundTerminalManager.kill")(function* (
 		this: BackgroundTerminalManager,
@@ -567,13 +684,12 @@ export class BackgroundTerminalManager {
 			if (!entry) throw new Error(`Unknown terminal id "${id}".`);
 			return { id, wasRunning: entry.kind !== "settled" };
 		});
-		yield* Effect.all(
+		const snapshots = yield* Effect.all(
 			entries.map(({ id }) => this.terminate(id, "kill")),
 			{ concurrency: "unbounded" },
 		);
-		return entries.map(({ id, wasRunning }) => {
-			const snapshot = this.get(id);
-			if (!snapshot) throw new Error(`Unknown terminal id "${id}".`);
+		return entries.map(({ id, wasRunning }, index) => {
+			const snapshot = snapshots[index];
 			return {
 				id,
 				title: snapshot.title,
@@ -592,7 +708,7 @@ export class BackgroundTerminalManager {
 		yield* Effect.all(
 			[...this.entries.entries()]
 				.filter(([, entry]) => entry.kind !== "settled")
-				.map(([id]) => this.terminate(id, "kill")),
+				.map(([id]) => this.terminate(id, "shutdown")),
 			{ concurrency: "unbounded" },
 		);
 		this.entries.clear();

@@ -63,8 +63,10 @@ Delegation uses the parent model unless `delegate.model` is configured in [`agen
 ### Installed skills
 
 - `create-verification-skill`
+- `docs-search`
 - `maintain-verification-skill`
 - `using-subagents`
+- `web-search`
 
 ### Installed prompts
 

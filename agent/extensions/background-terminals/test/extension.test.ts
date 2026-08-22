@@ -151,6 +151,71 @@ test("child terminals die with the child and stay out of the parent's list", () 
 	}
 })));
 
+test("parent shutdown awaits a child shutdown already escalating", {
+	skip: process.platform === "win32",
+}, () => Effect.runPromise(Effect.gen(function* () {
+	const { handlers: parentHandlers } = registeredExtension(() => {});
+	const { tools: childTools, handlers: childHandlers } =
+		registeredExtension(() => {});
+	const context = {
+		cwd: process.cwd(),
+		hasUI: false,
+		isIdle: () => false,
+	} as ExtensionContext;
+	yield* fromPromise(parentHandlers.get("session_start")?.(
+		{ type: "session_start", reason: "startup" },
+		context,
+	));
+	yield* fromPromise(childHandlers.get("session_start")?.(
+		{ type: "session_start", reason: "startup" },
+		context,
+	));
+	const [start, status] = childTools as unknown as [
+		{
+			execute: (...args: unknown[]) => Promise<{
+				details: { id: string; pid: number };
+			}>;
+		},
+		{
+			execute: (...args: unknown[]) => Promise<{
+				content: [{ text: string }];
+			}>;
+		},
+	];
+	const started = yield* fromPromise(start.execute(
+		"start-stubborn-child",
+		{
+			command: "trap '' TERM; echo ready; sleep 30 & wait",
+			title: "stubborn child",
+		},
+		undefined,
+		undefined,
+		context,
+	));
+	yield* eventually(() =>
+		status
+			.execute("stubborn-child-ready", { id: started.details.id })
+			.then((result) => result.content[0].text.includes("ready")),
+	);
+	const childShutdown = Promise.resolve(
+		childHandlers.get("session_shutdown")?.(
+			{ type: "session_shutdown", reason: "quit" },
+			context,
+		),
+	);
+	try {
+		yield* Effect.sleep(100);
+		assert.equal(processIsGone(started.details.pid), false);
+		yield* fromPromise(parentHandlers.get("session_shutdown")?.(
+			{ type: "session_shutdown", reason: "quit" },
+			context,
+		));
+		assert.ok(processIsGone(started.details.pid));
+	} finally {
+		yield* fromPromise(childShutdown);
+	}
+})));
+
 test("child completions cannot evict a parent's retained result", () => Effect.runPromise(Effect.gen(function* () {
 	const { tools: parentTools, handlers: parentHandlers } =
 		registeredExtension(() => {});

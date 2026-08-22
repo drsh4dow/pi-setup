@@ -12,7 +12,11 @@ import test from "node:test";
 import type { AgentSessionEvent, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Cause, Deferred, Effect, Fiber } from "effect";
 
-import { type DelegateSnapshot, MAX_CHILD_OUTPUT_BYTES } from "../contract.ts";
+import {
+	type DelegateSnapshot,
+	MAX_CHILD_OUTPUT_BYTES,
+	MAX_EXECUTION_TOKENS,
+} from "../contract.ts";
 import { DelegateManager } from "../manager.ts";
 import type { ChildSession } from "../runtime.ts";
 import { deferredPromise, eventually, yieldImmediate } from "./eventually.ts";
@@ -241,6 +245,34 @@ test("all effort modes stop at sixty million reported tokens", () => Effect.runP
 		yield* eventually(() => sessions[0].disposed);
 		yield* manager.shutdown();
 	}
+})));
+
+test("a ceiling event delivered during subscription cannot revive a stopped run", () => Effect.runPromise(Effect.gen(function* () {
+	class EventDuringSubscribeChild extends FakeChild {
+		override subscribe(listener: (event: AgentSessionEvent) => void) {
+			const unsubscribe = super.subscribe(listener);
+			this.emitAssistant("ceiling checkpoint", MAX_EXECUTION_TOKENS);
+			return unsubscribe;
+		}
+	}
+
+	const child = new EventDuringSubscribeChild();
+	const manager = new DelegateManager({
+		createSession: () => Promise.resolve(child as unknown as ChildSession),
+		shutdownSession() {
+			child.disposeNow();
+			return Promise.resolve();
+		},
+	});
+	const job = manager.spawn({ task: "subscription race", ctx: context });
+
+	const [failed] = yield* manager.wait([job.id]);
+	assert.equal(failed.status, "error");
+	assert.match(failed.error ?? "", /60,000,000 reported tokens/);
+	yield* yieldImmediate;
+	assert.deepEqual(child.prompts, []);
+	yield* eventually(() => child.disposed);
+	yield* manager.shutdown();
 })));
 
 test("cancellation releases prompts that ignore child abort", () => Effect.runPromise(Effect.gen(function* () {

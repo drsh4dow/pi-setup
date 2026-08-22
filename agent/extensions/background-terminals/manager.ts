@@ -183,6 +183,10 @@ type ActiveEntry =
 type Entry =
 	| ActiveEntry
 	| { kind: "settled"; snapshot: SettledTerminalSnapshot };
+type ManagerLifecycle =
+	| { kind: "running" }
+	| { kind: "stopping"; completion: Deferred.Deferred<void> }
+	| { kind: "stopped" };
 
 function assertNever(value: never): never {
 	throw new Error(`Unexpected terminal lifecycle variant: ${String(value)}`);
@@ -276,7 +280,7 @@ export function terminalResultFields(
 export class BackgroundTerminalManager {
 	private readonly entries = new Map<string, Entry>();
 	private counter = 0;
-	private lifecycle: "running" | "stopping" | "stopped" = "running";
+	private lifecycle: ManagerLifecycle = { kind: "running" };
 	private readonly onSettled?: (
 		snapshot: SettledTerminalSnapshot,
 		consumed: boolean,
@@ -352,7 +356,7 @@ export class BackgroundTerminalManager {
 		title: string;
 		cwd: string;
 	}): RunningTerminalSnapshot {
-		if (this.lifecycle !== "running")
+		if (this.lifecycle.kind !== "running")
 			throw new Error("Background terminal manager is shutting down.");
 		this.prune(MAX_TRACKED - 1);
 		const invocation =
@@ -532,7 +536,7 @@ export class BackgroundTerminalManager {
 						};
 		this.entries.set(id, { kind: "settled", snapshot });
 		try {
-			if (this.lifecycle === "running")
+			if (this.lifecycle.kind === "running")
 				this.onSettled?.(
 					snapshot,
 					entry.kind === "terminating" && entry.intent === "kill",
@@ -703,15 +707,33 @@ export class BackgroundTerminalManager {
 	shutdown = Effect.fn("BackgroundTerminalManager.shutdown")(function* (
 		this: BackgroundTerminalManager,
 	) {
-		if (this.lifecycle !== "running") return;
-		this.lifecycle = "stopping";
-		yield* Effect.all(
-			[...this.entries.entries()]
-				.filter(([, entry]) => entry.kind !== "settled")
-				.map(([id]) => this.terminate(id, "shutdown")),
-			{ concurrency: "unbounded" },
+		const lifecycle = this.lifecycle;
+		switch (lifecycle.kind) {
+			case "stopping":
+				return yield* Deferred.await(lifecycle.completion);
+			case "stopped":
+				return;
+			case "running":
+				break;
+			default:
+				return assertNever(lifecycle);
+		}
+		const completion = Deferred.makeUnsafe<void>();
+		this.lifecycle = { kind: "stopping", completion };
+		const manager = this;
+		const exit = yield* Effect.exit(
+			Effect.gen(function* () {
+				yield* Effect.all(
+					[...manager.entries.entries()]
+						.filter(([, entry]) => entry.kind !== "settled")
+						.map(([id]) => manager.terminate(id, "shutdown")),
+					{ concurrency: "unbounded" },
+				);
+				manager.entries.clear();
+				manager.lifecycle = { kind: "stopped" };
+			}),
 		);
-		this.entries.clear();
-		this.lifecycle = "stopped";
-	});
+		yield* Deferred.done(completion, exit);
+		return yield* exit;
+	}, Effect.uninterruptible);
 }

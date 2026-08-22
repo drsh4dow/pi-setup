@@ -1,413 +1,31 @@
-import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import * as BunPath from "@effect/platform-bun/BunPath";
-import { Clock, Effect, FileSystem, Layer, Path } from "effect";
-
-const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
-const logError = (message: string) => Effect.runSync(Effect.logError(message));
-
 import { Type } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { truncateUtf8Tail } from "../../lib/text.ts";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Effect, FileSystem, Layer, Path } from "effect";
 import { COMPACTION_DELIVERY_PAUSE_CHANNEL } from "../compaction/index.ts";
 import { registerProcessStatusSource } from "../process-status/status.ts";
 import {
-	BackgroundTerminalManager,
-	MAX_RUNNING_PER_OWNER,
-	MAX_TRACKED,
-	type TerminalSnapshot,
-} from "./manager.ts";
+	BackgroundTerminalDelivery,
+	formatTerminalDetails,
+	formatTerminalReport,
+	sanitizeErrorForDisplay,
+	sanitizeInline,
+	statusSummary,
+	summary,
+	terminalMetadata,
+} from "./delivery.ts";
+import {
+	type BackgroundTerminalSession,
+	joinBackgroundTerminalSession,
+} from "./session.ts";
 
-const MAX_LINES = 80;
-const MAX_TEXT = 24 * 1024;
-const COMPLETION_TEXT_BYTES = 3_584;
-const COMPLETION_BATCH_BYTES = 256 * 1024;
-const MAX_DELIVERY_ATTEMPTS = 3;
-const RETRY_DELAYS_MS = [100, 500] as const;
+export { BackgroundTerminalDelivery } from "./delivery.ts";
 
-function sanitizeMultiline(text: string): string {
-	let sanitized = "";
-	for (const character of text) {
-		const code = character.codePointAt(0) ?? 0;
-		sanitized +=
-			(code === 9 ||
-				code === 10 ||
-				(code >= 32 && code < 127) ||
-				code >= 160) &&
-			!/\p{Cf}/u.test(character)
-				? character
-				: "�";
-	}
-	return sanitized;
-}
-function sanitizeInline(text: string): string {
-	return sanitizeMultiline(text).replace(/\s+/gu, " ");
-}
-function sanitizeErrorForDisplay(error: unknown): Error {
-	const message = error instanceof Error ? error.message : String(error);
-	return new Error(sanitizeInline(message));
-}
-function tail(text: string, maxBytes = MAX_TEXT): string {
-	return truncateUtf8Tail(sanitizeMultiline(text), maxBytes)
-		.split("\n")
-		.slice(-MAX_LINES)
-		.join("\n");
-}
-function elapsed(snapshot: TerminalSnapshot): string {
-	return `${Math.max(0, Math.round(((snapshot.settledAt ?? Effect.runSync(Clock.currentTimeMillis)) - snapshot.createdAt) / 1000))}s`;
-}
-function statusSummary(snapshot: TerminalSnapshot): string {
-	const exit =
-		snapshot.state === "running"
-			? "running"
-			: (snapshot.signal ??
-				(snapshot.exitCode === undefined
-					? snapshot.state
-					: `exit ${snapshot.exitCode}`));
-	return `[${snapshot.state}] ${sanitizeInline(snapshot.title)} · ${exit} · ${elapsed(snapshot)}`;
-}
-function summary(snapshot: TerminalSnapshot): string {
-	return `${sanitizeInline(snapshot.id)} ${statusSummary(snapshot)}`;
-}
-function terminalMetadata(snapshot: TerminalSnapshot) {
-	return {
-		id: sanitizeInline(snapshot.id),
-		title: sanitizeInline(snapshot.title),
-		cwd: sanitizeInline(snapshot.cwd),
-		pid: snapshot.pid,
-		state: snapshot.state,
-		exitCode: snapshot.exitCode,
-		signal: snapshot.signal,
-		stdoutBytes: snapshot.stdout.totalBytes,
-		stderrBytes: snapshot.stderr.totalBytes,
-	};
-}
-function formatTerminalDetails(
-	snapshot: TerminalSnapshot,
-	outputBytes = MAX_TEXT,
-): string {
-	const sections = [
-		`command: ${sanitizeInline(snapshot.command)}`,
-		`cwd: ${sanitizeInline(snapshot.cwd)}`,
-	];
-	for (const [name, output] of [
-		["stdout", snapshot.stdout],
-		["stderr", snapshot.stderr],
-	] as const) {
-		if (output.totalBytes === 0) continue;
-		const omitted =
-			output.truncatedBytes > 0
-				? ` (${output.truncatedBytes} earlier bytes omitted)`
-				: "";
-		sections.push(`\n${name}${omitted}:\n${tail(output.text, outputBytes)}`);
-	}
-	if (snapshot.error)
-		sections.push(`\nerror: ${sanitizeInline(snapshot.error)}`);
-	if (snapshot.stdout.truncatedBytes || snapshot.stderr.truncatedBytes)
-		sections.push("\noutput-retention: bounded-tail");
-	return sections.join("\n");
-}
-function formatTerminalReport(
-	snapshot: TerminalSnapshot,
-	outputBytes = MAX_TEXT,
-): string {
-	return `${summary(snapshot)}\n${formatTerminalDetails(snapshot, outputBytes)}`;
-}
-
-export class BackgroundTerminalDelivery {
-	private context?: ExtensionContext;
-	private readonly pending = new Map<string, TerminalSnapshot>();
-	private readonly attempts = new Map<string, number>();
-	private readonly failed = new Set<string>();
-	private retryGeneration = 0;
-	private flushState: "idle" | "flushing" = "idle";
-	private lifecycle: "open" | "closed" = "closed";
-	private paused = false;
-	private readonly pi: Pick<ExtensionAPI, "sendMessage">;
-	private readonly reportError: (message: string) => void;
-	constructor(
-		pi: Pick<ExtensionAPI, "sendMessage">,
-		reportError: (message: string) => void = logError,
-	) {
-		this.pi = pi;
-		this.reportError = reportError;
-	}
-	get problem(): string | undefined {
-		if (this.failed.size === 0) return undefined;
-		return `Automatic completion delivery failed for ${[...this.failed].join(", ")}. Use bg_status to inspect the retained result.`;
-	}
-	setContext(context: ExtensionContext) {
-		this.context = context;
-		this.lifecycle = "open";
-		this.paused = false;
-	}
-	setPaused(paused: boolean) {
-		if (this.paused === paused) return;
-		this.paused = paused;
-		if (!paused && this.context?.isIdle()) Effect.runFork(this.flush);
-	}
-	private markFailed(id: string) {
-		this.failed.add(id);
-		if (this.failed.size > MAX_TRACKED)
-			this.failed.delete(this.failed.values().next().value as string);
-	}
-	enqueue(snapshot: TerminalSnapshot) {
-		if (this.lifecycle === "closed" || !this.context) return;
-		if (!this.pending.has(snapshot.id) && this.pending.size === MAX_TRACKED) {
-			const evicted = this.pending.keys().next().value as string;
-			this.pending.delete(evicted);
-			this.attempts.delete(evicted);
-			this.markFailed(evicted);
-			this.reportError(
-				`[background-terminals] completion queue evicted ${evicted}; use bg_status to inspect it.`,
-			);
-		}
-		this.pending.set(snapshot.id, snapshot);
-		if (this.context.isIdle()) Effect.runFork(this.flush);
-	}
-	consume(ids: readonly string[]) {
-		for (const id of ids) {
-			this.pending.delete(id);
-			this.attempts.delete(id);
-			this.failed.delete(id);
-		}
-	}
-	private batch():
-		| { snapshots: TerminalSnapshot[]; content: string }
-		| undefined {
-		const snapshots: TerminalSnapshot[] = [];
-		const parts = ["[Background terminal results]\n\n"];
-		let bytes = Buffer.byteLength(parts[0]);
-		for (const snapshot of this.pending.values()) {
-			if ((this.attempts.get(snapshot.id) ?? 0) >= MAX_DELIVERY_ATTEMPTS)
-				continue;
-			const rendered = formatTerminalReport(snapshot, COMPLETION_TEXT_BYTES);
-			const separator = snapshots.length ? "\n\n---\n\n" : "";
-			const addedBytes =
-				Buffer.byteLength(separator) + Buffer.byteLength(rendered);
-			if (snapshots.length && bytes + addedBytes > COMPLETION_BATCH_BYTES)
-				break;
-			if (bytes + addedBytes > COMPLETION_BATCH_BYTES) {
-				const fallback = `${summary(snapshot)}\nCompletion detail exceeded the delivery limit; use bg_status ${snapshot.id}.`;
-				parts.push(fallback);
-				bytes += Buffer.byteLength(fallback);
-			} else {
-				parts.push(separator, rendered);
-				bytes += addedBytes;
-			}
-			snapshots.push(snapshot);
-		}
-		return snapshots.length
-			? { snapshots, content: parts.join("") }
-			: undefined;
-	}
-	private scheduleRetry(attempt: number) {
-		if (this.lifecycle === "closed") return;
-		const generation = ++this.retryGeneration;
-		Effect.runFork(
-			Effect.sleep(
-				RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)],
-			).pipe(
-				Effect.tap(() =>
-					this.retryGeneration === generation && this.context?.isIdle()
-						? this.flush
-						: Effect.void,
-				),
-			),
-		);
-	}
-	flush = Effect.sync(() => {
-		if (
-			this.flushState === "flushing" ||
-			this.lifecycle === "closed" ||
-			this.paused ||
-			!this.context
-		)
-			return;
-		this.retryGeneration++;
-		this.flushState = "flushing";
-		try {
-			for (let sent = 0; sent < MAX_TRACKED; sent++) {
-				const batch = this.batch();
-				if (!batch) return;
-				try {
-					this.pi.sendMessage(
-						{
-							customType: "background-terminal-results",
-							content: batch.content,
-							display: true,
-							details: {
-								ids: batch.snapshots.map((snapshot) => snapshot.id),
-							},
-						},
-						{
-							deliverAs: "followUp",
-							triggerTurn: batch.snapshots.some(
-								(snapshot) => snapshot.state !== "done",
-							),
-						},
-					);
-					this.consume(batch.snapshots.map((snapshot) => snapshot.id));
-				} catch (error) {
-					let attempt = 0;
-					for (const snapshot of batch.snapshots) {
-						attempt = (this.attempts.get(snapshot.id) ?? 0) + 1;
-						this.attempts.set(snapshot.id, attempt);
-						if (attempt === MAX_DELIVERY_ATTEMPTS) this.markFailed(snapshot.id);
-					}
-					if (attempt < MAX_DELIVERY_ATTEMPTS) this.scheduleRetry(attempt);
-					else
-						this.reportError(
-							`[background-terminals] completion delivery failed for ${batch.snapshots.map((snapshot) => snapshot.id).join(", ")}; use bg_status to inspect retained results: ${sanitizeInline(String(error).slice(0, 512))}`,
-						);
-					return;
-				}
-			}
-		} finally {
-			this.flushState = "idle";
-		}
-	});
-	clear() {
-		this.lifecycle = "closed";
-		this.context = undefined;
-		this.retryGeneration++;
-		this.pending.clear();
-		this.attempts.clear();
-		this.failed.clear();
-		this.paused = false;
-	}
-}
-
-interface TerminalClient {
-	delivery: BackgroundTerminalDelivery;
-	updateStatus: () => void;
-}
-
-class BackgroundTerminalSession {
-	// Every admitted delegate joins this parent-owned session; aggregate admission is intentionally unbounded and the parent shutdown clears all clients.
-	private readonly clients = new Map<symbol, TerminalClient>();
-	private readonly owners = new Map<string, symbol>();
-	private readonly manager: BackgroundTerminalManager;
-	private readonly owner: symbol;
-	private lifecycle: "running" | "stopping" = "running";
-
-	constructor(owner: symbol, ownerClient: TerminalClient) {
-		this.owner = owner;
-		this.clients.set(owner, ownerClient);
-		this.manager = new BackgroundTerminalManager(
-			(snapshot, consumed) => {
-				this.updateStatuses();
-				if (consumed) {
-					this.consume([snapshot.id]);
-					return;
-				}
-				if (
-					snapshot.state === "done" &&
-					snapshot.stdout.totalBytes === 0 &&
-					snapshot.stderr.totalBytes === 0 &&
-					!snapshot.error
-				)
-					return;
-				const holder = this.owners.get(snapshot.id);
-				(holder ? this.clients.get(holder) : undefined)?.delivery.enqueue(
-					snapshot,
-				);
-			},
-			() => `bt-${++terminalSequence}`,
-		);
-	}
-
-	join(id: symbol, client: TerminalClient) {
-		if (this.lifecycle === "stopping")
-			throw new Error("Background terminal session is shutting down.");
-		this.clients.set(id, client);
-		client.updateStatus();
-	}
-
-	isOwner(id: symbol) {
-		return id === this.owner;
-	}
-
-	start(
-		client: symbol,
-		options: { command: string; title: string; cwd: string },
-	) {
-		const running = this.list(client).filter(
-			(snapshot) => snapshot.state === "running",
-		).length;
-		if (running >= MAX_RUNNING_PER_OWNER) {
-			throw new Error(
-				`Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${running}. Kill one with bg_kill or wait for one to settle.`,
-			);
-		}
-		const snapshot = this.manager.start(options);
-		this.owners.set(snapshot.id, client);
-		const tracked = new Set(this.manager.list().map((entry) => entry.id));
-		for (const id of this.owners.keys())
-			if (!tracked.has(id)) this.owners.delete(id);
-		this.updateStatuses();
-		return snapshot;
-	}
-
-	list(client: symbol) {
-		return this.manager
-			.list()
-			.filter((snapshot) => this.owners.get(snapshot.id) === client);
-	}
-
-	get(client: symbol, id: string) {
-		return this.owners.get(id) === client ? this.manager.get(id) : undefined;
-	}
-
-	kill(client: symbol, ids: readonly string[]) {
-		for (const id of ids) {
-			if (this.owners.get(id) !== client)
-				throw new Error(`Unknown terminal id "${id}".`);
-		}
-		return this.manager.kill(ids);
-	}
-
-	consume(ids: readonly string[]) {
-		for (const client of this.clients.values()) client.delivery.consume(ids);
-	}
-
-	private updateStatuses() {
-		for (const client of this.clients.values()) client.updateStatus();
-	}
-
-	leave = Effect.fn("BackgroundTerminalSession.leave")(function* (
-		this: BackgroundTerminalSession,
-		id: symbol,
-	) {
-		const client = this.clients.get(id);
-		if (!client) return;
-		client.delivery.clear();
-		this.clients.delete(id);
-		if (id !== this.owner) {
-			const held = this.list(id);
-			for (const snapshot of held) this.owners.delete(snapshot.id);
-			yield* this.manager.kill(
-				held
-					.filter((snapshot) => snapshot.state === "running")
-					.map((snapshot) => snapshot.id),
-			);
-			this.updateStatuses();
-			return;
-		}
-
-		this.lifecycle = "stopping";
-		if (activeTerminalSession === this) activeTerminalSession = undefined;
-		for (const remaining of this.clients.values()) remaining.delivery.clear();
-		this.clients.clear();
-		this.owners.clear();
-		yield* this.manager.shutdown();
-	});
-}
-
-let activeTerminalSession: BackgroundTerminalSession | undefined;
-let terminalSequence = 0;
+const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
 
 export default function backgroundTerminals(pi: ExtensionAPI) {
 	const delivery = new BackgroundTerminalDelivery(pi);
@@ -470,10 +88,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		if (joined) yield* joined.leave(clientId);
 		if (keepContext && context) {
 			delivery.setContext(context);
-			if (!activeTerminalSession)
-				activeTerminalSession = new BackgroundTerminalSession(clientId, client);
-			else activeTerminalSession.join(clientId, client);
-			session = activeTerminalSession;
+			session = joinBackgroundTerminalSession(clientId, client);
 			updateStatus();
 		}
 	});
@@ -484,14 +99,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		context = ctx;
 		delivery.setContext(ctx);
-		if (!session) {
-			// The enclosing session binds extensions before its in-process delegates,
-			// so the first client owns the shared process lifetime.
-			if (!activeTerminalSession)
-				activeTerminalSession = new BackgroundTerminalSession(clientId, client);
-			else activeTerminalSession.join(clientId, client);
-			session = activeTerminalSession;
-		}
+		if (!session) session = joinBackgroundTerminalSession(clientId, client);
 		updateStatus();
 	});
 	pi.on("agent_end", () =>
@@ -667,7 +275,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 				),
 				{ signal },
 			).catch((error) => {
-				// An abort only interrupts the wait; a failure of the kill itself
+				// An abort only interrupts the wait. A failure of the kill itself
 				// must surface even when the signal is also aborted.
 				if (killError !== undefined) throw sanitizeErrorForDisplay(killError);
 				throw sanitizeErrorForDisplay(

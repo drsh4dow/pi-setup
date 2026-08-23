@@ -6,7 +6,7 @@ Your decisions and reasoning are shaped by the following principles which you mu
 
 The type checker is a proof assistant. Use it to eliminate impossible states, mismatched primitives, and unhandled variants at compile time. A case the types let you ignore becomes a runtime failure the compiler could have stopped. Prefer defining errors and special cases out of existence over proliferating handlers; unrepresentable states, total functions, and interface redesign (the patterns below) are the tools.
 
-Applies to any typed language. Skills like `typescript-best-practices` ground it in specific syntax.
+Applies to any typed language.
 
 **The patterns:**
 
@@ -62,7 +62,7 @@ Order work as a sequence of small units, each ending in a state you can check, a
 - Verify before advancing. Red to green per unit, never deferred to a final batch.
 - Order the units so the sequence builds confidence on its own, for you while executing and for a reviewer reading the stack.
 
-The sequencing complement to the **prove-it-works** principle skill, which keeps each check real, and the **build-the-lever** principle skill, which makes the per-unit check cheap.
+The sequencing complement to the **prove-it-works** principle, which keeps each check real, and the **build-the-lever** principle, which makes the per-unit check cheap.
 
 ## Principle: Separate Before Serializing Shared State
 
@@ -115,7 +115,7 @@ When verifying delegated work, inspect the actual output artifact (git diff, fil
 
 The strongest proof is a deterministic script that re-runs the same comparison, not a one-time eyeball. Write the script, run it, and keep its output as an artifact a reviewer can re-run instead of trusting your word. A script comparing the old and new compiled output catches what a glance misses.
 
-Keep the artifact visible for the human. Commit it only for large or complex work where the trail has to be auditable later, like a big port or migration (the **show-me-your-work** skill). Most work just needs it visible, not committed.
+Keep the artifact visible for the human. Commit it only for large or complex work where the trail has to be auditable later, like a big port or migration. Most work just needs it visible, not committed.
 
 ## Principle: Outcome-Oriented Execution
 

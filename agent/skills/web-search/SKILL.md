@@ -17,9 +17,11 @@ Use `firecrawl` for live web retrieval. Use `firecrawl <command> --help` when a 
 | Find scientific papers                                | `firecrawl research search-papers "$query" --limit 20 --json -o .firecrawl/papers-{topic}.json`                                    |
 | Find a page inside a known site                       | `firecrawl map "$site" --search "$path_hint" --limit 20 --json -o .firecrawl/map-{site}.json`                                      |
 | Read several pages from one site section              | `firecrawl crawl "$site" --include-paths "$paths" --limit 20 --wait -o .firecrawl/crawl-{site}.json`                               |
-| Extract structured data from complex sites            | `firecrawl agent "$prompt" --urls "$urls" --schema-file "$schema" --max-credits "$budget" --wait -o .firecrawl/agent-{topic}.json` |
+| Extract structured data from complex sites            | `firecrawl agent "$prompt" --urls "$urls" --schema-file "$schema" --max-credits "$budget" --wait --json -o .firecrawl/agent-{topic}.json` |
 | Download a site to files                              | `firecrawl x download "$site" --include-paths "$paths" --limit 100 -y`                                                             |
 | Watch for future changes                              | `firecrawl monitor create --name "$name" --goal "$goal" --schedule "$schedule" --page "$url"`                                      |
+
+Agent schema files use Firecrawl's supported JSON Schema subset; omit the `$schema` declaration. Set `--max-credits` as a realistic hard ceiling: the job fails without an output artifact if it exceeds that budget.
 
 Use `search --sources news` for news, `--tbs qdr:d|w|m|y` for recency, and `--country` or `--location` for regional results. Put repository, version, error text, source type, and other scope directly in a `developer` query. For papers, run several distinct query framings, inspect promising records with `research inspect-paper`, and verify relevant passages with `research read-paper --question "$question"`. A local PDF, DOCX, or spreadsheet is not a web task; parse it with `firecrawl parse "$file"`.
 
@@ -38,10 +40,13 @@ Reuse fetched content instead of scraping the same URL twice. A plain search res
 
 ```bash
 firecrawl scrape "$url" --json -o .firecrawl/start.json
-firecrawl interact "Click the pricing tab"
-firecrawl interact "Return the plan names and prices"
-firecrawl interact stop
+scrape_id=$(jq -r '.metadata.scrapeId' .firecrawl/start.json)
+firecrawl interact -s "$scrape_id" "Click the pricing tab"
+firecrawl interact -s "$scrape_id" "Return the plan names and prices"
+firecrawl interact stop "$scrape_id"
 ```
+
+Pass the saved scrape ID to every interaction and to `stop`. Firecrawl's implicit "last scrape" state is shared across processes, so another concurrent scrape can replace it.
 
 Use the `agent-browser` skill for login, forms, visual checks, or multi-step browser automation.
 

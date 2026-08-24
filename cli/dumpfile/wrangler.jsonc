@@ -1,0 +1,29 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "dumpfile-sign",
+	"main": "src/worker.ts",
+	"compatibility_date": "2026-08-21",
+	"routes": [
+		{
+			"pattern": "upload.drsh4dow.dev",
+			"custom_domain": true
+		}
+	],
+	"ratelimits": [
+		{
+			"name": "UPLOAD_RATE_LIMITER",
+			"namespace_id": "834729105",
+			"simple": {
+				"limit": 100,
+				"period": 60
+			}
+		}
+	],
+	"observability": {
+		"enabled": true,
+		"logs": {
+			"enabled": true,
+			"invocation_logs": true
+		}
+	}
+}

@@ -64,9 +64,14 @@ Delegation uses the parent model unless `delegate.model` is configured in [`agen
 
 - `create-verification-skill`
 - `docs-search`
+- `dumpfile`
 - `maintain-verification-skill`
 - `using-subagents`
 - `web-search`
+
+### Installed CLI tools
+
+- [`dumpfile`](cli/dumpfile/README.md) publishes screenshots, recordings, and other review evidence to immutable public R2 URLs. Run `./cli/dumpfile/setup.sh` once to provision Cloudflare and install the command.
 
 ### Installed prompts
 
@@ -99,6 +104,8 @@ agent/
 ├── skills/            # reusable agent workflows and references
 ├── prompts/           # prompt templates
 └── themes/            # Catppuccin and Gruvbox themes
+cli/
+└── dumpfile/          # R2 upload CLI, signer Worker, tests, and setup wizard
 ```
 
 Runtime state and secrets such as `auth.json`, sessions, API configuration, run history, and trusted local paths are ignored. Do not commit them. [`agent/trust.example.json`](agent/trust.example.json) documents the trust-file shape without including machine-specific paths.

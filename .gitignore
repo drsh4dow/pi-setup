@@ -1,4 +1,6 @@
 .env
+.dev.vars*
+.wrangler/
 node_modules/
 sessions
 .firecrawl/

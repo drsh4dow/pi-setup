@@ -6,14 +6,14 @@ argument-hint: "Issue URL or Number"
 Implement the work described in $1 , work on a different git worktree directory.
 Read the involved ticket and spec (if any).
 Use tdd skill where possible, at pre-agreed seams.
-Run typechecking regularly, single test files regularly, and the full test suite once at the end.
+Run typechecking regularly, single test files regularly, and the full test suite + repo verification-skill once at the end.
 
-Act as a planner and orchestrator. Delegate implementation to subagents intelligently, parallelizing when useful. Use separate Git worktrees/directories for parallel work to avoid interfering with the current working tree.
+Act as a planner and orchestrator. Delegate implementation to subagents intelligently, parallelizing when useful. Use separate Git worktrees/directories for parallel work to avoid interfering with the current working tree. You don't implement yourself, you delegate and implement through subagents.
 
 After implementation:
 
 1. Spawn a subagent with the `code-review` skill to review the changes.
-2. Address all valid findings.
+2. Address all valid findings. Loop over step 1 until no new findings are produced.
 3. Create a PR against `main`.
 4. Wait for CodeRabbit to review the PR.
 5. Review every CodeRabbit comment:

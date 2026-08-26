@@ -22,6 +22,6 @@ After implementation:
    - If a suggestion is invalid, not applicable, or already covered by another issue, reply with a clear explanation.
 
 6. Respond to every CodeRabbit comment, either directly in its thread or by tagging `@coderabbitai`.
-7. When done and the PR is ready record a video demonstrating the functionality end to end as the end-user of such functionality. Use the dumpfile skill and upload the media so it can be reviewed from the PR.
+7. When done and the PR is ready add complementary media material demonstrating the functionality end to end as the end-user of such functionality, if the implemented change is backend, then the media should help the viewer to understand such pipeline and the impact. If the change is a fix, then the media should demonstrate the before and after clearly displaying the fix. Use the dumpfile skill and upload the media so it can be reviewed from the PR.
 
 ${@:2}

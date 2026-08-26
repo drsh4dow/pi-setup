@@ -16,7 +16,7 @@ For example but not limited to paywalls, keys, KYC, services access, etc.
 After implementation:
 
 1. Spawn a subagent with the `code-review` skill to review the changes.
-2. Address all valid findings. Loop over step 1 until no new valid findings are produced.
+2. Address all valid findings (no false positives, or issues already discussed/covered in other gh tickets). Loop over step 1 until no new valid findings are produced.
 3. Create a PR against `main`.
 4. Wait for CodeRabbit to review the PR.
 5. Review every CodeRabbit comment:

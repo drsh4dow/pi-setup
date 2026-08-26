@@ -1,5 +1,5 @@
 diff --git a/dist/core/bash-executor.js b/dist/core/bash-executor.js
-index 46a438fb39fb4b9bdf033fd26b09d84db8311ea6..8b7f996b9f210969fc94e77e4e05e5a9ae882231 100644
+index 46a438f..8b7f996 100644
 --- a/dist/core/bash-executor.js
 +++ b/dist/core/bash-executor.js
 @@ -6,9 +6,10 @@
@@ -120,7 +120,7 @@ index 46a438fb39fb4b9bdf033fd26b09d84db8311ea6..8b7f996b9f210969fc94e77e4e05e5a9
      }
  }
 diff --git a/dist/core/compaction/compaction.js b/dist/core/compaction/compaction.js
-index e7ffee7a8566a7556f75e3f3edd228af3d93b141..01376369b15be87a1f1936d7d0b1282f450d5158 100644
+index d27179c..425e3b9 100644
 --- a/dist/core/compaction/compaction.js
 +++ b/dist/core/compaction/compaction.js
 @@ -321,7 +321,8 @@ export function findCutPoint(entries, startIndex, endIndex, keepRecentTokens) {
@@ -134,7 +134,7 @@ index e7ffee7a8566a7556f75e3f3edd228af3d93b141..01376369b15be87a1f1936d7d0b1282f
                  if (cutPoints[c] >= i) {
                      cutIndex = cutPoints[c];
 diff --git a/dist/core/diagnostics.d.ts b/dist/core/diagnostics.d.ts
-index f8ebee065112bdc6071220d20ad1357d919cac81..f2f06bcd3256886423c6d1c96f0728abc21ba525 100644
+index f8ebee0..f2f06bc 100644
 --- a/dist/core/diagnostics.d.ts
 +++ b/dist/core/diagnostics.d.ts
 @@ -12,4 +12,11 @@ export interface ResourceDiagnostic {
@@ -151,7 +151,7 @@ index f8ebee065112bdc6071220d20ad1357d919cac81..f2f06bcd3256886423c6d1c96f0728ab
  //# sourceMappingURL=diagnostics.d.ts.map
 \ No newline at end of file
 diff --git a/dist/core/diagnostics.js b/dist/core/diagnostics.js
-index 09bdbfc45bdeb811a5601ce0f8fa2e700fec196c..7c0eb96dc3f6fe47f58c70cd520c14606f003544 100644
+index 09bdbfc..7c0eb96 100644
 --- a/dist/core/diagnostics.js
 +++ b/dist/core/diagnostics.js
 @@ -1,2 +1,66 @@
@@ -224,7 +224,7 @@ index 09bdbfc45bdeb811a5601ce0f8fa2e700fec196c..7c0eb96dc3f6fe47f58c70cd520c1460
  //# sourceMappingURL=diagnostics.js.map
 \ No newline at end of file
 diff --git a/dist/core/tools/output-accumulator.d.ts b/dist/core/tools/output-accumulator.d.ts
-index fbd581f6067c98771dc6a29272a5bab2b2653dcd..811928db0b549284a32a759225a63fc8275e8324 100644
+index fbd581f..811928d 100644
 --- a/dist/core/tools/output-accumulator.d.ts
 +++ b/dist/core/tools/output-accumulator.d.ts
 @@ -35,6 +35,8 @@ export declare class OutputAccumulator {
@@ -237,7 +237,7 @@ index fbd581f6067c98771dc6a29272a5bab2b2653dcd..811928db0b549284a32a759225a63fc8
      append(data: Buffer): void;
      finish(): void;
 diff --git a/dist/core/tools/output-accumulator.js b/dist/core/tools/output-accumulator.js
-index 72416680b6307108ffeace36e45fa7076cc8b7e5..00565994c8468b80ee191ee88f00f4febcfe42b8 100644
+index 7241668..0056599 100644
 --- a/dist/core/tools/output-accumulator.js
 +++ b/dist/core/tools/output-accumulator.js
 @@ -1,7 +1,8 @@
@@ -334,18 +334,18 @@ index 72416680b6307108ffeace36e45fa7076cc8b7e5..00565994c8468b80ee191ee88f00f4fe
              this.tempFileStream.write(chunk);
          }
 diff --git a/dist/modes/interactive/interactive-mode.js b/dist/modes/interactive/interactive-mode.js
-index 6a88679e03161d2c048e2abab0041e96d214e67b..491159248a2bada9066fcafc70227d65b37fc2e8 100644
+index 19dafec..6f46274 100644
 --- a/dist/modes/interactive/interactive-mode.js
 +++ b/dist/modes/interactive/interactive-mode.js
-@@ -14,6 +14,7 @@ import { APP_NAME, APP_TITLE, CONFIG_DIR_NAME, getAgentDir, getAuthPath, getDebu
- import { parseSkillBlock } from "../../core/agent-session.js";
+@@ -15,6 +15,7 @@ import { parseSkillBlock } from "../../core/agent-session.js";
  import { SessionImportFileNotFoundError } from "../../core/agent-session-runtime.js";
  import { CACHE_TTL_MS, collectCacheMisses, computeCacheWaste, detectCacheMiss, } from "../../core/cache-stats.js";
+ import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "../../core/defaults.js";
 +import { formatStorageQuotaError } from "../../core/diagnostics.js";
  import { FooterDataProvider } from "../../core/footer-data-provider.js";
  import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.js";
  import { KeybindingsManager } from "../../core/keybindings.js";
-@@ -3183,7 +3184,10 @@ export class InteractiveMode {
+@@ -3262,7 +3263,10 @@ export class InteractiveMode {
              this.ui.stop();
          }
          catch { }

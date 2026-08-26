@@ -27,6 +27,20 @@ function packageVersion(root) {
 	return manifest.version;
 }
 
+export function findPiPackageRoot(executable) {
+	let directory = dirname(realpathSync(executable));
+	for (;;) {
+		const manifestPath = join(directory, "package.json");
+		if (existsSync(manifestPath)) {
+			const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+			if (manifest.name === "@earendil-works/pi-coding-agent") return directory;
+		}
+		const parent = dirname(directory);
+		if (parent === directory) return undefined;
+		directory = parent;
+	}
+}
+
 export function syncPiPatches(localRoot, targetRoot) {
 	if (realpathSync(localRoot) === realpathSync(targetRoot)) return 0;
 	const localVersion = packageVersion(localRoot);
@@ -60,8 +74,9 @@ function activePiPackage(localRoot) {
 		);
 		try {
 			accessSync(executable, constants.X_OK);
-			const target = dirname(dirname(realpathSync(executable)));
-			if (realpathSync(target) !== realpathSync(localRoot)) return target;
+			const target = findPiPackageRoot(executable);
+			if (target && realpathSync(target) !== realpathSync(localRoot))
+				return target;
 		} catch {}
 	}
 }

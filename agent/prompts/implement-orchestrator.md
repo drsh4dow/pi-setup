@@ -1,6 +1,6 @@
 ---
 description: Implement the task end to end
-argument-hint: "Issue URL or Number"
+argument-hint: "Issue URL, Number, or pointer"
 ---
 
 Implement the work described in $1 , work on a different git worktree directory.

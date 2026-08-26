@@ -69,6 +69,7 @@ Delegation uses the parent model unless `delegate.model` is configured in [`agen
 - `using-subagents`
 - `web-search`
 - `writing-good-prs`
+- `writing-good-tickets`
 
 ### Installed CLI tools
 

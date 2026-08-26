@@ -24,9 +24,9 @@
     "verify": "bun run typecheck && bun run check && bun run test:extensions && bun run test:runtime-patches && bun run test:dumpfile && bun run test:docs"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.84.2",
-    "@earendil-works/pi-coding-agent": "^0.84.2",
-    "@earendil-works/pi-tui": "^0.84.2",
+    "@earendil-works/pi-ai": "^0.84.3",
+    "@earendil-works/pi-coding-agent": "^0.84.3",
+    "@earendil-works/pi-tui": "^0.84.3",
     "@effect/platform-bun": "4.0.0-rc.110",
     "aws4fetch": "^1.0.20",
     "effect": "4.0.0-rc.110"
@@ -44,6 +44,6 @@
     "protobufjs"
   ],
   "patchedDependencies": {
-    "@earendil-works/pi-coding-agent@0.84.2": "patches/@earendil-works%2Fpi-coding-agent@0.84.2.patch"
+    "@earendil-works/pi-coding-agent@0.84.3": "patches/@earendil-works%2Fpi-coding-agent@0.84.3.patch"
   }
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
 	formatStorageQuotaError,
 	recoverStorageQuota,
 } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/core/diagnostics.js";
+import { findPiPackageRoot } from "../../scripts/sync-pi-patches.mjs";
 
 const outputAccumulatorUrl = pathToFileURL(
 	`${process.cwd()}/node_modules/@earendil-works/pi-coding-agent/dist/core/tools/output-accumulator.js`,
@@ -119,6 +120,23 @@ try {
 		child.stderr,
 		/Failed to save full command output to \/dev\/full\/pi-output-[a-f0-9]+\.log:/,
 	);
+});
+
+test("patch sync finds the package root for a bundled Pi executable", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-package-root-test-"));
+	try {
+		const executable = join(root, "dist", "bundle", "cli.js");
+		mkdirSync(join(root, "dist", "bundle"), { recursive: true });
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
+		);
+		writeFileSync(executable, "");
+
+		assert.equal(findPiPackageRoot(executable), root);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("patch sync permits dependency installation without an active Pi", () => {

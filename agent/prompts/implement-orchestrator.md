@@ -10,6 +10,9 @@ Run typechecking regularly, single test files regularly, and the full test suite
 
 Act as a planner and orchestrator. Delegate implementation to subagents intelligently, parallelizing when useful. Use separate Git worktrees/directories for parallel work to avoid interfering with the current working tree. You don't implement yourself, you delegate and implement through subagents.
 
+If the work itself requires human interaction because otherwise would be impossible to complete you can stop and ask the user for what you need.
+For example but not limited to paywalls, keys, KYC, services access, etc.
+
 After implementation:
 
 1. Spawn a subagent with the `code-review` skill to review the changes.

@@ -48,19 +48,25 @@ const FastModeSettings = Schema.fromJsonString(
 type PiModel = { provider?: string; id?: string };
 type ProviderPayload = Record<string, unknown>;
 
+function providerFamily(provider: string): string {
+	return provider.startsWith("openai-codex-") ? "openai-codex" : provider;
+}
+
 export function modelKey(model: PiModel): string {
 	return `${model.provider}/${model.id}`;
 }
 export function isSupportedModel(model: PiModel | undefined): boolean {
 	return Boolean(
-		model?.provider && model.id && SUPPORTED_MODELS.has(modelKey(model)),
+		model?.provider &&
+			model.id &&
+			SUPPORTED_MODELS.has(`${providerFamily(model.provider)}/${model.id}`),
 	);
 }
 export function fastServiceTier(
 	model: PiModel | undefined,
 ): string | undefined {
 	if (!isSupportedModel(model)) return undefined;
-	return model?.provider === "openai-codex"
+	return model?.provider && providerFamily(model.provider) === "openai-codex"
 		? CODEX_FAST_SERVICE_TIER
 		: OPENAI_FAST_SERVICE_TIER;
 }

@@ -31,6 +31,18 @@ describe("gpt-fast-mode request mapping", () => {
 		});
 	});
 
+	test("uses Codex's catalog tier ID through account aliases", () => {
+		const model = { provider: "openai-codex-cyber", id: "gpt-5.6-sol" };
+		const payload = { model: model.id, input: "hello" };
+
+		assert.equal(fastServiceTier(model), "priority");
+		assert.equal(shouldApplyFastMode(model, payload), true);
+		assert.deepEqual(withFastServiceTier(model, payload), {
+			...payload,
+			service_tier: "priority",
+		});
+	});
+
 	test("does not tag models outside Codex's Fast catalog", () => {
 		const model = { provider: "openai-codex", id: "gpt-5.4-mini" };
 		const payload = { model: model.id, input: "hello" };

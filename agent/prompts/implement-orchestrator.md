@@ -1,30 +1,40 @@
 ---
-description: Implement the task end to end
-argument-hint: "Issue URL, Number, or pointer"
+description: Implement a ticket end to end through delegated agents
+argument-hint: "<issue URL, number, or pointer>"
 ---
 
-Implement the work described in $1 , work on a different git worktree directory.
-Read the involved ticket and spec (if any).
-Use tdd skill where possible, at pre-agreed seams.
-Run typechecking regularly, single test files regularly, and the full test suite + repo verification-skill once at the end.
+Implement $1 in a new worktree from `origin/main`. Do not modify the current worktree or implement code yourself. Plan, delegate, integrate, and verify. You execute your will through subagents smartly.
 
-Act as a planner and orchestrator. Delegate implementation to subagents intelligently, parallelizing when useful. Use separate Git worktrees/directories for parallel work to avoid interfering with the current working tree. You don't implement yourself, you delegate and implement through subagents.
+Read the ticket/task, and related documents if not already in context.
 
-If the work itself requires human interaction because otherwise would be impossible to complete you can stop and ask the user for what you need.
-For example but not limited to paywalls, keys, KYC, services access, etc.
+Scope each delegated task so one fresh subagent can complete it end to end while keeping its active context below 150k tokens. This limit applies separately to each subagent, not to their combined or cumulative token usage. Split any task likely to exceed this limit into self-contained delegated tasks.
+
+Use separate worktrees for parallel work. Require TDD skill. Verify diffs and artifacts yourself.
+
+Run focused tests and typechecking after each integrated change. Do not run the full verification gate during implementation.
+
+The full verification gate is format, lint, typecheck, full tests, and the repo verification skill.
 
 After implementation:
 
-1. Spawn a subagent with the `code-review` skill to review the changes.
-2. Address all valid findings (no false positives, or issues already discussed/covered in other gh tickets). Loop over step 1 until no new valid findings are produced.
-3. Create a PR against `main`.
-4. Wait for CodeRabbit to review the PR. if coderabbit is rate-limited, don't wait, just skip to step 7.
-5. Review every CodeRabbit comment:
+1. Run one `code-review` subagent.
+2. Fix findings that cite a contract requirement or hard repo rule and include reproducible evidence.
+3. Complete the full verification gate on the final pre-PR state. If it fails, fix the cause and restart the gate.
 
-   - Fix all valid and applicable findings, then push the changes.
-   - If a suggestion is invalid, not applicable, or already covered by another issue, reply with a clear explanation.
+Do not run further broad reviews. Fix any remaining valid finding with targeted verification. Reject speculation, scope expansion, prototype production-parity beyond the contract, settled findings, and work tracked elsewhere.
 
-6. Respond to every CodeRabbit comment, either directly in its thread or by tagging `@coderabbitai`.
-7. When done and the PR is ready add complementary media material demonstrating the functionality end to end as the end-user of such functionality, if the implemented change is backend, then the media should help the viewer to understand such pipeline and the impact. If the change is a fix, then the media should demonstrate the before and after clearly displaying the fix. Use the dumpfile skill and upload the media so it can be reviewed from the PR.
+Then:
+
+1. Create a PR against `main`.
+2. Wait for CodeRabbit unless rate-limited.
+3. Apply the same validity rules to every comment.
+4. Fix valid comments, push, and reply to every thread. Do not solicit repeated full reviews.
+5. If the branch changed after opening the PR, complete the full verification gate again. Otherwise, reuse the successful pre-PR result.
+6. Add end-to-end media to the PR using `dumpfile`.
+7. Stop owned processes.
+
+Do not run the full verification gate at any other point.
+
+Ask the user only when faithful completion is impossible without human access or input.
 
 ${@:2}

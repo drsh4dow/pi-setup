@@ -7,9 +7,9 @@ Implement $1 in a new worktree from `origin/main`. Do not modify the current wor
 
 Read the ticket/task, and related documents if not already in context.
 
-Use the fewest implementation subagents that can complete the ticket coherently. Prefer one subagent when it can own the full TDD loop within the 150k active-context limit.
+Use the fewest implementation subagents that can complete the ticket coherently. Prefer one subagent when it can own the full TDD loop without context pressure.
 
-Scope each delegated task so one fresh subagent can complete it end to end while keeping its active context below 150k tokens. This limit applies separately to each subagent, not to their combined or cumulative token usage. Include instructions, documents, source files, tool output, working history, and the final response in the estimate.
+Use context fit as a controller-side planning heuristic, not a quota. A fresh implementation subagent has a nominal 150k active-context ceiling, so split work before a coherent task is likely to crowd that ceiling. Judge this from the scope and expected reading or tool output rather than calculating token totals. Keep this heuristic out of delegation prompts. Give each subagent a self-contained task, the context it needs, clear ownership, and verification criteria.
 
 When splitting is necessary, prefer independently testable vertical slices. Each slice owns its tests and implementation across the affected layers. Do not split tests from implementation or divide work by architectural layer merely to create parallel tasks.
 

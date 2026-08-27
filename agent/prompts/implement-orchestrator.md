@@ -7,9 +7,13 @@ Implement $1 in a new worktree from `origin/main`. Do not modify the current wor
 
 Read the ticket/task, and related documents if not already in context.
 
-Scope each delegated task so one fresh subagent can complete it end to end while keeping its active context below 150k tokens. This limit applies separately to each subagent, not to their combined or cumulative token usage. Split any task likely to exceed this limit into self-contained delegated tasks.
+Use the fewest implementation subagents that can complete the ticket coherently. Prefer one subagent when it can own the full TDD loop within the 150k active-context limit.
 
-Use separate worktrees for parallel work. Require TDD skill. Verify diffs and artifacts yourself.
+Scope each delegated task so one fresh subagent can complete it end to end while keeping its active context below 150k tokens. This limit applies separately to each subagent, not to their combined or cumulative token usage. Include instructions, documents, source files, tool output, working history, and the final response in the estimate.
+
+When splitting is necessary, prefer independently testable vertical slices. Each slice owns its tests and implementation across the affected layers. Do not split tests from implementation or divide work by architectural layer merely to create parallel tasks.
+
+Delegate shared foundations first and verify them before starting dependent slices. Parallelize only slices with independent write ownership, using separate worktrees. Require every implementation subagent to use the TDD skill. Verify diffs and artifacts yourself.
 
 Run focused tests and typechecking after each integrated change. Do not run the full verification gate during implementation.
 

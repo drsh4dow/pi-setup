@@ -4,7 +4,8 @@ argument-hint: "Issue URL or Number"
 ---
 
 Implement the work described in $1 , work on a different git worktree directory.
-Read the involved ticket and docs (if any).
+If there is no ticket for it create one on github, in that ticket capture a checklist
+of tasks you must do, the problem you are solving, and our shared understanding we reached so even if the context gets compacted it will survive on memory and you will retain the key tasks/decisions.
 Use tdd skill where possible, at pre-agreed seams.
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 

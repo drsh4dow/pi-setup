@@ -1,15 +1,15 @@
 {
-  "lastChangelogVersion": "0.84.3",
-  "packages": [],
+  "lastChangelogVersion": "0.84.4",
+  "packages": [
+    "npm:pi-mcp-adapter"
+  ],
   "defaultProvider": "openai-codex-cyber",
   "defaultModel": "gpt-5.6-sol",
   "enabledModels": [
     "openai-codex/gpt-5.6-sol",
-    "opencode-go/kimi-k3",
-    "anthropic/claude-fable-5",
     "openai-codex-cyber/gpt-daybreak-blue-latest",
-    "anthropic/claude-opus-5",
-    "openai-codex-cyber/gpt-5.6-sol"
+    "openai-codex-cyber/gpt-5.6-sol",
+    "opencode-go/glm-5.3-flash"
   ],
   "delegate": {
     "model": "openai-codex/gpt-5.6-sol"

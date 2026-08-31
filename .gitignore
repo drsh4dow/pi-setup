@@ -12,3 +12,5 @@ telemetry-minimal
 telemetry-minimal.json
 trust.json
 models-store.json
+mcp-cache.json
+mcp-onboarding.json

@@ -257,23 +257,7 @@ function eventSubject(event) {
 	}
 }
 
-export function reconcileSupersededEvents(paths) {
-	const latestBySubject = new Map();
-	const superseded = [];
-	for (const { event } of pendingRecords(paths)) {
-		const subject = eventSubject(event);
-		const previous = latestBySubject.get(subject);
-		if (previous) {
-			acknowledge(paths, previous.id, "superseded");
-			superseded.push(previous.id);
-		}
-		latestBySubject.set(subject, event);
-	}
-	return superseded;
-}
-
 export function queueEvents(paths, events) {
-	reconcileSupersededEvents(paths);
 	const added = [];
 	for (const event of events) {
 		for (const name of eventFiles(paths)) {
@@ -331,20 +315,6 @@ export function drainEvents(paths, now = Date.now()) {
 	const records = pendingRecords(paths);
 	markNotified(paths, records, now);
 	return records.map(({ event }) => event);
-}
-
-export function reconcileBotSummaries(paths) {
-	const acknowledged = [];
-	for (const { event } of pendingRecords(paths)) {
-		const isSummary =
-			(event.kind === "issue-comment" &&
-				codeRabbitIssueSummary(event.payload.comment)) ||
-			(event.kind === "review" && aggregateBotReview(event.payload.review));
-		if (!isSummary) continue;
-		acknowledge(paths, event.id, "bot-summary");
-		acknowledged.push(event.id);
-	}
-	return acknowledged;
 }
 
 export function reconcileResolvedReviewComments(
@@ -534,7 +504,6 @@ function poll(cwd, reference, paths, trustedBots) {
 		paths,
 		snapshot.input.unresolvedReviewCommentIds,
 	);
-	reconcileBotSummaries(paths);
 	const candidates = candidateEvents(snapshot.input, observedAt);
 	reconcileUnnotifiedCheckEvents(paths, candidates);
 	const added = queueEvents(paths, candidates);

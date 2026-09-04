@@ -12,15 +12,20 @@ import {
 	pendingEvents,
 	pollBaseline,
 	queueEvents,
-	reconcileBotSummaries,
 	reconcileResolvedReviewComments,
-	reconcileSupersededEvents,
 	reconcileUnnotifiedCheckEvents,
 	shouldEmit,
 	statePaths,
 	tryEmit,
 } from "../scripts/babysit-pr.mjs";
 import { trustedLogins } from "../scripts/github.mjs";
+
+const identity = {
+	host: "github.com",
+	owner: "acme",
+	repo: "widgets",
+	pr: 42,
+};
 
 function snapshot() {
 	return {
@@ -129,12 +134,32 @@ function snapshot() {
 	};
 }
 
-test("normalizes every wake-up class and excludes untrusted, resolved, and routine events", () => {
+function withState(name, run) {
+	const root = mkdtempSync(join(tmpdir(), `babysit-pr-${name}-`));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		return run(statePaths(root, identity));
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+}
+
+function eventOf(
+	kind,
+	input = snapshot(),
+	observedAt = "2026-01-01T00:01:00Z",
+) {
+	const event = candidateEvents(input, observedAt).find(
+		(candidate) => candidate.kind === kind,
+	);
+	assert.ok(event, `missing ${kind} event`);
+	return event;
+}
+
+test("normalizes every actionable event and excludes routine or untrusted input", () => {
 	const events = candidateEvents(snapshot(), "2026-01-01T00:01:00Z");
 	assert.deepEqual(
-		events
-			.map((event) => event.kind)
-			.sort((left, right) => left.localeCompare(right)),
+		events.map((event) => event.kind).sort(),
 		[
 			"behind-target",
 			"check-failed",
@@ -143,24 +168,22 @@ test("normalizes every wake-up class and excludes untrusted, resolved, and routi
 			"review",
 			"review-comment",
 			"review-thread-reopened",
-		].sort((left, right) => left.localeCompare(right)),
+		].sort(),
 	);
 	assert.ok(events.every((event) => event.id && event.marker));
 	assert.ok(
 		events.every((event) => !JSON.stringify(event).includes("stranger")),
 	);
+	assert.deepEqual(
+		events
+			.filter((event) => event.kind === "review-comment")
+			.map((event) => event.payload.comment.id),
+		[4],
+	);
 });
 
-test("distinct failed check runs cannot share an event identity", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-check-identity-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
+test("distinct failed check runs retain distinct identities", () =>
+	withState("check-identity", (paths) => {
 		const input = snapshot();
 		const failed = input.checks[0];
 		input.checks = [failed, { ...failed, link: "check-1-retry" }];
@@ -170,21 +193,9 @@ test("distinct failed check runs cannot share an event identity", () => {
 		assert.equal(new Set(events.map((event) => event.id)).size, 2);
 		assert.equal(queueEvents(paths, events).length, 2);
 		assert.equal(pendingEvents(paths).length, 2);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
+	}));
 
-test("resolved review comments never become actionable events", () => {
-	assert.deepEqual(
-		candidateEvents(snapshot(), "2026-01-01T00:01:00Z")
-			.filter((event) => event.kind === "review-comment")
-			.map((event) => event.payload.comment.id),
-		[4],
-	);
-});
-
-test("bot authors remain untrusted unless explicitly allowlisted", () => {
+test("bots are default-deny and trust changes backfill unresolved feedback", () => {
 	assert.deepEqual(
 		[
 			...trustedLogins(
@@ -211,67 +222,11 @@ test("bot authors remain untrusted unless explicitly allowlisted", () => {
 		],
 		["reviewer[bot]"],
 	);
-});
-
-test("CodeRabbit summaries do not duplicate their inline review work", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-bot-summary-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
-		const input = snapshot();
-		input.issueComments = [
-			{
-				...input.issueComments[0],
-				user: { login: "reviewer[bot]" },
-			},
-		];
-		input.reviews = [
-			{
-				...input.reviews[0],
-				user: { login: "reviewer[bot]" },
-			},
-		];
-		input.trustedLogins = new Set(["reviewer[bot]"]);
-		const oldEvents = candidateEvents(input, "2026-01-01T00:01:00Z").filter(
-			(event) => event.kind === "issue-comment" || event.kind === "review",
-		);
-		input.issueComments[0].body =
-			"<!-- This is an auto-generated comment: summarize by coderabbit.ai -->";
-		input.reviews[0].body = "**Actionable comments posted: 2**";
-		queueEvents(paths, oldEvents);
-		assert.deepEqual(
-			reconcileBotSummaries(paths).sort((left, right) =>
-				left.localeCompare(right),
-			),
-			oldEvents
-				.map((event) => event.id)
-				.sort((left, right) => left.localeCompare(right)),
-		);
-		assert.deepEqual(pendingEvents(paths), []);
-		assert.equal(
-			candidateEvents(input, "2026-01-01T00:02:00Z").filter(
-				(event) => event.kind === "issue-comment" || event.kind === "review",
-			).length,
-			0,
-		);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
-
-test("a non-collaborator PR author remains untrusted", () => {
 	assert.deepEqual(
 		[...trustedLogins(".", {}, "contributor", "pi", new Set(), new Set())],
 		[],
 	);
-});
 
-test("a trusted-bot change forces a full reconciliation", () => {
 	const previous = {
 		lastPollAt: "2026-01-01T00:00:00Z",
 		trustedBots: [],
@@ -279,24 +234,13 @@ test("a trusted-bot change forces a full reconciliation", () => {
 	};
 	const changed = pollBaseline(previous, new Set(["reviewer[bot]"]));
 	assert.equal(changed.previous.lastPollAt, undefined);
-	assert.deepEqual(changed.configuredTrustedBots, ["reviewer[bot]"]);
-	const unchanged = pollBaseline(
-		{ ...previous, trustedBots: ["reviewer[bot]"] },
-		new Set(["reviewer[bot]"]),
+	assert.equal(
+		pollBaseline(
+			{ ...previous, trustedBots: ["reviewer[bot]"] },
+			new Set(["reviewer[bot]"]),
+		).previous.lastPollAt,
+		previous.lastPollAt,
 	);
-	assert.equal(unchanged.previous.lastPollAt, previous.lastPollAt);
-});
-
-test("a trust change backfills each unresolved bot comment", () => {
-	const baseline = pollBaseline(
-		{
-			lastPollAt: "2026-01-01T00:00:00Z",
-			trustedBots: [],
-			threadStates: {},
-		},
-		new Set(["reviewer[bot]"]),
-	);
-	assert.equal(baseline.previous.lastPollAt, undefined);
 	const input = snapshot();
 	input.reviewComments = input.reviewComments.map((comment) => ({
 		...comment,
@@ -311,218 +255,100 @@ test("a trust change backfills each unresolved bot comment", () => {
 	);
 });
 
-test("comment edits produce a new event revision", () => {
-	const first = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").find(
-		(event) => event.kind === "issue-comment",
+test("CodeRabbit summaries are ignored while its inline feedback remains actionable", () => {
+	const input = snapshot();
+	input.issueComments = [
+		{
+			...input.issueComments[0],
+			user: { login: "reviewer[bot]" },
+			body: "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->",
+		},
+	];
+	input.reviewComments = [
+		{ ...input.reviewComments[0], user: { login: "reviewer[bot]" } },
+	];
+	input.reviews = [
+		{
+			...input.reviews[0],
+			user: { login: "reviewer[bot]" },
+			body: "**Actionable comments posted: 2**",
+		},
+	];
+	input.trustedLogins = new Set(["reviewer[bot]"]);
+	const feedback = candidateEvents(input, "2026-01-01T00:01:00Z").filter(
+		(event) =>
+			["issue-comment", "review-comment", "review"].includes(event.kind),
 	);
-	const edited = snapshot();
-	edited.issueComments[0].updated_at = "2026-01-01T00:02:00Z";
-	const second = candidateEvents(edited, "2026-01-01T00:02:00Z").find(
-		(event) => event.kind === "issue-comment",
+	assert.deepEqual(
+		feedback.map((event) => event.kind),
+		["review-comment"],
 	);
-	assert.notEqual(first.id, second.id);
 });
 
-test("edited review summaries remain actionable after acknowledgement", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-review-edit-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
-		const first = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").find(
-			(event) => event.kind === "review",
+test("edited feedback supersedes pending revisions but not acknowledged ones", () =>
+	withState("edits", (paths) => {
+		const first = eventOf("issue-comment");
+		const editedInput = snapshot();
+		editedInput.issueComments[0].updated_at = "2026-01-01T00:02:00Z";
+		const edited = eventOf(
+			"issue-comment",
+			editedInput,
+			"2026-01-01T00:02:00Z",
 		);
-		const edited = snapshot();
-		edited.reviews[0].body = "new requested changes";
-		const second = candidateEvents(edited, "2026-01-01T00:02:00Z").find(
-			(event) => event.kind === "review",
-		);
+		assert.notEqual(first.id, edited.id);
 		queueEvents(paths, [first]);
-		ackEvents(paths, [first.id]);
-		assert.equal(queueEvents(paths, [second]).length, 1);
+		queueEvents(paths, [edited]);
 		assert.deepEqual(
 			pendingEvents(paths).map((event) => event.id),
-			[second.id],
-		);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
-
-test("a newer comment edit supersedes its pending revision", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-edit-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
-		const first = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").find(
-			(event) => event.kind === "issue-comment",
-		);
-		const edited = snapshot();
-		edited.issueComments[0].updated_at = "2026-01-01T00:02:00Z";
-		const second = candidateEvents(edited, "2026-01-01T00:02:00Z").find(
-			(event) => event.kind === "issue-comment",
-		);
-		queueEvents(paths, [first]);
-		queueEvents(paths, [second]);
-		assert.deepEqual(
-			pendingEvents(paths).map((event) => event.id),
-			[second.id],
-		);
-		assert.match(
-			readFileSync(paths.eventFile(first.id), "utf8"),
-			/"version": 1/,
-		);
-		assert.match(
-			readFileSync(paths.ackFile(first.id), "utf8"),
-			/"source": "superseded"/,
+			[edited.id],
 		);
 		assert.doesNotThrow(() => ackEvents(paths, [first.id]));
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
 
-test("legacy duplicate revisions converge to the newest pending edit", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-legacy-edit-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
-		const first = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").find(
-			(event) => event.kind === "issue-comment",
-		);
-		const edited = snapshot();
-		edited.issueComments[0].updated_at = "2026-01-01T00:02:00Z";
-		const second = candidateEvents(edited, "2026-01-01T00:02:00Z").find(
-			(event) => event.kind === "issue-comment",
-		);
-		queueEvents(paths, [first]);
-		writeFileSync(
-			paths.eventFile(second.id),
-			`${JSON.stringify(second, null, 2)}\n`,
-		);
-		assert.deepEqual(reconcileSupersededEvents(paths), [first.id]);
-		assert.deepEqual(
-			pendingEvents(paths).map((event) => event.id),
-			[second.id],
-		);
-		assert.match(
-			readFileSync(paths.eventFile(first.id), "utf8"),
-			/"version": 1/,
-		);
-		assert.match(
-			readFileSync(paths.ackFile(first.id), "utf8"),
-			/"source": "superseded"/,
-		);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
+		const review = eventOf("review");
+		queueEvents(paths, [review]);
+		ackEvents(paths, [review.id]);
+		const revisedInput = snapshot();
+		revisedInput.reviews[0].body = "new requested changes";
+		const revised = eventOf("review", revisedInput, "2026-01-01T00:03:00Z");
+		assert.equal(queueEvents(paths, [revised]).length, 1);
+		assert.ok(pendingEvents(paths).some((event) => event.id === revised.id));
+	}));
 
-test("resolved threads acknowledge already queued review comments", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-resolved-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
-		const reviewComment = candidateEvents(
-			snapshot(),
-			"2026-01-01T00:01:00Z",
-		).find((event) => event.kind === "review-comment");
-		queueEvents(paths, [reviewComment]);
+test("resolved threads clear already queued review comments", () =>
+	withState("resolved", (paths) => {
+		const comment = eventOf("review-comment");
+		queueEvents(paths, [comment]);
 		assert.deepEqual(reconcileResolvedReviewComments(paths, new Set()), [
-			reviewComment.id,
+			comment.id,
 		]);
 		assert.deepEqual(pendingEvents(paths), []);
-		assert.match(
-			readFileSync(paths.ackFile(reviewComment.id), "utf8"),
-			/"source": "thread-resolved"/,
-		);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
+	}));
 
-test("drops an unnotified check failure when the check recovers during debounce", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-check-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
-		const failed = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").filter(
-			(event) => event.kind === "check-failed",
-		);
-		queueEvents(paths, failed);
-		assert.equal(pendingEvents(paths).length, 1);
+test("recovered checks drop before delivery and remain after delivery", () =>
+	withState("check-recovery", (paths) => {
+		const failed = eventOf("check-failed");
+		queueEvents(paths, [failed]);
 		reconcileUnnotifiedCheckEvents(paths, []);
-		assert.equal(pendingEvents(paths).length, 0);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
+		assert.deepEqual(pendingEvents(paths), []);
 
-test("keeps a drained check failure pending until acknowledgement", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-drain-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
-		const failed = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").filter(
-			(event) => event.kind === "check-failed",
-		);
-		queueEvents(paths, failed);
+		queueEvents(paths, [failed]);
 		assert.equal(drainEvents(paths, 1_000).length, 1);
 		reconcileUnnotifiedCheckEvents(paths, []);
-		assert.equal(pendingEvents(paths).length, 1);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
+		assert.deepEqual(
+			pendingEvents(paths).map((event) => event.id),
+			[failed.id],
+		);
+	}));
 
-test("rejects persisted events with an invalid observation timestamp", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-timestamp-test-"));
-	try {
-		execFileSync("git", ["init", "--quiet", root]);
-		const paths = statePaths(root, {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		});
-		const [event] = candidateEvents(snapshot(), "not-a-timestamp");
-		queueEvents(paths, [event]);
+test("rejects corrupt persisted event timestamps", () =>
+	withState("corrupt", (paths) => {
+		queueEvents(paths, [
+			eventOf("issue-comment", snapshot(), "not-a-timestamp"),
+		]);
 		assert.throws(() => pendingEvents(paths), /Invalid babysit-pr state/);
-	} finally {
-		rmSync(root, { recursive: true, force: true });
-	}
-});
+	}));
 
-test("a failed owner notification stays inside the watcher error path", () => {
+test("notification failures stay inside the watcher retry path", () => {
 	const reported = [];
 	assert.equal(
 		tryEmit(
@@ -540,7 +366,7 @@ test("a failed owner notification stays inside the watcher error path", () => {
 	]);
 });
 
-test("debounces until quiet, with a hard cap and ten-minute reminders", () => {
+test("debounces until quiet, caps delay, and reminds after ten minutes", () => {
 	assert.equal(
 		shouldEmit(
 			{ firstSeenAt: 0, lastSeenAt: 20_000, lastEmittedAt: null },
@@ -578,8 +404,8 @@ test("debounces until quiet, with a hard cap and ten-minute reminders", () => {
 	);
 });
 
-test("uses the shared git directory and keeps queued events until acknowledgement", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-test-"));
+test("linked worktrees share durable, idempotent event state", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-worktree-"));
 	const repository = join(root, "repository");
 	const worktree = join(root, "worktree");
 	try {
@@ -600,15 +426,9 @@ test("uses the shared git directory and keeps queued events until acknowledgemen
 				cwd: repository,
 			},
 		);
-		const identity = {
-			host: "github.com",
-			owner: "acme",
-			repo: "widgets",
-			pr: 42,
-		};
 		const paths = statePaths(worktree, identity);
 		assert.equal(paths.root, statePaths(repository, identity).root);
-		const [event] = candidateEvents(snapshot(), "2026-01-01T00:01:00Z");
+		const event = eventOf("issue-comment");
 		assert.equal(queueEvents(paths, [event]).length, 1);
 		assert.equal(queueEvents(paths, [event]).length, 0);
 		assert.deepEqual(

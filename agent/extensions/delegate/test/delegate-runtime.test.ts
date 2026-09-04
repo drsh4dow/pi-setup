@@ -167,7 +167,7 @@ test("covers delegated runtime behavior", () =>
 					.getActiveToolNames()
 					.filter((name) => name.startsWith("bg_"))
 					.sort(),
-				["bg_kill", "bg_list", "bg_start", "bg_status"],
+				["bg_kill", "bg_list", "bg_start", "bg_status", "bg_wait"],
 			);
 			yield* shutdownChild(backgroundChild);
 

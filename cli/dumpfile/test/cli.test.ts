@@ -107,7 +107,6 @@ test("uploads a file, verifies public metadata, and prints only its URL", async 
 		"Verifying public file...\n",
 	]);
 	assert.equal(requests.length, 3);
-	assert.equal(requests[0]?.init?.headers instanceof Headers, false);
 	assert.deepEqual(requests[1]?.init?.headers, {
 		"Cache-Control": CACHE_CONTROL,
 		"Content-Disposition": "inline",
@@ -121,8 +120,8 @@ test("uploads a file, verifies public metadata, and prints only its URL", async 
 		size: 11,
 	});
 	assert.equal(
-		JSON.stringify(requests[0]?.init?.headers).includes("local-secret-token"),
-		true,
+		new Headers(requests[0]?.init?.headers).get("Authorization"),
+		"Bearer local-secret-token",
 	);
 	assert.equal(state.stdout.join("").includes("local-secret-token"), false);
 	assert.equal(state.stderr.join("").includes("local-secret-token"), false);

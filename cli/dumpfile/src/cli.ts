@@ -86,7 +86,7 @@ async function readConfig(env: CliDependencies["env"]): Promise<Config> {
 		env.DUMPFILE_CONFIG_FILE ?? `${homedir()}/.config/dumpfile/config.env`;
 	let fromFile: Record<string, string> = {};
 	try {
-		const file = await import("node:fs/promises").then((fs) => fs.stat(path));
+		const file = await stat(path);
 		if (!file.isFile()) throw new CliError(`${path} is not a regular file`);
 		if (process.platform !== "win32" && (file.mode & 0o077) !== 0) {
 			throw new CliError(`${path} must have mode 0600`);
@@ -264,13 +264,7 @@ async function uploadWithOneRetry(
 		try {
 			response = await dependencies.fetch(authorization.upload.url, {
 				body: dependencies.fileBody(path),
-				headers: {
-					"Cache-Control": authorization.upload.headers["Cache-Control"],
-					"Content-Disposition":
-						authorization.upload.headers["Content-Disposition"],
-					"Content-Length": authorization.upload.headers["Content-Length"],
-					"Content-Type": authorization.upload.headers["Content-Type"],
-				},
+				headers: { ...authorization.upload.headers },
 				method: authorization.upload.method,
 			});
 		} catch {
@@ -350,9 +344,6 @@ function parseArguments(argv: readonly string[]): {
 	json: boolean;
 	path: string;
 } {
-	if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
-		throw new CliError(usage);
-	}
 	if (argv[0] !== "upload") throw new CliError(usage);
 	const rest = argv.slice(1);
 	const json = rest.includes("--json");

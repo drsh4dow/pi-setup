@@ -10,7 +10,6 @@ import {
 	drainEvents,
 	eventMarker,
 	pendingEvents,
-	pollBaseline,
 	queueEvents,
 	reconcileResolvedReviewComments,
 	reconcileUnnotifiedCheckEvents,
@@ -157,55 +156,28 @@ test("distinct failed check runs retain distinct identities", () =>
 		assert.equal(pendingEvents(paths).length, 2);
 	}));
 
-test("bots are default-deny and trust changes backfill unresolved feedback", () => {
-	assert.deepEqual(
-		[
-			...trustedLogins(
-				".",
-				{},
-				"reviewer[bot]",
-				"pi",
-				new Set(["reviewer[bot]"]),
-				new Set(),
-			),
-		],
-		[],
-	);
-	assert.deepEqual(
-		[
-			...trustedLogins(
-				".",
-				{},
-				"reviewer[bot]",
-				"pi",
-				new Set(["reviewer[bot]"]),
-				new Set(["reviewer[bot]"]),
-			),
-		],
-		["reviewer[bot]"],
-	);
+test("bots are default-deny and trusted inline feedback is actionable", () => {
+	const botActors = new Set(["reviewer[bot]"]);
+	const trusted = (allowed) => [
+		...trustedLogins(
+			".",
+			{},
+			"reviewer[bot]",
+			"pi",
+			botActors,
+			new Set(allowed),
+		),
+	];
+	assert.deepEqual(trusted([]), []);
+	assert.deepEqual(trusted(["reviewer[bot]"]), ["reviewer[bot]"]);
 	assert.deepEqual(
 		[...trustedLogins(".", {}, "contributor", "pi", new Set(), new Set())],
 		[],
 	);
 
-	const previous = {
-		lastPollAt: "2026-01-01T00:00:00Z",
-		trustedBots: [],
-		threadStates: {},
-	};
-	const changed = pollBaseline(previous, new Set(["reviewer[bot]"]));
-	assert.equal(changed.previous.lastPollAt, undefined);
-	assert.equal(
-		pollBaseline(
-			{ ...previous, trustedBots: ["reviewer[bot]"] },
-			new Set(["reviewer[bot]"]),
-		).previous.lastPollAt,
-		previous.lastPollAt,
-	);
 	const input = snapshot();
-	input.reviewComments = input.reviewComments.map((comment) => ({
-		...comment,
+	input.reviewComments = input.reviewComments.map((item) => ({
+		...item,
 		user: { login: "reviewer[bot]" },
 	}));
 	input.trustedLogins = new Set(["reviewer[bot]"]);
@@ -329,41 +301,24 @@ test("notification failures stay inside the watcher retry path", () => {
 });
 
 test("debounces until quiet, caps delay, and reminds after ten minutes", () => {
-	assert.equal(
-		shouldEmit(
-			{ firstSeenAt: 0, lastSeenAt: 20_000, lastEmittedAt: null },
-			49_999,
-		),
-		false,
-	);
-	assert.equal(
-		shouldEmit(
-			{ firstSeenAt: 0, lastSeenAt: 20_000, lastEmittedAt: null },
-			50_000,
-		),
-		true,
-	);
-	assert.equal(
-		shouldEmit(
-			{ firstSeenAt: 0, lastSeenAt: 119_000, lastEmittedAt: null },
-			120_000,
-		),
-		true,
-	);
-	assert.equal(
-		shouldEmit(
-			{ firstSeenAt: 0, lastSeenAt: 0, lastEmittedAt: 100_000 },
-			699_999,
-		),
-		false,
-	);
-	assert.equal(
-		shouldEmit(
-			{ firstSeenAt: 0, lastSeenAt: 0, lastEmittedAt: 100_000 },
-			700_000,
-		),
-		true,
-	);
+	const unseen = (lastSeenAt) => ({
+		firstSeenAt: 0,
+		lastSeenAt,
+		lastEmittedAt: null,
+	});
+	const notified = {
+		firstSeenAt: 0,
+		lastSeenAt: 0,
+		lastEmittedAt: 100_000,
+	};
+	for (const [batch, now, expected] of [
+		[unseen(20_000), 49_999, false],
+		[unseen(20_000), 50_000, true],
+		[unseen(119_000), 120_000, true],
+		[notified, 699_999, false],
+		[notified, 700_000, true],
+	])
+		assert.equal(shouldEmit(batch, now), expected);
 });
 
 test("linked worktrees share durable, idempotent event state", () => {

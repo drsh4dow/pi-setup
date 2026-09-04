@@ -4,7 +4,7 @@ import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import codexAccounts, { codexAliasProvider } from "../index.ts";
 
-test("cyber alias adds Daybreak Blue and re-stamps model providers", () => {
+test("cyber alias adds Daybreak Blue and GPT-6 Astra and re-stamps model providers", () => {
 	const base = builtinProviders().find(
 		(provider) => provider.id === "openai-codex",
 	);
@@ -21,12 +21,25 @@ test("cyber alias adds Daybreak Blue and re-stamps model providers", () => {
 		assert.equal(model.provider, "openai-codex-cyber");
 	}
 	assert.deepEqual(
-		models.slice(0, -1).map((model) => model.id),
+		models.slice(0, base.getModels().length).map((model) => model.id),
 		base.getModels().map((model) => model.id),
 	);
-	const daybreak = models.at(-1);
-	assert.equal(daybreak?.id, "gpt-daybreak-blue-latest");
+	const daybreak = models.find(
+		(model) => model.id === "gpt-daybreak-blue-latest",
+	);
 	assert.equal(daybreak?.name, "Daybreak Blue");
+	const astra = models.find((model) => model.id === "gpt-6-astra");
+	assert.ok(astra);
+	assert.equal(astra.name, "GPT-6 Astra");
+	assert.equal(astra.api, "openai-codex-responses");
+	assert.equal(astra.contextWindow, 272000);
+	assert.equal(astra.maxTokens, 128000);
+	assert.equal(astra.thinkingLevelMap?.max, "max");
+	assert.equal(astra.thinkingLevelMap?.off, null);
+	assert.equal(astra.cost.input, 10);
+	assert.equal(astra.cost.output, 50);
+	assert.equal(new Set(models.map((model) => model.id)).size, models.length);
+	assert.deepEqual(alias.getModels(), models);
 	assert.deepEqual(
 		codexAliasProvider("other")
 			.getModels()

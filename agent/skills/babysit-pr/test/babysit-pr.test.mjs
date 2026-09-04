@@ -13,6 +13,7 @@ import {
 	pollBaseline,
 	queueEvents,
 	reconcileResolvedReviewComments,
+	reconcileSupersededEvents,
 	reconcileUnnotifiedCheckEvents,
 	shouldEmit,
 	statePaths,
@@ -266,6 +267,39 @@ test("a newer comment edit supersedes its pending revision", () => {
 		);
 		queueEvents(paths, [first]);
 		queueEvents(paths, [second]);
+		assert.deepEqual(
+			pendingEvents(paths).map((event) => event.id),
+			[second.id],
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("legacy duplicate revisions converge to the newest pending edit", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-legacy-edit-test-"));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		const paths = statePaths(root, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		const first = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").find(
+			(event) => event.kind === "issue-comment",
+		);
+		const edited = snapshot();
+		edited.issueComments[0].updated_at = "2026-01-01T00:02:00Z";
+		const second = candidateEvents(edited, "2026-01-01T00:02:00Z").find(
+			(event) => event.kind === "issue-comment",
+		);
+		queueEvents(paths, [first]);
+		writeFileSync(
+			paths.eventFile(second.id),
+			`${JSON.stringify(second, null, 2)}\n`,
+		);
+		assert.deepEqual(reconcileSupersededEvents(paths), [first.id]);
 		assert.deepEqual(
 			pendingEvents(paths).map((event) => event.id),
 			[second.id],

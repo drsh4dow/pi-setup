@@ -228,7 +228,24 @@ function eventSubject(event) {
 	}
 }
 
+export function reconcileSupersededEvents(paths) {
+	const latestBySubject = new Map();
+	const superseded = [];
+	for (const { event } of pendingRecords(paths)) {
+		const subject = eventSubject(event);
+		const previous = latestBySubject.get(subject);
+		if (previous) {
+			rmSync(paths.eventFile(previous.id), { force: true });
+			rmSync(paths.notificationFile(previous.id), { force: true });
+			superseded.push(previous.id);
+		}
+		latestBySubject.set(subject, event);
+	}
+	return superseded;
+}
+
 export function queueEvents(paths, events) {
+	reconcileSupersededEvents(paths);
 	const added = [];
 	for (const event of events) {
 		for (const name of eventFiles(paths)) {
@@ -272,8 +289,10 @@ function pendingRecords(paths) {
 		}
 		records.push({ event, emittedAt });
 	}
-	return records.sort((left, right) =>
-		left.event.observedAt.localeCompare(right.event.observedAt),
+	return records.sort(
+		(left, right) =>
+			left.event.observedAt.localeCompare(right.event.observedAt) ||
+			left.event.key.localeCompare(right.event.key),
 	);
 }
 

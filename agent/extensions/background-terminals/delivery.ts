@@ -311,17 +311,21 @@ export class BackgroundTerminalDelivery {
 					);
 					this.consume(ids);
 				} catch (error) {
-					let attempt = 0;
+					const retryable: number[] = [];
+					const exhausted: string[] = [];
 					for (const id of ids) {
-						const next = (this.attempts.get(id) ?? 0) + 1;
-						this.attempts.set(id, next);
-						attempt = Math.max(attempt, next);
-						if (next === MAX_DELIVERY_ATTEMPTS) this.markFailed(id);
+						const attempt = (this.attempts.get(id) ?? 0) + 1;
+						this.attempts.set(id, attempt);
+						if (attempt < MAX_DELIVERY_ATTEMPTS) retryable.push(attempt);
+						else {
+							this.markFailed(id);
+							exhausted.push(id);
+						}
 					}
-					if (attempt < MAX_DELIVERY_ATTEMPTS) this.scheduleRetry(attempt);
-					else
+					if (retryable.length) this.scheduleRetry(Math.max(...retryable));
+					if (exhausted.length)
 						this.reportError(
-							`[background-terminals] ${batch.kind} delivery failed for ${ids.join(", ")}${batch.kind === "completion" ? "; use bg_status to inspect retained results" : ""}: ${sanitizeInline(String(error).slice(0, 512))}`,
+							`[background-terminals] ${batch.kind} delivery failed for ${exhausted.join(", ")}${batch.kind === "completion" ? "; use bg_status to inspect retained results" : ""}: ${sanitizeInline(String(error).slice(0, 512))}`,
 						);
 					return;
 				}

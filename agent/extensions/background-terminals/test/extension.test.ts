@@ -604,7 +604,7 @@ test("bounds complete delivery batches with worst-case metadata", () => Effect.r
 	assert.ok(messages.every((message) => !message.content.includes("�")));
 })));
 
-test("retries completion delivery three times and exposes final failure", () => Effect.runPromise(Effect.gen(function* () {
+test("retries mixed-attempt delivery items independently", () => Effect.runPromise(Effect.gen(function* () {
 	let attempts = 0;
 	let idle = false;
 	const diagnostics: string[] = [];
@@ -619,7 +619,7 @@ test("retries completion delivery three times and exposes final failure", () => 
 	);
 	try {
 		delivery.setContext({ isIdle: () => idle } as ExtensionContext);
-		delivery.enqueue({
+		const snapshot = {
 			id: "bt-retry",
 			title: "retry",
 			command: "false",
@@ -633,13 +633,16 @@ test("retries completion delivery three times and exposes final failure", () => 
 			},
 			stdout: { text: "", totalBytes: 0, truncatedBytes: 0 },
 			stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
-		});
+		} as const;
+		delivery.enqueue(snapshot);
 		idle = true;
 		yield* delivery.flush;
+		yield* Effect.sleep(150);
+		delivery.enqueue({ ...snapshot, id: "bt-late" });
 		yield* Effect.sleep(700);
-		assert.equal(attempts, 3);
-		assert.match(delivery.problem ?? "", /bt-retry/);
-		assert.equal(diagnostics.length, 1);
+		assert.equal(attempts, 5);
+		assert.match(delivery.problem ?? "", /bt-retry.*bt-late/);
+		assert.equal(diagnostics.length, 2);
 		assert.ok(!diagnostics[0].includes("\u001b"));
 		assert.ok(!diagnostics[0].includes("\u202e"));
 		assert.ok(!diagnostics[0].includes("\n"));

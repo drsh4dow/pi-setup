@@ -271,6 +271,15 @@ test("a newer comment edit supersedes its pending revision", () => {
 			pendingEvents(paths).map((event) => event.id),
 			[second.id],
 		);
+		assert.match(
+			readFileSync(paths.eventFile(first.id), "utf8"),
+			/"version": 1/,
+		);
+		assert.match(
+			readFileSync(paths.ackFile(first.id), "utf8"),
+			/"source": "superseded"/,
+		);
+		assert.doesNotThrow(() => ackEvents(paths, [first.id]));
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -303,6 +312,14 @@ test("legacy duplicate revisions converge to the newest pending edit", () => {
 		assert.deepEqual(
 			pendingEvents(paths).map((event) => event.id),
 			[second.id],
+		);
+		assert.match(
+			readFileSync(paths.eventFile(first.id), "utf8"),
+			/"version": 1/,
+		);
+		assert.match(
+			readFileSync(paths.ackFile(first.id), "utf8"),
+			/"source": "superseded"/,
 		);
 	} finally {
 		rmSync(root, { recursive: true, force: true });

@@ -7,6 +7,7 @@ import test from "node:test";
 import {
 	ackEvents,
 	candidateEvents,
+	drainEvents,
 	eventMarker,
 	pendingEvents,
 	queueEvents,
@@ -215,6 +216,28 @@ test("drops an unnotified check failure when the check recovers during debounce"
 		assert.equal(pendingEvents(paths).length, 1);
 		reconcileUnnotifiedCheckEvents(paths, []);
 		assert.equal(pendingEvents(paths).length, 0);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("keeps a drained check failure pending until acknowledgement", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-drain-test-"));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		const paths = statePaths(root, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		const failed = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").filter(
+			(event) => event.kind === "check-failed",
+		);
+		queueEvents(paths, failed);
+		assert.equal(drainEvents(paths, 1_000).length, 1);
+		reconcileUnnotifiedCheckEvents(paths, []);
+		assert.equal(pendingEvents(paths).length, 1);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

@@ -41,7 +41,6 @@ export {
 	CHILD_EXTENSION_PATHS_ENV,
 	type DelegateDetails,
 	type DelegateEffort,
-	type DelegateOutput,
 	type DelegateThinking,
 	type DelegateUsageStats,
 } from "./contract.ts";
@@ -114,11 +113,8 @@ export class BackgroundDelivery {
 		{
 			snapshot: DelegateSnapshot;
 			attempts: number;
-			exhausted: boolean;
-			diagnosed: boolean;
 		}
 	>();
-	private readonly reservations = new Map<symbol, string | undefined>();
 	private readonly pi: Pick<ExtensionAPI, "sendMessage">;
 	private readonly render: typeof resultText;
 	private readonly acknowledge: (ids: readonly string[]) => void;
@@ -158,39 +154,14 @@ export class BackgroundDelivery {
 		if (this.retryTimer) cancelTimer(this.retryTimer);
 		this.retryTimer = undefined;
 		this.pending.clear();
-		this.reservations.clear();
 		this.paused = false;
 		this.version++;
-	}
-
-	reserve(): symbol {
-		const reservation = Symbol("delegate-delivery");
-		this.reservations.set(reservation, undefined);
-		this.version++;
-		return reservation;
-	}
-
-	attach(reservation: symbol, snapshot: DelegateSnapshot) {
-		if (!this.reservations.has(reservation)) {
-			throw new Error("Background delivery reservation is no longer active.");
-		}
-		this.reservations.set(reservation, snapshot.id);
-		this.version++;
-	}
-
-	release(reservation: symbol) {
-		if (this.reservations.delete(reservation)) this.version++;
 	}
 
 	consume(snapshots: readonly DelegateSnapshot[]) {
 		let changed = false;
 		for (const snapshot of snapshots) {
 			changed = this.pending.delete(snapshot.id) || changed;
-			for (const [reservation, id] of this.reservations) {
-				if (id !== snapshot.id) continue;
-				this.reservations.delete(reservation);
-				changed = true;
-			}
 		}
 		if (changed) this.version++;
 		this.acknowledge(snapshots.map((snapshot) => snapshot.id));
@@ -204,8 +175,6 @@ export class BackgroundDelivery {
 			this.pending.set(snapshot.id, {
 				snapshot,
 				attempts: 0,
-				exhausted: false,
-				diagnosed: false,
 			});
 		}
 		this.version++;
@@ -223,7 +192,7 @@ export class BackgroundDelivery {
 		)
 			return Effect.void;
 		const entries = [...this.pending.values()].filter(
-			(entry) => !entry.exhausted,
+			(entry) => entry.attempts <= DELIVERY_RETRY_DELAYS_MS.length,
 		);
 		if (entries.length === 0) return Effect.void;
 		this.flushing = true;
@@ -269,11 +238,7 @@ export class BackgroundDelivery {
 					if (this.pending.get(entry.snapshot.id) !== entry) continue;
 					entry.attempts++;
 					if (entry.attempts > DELIVERY_RETRY_DELAYS_MS.length) {
-						entry.exhausted = true;
-						if (!entry.diagnosed) {
-							entry.diagnosed = true;
-							exhausted.push(entry.snapshot.id);
-						}
+						exhausted.push(entry.snapshot.id);
 					} else {
 						retryDelay = Math.min(
 							retryDelay ?? Number.POSITIVE_INFINITY,
@@ -308,7 +273,9 @@ export class BackgroundDelivery {
 						this.version !== startVersion &&
 						!this.paused &&
 						this.context?.isIdle() &&
-						[...this.pending.values()].some((entry) => !entry.exhausted)
+						[...this.pending.values()].some(
+							(entry) => entry.attempts <= DELIVERY_RETRY_DELAYS_MS.length,
+						)
 					) {
 						Effect.runFork(this.flush());
 					}
@@ -378,9 +345,6 @@ export default function delegateExtension(pi: ExtensionAPI) {
 			let spawnedId: string | undefined;
 			return Effect.runPromise(
 				Effect.gen(function* () {
-					const reservation = params.background
-						? delivery.reserve()
-						: undefined;
 					const snapshot = yield* Effect.try({
 						try: () => {
 							const spawned = manager.spawn({
@@ -393,13 +357,9 @@ export default function delegateExtension(pi: ExtensionAPI) {
 								ctx,
 							});
 							spawnedId = spawned.id;
-							if (reservation) delivery.attach(reservation, spawned);
 							return spawned;
 						},
-						catch: (error) => {
-							if (reservation) delivery.release(reservation);
-							return delegateError(error);
-						},
+						catch: delegateError,
 					});
 					if (params.background) {
 						return {

@@ -161,7 +161,6 @@ type ProcessObservation =
 	| { kind: "executing" }
 	| { kind: "draining-after-exit"; exit: ProcessExit }
 	| { kind: "reaping-after-pipe-close"; exit: ProcessExit };
-type TerminationPhase = "graceful" | "forceful" | "closing-pipes";
 type TerminationIntent = "automatic" | "kill" | "shutdown";
 
 interface ActiveTerminal {
@@ -185,7 +184,6 @@ type ActiveEntry =
 			kind: "terminating";
 			terminal: ActiveTerminal;
 			intent: TerminationIntent;
-			phase: TerminationPhase;
 	  };
 type Entry =
 	| ActiveEntry
@@ -439,7 +437,6 @@ export class BackgroundTerminalManager {
 						kind: "terminating",
 						terminal,
 						intent: entry.intent,
-						phase: entry.phase,
 					},
 		);
 	}
@@ -655,11 +652,6 @@ export class BackgroundTerminalManager {
 			Effect.sleep(timeoutMs),
 		);
 	});
-	private setTerminationPhase(id: string, phase: TerminationPhase) {
-		const entry = this.entries.get(id);
-		if (entry?.kind !== "terminating") return;
-		this.entries.set(id, { ...entry, phase });
-	}
 	private terminate = Effect.fn("BackgroundTerminalManager.terminate")(
 		function* (
 			this: BackgroundTerminalManager,
@@ -685,17 +677,14 @@ export class BackgroundTerminalManager {
 				kind: "terminating",
 				terminal: current.terminal,
 				intent,
-				phase: "graceful",
 			});
 			yield* this.signalTree(id, false);
 			yield* this.waitForSettlement(settlement, TERM_GRACE_MS);
 			if (!this.active(id)) return yield* Deferred.await(settlement);
-			this.setTerminationPhase(id, "forceful");
 			yield* this.signalTree(id, true);
 			yield* this.waitForSettlement(settlement, CLOSE_GRACE_MS);
 			const active = this.active(id);
 			if (!active) return yield* Deferred.await(settlement);
-			this.setTerminationPhase(id, "closing-pipes");
 			this.setProcessError(
 				id,
 				active.terminal.processError ??

@@ -12,9 +12,9 @@ import {
 	pendingEvents,
 	pollBaseline,
 	queueEvents,
+	reconcileBotSummaries,
 	reconcileResolvedReviewComments,
 	reconcileSupersededEvents,
-	reconcileTemporaryBotStatuses,
 	reconcileUnnotifiedCheckEvents,
 	shouldEmit,
 	statePaths,
@@ -213,8 +213,8 @@ test("bot authors remain untrusted unless explicitly allowlisted", () => {
 	);
 });
 
-test("temporary CodeRabbit status edits do not become review work", () => {
-	const root = mkdtempSync(join(tmpdir(), "babysit-pr-bot-status-test-"));
+test("CodeRabbit summaries do not duplicate their inline review work", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-bot-summary-test-"));
 	try {
 		execFileSync("git", ["init", "--quiet", root]);
 		const paths = statePaths(root, {
@@ -230,16 +230,32 @@ test("temporary CodeRabbit status edits do not become review work", () => {
 				user: { login: "reviewer[bot]" },
 			},
 		];
+		input.reviews = [
+			{
+				...input.reviews[0],
+				user: { login: "reviewer[bot]" },
+			},
+		];
 		input.trustedLogins = new Set(["reviewer[bot]"]);
-		const oldEvent = candidateEvents(input, "2026-01-01T00:01:00Z")[0];
-		oldEvent.payload.comment.body =
-			"<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->";
-		queueEvents(paths, [oldEvent]);
-		assert.deepEqual(reconcileTemporaryBotStatuses(paths), [oldEvent.id]);
+		const oldEvents = candidateEvents(input, "2026-01-01T00:01:00Z").filter(
+			(event) => event.kind === "issue-comment" || event.kind === "review",
+		);
+		input.issueComments[0].body =
+			"<!-- This is an auto-generated comment: summarize by coderabbit.ai -->";
+		input.reviews[0].body = "**Actionable comments posted: 2**";
+		queueEvents(paths, oldEvents);
+		assert.deepEqual(
+			reconcileBotSummaries(paths).sort((left, right) =>
+				left.localeCompare(right),
+			),
+			oldEvents
+				.map((event) => event.id)
+				.sort((left, right) => left.localeCompare(right)),
+		);
 		assert.deepEqual(pendingEvents(paths), []);
 		assert.equal(
 			candidateEvents(input, "2026-01-01T00:02:00Z").filter(
-				(event) => event.kind === "issue-comment",
+				(event) => event.kind === "issue-comment" || event.kind === "review",
 			).length,
 			0,
 		);

@@ -74,13 +74,21 @@ function trustedComment(comment, input) {
 	);
 }
 
-function temporaryBotStatus(comment) {
+function codeRabbitIssueSummary(comment) {
 	return (
 		comment?.user?.login?.endsWith("[bot]") &&
 		typeof comment.body === "string" &&
-		/<!-- This is an auto-generated comment: (?:review in progress|rate limited) by coderabbit\.ai -->/.test(
-			comment.body,
+		comment.body.includes(
+			"<!-- This is an auto-generated comment: summarize by coderabbit.ai -->",
 		)
+	);
+}
+
+function aggregateBotReview(review) {
+	return (
+		review?.user?.login?.endsWith("[bot]") &&
+		typeof review.body === "string" &&
+		/^\*\*Actionable comments posted: \d+\*\*/u.test(review.body.trimStart())
 	);
 }
 
@@ -88,7 +96,7 @@ export function candidateEvents(input, observedAt) {
 	const { pr } = input;
 	const events = [];
 	for (const comment of input.issueComments) {
-		if (!trustedComment(comment, input) || temporaryBotStatus(comment))
+		if (!trustedComment(comment, input) || codeRabbitIssueSummary(comment))
 			continue;
 		const key = `issue-comment:${comment.id}:${compactTimestamp(comment.updated_at)}`;
 		events.push(makeEvent(pr, "issue-comment", key, observedAt, { comment }));
@@ -104,7 +112,7 @@ export function candidateEvents(input, observedAt) {
 		events.push(makeEvent(pr, "review-comment", key, observedAt, { comment }));
 	}
 	for (const review of input.reviews) {
-		if (!trustedComment(review, input)) continue;
+		if (!trustedComment(review, input) || aggregateBotReview(review)) continue;
 		const state = String(review.state ?? "").toUpperCase();
 		const body = typeof review.body === "string" ? review.body.trim() : "";
 		if (!body && state !== "CHANGES_REQUESTED") continue;
@@ -325,15 +333,15 @@ export function drainEvents(paths, now = Date.now()) {
 	return records.map(({ event }) => event);
 }
 
-export function reconcileTemporaryBotStatuses(paths) {
+export function reconcileBotSummaries(paths) {
 	const acknowledged = [];
 	for (const { event } of pendingRecords(paths)) {
-		if (
-			event.kind !== "issue-comment" ||
-			!temporaryBotStatus(event.payload.comment)
-		)
-			continue;
-		acknowledge(paths, event.id, "temporary-bot-status");
+		const isSummary =
+			(event.kind === "issue-comment" &&
+				codeRabbitIssueSummary(event.payload.comment)) ||
+			(event.kind === "review" && aggregateBotReview(event.payload.review));
+		if (!isSummary) continue;
+		acknowledge(paths, event.id, "bot-summary");
 		acknowledged.push(event.id);
 	}
 	return acknowledged;
@@ -526,7 +534,7 @@ function poll(cwd, reference, paths, trustedBots) {
 		paths,
 		snapshot.input.unresolvedReviewCommentIds,
 	);
-	reconcileTemporaryBotStatuses(paths);
+	reconcileBotSummaries(paths);
 	const candidates = candidateEvents(snapshot.input, observedAt);
 	reconcileUnnotifiedCheckEvents(paths, candidates);
 	const added = queueEvents(paths, candidates);

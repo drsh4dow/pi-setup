@@ -35,13 +35,45 @@ export function codexAliasProvider(label: string) {
 			if (label === "cyber") {
 				const template = models.find((model) => model.id === "gpt-5.6-sol");
 				if (!template) {
-					throw new Error("No gpt-5.6-sol model to template Daybreak Blue.");
+					throw new Error("No gpt-5.6-sol model to template cyber models.");
 				}
 				models.push({
 					...template,
 					id: "gpt-daybreak-blue-latest",
 					name: "Daybreak Blue",
 				});
+				if (!models.some((model) => model.id === "gpt-6-astra")) {
+					// Astra metadata from the refreshed Codex catalog.
+					models.push({
+						...template,
+						id: "gpt-6-astra",
+						name: "GPT-6 Astra",
+						cost: {
+							input: 10,
+							output: 50,
+							cacheRead: 1,
+							cacheWrite: 12.5,
+							tiers: [
+								{
+									inputTokensAbove: 272000,
+									input: 20,
+									output: 75,
+									cacheRead: 2,
+									cacheWrite: 25,
+								},
+							],
+						},
+						thinkingLevelMap: {
+							off: null,
+							minimal: "low",
+							low: "low",
+							medium: "medium",
+							high: "high",
+							xhigh: "xhigh",
+							max: "max",
+						},
+					});
+				}
 			}
 			return models.map((model) => ({ ...model, provider: id }));
 		},

@@ -75,9 +75,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			},
 		}));
 	});
-	const leaveSession = Effect.fn("leaveSession")(function* (
-		keepContext: boolean,
-	) {
+	const leaveSession = Effect.fn("leaveSession")(function* () {
 		const joined = session;
 		session = undefined;
 		observations.clear();
@@ -88,13 +86,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			catch: () => undefined,
 		}).pipe(Effect.ignore);
 		lastStatus = null;
-		if (!keepContext) context = undefined;
+		context = undefined;
 		if (joined) yield* joined.leave(clientId);
-		if (keepContext && context) {
-			delivery.setContext(context);
-			session = joinBackgroundTerminalSession(clientId, client);
-			updateStatus();
-		}
 	});
 
 	pi.events.on(COMPACTION_DELIVERY_PAUSE_CHANNEL, (paused) => {
@@ -106,13 +99,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		if (!session) session = joinBackgroundTerminalSession(clientId, client);
 		updateStatus();
 	});
-	pi.on("agent_end", () =>
-		context && !context.hasUI && session?.isOwner(clientId)
-			? Effect.runPromise(leaveSession(true))
-			: undefined,
-	);
 	pi.on("agent_settled", () => Effect.runPromise(delivery.flush));
-	pi.on("session_shutdown", () => Effect.runPromise(leaveSession(false)));
+	pi.on("session_shutdown", () => Effect.runPromise(leaveSession()));
 
 	pi.registerTool({
 		name: "bg_start",

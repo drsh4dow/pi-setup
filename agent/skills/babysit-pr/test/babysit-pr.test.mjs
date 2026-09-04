@@ -14,6 +14,7 @@ import {
 	queueEvents,
 	reconcileResolvedReviewComments,
 	reconcileSupersededEvents,
+	reconcileTemporaryBotStatuses,
 	reconcileUnnotifiedCheckEvents,
 	shouldEmit,
 	statePaths,
@@ -186,6 +187,41 @@ test("bot authors remain untrusted unless explicitly allowlisted", () => {
 		],
 		["reviewer[bot]"],
 	);
+});
+
+test("temporary CodeRabbit status edits do not become review work", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-bot-status-test-"));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		const paths = statePaths(root, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		const input = snapshot();
+		input.issueComments = [
+			{
+				...input.issueComments[0],
+				user: { login: "reviewer[bot]" },
+			},
+		];
+		input.trustedLogins = new Set(["reviewer[bot]"]);
+		const oldEvent = candidateEvents(input, "2026-01-01T00:01:00Z")[0];
+		oldEvent.payload.comment.body =
+			"<!-- This is an auto-generated comment: review in progress by coderabbit.ai -->";
+		queueEvents(paths, [oldEvent]);
+		assert.deepEqual(reconcileTemporaryBotStatuses(paths), [oldEvent.id]);
+		assert.deepEqual(pendingEvents(paths), []);
+		assert.equal(
+			candidateEvents(input, "2026-01-01T00:02:00Z").filter(
+				(event) => event.kind === "issue-comment",
+			).length,
+			0,
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("a non-collaborator PR author remains untrusted", () => {

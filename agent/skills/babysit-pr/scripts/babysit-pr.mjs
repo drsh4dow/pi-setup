@@ -74,11 +74,22 @@ function trustedComment(comment, input) {
 	);
 }
 
+function temporaryBotStatus(comment) {
+	return (
+		comment?.user?.login?.endsWith("[bot]") &&
+		typeof comment.body === "string" &&
+		/<!-- This is an auto-generated comment: (?:review in progress|rate limited) by coderabbit\.ai -->/.test(
+			comment.body,
+		)
+	);
+}
+
 export function candidateEvents(input, observedAt) {
 	const { pr } = input;
 	const events = [];
 	for (const comment of input.issueComments) {
-		if (!trustedComment(comment, input)) continue;
+		if (!trustedComment(comment, input) || temporaryBotStatus(comment))
+			continue;
 		const key = `issue-comment:${comment.id}:${compactTimestamp(comment.updated_at)}`;
 		events.push(makeEvent(pr, "issue-comment", key, observedAt, { comment }));
 	}
@@ -314,6 +325,20 @@ export function drainEvents(paths, now = Date.now()) {
 	return records.map(({ event }) => event);
 }
 
+export function reconcileTemporaryBotStatuses(paths) {
+	const acknowledged = [];
+	for (const { event } of pendingRecords(paths)) {
+		if (
+			event.kind !== "issue-comment" ||
+			!temporaryBotStatus(event.payload.comment)
+		)
+			continue;
+		acknowledge(paths, event.id, "temporary-bot-status");
+		acknowledged.push(event.id);
+	}
+	return acknowledged;
+}
+
 export function reconcileResolvedReviewComments(
 	paths,
 	unresolvedReviewCommentIds,
@@ -501,6 +526,7 @@ function poll(cwd, reference, paths, trustedBots) {
 		paths,
 		snapshot.input.unresolvedReviewCommentIds,
 	);
+	reconcileTemporaryBotStatuses(paths);
 	const candidates = candidateEvents(snapshot.input, observedAt);
 	reconcileUnnotifiedCheckEvents(paths, candidates);
 	const added = queueEvents(paths, candidates);

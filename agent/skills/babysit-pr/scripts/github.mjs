@@ -127,9 +127,7 @@ export function trustedLogins(
 	trustedBots,
 ) {
 	const trusted = new Set();
-	if (!prAuthor.endsWith("[bot]") || trustedBots.has(prAuthor))
-		trusted.add(prAuthor);
-	for (const login of actors) {
+	for (const login of new Set([...actors, prAuthor])) {
 		if (!login || login === selfLogin || trusted.has(login)) continue;
 		if (login.endsWith("[bot]")) {
 			if (trustedBots.has(login)) trusted.add(login);

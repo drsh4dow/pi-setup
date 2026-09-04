@@ -15,6 +15,7 @@ extension(new Proxy({}, { get() { process.exit(2); } }));`,
 		],
 		{
 			encoding: "utf8",
+			timeout: 10_000,
 			env: {
 				...process.env,
 				HERDR_ENV: "0",

@@ -48,6 +48,7 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 			throw new Error("Background terminal session is shutting down.");
 		const manager = new BackgroundTerminalManager(
 			(snapshot, consumed) => {
+				client.delivery.terminalSettled(snapshot.id);
 				client.updateStatus();
 				if (consumed) {
 					client.delivery.consume([snapshot.id]);

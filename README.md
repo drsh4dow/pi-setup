@@ -51,13 +51,15 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | `compaction` | Dense handoffs and automatic continuation after proactive compaction |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
-| `herdr-agent-state` | Herdr pane state and Pi session reporting when running inside Herdr |
+| `herdr-agent-state` | Herdr pane state and Pi session reporting, with idle reconciliation independent of background processes |
 | `process-status` | `/ps` views for active work, worker tokens, and cost |
 | `sacrifice-preference` | Marks spawned work as the preferred target under Linux memory pressure |
 | `session-timer` | Per-run and cumulative session timing in the status bar |
 | `skill-visibility` | `/skill-visibility` controls which loaded skills the model can discover |
 | `tps-tracker` | Live and final output-token throughput |
 | `ui-moto` | Compact model and project status header |
+
+`agent/extensions/herdr-agent-state.ts` is locally patched. Herdr integration updates overwrite it; restore the repository version and run `/reload` in affected Pi sessions after updating Herdr's integration.
 
 Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). A project's `.pi/delegate.json` can override that default with `{"model":"provider/model-id"}`; lookup checks the run's effective `cwd`, then the parent session's project, so an external worktree does not discard the session's choice. An explicit `delegate_run.model` overrides every file. Invalid, unavailable, or unauthenticated configured models fall back to the parent model, while an invalid explicit override fails the run. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort; a run that settles abnormally hands back the child's last messages so it can be re-briefed. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation unless `cwd` points them at one the caller prepared, so parallel mutations can otherwise conflict. A child's background terminals are its own: they never appear in the parent's list and are terminated when the child settles.
 

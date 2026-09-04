@@ -8,7 +8,6 @@ import {
 	ackEvents,
 	candidateEvents,
 	drainEvents,
-	eventMarker,
 	pendingEvents,
 	queueEvents,
 	reconcileResolvedReviewComments,
@@ -358,7 +357,7 @@ test("linked worktrees share durable, idempotent event state", () => {
 			readFileSync(paths.eventFile(event.id), "utf8"),
 			/"version": 1/,
 		);
-		assert.equal(eventMarker(event.id), event.marker);
+		assert.equal(event.marker, `<!-- pi-event:${event.id} -->`);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

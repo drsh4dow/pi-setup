@@ -119,6 +119,39 @@ test("lists each activity on its own line with aggregate usage", () => {
 	]);
 });
 
+test("ignores retained collection requests after synchronous delivery", () => {
+	const events = eventBus();
+	const requests: unknown[] = [];
+	let activityLoads = 0;
+	let usageLoads = 0;
+	const stopRetaining = events.on("process-status:collect", (request) => {
+		requests.push(request);
+	});
+	registerProcessStatusSource(
+		{ events },
+		"retained",
+		() => {
+			activityLoads++;
+			return [activity("d1", "subagents", true, "running")];
+		},
+		() => {
+			usageLoads++;
+			return { tokens: 10, cost: 0.1 };
+		},
+	);
+
+	const first = processStatusView({ events });
+	const second = processStatusView({ events });
+	assert.deepEqual(second, first);
+	assert.equal(requests.length, 2);
+	stopRetaining();
+	for (const request of requests)
+		events.emit("process-status:collect", request);
+	assert.equal(activityLoads, 2);
+	assert.equal(usageLoads, 2);
+	assert.match(first.collapsed, /10 tokens · \$0\.1000\nd1 running/);
+});
+
 test("shows one worker's usage and bounded diagnostics", () => {
 	const events = eventBus();
 	let detail = `Tool read input:\n{ path: 'a.ts' }\n\nTool read output:\nsource\n${"é".repeat(40_000)}\ntail`;

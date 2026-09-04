@@ -780,7 +780,7 @@ test("bg_wait is owner-isolated, abortable, consumes results, and survives reloa
 			const ctx = {
 				cwd: process.cwd(),
 				hasUI: true,
-				isIdle: () => true,
+				isIdle: () => false,
 				ui: { setStatus() {} },
 			} as unknown as ExtensionContext;
 			owner.handlers.get("session_start")?.({}, ctx);
@@ -882,6 +882,7 @@ test("bg_wait is owner-isolated, abortable, consumes results, and survives reloa
 						.join("\n"),
 					/waited/,
 				);
+				yield* fromPromise(owner.handlers.get("agent_settled")?.({}, ctx));
 				assert.equal(messages.length, 0);
 				const repeated = yield* fromPromise(
 					tool("bg_wait").execute("again", { id }, undefined, undefined, ctx),

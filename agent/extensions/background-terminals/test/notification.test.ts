@@ -12,6 +12,12 @@ import { NotificationFrames } from "../notifications.ts";
 
 const { spawnSync } = process.getBuiltinModule("node:child_process");
 const noEvents = { emit() {}, on() {} };
+const context = {
+	cwd: process.cwd(),
+	hasUI: true,
+	isIdle: () => true,
+	ui: { setStatus() {} },
+} as unknown as ExtensionContext;
 
 function registeredExtension(
 	sendMessage: (message: unknown, options: unknown) => void,
@@ -44,6 +50,28 @@ const eventually = Effect.fn("eventually")(function* (
 	throw new Error("condition not met within 5 seconds");
 });
 
+function lifecycle(
+	registration: ReturnType<typeof registeredExtension>,
+	name: "session_start" | "session_shutdown",
+) {
+	return fromPromise(
+		registration.handlers.get(name)?.(
+			{
+				type: name,
+				reason: name === "session_start" ? "startup" : "quit",
+			},
+			context,
+		),
+	);
+}
+
+function tools(registration: ReturnType<typeof registeredExtension>) {
+	const [start, status, , kill] = registration.tools as unknown as Array<{
+		execute: (...args: unknown[]) => Promise<unknown>;
+	}>;
+	return { start, status, kill };
+}
+
 test("notification framing accepts split valid messages and drops malformed frames", () => {
 	const frames = new NotificationFrames();
 	assert.deepEqual(frames.append(Buffer.from('{"version":1,"mess')), []);
@@ -60,34 +88,27 @@ test("notification framing accepts split valid messages and drops malformed fram
 	);
 });
 
-test("emit-to-pi wakes the owner while its terminal keeps running", () =>
+test("emit-to-pi wakes only the owner while its terminal keeps running", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
-			const deliveries: Array<{
-				message: { customType: string; content: string };
+			const parentMessages: unknown[] = [];
+			const childMessages: Array<{
+				customType: string;
+				content: string;
 				options: { deliverAs: string; triggerTurn: boolean };
 			}> = [];
-			const { tools, handlers } = registeredExtension((message, options) => {
-				deliveries.push({
-					message: message as { customType: string; content: string },
-					options: options as { deliverAs: string; triggerTurn: boolean },
-				});
-			});
-			const context = {
-				cwd: process.cwd(),
-				hasUI: true,
-				isIdle: () => true,
-				ui: { setStatus() {} },
-			} as unknown as ExtensionContext;
-			yield* fromPromise(
-				handlers.get("session_start")?.(
-					{ type: "session_start", reason: "startup" },
-					context,
-				),
+			const parent = registeredExtension((message) =>
+				parentMessages.push(message),
 			);
-			const [start, status, , kill] = tools as unknown as Array<{
-				execute: (...args: unknown[]) => Promise<unknown>;
-			}>;
+			const child = registeredExtension((message, options) =>
+				childMessages.push({
+					...(message as { customType: string; content: string }),
+					options: options as { deliverAs: string; triggerTurn: boolean },
+				}),
+			);
+			yield* lifecycle(parent, "session_start");
+			yield* lifecycle(child, "session_start");
+			const { start, status, kill } = tools(child);
 			const started = (yield* Effect.promise(() =>
 				start.execute(
 					"emit",
@@ -101,13 +122,14 @@ test("emit-to-pi wakes the owner while its terminal keeps running", () =>
 				),
 			)) as { details: { id: string } };
 			try {
-				yield* eventually(() => deliveries.length === 1);
+				yield* eventually(() => childMessages.length === 1);
+				assert.equal(parentMessages.length, 0);
 				assert.equal(
-					deliveries[0].message.customType,
+					childMessages[0].customType,
 					"background-terminal-notification",
 				);
-				assert.match(deliveries[0].message.content, /PR 42 has new feedback/);
-				assert.deepEqual(deliveries[0].options, {
+				assert.match(childMessages[0].content, /PR 42 has new feedback/);
+				assert.deepEqual(childMessages[0].options, {
 					deliverAs: "followUp",
 					triggerTurn: true,
 				});
@@ -119,12 +141,8 @@ test("emit-to-pi wakes the owner while its terminal keeps running", () =>
 				yield* Effect.promise(() =>
 					kill.execute("kill", { ids: [started.details.id] }),
 				);
-				yield* fromPromise(
-					handlers.get("session_shutdown")?.(
-						{ type: "session_shutdown", reason: "quit" },
-						context,
-					),
-				);
+				yield* lifecycle(child, "session_shutdown");
+				yield* lifecycle(parent, "session_shutdown");
 			}
 		}),
 	));
@@ -133,24 +151,11 @@ test("concurrent emitters preserve every frame", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const deliveries: Array<{ content: string }> = [];
-			const { tools, handlers } = registeredExtension((message) => {
-				deliveries.push(message as { content: string });
-			});
-			const context = {
-				cwd: process.cwd(),
-				hasUI: true,
-				isIdle: () => true,
-				ui: { setStatus() {} },
-			} as unknown as ExtensionContext;
-			yield* fromPromise(
-				handlers.get("session_start")?.(
-					{ type: "session_start", reason: "startup" },
-					context,
-				),
+			const registration = registeredExtension((message) =>
+				deliveries.push(message as { content: string }),
 			);
-			const [start, , , kill] = tools as unknown as Array<{
-				execute: (...args: unknown[]) => Promise<unknown>;
-			}>;
+			yield* lifecycle(registration, "session_start");
+			const { start, kill } = tools(registration);
 			const started = (yield* Effect.promise(() =>
 				start.execute(
 					"emit-many",
@@ -177,109 +182,12 @@ test("concurrent emitters preserve every frame", () =>
 				yield* Effect.promise(() =>
 					kill.execute("kill", { ids: [started.details.id] }),
 				);
-				yield* fromPromise(
-					handlers.get("session_shutdown")?.(
-						{ type: "session_shutdown", reason: "quit" },
-						context,
-					),
-				);
+				yield* lifecycle(registration, "session_shutdown");
 			}
 		}),
 	));
 
-test("notifications stay with the terminal's owning client", () =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const parentMessages: unknown[] = [];
-			const childMessages: unknown[] = [];
-			const parent = registeredExtension((message) =>
-				parentMessages.push(message),
-			);
-			const child = registeredExtension((message) =>
-				childMessages.push(message),
-			);
-			const context = {
-				cwd: process.cwd(),
-				hasUI: true,
-				isIdle: () => true,
-				ui: { setStatus() {} },
-			} as unknown as ExtensionContext;
-			yield* fromPromise(
-				parent.handlers.get("session_start")?.(
-					{ type: "session_start", reason: "startup" },
-					context,
-				),
-			);
-			yield* fromPromise(
-				child.handlers.get("session_start")?.(
-					{ type: "session_start", reason: "startup" },
-					context,
-				),
-			);
-			const [start, , , kill] = child.tools as unknown as Array<{
-				execute: (...args: unknown[]) => Promise<unknown>;
-			}>;
-			const started = (yield* Effect.promise(() =>
-				start.execute(
-					"emit",
-					{
-						command: "emit-to-pi child-only; sleep 30",
-						title: "child watcher",
-					},
-					undefined,
-					undefined,
-					context,
-				),
-			)) as { details: { id: string } };
-			try {
-				yield* eventually(() => childMessages.length === 1);
-				assert.equal(parentMessages.length, 0);
-			} finally {
-				yield* Effect.promise(() =>
-					kill.execute("kill", { ids: [started.details.id] }),
-				);
-				yield* fromPromise(
-					child.handlers.get("session_shutdown")?.(
-						{ type: "session_shutdown", reason: "quit" },
-						context,
-					),
-				);
-				yield* fromPromise(
-					parent.handlers.get("session_shutdown")?.(
-						{ type: "session_shutdown", reason: "quit" },
-						context,
-					),
-				);
-			}
-		}),
-	));
-
-test("explicit notifications remain queued while delivery is paused", () =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const messages: unknown[] = [];
-			const delivery = new BackgroundTerminalDelivery({
-				sendMessage(message: unknown) {
-					messages.push(message);
-				},
-			} as ExtensionAPI);
-			delivery.setContext({ isIdle: () => true } as ExtensionContext);
-			delivery.setPaused(true);
-			delivery.enqueueNotification({
-				id: "bt-1:notification-1",
-				terminalId: "bt-1",
-				title: "watcher",
-				message: "queued work",
-			});
-			yield* delivery.flush;
-			assert.equal(messages.length, 0);
-			delivery.setPaused(false);
-			yield* eventually(() => messages.length === 1);
-			delivery.clear();
-		}),
-	));
-
-test("settlement discards notifications that could not wake the owner in time", () =>
+test("paused delivery keeps live notifications and drops settled ones", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const messages: Array<{ content: string }> = [];
@@ -288,7 +196,7 @@ test("settlement discards notifications that could not wake the owner in time", 
 					messages.push(message as { content: string });
 				},
 			} as ExtensionAPI);
-			delivery.setContext({ isIdle: () => true } as ExtensionContext);
+			delivery.setContext(context);
 			delivery.setPaused(true);
 			delivery.enqueueNotification({
 				id: "bt-1:notification-1",
@@ -302,6 +210,8 @@ test("settlement discards notifications that could not wake the owner in time", 
 				title: "running watcher",
 				message: "current",
 			});
+			yield* delivery.flush;
+			assert.equal(messages.length, 0);
 			delivery.terminalSettled("bt-1");
 			delivery.setPaused(false);
 			yield* eventually(() => messages.length === 1);

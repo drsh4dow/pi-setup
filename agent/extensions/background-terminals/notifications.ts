@@ -19,9 +19,7 @@ export interface RunningTerminalNotification {
 	id: string;
 	terminalId: string;
 	title: string;
-	cwd: string;
 	message: string;
-	createdAt: number;
 }
 
 export function notificationEnvironment(): NodeJS.ProcessEnv {

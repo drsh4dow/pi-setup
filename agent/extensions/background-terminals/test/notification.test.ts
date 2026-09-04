@@ -269,9 +269,7 @@ test("explicit notifications remain queued while delivery is paused", () =>
 				id: "bt-1:notification-1",
 				terminalId: "bt-1",
 				title: "watcher",
-				cwd: "/repo",
 				message: "queued work",
-				createdAt: 0,
 			});
 			yield* delivery.flush;
 			assert.equal(messages.length, 0);
@@ -296,17 +294,13 @@ test("settlement discards notifications that could not wake the owner in time", 
 				id: "bt-1:notification-1",
 				terminalId: "bt-1",
 				title: "finished watcher",
-				cwd: "/repo",
 				message: "stale",
-				createdAt: 0,
 			});
 			delivery.enqueueNotification({
 				id: "bt-2:notification-1",
 				terminalId: "bt-2",
 				title: "running watcher",
-				cwd: "/repo",
 				message: "current",
-				createdAt: 0,
 			});
 			delivery.terminalSettled("bt-1");
 			delivery.setPaused(false);

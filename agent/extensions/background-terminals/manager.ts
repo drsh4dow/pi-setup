@@ -456,9 +456,7 @@ export class BackgroundTerminalManager {
 					id: `${id}:notification-${++this.notificationSequence}`,
 					terminalId: id,
 					title: entry.terminal.title,
-					cwd: entry.terminal.cwd,
 					message,
-					createdAt: Effect.runSync(Clock.currentTimeMillis),
 				});
 			} catch {
 				// Notification delivery does not own process lifecycle state.

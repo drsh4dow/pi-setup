@@ -123,13 +123,23 @@ function formatTerminalNotification(
 	return `${sanitizeInline(notification.terminalId)} [running] ${sanitizeInline(notification.title)}\n${tail(notification.message)}`;
 }
 
+type DeliveryItem =
+	| {
+			kind: "completion";
+			id: string;
+			terminalId: string;
+			snapshot: SettledTerminalSnapshot;
+	  }
+	| {
+			kind: "notification";
+			id: string;
+			terminalId: string;
+			notification: RunningTerminalNotification;
+	  };
+
 export class BackgroundTerminalDelivery {
 	private context?: ExtensionContext;
-	private readonly pending = new Map<string, SettledTerminalSnapshot>();
-	private readonly notificationPending = new Map<
-		string,
-		RunningTerminalNotification
-	>();
+	private readonly pending = new Map<string, DeliveryItem>();
 	private readonly attempts = new Map<string, number>();
 	private readonly failed = new Set<string>();
 	private retryGeneration = 0;
@@ -165,107 +175,90 @@ export class BackgroundTerminalDelivery {
 		const oldest = this.failed.values().next();
 		if (!oldest.done) this.failed.delete(oldest.value);
 	}
-	enqueue(snapshot: SettledTerminalSnapshot) {
+	private queue(item: DeliveryItem) {
 		if (this.lifecycle === "closed" || !this.context) return;
-		if (!this.pending.has(snapshot.id) && this.pending.size === MAX_TRACKED) {
-			const oldest = this.pending.keys().next();
-			if (!oldest.done) {
-				this.pending.delete(oldest.value);
-				this.attempts.delete(oldest.value);
-				this.markFailed(oldest.value);
-				this.reportError(
-					`[background-terminals] completion queue evicted ${oldest.value}; use bg_status to inspect it.`,
-				);
-			}
+		const sameKind = [...this.pending.values()].filter(
+			(pending) => pending.kind === item.kind,
+		);
+		if (!this.pending.has(item.id) && sameKind.length === MAX_TRACKED) {
+			const [oldest] = sameKind;
+			this.pending.delete(oldest.id);
+			this.attempts.delete(oldest.id);
+			this.markFailed(oldest.id);
+			this.reportError(
+				`[background-terminals] ${item.kind} queue evicted ${oldest.id}${item.kind === "completion" ? "; use bg_status to inspect it" : ""}.`,
+			);
 		}
-		this.pending.set(snapshot.id, snapshot);
+		this.pending.set(item.id, item);
 		if (this.context.isIdle()) Effect.runFork(this.flush);
 	}
+	enqueue(snapshot: SettledTerminalSnapshot) {
+		this.queue({
+			kind: "completion",
+			id: snapshot.id,
+			terminalId: snapshot.id,
+			snapshot,
+		});
+	}
 	enqueueNotification(notification: RunningTerminalNotification) {
-		if (this.lifecycle === "closed" || !this.context) return;
-		if (
-			!this.notificationPending.has(notification.id) &&
-			this.notificationPending.size === MAX_TRACKED
-		) {
-			const oldest = this.notificationPending.keys().next();
-			if (!oldest.done) {
-				this.notificationPending.delete(oldest.value);
-				this.attempts.delete(oldest.value);
-				this.markFailed(oldest.value);
-				this.reportError(
-					`[background-terminals] notification queue evicted ${oldest.value}.`,
-				);
-			}
-		}
-		this.notificationPending.set(notification.id, notification);
-		if (this.context.isIdle()) Effect.runFork(this.flush);
+		this.queue({
+			kind: "notification",
+			id: notification.id,
+			terminalId: notification.terminalId,
+			notification,
+		});
 	}
 	terminalSettled(terminalId: string) {
 		this.consume(
-			[...this.notificationPending.values()]
-				.filter((notification) => notification.terminalId === terminalId)
-				.map((notification) => notification.id),
+			[...this.pending.values()]
+				.filter(
+					(item) =>
+						item.kind === "notification" && item.terminalId === terminalId,
+				)
+				.map((item) => item.id),
 		);
 	}
 	consume(ids: readonly string[]) {
 		for (const id of ids) {
 			this.pending.delete(id);
-			this.notificationPending.delete(id);
 			this.attempts.delete(id);
 			this.failed.delete(id);
 		}
 	}
-	private notificationBatch():
-		| { notifications: RunningTerminalNotification[]; content: string }
-		| undefined {
-		const notifications: RunningTerminalNotification[] = [];
-		const parts = ["[Background terminal notifications]\n\n"];
+	private batch(kind: DeliveryItem["kind"]) {
+		const items: DeliveryItem[] = [];
+		const parts = [
+			kind === "notification"
+				? "[Background terminal notifications]\n\n"
+				: "[Background terminal results]\n\n",
+		];
 		let bytes = Buffer.byteLength(parts[0]);
-		for (const notification of this.notificationPending.values()) {
-			if ((this.attempts.get(notification.id) ?? 0) >= MAX_DELIVERY_ATTEMPTS)
+		for (const item of this.pending.values()) {
+			if (
+				item.kind !== kind ||
+				(this.attempts.get(item.id) ?? 0) >= MAX_DELIVERY_ATTEMPTS
+			)
 				continue;
-			const rendered = formatTerminalNotification(notification);
-			const separator = notifications.length ? "\n\n---\n\n" : "";
-			const addedBytes =
+			let rendered =
+				item.kind === "notification"
+					? formatTerminalNotification(item.notification)
+					: formatTerminalReport(item.snapshot, COMPLETION_TEXT_BYTES);
+			const separator = items.length ? "\n\n---\n\n" : "";
+			let addedBytes =
 				Buffer.byteLength(separator) + Buffer.byteLength(rendered);
-			if (notifications.length && bytes + addedBytes > COMPLETION_BATCH_BYTES)
-				break;
+			if (items.length && bytes + addedBytes > COMPLETION_BATCH_BYTES) break;
+			if (
+				item.kind === "completion" &&
+				bytes + addedBytes > COMPLETION_BATCH_BYTES
+			) {
+				rendered = `${summary(item.snapshot)}\nCompletion detail exceeded the delivery limit; use bg_status ${item.id}.`;
+				addedBytes = Buffer.byteLength(rendered);
+			}
 			parts.push(separator, rendered);
 			bytes += addedBytes;
-			notifications.push(notification);
+			items.push(item);
 		}
-		return notifications.length
-			? { notifications, content: parts.join("") }
-			: undefined;
-	}
-	private batch():
-		| { snapshots: SettledTerminalSnapshot[]; content: string }
-		| undefined {
-		const snapshots: SettledTerminalSnapshot[] = [];
-		const parts = ["[Background terminal results]\n\n"];
-		let bytes = Buffer.byteLength(parts[0]);
-		for (const snapshot of this.pending.values()) {
-			if ((this.attempts.get(snapshot.id) ?? 0) >= MAX_DELIVERY_ATTEMPTS)
-				continue;
-			const rendered = formatTerminalReport(snapshot, COMPLETION_TEXT_BYTES);
-			const separator = snapshots.length ? "\n\n---\n\n" : "";
-			const addedBytes =
-				Buffer.byteLength(separator) + Buffer.byteLength(rendered);
-			if (snapshots.length && bytes + addedBytes > COMPLETION_BATCH_BYTES)
-				break;
-			if (bytes + addedBytes > COMPLETION_BATCH_BYTES) {
-				const fallback = `${summary(snapshot)}\nCompletion detail exceeded the delivery limit; use bg_status ${snapshot.id}.`;
-				parts.push(fallback);
-				bytes += Buffer.byteLength(fallback);
-			} else {
-				parts.push(separator, rendered);
-				bytes += addedBytes;
-			}
-			snapshots.push(snapshot);
-		}
-		return snapshots.length
-			? { snapshots, content: parts.join("") }
-			: undefined;
+		return items.length ? { kind, items, content: parts.join("") } : undefined;
 	}
 	private scheduleRetry(attempt: number) {
 		if (this.lifecycle === "closed") return;
@@ -293,70 +286,42 @@ export class BackgroundTerminalDelivery {
 		this.retryGeneration++;
 		this.flushState = "flushing";
 		try {
-			for (let sent = 0; sent < MAX_TRACKED; sent++) {
-				const notificationBatch = this.notificationBatch();
-				if (notificationBatch) {
-					const ids = notificationBatch.notifications.map(
-						(notification) => notification.id,
-					);
-					try {
-						this.pi.sendMessage(
-							{
-								customType: "background-terminal-notification",
-								content: notificationBatch.content,
-								display: true,
-								details: { ids },
-							},
-							{ deliverAs: "followUp", triggerTurn: true },
-						);
-						this.consume(ids);
-					} catch (error) {
-						let attempt = 0;
-						for (const id of ids) {
-							attempt = (this.attempts.get(id) ?? 0) + 1;
-							this.attempts.set(id, attempt);
-							if (attempt === MAX_DELIVERY_ATTEMPTS) this.markFailed(id);
-						}
-						if (attempt < MAX_DELIVERY_ATTEMPTS) this.scheduleRetry(attempt);
-						else
-							this.reportError(
-								`[background-terminals] notification delivery failed for ${ids.join(", ")}: ${sanitizeInline(String(error).slice(0, 512))}`,
-							);
-						return;
-					}
-					continue;
-				}
-				const batch = this.batch();
+			for (let sent = 0; sent < MAX_TRACKED * 2; sent++) {
+				const batch = this.batch("notification") ?? this.batch("completion");
 				if (!batch) return;
+				const ids = batch.items.map((item) => item.id);
 				try {
 					this.pi.sendMessage(
 						{
-							customType: "background-terminal-results",
+							customType: `background-terminal-${batch.kind === "notification" ? "notification" : "results"}`,
 							content: batch.content,
 							display: true,
-							details: {
-								ids: batch.snapshots.map((snapshot) => snapshot.id),
-							},
+							details: { ids },
 						},
 						{
 							deliverAs: "followUp",
-							triggerTurn: batch.snapshots.some(
-								(snapshot) => snapshot.state !== "done",
-							),
+							triggerTurn:
+								batch.kind === "notification" ||
+								batch.items.some(
+									(item) =>
+										item.kind === "completion" &&
+										item.snapshot.state !== "done",
+								),
 						},
 					);
-					this.consume(batch.snapshots.map((snapshot) => snapshot.id));
+					this.consume(ids);
 				} catch (error) {
 					let attempt = 0;
-					for (const snapshot of batch.snapshots) {
-						attempt = (this.attempts.get(snapshot.id) ?? 0) + 1;
-						this.attempts.set(snapshot.id, attempt);
-						if (attempt === MAX_DELIVERY_ATTEMPTS) this.markFailed(snapshot.id);
+					for (const id of ids) {
+						const next = (this.attempts.get(id) ?? 0) + 1;
+						this.attempts.set(id, next);
+						attempt = Math.max(attempt, next);
+						if (next === MAX_DELIVERY_ATTEMPTS) this.markFailed(id);
 					}
 					if (attempt < MAX_DELIVERY_ATTEMPTS) this.scheduleRetry(attempt);
 					else
 						this.reportError(
-							`[background-terminals] completion delivery failed for ${batch.snapshots.map((snapshot) => snapshot.id).join(", ")}; use bg_status to inspect retained results: ${sanitizeInline(String(error).slice(0, 512))}`,
+							`[background-terminals] ${batch.kind} delivery failed for ${ids.join(", ")}${batch.kind === "completion" ? "; use bg_status to inspect retained results" : ""}: ${sanitizeInline(String(error).slice(0, 512))}`,
 						);
 					return;
 				}
@@ -370,7 +335,6 @@ export class BackgroundTerminalDelivery {
 		this.context = undefined;
 		this.retryGeneration++;
 		this.pending.clear();
-		this.notificationPending.clear();
 		this.attempts.clear();
 		this.failed.clear();
 		this.paused = false;

@@ -114,7 +114,6 @@ export function resolvePr(cwd, reference) {
 	return {
 		pr,
 		identity: identityFrom(pr, repository.nameWithOwner),
-		nameWithOwner: repository.nameWithOwner,
 	};
 }
 
@@ -150,14 +149,6 @@ export function trustedLogins(
 	return trusted;
 }
 
-function changedSince(path, lastPollAt) {
-	if (!lastPollAt) return path;
-	const parsed = Date.parse(lastPollAt);
-	if (!Number.isFinite(parsed)) return path;
-	const overlap = new Date(parsed - 1_000).toISOString();
-	return `${path}?since=${encodeURIComponent(overlap)}`;
-}
-
 export function fetchSnapshot(
 	cwd,
 	reference,
@@ -167,17 +158,11 @@ export function fetchSnapshot(
 	const resolved = resolvePr(cwd, reference);
 	const { pr, identity } = resolved;
 	const issueComments = paginatedGh(
-		changedSince(
-			`repos/${identity.owner}/${identity.repo}/issues/${pr.number}/comments`,
-			previous.lastPollAt,
-		),
+		`repos/${identity.owner}/${identity.repo}/issues/${pr.number}/comments`,
 		cwd,
 	);
 	const reviewComments = paginatedGh(
-		changedSince(
-			`repos/${identity.owner}/${identity.repo}/pulls/${pr.number}/comments`,
-			previous.lastPollAt,
-		),
+		`repos/${identity.owner}/${identity.repo}/pulls/${pr.number}/comments`,
 		cwd,
 	);
 	const reviews = paginatedGh(

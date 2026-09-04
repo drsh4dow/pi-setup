@@ -5,7 +5,7 @@ description: Use always after creating a PR or resuming work on a PR previously 
 
 # Babysit a PR
 
-You own this PR until it merges or closes. Reviewers will leave comments, checks will fail, the target branch will move on. Each of those is a request for your attention, and a PR that waits hours for its author to notice is a PR that stalls. Your job is to answer every one of them promptly, correctly, and visibly on GitHub, so the reviewer never has to chase you.
+You own this PR until it merges or closes. Reviewers will leave comments, checks will fail, the target branch will move on. Each of those is a request for your attention, and a PR that waits hours for its author to notice is a PR that stalls. Resolve each one promptly and correctly. Keep code changes in commits and replies inside existing review threads, so the PR timeline stays clean.
 
 You will not do this by watching. Polling GitHub from an agent turn burns context on nothing, and sleeping between polls blocks the human's work. Instead you start a watcher once, walk away, and act only when it wakes you. The watcher lives at `scripts/babysit-pr.mjs` beside this file; call it by absolute path, from the root of the PR's checkout, with the PR URL.
 

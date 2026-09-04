@@ -62,11 +62,11 @@ function registeredTools() {
 	}>;
 }
 
-test("registers four parallel tools and lifecycle hooks", () => {
+test("registers five parallel tools and lifecycle hooks", () => {
 	const { tools, handlers } = registeredExtension();
 	assert.deepEqual(
 		tools.map((tool) => tool.name),
-		["bg_start", "bg_status", "bg_list", "bg_kill"],
+		["bg_start", "bg_status", "bg_list", "bg_kill", "bg_wait"],
 	);
 	assert.ok(tools.every((tool) => tool.executionMode === "parallel"));
 	assert.ok(
@@ -769,3 +769,174 @@ test("aborted bg_kill wait does not cancel termination", () => {
 	));
 	}));
 });
+
+
+test("bg_wait is owner-isolated, abortable, consumes results, and survives reload cleanup", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const messages: unknown[] = [];
+			const owner = registeredExtension((message) => messages.push(message));
+			const foreign = registeredExtension(() => {});
+			const ctx = {
+				cwd: process.cwd(),
+				hasUI: true,
+				isIdle: () => true,
+				ui: { setStatus() {} },
+			} as unknown as ExtensionContext;
+			owner.handlers.get("session_start")?.({}, ctx);
+			foreign.handlers.get("session_start")?.({}, ctx);
+			const tool = (name: string, source = owner) => {
+				const found = source.tools.find((candidate) => candidate.name === name);
+				assert.ok(found);
+				return found;
+			};
+			try {
+				const started = yield* fromPromise(
+					tool("bg_start").execute(
+						"start",
+						{ command: "sleep 0.2; printf waited", title: "wait" },
+						undefined,
+						undefined,
+						ctx,
+					),
+				);
+				const details = (value: unknown) => {
+					assert.ok(value && typeof value === "object");
+					return value;
+				};
+				const idOf = (value: unknown) => {
+					const record = details(value);
+					assert.ok("id" in record && typeof record.id === "string");
+					return record.id;
+				};
+				const field = (value: unknown, key: string) =>
+					Reflect.get(details(value), key);
+				const id = idOf(started.details);
+				assert.match(
+					started.content
+						.map((part) => (part.type === "text" ? part.text : ""))
+						.join("\n"),
+					/bg_wait/,
+				);
+				yield* fromPromise(
+					assert.rejects(
+						Promise.resolve(
+							tool("bg_wait", foreign).execute(
+								"foreign",
+								{ id },
+								undefined,
+								undefined,
+								ctx,
+							),
+						),
+						/Unknown terminal id/,
+					),
+				);
+				const controller = new AbortController();
+				const pending = Promise.resolve(
+					tool("bg_wait").execute(
+						"abort",
+						{ id },
+						controller.signal,
+						undefined,
+						ctx,
+					),
+				);
+				controller.abort();
+				yield* fromPromise(
+					assert.rejects(pending, /Wait aborted; terminal continues/),
+				);
+				const first = yield* fromPromise(
+					tool("bg_status").execute(
+						"status",
+						{ id },
+						undefined,
+						undefined,
+						ctx,
+					),
+				);
+				const second = yield* fromPromise(
+					tool("bg_status").execute(
+						"status",
+						{ id },
+						undefined,
+						undefined,
+						ctx,
+					),
+				);
+				assert.equal(field(first.details, "observation"), "first");
+				assert.equal(field(second.details, "observation"), "unchanged");
+				assert.match(
+					second.content
+						.map((part) => (part.type === "text" ? part.text : ""))
+						.join("\n"),
+					/bg_wait/,
+				);
+				const result = yield* fromPromise(
+					tool("bg_wait").execute("wait", { id }, undefined, undefined, ctx),
+				);
+				assert.equal(field(result.details, "state"), "done");
+				assert.match(
+					result.content
+						.map((part) => (part.type === "text" ? part.text : ""))
+						.join("\n"),
+					/waited/,
+				);
+				assert.equal(messages.length, 0);
+				const repeated = yield* fromPromise(
+					tool("bg_wait").execute("again", { id }, undefined, undefined, ctx),
+				);
+				assert.deepEqual(repeated, result);
+				const changed = yield* fromPromise(
+					tool("bg_status").execute(
+						"changed",
+						{ id },
+						undefined,
+						undefined,
+						ctx,
+					),
+				);
+				assert.equal(field(changed.details, "observation"), "changed");
+				const running = yield* fromPromise(
+					tool("bg_start").execute(
+						"start",
+						{ command: "sleep 30", title: "reload" },
+						undefined,
+						undefined,
+						ctx,
+					),
+				);
+				const statusBefore = yield* fromPromise(tool("bg_status").execute("before", { id: idOf(running.details) }, undefined, undefined, ctx));
+			yield* Effect.sleep(1_100);
+			const statusAfter = yield* fromPromise(tool("bg_status").execute("after", { id: idOf(running.details) }, undefined, undefined, ctx));
+			assert.equal(field(statusBefore.details, "observation"), "first");
+			assert.equal(field(statusAfter.details, "observation"), "unchanged");
+			const waiting = tool("bg_wait").execute(
+					"wait",
+					{ id: idOf(running.details) },
+					undefined,
+					undefined,
+					ctx,
+				);
+				yield* fromPromise(
+					owner.handlers.get("session_shutdown")?.({ reason: "reload" }, ctx),
+				);
+				assert.equal(
+					field((yield* fromPromise(waiting)).details, "state"),
+					"killed",
+				);
+				owner.handlers.get("session_start")?.({ reason: "reload" }, ctx);
+				yield* fromPromise(
+					assert.rejects(
+						Promise.resolve(
+							tool("bg_wait").execute("old", { id }, undefined, undefined, ctx),
+						),
+						/Unknown terminal id/,
+					),
+				);
+			} finally {
+				yield* fromPromise(foreign.handlers.get("session_shutdown")?.({}, ctx));
+				yield* fromPromise(owner.handlers.get("session_shutdown")?.({}, ctx));
+			}
+		}),
+	));

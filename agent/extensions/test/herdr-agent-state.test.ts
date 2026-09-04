@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+const { spawnSync } = process.getBuiltinModule("node:child_process");
 const extensionUrl = new URL("../herdr-agent-state.ts", import.meta.url);
 
 test("stays inert when Pi is not running inside Herdr", () => {

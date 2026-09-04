@@ -40,13 +40,13 @@ function paint([r, g, b]: Rgb, text: string): string {
 	return `\x1b[38;2;${r};${g};${b}m${text}${RESET}`;
 }
 
-function gradient(text: string, phase: number): string {
+function gradient(text: string): string {
 	const chars = [...text];
 	const span = Math.max(chars.length - 1, 1);
 
 	return chars
 		.map((char, index) =>
-			char === " " ? char : paint(colorAt(index / span + phase), char),
+			char === " " ? char : paint(colorAt(index / span), char),
 		)
 		.join("");
 }
@@ -73,7 +73,7 @@ function headerLine(width: number, modelId: string): string {
 }
 
 function renderHeader(width: number, modelId: string): string[] {
-	return ["", `${BOLD}${gradient(headerLine(width, modelId), 0)}${RESET}`, ""];
+	return ["", `${BOLD}${gradient(headerLine(width, modelId))}${RESET}`, ""];
 }
 
 export default function (pi: ExtensionAPI) {

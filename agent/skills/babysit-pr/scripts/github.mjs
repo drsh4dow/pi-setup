@@ -239,7 +239,6 @@ export function fetchSnapshot(
 			unresolvedReviewCommentIds: threads.unresolvedReviewCommentIds,
 			threadStates: threads.states,
 			previousThreadStates: previous.threadStates,
-			initialReconciliation: !previous.lastPollAt,
 			selfLogin,
 			trustedLogins: trustedLogins(
 				cwd,

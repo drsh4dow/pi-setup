@@ -12,6 +12,7 @@ import {
 	pendingEvents,
 	pollBaseline,
 	queueEvents,
+	reconcileResolvedReviewComments,
 	reconcileUnnotifiedCheckEvents,
 	shouldEmit,
 	statePaths,
@@ -122,7 +123,6 @@ function snapshot() {
 		]),
 		previousThreadStates: { "thread-open": false, "thread-reopened": true },
 		selfLogin: "pi",
-		initialReconciliation: true,
 		trustedLogins: new Set(["author", "maintainer"]),
 	};
 }
@@ -149,14 +149,12 @@ test("normalizes every wake-up class and excludes untrusted, resolved, and routi
 	);
 });
 
-test("later polls retain trusted comments even if their thread was resolved quickly", () => {
-	const later = snapshot();
-	later.initialReconciliation = false;
-	assert.equal(
-		candidateEvents(later, "2026-01-01T00:01:00Z").filter(
-			(event) => event.kind === "review-comment",
-		).length,
-		2,
+test("resolved review comments never become actionable events", () => {
+	assert.deepEqual(
+		candidateEvents(snapshot(), "2026-01-01T00:01:00Z")
+			.filter((event) => event.kind === "review-comment")
+			.map((event) => event.payload.comment.id),
+		[4],
 	);
 });
 
@@ -221,8 +219,8 @@ test("a trust change backfills each unresolved bot comment", () => {
 		},
 		new Set(["reviewer[bot]"]),
 	);
+	assert.equal(baseline.previous.lastPollAt, undefined);
 	const input = snapshot();
-	input.initialReconciliation = !baseline.previous.lastPollAt;
 	input.reviewComments = input.reviewComments.map((comment) => ({
 		...comment,
 		user: { login: "reviewer[bot]" },
@@ -246,6 +244,63 @@ test("comment edits produce a new event revision", () => {
 		(event) => event.kind === "issue-comment",
 	);
 	assert.notEqual(first.id, second.id);
+});
+
+test("a newer comment edit supersedes its pending revision", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-edit-test-"));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		const paths = statePaths(root, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		const first = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").find(
+			(event) => event.kind === "issue-comment",
+		);
+		const edited = snapshot();
+		edited.issueComments[0].updated_at = "2026-01-01T00:02:00Z";
+		const second = candidateEvents(edited, "2026-01-01T00:02:00Z").find(
+			(event) => event.kind === "issue-comment",
+		);
+		queueEvents(paths, [first]);
+		queueEvents(paths, [second]);
+		assert.deepEqual(
+			pendingEvents(paths).map((event) => event.id),
+			[second.id],
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("resolved threads acknowledge already queued review comments", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-resolved-test-"));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		const paths = statePaths(root, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		const reviewComment = candidateEvents(
+			snapshot(),
+			"2026-01-01T00:01:00Z",
+		).find((event) => event.kind === "review-comment");
+		queueEvents(paths, [reviewComment]);
+		assert.deepEqual(reconcileResolvedReviewComments(paths, new Set()), [
+			reviewComment.id,
+		]);
+		assert.deepEqual(pendingEvents(paths), []);
+		assert.match(
+			readFileSync(paths.ackFile(reviewComment.id), "utf8"),
+			/"source": "thread-resolved"/,
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
 test("drops an unnotified check failure when the check recovers during debounce", () => {

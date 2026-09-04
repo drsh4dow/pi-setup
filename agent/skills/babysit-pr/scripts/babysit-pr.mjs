@@ -108,7 +108,7 @@ export function candidateEvents(input, observedAt) {
 		const state = String(review.state ?? "").toUpperCase();
 		const body = typeof review.body === "string" ? review.body.trim() : "";
 		if (!body && state !== "CHANGES_REQUESTED") continue;
-		const key = `review:${review.id}:${compactTimestamp(review.submitted_at)}:${state}`;
+		const key = `review:${review.id}:${compactTimestamp(review.submitted_at)}:${state}:${hash(body)}`;
 		events.push(makeEvent(pr, "review", key, observedAt, { review }));
 	}
 	for (const check of input.checks) {

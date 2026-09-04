@@ -151,6 +151,30 @@ test("normalizes every wake-up class and excludes untrusted, resolved, and routi
 	);
 });
 
+test("distinct failed check runs cannot share an event identity", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-check-identity-test-"));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		const paths = statePaths(root, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		const input = snapshot();
+		const failed = input.checks[0];
+		input.checks = [failed, { ...failed, link: "check-1-retry" }];
+		const events = candidateEvents(input, "2026-01-01T00:01:00Z").filter(
+			(event) => event.kind === "check-failed",
+		);
+		assert.equal(new Set(events.map((event) => event.id)).size, 2);
+		assert.equal(queueEvents(paths, events).length, 2);
+		assert.equal(pendingEvents(paths).length, 2);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("resolved review comments never become actionable events", () => {
 	assert.deepEqual(
 		candidateEvents(snapshot(), "2026-01-01T00:01:00Z")

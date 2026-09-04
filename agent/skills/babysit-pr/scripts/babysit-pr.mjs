@@ -260,6 +260,12 @@ export function pendingEvents(paths) {
 	return pendingRecords(paths).map(({ event }) => event);
 }
 
+export function drainEvents(paths, now = Date.now()) {
+	const records = pendingRecords(paths);
+	markNotified(paths, records, now);
+	return records.map(({ event }) => event);
+}
+
 export function reconcileUnnotifiedCheckEvents(paths, currentEvents) {
 	const current = new Set(
 		currentEvents
@@ -577,7 +583,7 @@ async function main() {
 			return;
 		case "drain": {
 			const { paths } = contextFor(cwd, reference);
-			print({ state: paths.root, events: pendingEvents(paths) });
+			print({ state: paths.root, events: drainEvents(paths) });
 			return;
 		}
 		case "ack": {

@@ -23,7 +23,7 @@ if (!message) {
 	process.exit(1);
 }
 
-const frame = `${JSON.stringify({ version: 1, message })}\n`;
+const frame = `${JSON.stringify(message)}\n`;
 if (Buffer.byteLength(frame) > 4 * 1024) {
 	process.stderr.write("emit-to-pi messages must fit within 4 KiB.\n");
 	process.exit(1);

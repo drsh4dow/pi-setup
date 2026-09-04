@@ -74,16 +74,10 @@ function tools(registration: ReturnType<typeof registeredExtension>) {
 
 test("notification framing accepts split valid messages and drops malformed frames", () => {
 	const frames = new NotificationFrames();
-	assert.deepEqual(frames.append(Buffer.from('{"version":1,"mess')), []);
-	assert.deepEqual(frames.append(Buffer.from('age":"hello"}\nnot-json\n')), [
-		"hello",
-	]);
+	assert.deepEqual(frames.append(Buffer.from('"hel')), []);
+	assert.deepEqual(frames.append(Buffer.from('lo"\nnot-json\n')), ["hello"]);
 	assert.deepEqual(
-		frames.append(
-			Buffer.from(
-				`${"x".repeat(4 * 1024 + 1)}\n{"version":1,"message":"after"}\n`,
-			),
-		),
+		frames.append(Buffer.from(`${"x".repeat(4 * 1024 + 1)}\n"after"\n`)),
 		["after"],
 	);
 });

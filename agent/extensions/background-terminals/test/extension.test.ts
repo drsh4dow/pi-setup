@@ -19,6 +19,7 @@ const noEvents = {
 };
 
 const fromPromise = <A>(value: A | PromiseLike<A>) => Effect.promise(() => Promise.resolve(value));
+const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 const eventually = Effect.fn("eventually")(function* (condition: () => boolean | Promise<boolean>) {
 	for (let attempt = 0; attempt < 200; attempt += 1) {
 		if (yield* fromPromise(condition())) return;
@@ -178,14 +179,16 @@ test("parent shutdown awaits a child shutdown already escalating", {
 		},
 		{
 			execute: (...args: unknown[]) => Promise<{
-				content: [{ text: string }];
+				details: { stdoutBytes: number };
 			}>;
 		},
 	];
+	const stubbornProgram =
+		'process.on("SIGTERM", () => {}); setImmediate(() => console.log("ready", process.env.NODE_TEST_CONTEXT)); setInterval(() => {}, 1_000);';
 	const started = yield* fromPromise(start.execute(
 		"start-stubborn-child",
 		{
-			command: "trap '' TERM; echo ready; exec tail -f /dev/null",
+			command: `exec ${shellQuote(process.execPath)} -e ${shellQuote(stubbornProgram)}`,
 			title: "stubborn child",
 		},
 		undefined,
@@ -195,7 +198,7 @@ test("parent shutdown awaits a child shutdown already escalating", {
 	yield* eventually(() =>
 		status
 			.execute("stubborn-child-ready", { id: started.details.id })
-			.then((result) => result.content[0].text.includes("ready")),
+			.then((result) => result.details.stdoutBytes > 0),
 	);
 	const childShutdown = Promise.resolve(
 		childHandlers.get("session_shutdown")?.(

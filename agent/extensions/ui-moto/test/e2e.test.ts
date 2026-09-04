@@ -9,6 +9,7 @@ import {
 	e2eUnavailable,
 	isDead,
 	type PiSession,
+	prompt,
 	readStderr,
 	runTask,
 	sendKeys,
@@ -33,6 +34,7 @@ const Settings = Schema.fromJsonString(
 );
 
 const BAR_FILL = "─";
+const CURRENT_MODEL_ROW = /^(?=.*✓).*?(\S+) \[([^\]]+)\]/m;
 
 interface Header {
 	readonly line: string;
@@ -119,26 +121,54 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 	});
 
 	testEffect(
-		"header follows model_select when the model is cycled",
+		"header follows model_select when a different default is selected",
 		function* () {
 			const first = header(yield* capture(session));
-			assert.ok(first, "header missing before cycling the model");
+			assert.ok(first, "header missing before selecting the model");
 
-			yield* sendKeys(session, "M-p");
-			const cycled = yield* waitFor(
+			const openModelPicker = Effect.fn("openModelPicker")(function* () {
+				yield* prompt(session, "/model");
+				const pane = yield* waitFor(session, /Ctrl\+S to set as default/);
+				if (pane.includes("Scope:")) yield* sendKeys(session, "Tab");
+				return yield* waitFor(session, (pane) => {
+					const current = CURRENT_MODEL_ROW.exec(pane);
+					return (
+						current !== null &&
+						[...pane.matchAll(/(\S+) \[([^\]]+)\]/g)].some(
+							(match) => match[1] !== current[1],
+						)
+					);
+				});
+			});
+			const chooseDefault = Effect.fn("chooseDefault")(function* (
+				reference: string,
+			) {
+				yield* sendKeys(session, "-l", reference);
+				yield* waitFor(session, (pane) => pane.includes(`> ${reference}`));
+				yield* sendKeys(session, "C-s");
+			});
+			const picker = yield* openModelPicker();
+			const original = CURRENT_MODEL_ROW.exec(picker);
+			assert.ok(original, `current model missing from picker:\n${picker}`);
+			const alternative = [...picker.matchAll(/(\S+) \[([^\]]+)\]/g)].find(
+				(match) => match[1] !== first.modelId,
+			);
+			assert.ok(alternative, `need a different available model:\n${picker}`);
+			yield* chooseDefault(`${alternative[2]}/${alternative[1]}`);
+			const selected = yield* waitFor(
 				session,
 				(pane) => {
 					const bar = header(pane);
 					return (
 						bar !== undefined &&
-						bar.modelId !== first.modelId &&
+						bar.modelId === alternative[1] &&
 						footerModelId(pane) === bar.modelId
 					);
 				},
 				{ timeoutMs: 30_000, description: "header to pick up the new model" },
 			);
-			const second = header(cycled);
-			assert.ok(second, "header missing after cycling the model");
+			const second = header(selected);
+			assert.ok(second, "header missing after selecting the model");
 			assert.notEqual(second.modelId, first.modelId);
 			assert.equal(second.project, first.project);
 			assert.equal(second.line.length, first.line.length);
@@ -147,7 +177,8 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 			);
 			assert.equal(settings.defaultModel, second.modelId);
 
-			yield* sendKeys(session, "M-p");
+			yield* openModelPicker();
+			yield* chooseDefault(`${original[2]}/${original[1]}`);
 			yield* waitFor(
 				session,
 				(pane) =>

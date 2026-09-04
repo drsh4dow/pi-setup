@@ -284,3 +284,87 @@ test("bounds settlement when descendants retain inherited pipes", {
 	assert.ok(snapshot.settledAt - snapshot.createdAt < 4_500);
 	yield* manager.shutdown();
 })));
+
+const fromPromise = <A>(value: A | PromiseLike<A>) =>
+	Effect.promise(() => Promise.resolve(value));
+
+test("wait returns complete output, repeats settled results, and consumes completion once", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const notifications: boolean[] = [];
+			const manager = new BackgroundTerminalManager((_snapshot, consumed) =>
+				notifications.push(consumed),
+			);
+			try {
+				const started = manager.start({
+					command: "sleep 0.1; printf waited",
+					title: "wait",
+					cwd,
+				});
+				const [one, two] = yield* fromPromise(
+					Promise.all([
+						Effect.runPromise(manager.wait(started.id)),
+						Effect.runPromise(manager.wait(started.id)),
+					]),
+				);
+				assert.equal(one.stdout.text, "waited");
+				assert.deepEqual(two, one);
+				assert.deepEqual(yield* manager.wait(started.id), one);
+				assert.deepEqual(notifications, [true]);
+				yield* fromPromise(
+					assert.rejects(
+						Effect.runPromise(manager.wait("foreign")),
+						/Unknown terminal id/,
+					),
+				);
+			} finally {
+				yield* manager.shutdown();
+			}
+		}),
+	));
+
+test("aborting wait leaves the process alive and restores automatic completion", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const notifications: boolean[] = [];
+			const manager = new BackgroundTerminalManager((_snapshot, consumed) =>
+				notifications.push(consumed),
+			);
+			try {
+				const started = manager.start({
+					command: "sleep 0.2; printf survived",
+					title: "abort",
+					cwd,
+				});
+				const controller = new AbortController();
+				const pending = Effect.runPromise(manager.wait(started.id), {
+					signal: controller.signal,
+				});
+				controller.abort();
+				yield* fromPromise(assert.rejects(pending));
+				assert.equal(manager.get(started.id)?.state, "running");
+				assert.equal(processIsGone(started.pid ?? 0), false);
+				const result = yield* settled(manager, started.id);
+				assert.equal(result.stdout.text, "survived");
+				assert.deepEqual(notifications, [false]);
+			} finally {
+				yield* manager.shutdown();
+			}
+		}),
+	));
+
+test("shutdown settles outstanding waiters and clears tracked results", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const manager = new BackgroundTerminalManager();
+			const started = manager.start({
+				command: "sleep 30",
+				title: "shutdown",
+				cwd,
+			});
+			const pending = Effect.runPromise(manager.wait(started.id));
+			yield* manager.shutdown();
+			assert.equal((yield* fromPromise(pending)).state, "killed");
+			assert.deepEqual(manager.list(), []);
+		}),
+	));

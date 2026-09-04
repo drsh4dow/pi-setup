@@ -307,6 +307,36 @@ test("comment edits produce a new event revision", () => {
 	assert.notEqual(first.id, second.id);
 });
 
+test("edited review summaries remain actionable after acknowledgement", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-review-edit-test-"));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		const paths = statePaths(root, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		const first = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").find(
+			(event) => event.kind === "review",
+		);
+		const edited = snapshot();
+		edited.reviews[0].body = "new requested changes";
+		const second = candidateEvents(edited, "2026-01-01T00:02:00Z").find(
+			(event) => event.kind === "review",
+		);
+		queueEvents(paths, [first]);
+		ackEvents(paths, [first.id]);
+		assert.equal(queueEvents(paths, [second]).length, 1);
+		assert.deepEqual(
+			pendingEvents(paths).map((event) => event.id),
+			[second.id],
+		);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("a newer comment edit supersedes its pending revision", () => {
 	const root = mkdtempSync(join(tmpdir(), "babysit-pr-edit-test-"));
 	try {

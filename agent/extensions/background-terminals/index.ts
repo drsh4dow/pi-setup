@@ -114,11 +114,12 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		name: "bg_start",
 		label: "Start Background Terminal",
 		description:
-			"Start a non-interactive, session-scoped shell command in the background. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
+			"Start a non-interactive, session-scoped shell command in the background. The command can run emit-to-pi <message> to wake its owning agent without exiting. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
 		promptSnippet:
 			"Start a long-running non-interactive command and continue useful work instead of polling",
 		promptGuidelines: [
 			"Use meaningful titles and avoid duplicate servers or watchers.",
+			"Use emit-to-pi inside a bg_start command to wake the owning agent for an actionable milestone while the process keeps running.",
 			"Never use for interactive commands. Background commands and delegated children share the worktree without write isolation; avoid overlapping mutations.",
 		],
 		parameters: Type.Object({

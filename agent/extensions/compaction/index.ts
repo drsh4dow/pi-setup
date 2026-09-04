@@ -301,7 +301,8 @@ export default function compactionExtension(
 ): void {
 	let generation = 0;
 	let armed = true;
-	let phase: "idle" | "awaiting-handoff" | "compacting" = "idle";
+	let phase: "idle" | "awaiting-handoff" | "draining" | "ready" | "compacting" =
+		"idle";
 	// Captured at turn_end, then consumed by session_before_compact.
 	let pendingHandoff: Handoff | undefined;
 
@@ -329,7 +330,20 @@ export default function compactionExtension(
 	// Native compact() waits for idle. Await it here, never inside turn_end,
 	// so prompt() cannot finish while the handoff is still being compacted.
 	pi.on("agent_settled", (_event, ctx) => {
-		if (phase !== "compacting") return;
+		if (
+			phase !== "idle" &&
+			phase !== "compacting" &&
+			!autoCompactionEnabled(ctx)
+		) {
+			reset();
+			return;
+		}
+		if (phase === "draining") {
+			requestHandoff();
+			return;
+		}
+		if (phase !== "ready") return;
+		phase = "compacting";
 		const handoff = pendingHandoff;
 		const activeGeneration = generation;
 		return Effect.runPromise(
@@ -377,20 +391,28 @@ export default function compactionExtension(
 	});
 
 	pi.on("turn_end", (event, ctx) => {
-		if (!autoCompactionEnabled(ctx)) {
-			if (phase === "awaiting-handoff") {
-				phase = "idle";
-				armed = true;
-				pauseDelivery(false);
-			}
-			return;
-		}
-		if (phase === "compacting") return;
 		if (
 			event.message.role === "assistant" &&
 			event.message.stopReason === "aborted"
 		) {
 			reset();
+			return;
+		}
+		if (phase === "compacting") return;
+		if (!autoCompactionEnabled(ctx)) {
+			if (phase !== "idle") reset();
+			return;
+		}
+		if (phase === "ready" || phase === "draining") {
+			// Any later turn invalidates both the captured state and its choice.
+			// Drain queued work before asking the author again, once at settlement.
+			pendingHandoff = undefined;
+			phase = "draining";
+			if (
+				event.message.role === "assistant" &&
+				event.message.stopReason === "error"
+			)
+				reset();
 			return;
 		}
 		const usage = ctx.getContextUsage();
@@ -422,7 +444,7 @@ export default function compactionExtension(
 			}
 			const handoff = extractHandoff(event.message);
 			pendingHandoff = handoff;
-			phase = "compacting";
+			phase = "ready";
 			// Let tools and queued user messages drain into agent_settled.
 			// ctx.abort() invokes the TUI Escape handler and dequeues user input.
 			return;
@@ -436,6 +458,10 @@ export default function compactionExtension(
 		}
 		if (!armed || overflowFromActiveModel) return;
 		armed = false;
+		requestHandoff();
+	});
+
+	function requestHandoff() {
 		phase = "awaiting-handoff";
 		pauseDelivery(true);
 		pi.sendMessage(
@@ -446,5 +472,5 @@ export default function compactionExtension(
 			},
 			{ triggerTurn: true },
 		);
-	});
+	}
 }

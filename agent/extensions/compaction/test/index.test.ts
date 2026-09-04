@@ -211,6 +211,19 @@ test("abandons a pending handoff request when auto-compaction is disabled", () =
 	);
 });
 
+test("disabling auto-compaction after capture discards the pending handoff", () => {
+	let enabled = true;
+	const { handlers, sent } = loadExtension(() => enabled);
+	const compactCalls: Array<Record<string, unknown>> = [];
+	const context = makeContext(compactCalls, () => 250_000);
+	handlers.get("turn_end")?.(turn, context);
+	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	enabled = false;
+	handlers.get("agent_settled")?.({}, context);
+	assert.equal(compactCalls.length, 0);
+	assert.equal(sent.length, 1);
+});
+
 test("extracts the handoff body and continuation choice", () => {
 	const handoff = extractHandoff(assistantTurn(HANDOFF_REPLY).message);
 	assert.ok(handoff);

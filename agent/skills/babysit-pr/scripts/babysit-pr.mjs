@@ -395,20 +395,6 @@ function readMeta(paths) {
 	);
 }
 
-export function pollBaseline(previous, trustedBots) {
-	const configuredTrustedBots = [...trustedBots].sort();
-	const previousTrustedBots = previous.trustedBots ?? [];
-	const trustChanged =
-		configuredTrustedBots.length !== previousTrustedBots.length ||
-		configuredTrustedBots.some(
-			(login, index) => login !== previousTrustedBots[index],
-		);
-	return {
-		configuredTrustedBots,
-		previous: trustChanged ? { ...previous, lastPollAt: undefined } : previous,
-	};
-}
-
 function reconcileResponseMarkers(paths, comments, selfLogin) {
 	const ids = new Set();
 	for (const comment of comments) {
@@ -491,8 +477,7 @@ function emitPending(cwd, pr, paths, records, reminder) {
 }
 
 function poll(cwd, reference, paths, trustedBots) {
-	const stored = readMeta(paths);
-	const { configuredTrustedBots, previous } = pollBaseline(stored, trustedBots);
+	const previous = readMeta(paths);
 	const observedAt = new Date().toISOString();
 	const snapshot = fetchSnapshot(cwd, reference, previous, trustedBots);
 	reconcileResponseMarkers(
@@ -506,16 +491,15 @@ function poll(cwd, reference, paths, trustedBots) {
 	);
 	const candidates = candidateEvents(snapshot.input, observedAt);
 	reconcileUnnotifiedCheckEvents(paths, candidates);
-	const added = queueEvents(paths, candidates);
+	queueEvents(paths, candidates);
 	atomicJson(paths.meta, {
 		version: VERSION,
 		pr: snapshot.pr,
-		lastPollAt: observedAt,
 		selfLogin: snapshot.input.selfLogin,
-		trustedBots: configuredTrustedBots,
+		trustedBots: [...trustedBots].sort(),
 		threadStates: Object.fromEntries(snapshot.input.threadStates),
 	});
-	return { ...snapshot, added };
+	return snapshot;
 }
 
 function terminalState(pr) {

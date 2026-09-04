@@ -103,7 +103,7 @@ export function candidateEvents(input, observedAt) {
 	}
 	for (const check of input.checks) {
 		if (check.bucket !== "fail" && check.bucket !== "cancel") continue;
-		const key = `required-check:${pr.headRefOid}:${check.name}:${compactTimestamp(check.completedAt)}:${check.state}`;
+		const key = `check:${pr.headRefOid}:${check.name}:${compactTimestamp(check.completedAt)}:${check.state}`;
 		events.push(makeEvent(pr, "check-failed", key, observedAt, { check }));
 	}
 	if (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY") {
@@ -197,6 +197,7 @@ function validEvent(value) {
 		/^[a-f0-9]{64}$/.test(value.id) &&
 		typeof value.kind === "string" &&
 		typeof value.observedAt === "string" &&
+		Number.isFinite(Date.parse(value.observedAt)) &&
 		value.marker === eventMarker(value.id)
 	);
 }
@@ -322,8 +323,28 @@ function readMeta(paths) {
 		(value) =>
 			value?.version === VERSION &&
 			value.threadStates &&
-			typeof value.threadStates === "object",
+			typeof value.threadStates === "object" &&
+			(value.trustedBots === undefined ||
+				(Array.isArray(value.trustedBots) &&
+					value.trustedBots.every(
+						(login) =>
+							typeof login === "string" && /^[A-Za-z0-9-]+\[bot\]$/.test(login),
+					))),
 	);
+}
+
+export function pollBaseline(previous, trustedBots) {
+	const configuredTrustedBots = [...trustedBots].sort();
+	const previousTrustedBots = previous.trustedBots ?? [];
+	const trustChanged =
+		configuredTrustedBots.length !== previousTrustedBots.length ||
+		configuredTrustedBots.some(
+			(login, index) => login !== previousTrustedBots[index],
+		);
+	return {
+		configuredTrustedBots,
+		previous: trustChanged ? { ...previous, lastPollAt: undefined } : previous,
+	};
 }
 
 function reconcileResponseMarkers(paths, comments, selfLogin) {
@@ -346,7 +367,7 @@ function reconcileResponseMarkers(paths, comments, selfLogin) {
 			});
 }
 
-function acquireLock(paths) {
+function acquireLock(paths, trustedBots) {
 	mkdirSync(paths.root, { recursive: true });
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
@@ -354,6 +375,7 @@ function acquireLock(paths) {
 			atomicJson(join(paths.lock, "owner.json"), {
 				version: VERSION,
 				pid: process.pid,
+				trustedBots: [...trustedBots].sort(),
 				startedAt: new Date().toISOString(),
 			});
 			return;
@@ -386,6 +408,21 @@ function emit(message, cwd) {
 	runCommand("emit-to-pi", [message], cwd);
 }
 
+export function tryEmit(
+	message,
+	cwd,
+	emitMessage = emit,
+	report = (error) => process.stderr.write(`${error}\n`),
+) {
+	try {
+		emitMessage(message, cwd);
+		return true;
+	} catch (error) {
+		report(`babysit-pr could not notify its owner: ${error}`);
+		return false;
+	}
+}
+
 function notificationMessage(pr, records, paths, reminder) {
 	const kinds = [...new Set(records.map(({ event }) => event.kind))].join(", ");
 	return `babysit-pr${reminder ? " reminder" : ""}: PR #${pr.number} has ${records.length} pending event${records.length === 1 ? "" : "s"} (${kinds}). Run node ${scriptPath} drain ${pr.url}, follow the babysit-pr skill, then acknowledge each completed event. State: ${paths.root}`;
@@ -397,7 +434,8 @@ function emitPending(cwd, pr, paths, records, reminder) {
 }
 
 function poll(cwd, reference, paths, trustedBots) {
-	const previous = readMeta(paths);
+	const stored = readMeta(paths);
+	const { configuredTrustedBots, previous } = pollBaseline(stored, trustedBots);
 	const observedAt = new Date().toISOString();
 	const snapshot = fetchSnapshot(cwd, reference, previous, trustedBots);
 	reconcileResponseMarkers(
@@ -413,6 +451,7 @@ function poll(cwd, reference, paths, trustedBots) {
 		pr: snapshot.pr,
 		lastPollAt: observedAt,
 		selfLogin: snapshot.input.selfLogin,
+		trustedBots: configuredTrustedBots,
 		threadStates: Object.fromEntries(snapshot.input.threadStates),
 	});
 	return { ...snapshot, added };
@@ -478,7 +517,7 @@ function failureNeedsImmediateNotice(error) {
 async function watch(cwd, reference, trustedBots) {
 	const initial = resolvePr(cwd, reference);
 	const paths = statePaths(cwd, initial.identity);
-	acquireLock(paths);
+	acquireLock(paths, trustedBots);
 	const release = () => rmSync(paths.lock, { recursive: true, force: true });
 	for (const signal of ["SIGINT", "SIGTERM"])
 		process.once(signal, () => {
@@ -530,7 +569,7 @@ async function watch(cwd, reference, trustedBots) {
 					(failureNeedsImmediateNotice(error) ||
 						now - failureStartedAt >= FAILURE_NOTICE_MS)
 				) {
-					emit(
+					tryEmit(
 						`babysit-pr monitoring is impaired for ${reference}: ${error}`,
 						cwd,
 					);
@@ -596,17 +635,19 @@ async function main() {
 		}
 		case "status": {
 			const { paths, pr } = contextFor(cwd, reference);
-			let pid = null;
+			const meta = readMeta(paths);
+			let owner = null;
 			if (existsSync(join(paths.lock, "owner.json")))
 				try {
-					pid = JSON.parse(
+					owner = JSON.parse(
 						readFileSync(join(paths.lock, "owner.json"), "utf8"),
-					).pid;
+					);
 				} catch {}
 			print({
 				pr: pr.url,
 				state: terminalState(pr) ?? "open",
-				watcherPid: pid,
+				watcherPid: owner?.pid ?? null,
+				trustedBots: owner?.trustedBots ?? meta.trustedBots ?? [],
 				pending: pendingEvents(paths).length,
 				statePath: paths.root,
 			});

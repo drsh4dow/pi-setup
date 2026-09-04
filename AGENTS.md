@@ -10,6 +10,8 @@ Before writing Effect code, read `.repos/effect/LLMS.md` and inspect its source 
 
 ## Agent skills
 
+PR review bot policy: `coderabbitai[bot]` is trusted for `babysit-pr`.
+
 ### Issue tracker
 
 Issues live as GitHub issues in `drsh4dow/pi-setup`, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.

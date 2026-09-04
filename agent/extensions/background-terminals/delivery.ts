@@ -200,6 +200,13 @@ export class BackgroundTerminalDelivery {
 		this.notificationPending.set(notification.id, notification);
 		if (this.context.isIdle()) Effect.runFork(this.flush);
 	}
+	terminalSettled(terminalId: string) {
+		this.consume(
+			[...this.notificationPending.values()]
+				.filter((notification) => notification.terminalId === terminalId)
+				.map((notification) => notification.id),
+		);
+	}
 	consume(ids: readonly string[]) {
 		for (const id of ids) {
 			this.pending.delete(id);

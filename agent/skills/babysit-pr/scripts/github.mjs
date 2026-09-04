@@ -192,7 +192,6 @@ export function fetchSnapshot(
 			"pr",
 			"checks",
 			String(pr.number),
-			"--required",
 			"--json",
 			"name,state,bucket,link,workflow,completedAt",
 		],

@@ -31,13 +31,17 @@ function registeredExtension(
 	return { tools, handlers };
 }
 
-async function eventually(condition: () => boolean) {
+const fromPromise = <A>(value: A | PromiseLike<A>) =>
+	Effect.promise(() => Promise.resolve(value));
+const eventually = Effect.fn("eventually")(function* (
+	condition: () => boolean,
+) {
 	for (let attempt = 0; attempt < 200; attempt++) {
 		if (condition()) return;
-		await new Promise((resolve) => setTimeout(resolve, 25));
+		yield* Effect.sleep(25);
 	}
 	throw new Error("condition not met within 5 seconds");
-}
+});
 
 test("notification framing accepts split valid messages and drops malformed frames", () => {
 	const frames = new NotificationFrames();
@@ -55,176 +59,224 @@ test("notification framing accepts split valid messages and drops malformed fram
 	);
 });
 
-test("emit-to-pi wakes the owner while its terminal keeps running", async () => {
-	const deliveries: Array<{
-		message: { customType: string; content: string };
-		options: { deliverAs: string; triggerTurn: boolean };
-	}> = [];
-	const { tools, handlers } = registeredExtension((message, options) => {
-		deliveries.push({
-			message: message as { customType: string; content: string },
-			options: options as { deliverAs: string; triggerTurn: boolean },
-		});
-	});
-	const context = {
-		cwd: process.cwd(),
-		hasUI: true,
-		isIdle: () => true,
-		ui: { setStatus() {} },
-	} as unknown as ExtensionContext;
-	await handlers.get("session_start")?.(
-		{ type: "session_start", reason: "startup" },
-		context,
-	);
-	const [start, status, , kill] = tools as unknown as Array<{
-		execute: (...args: unknown[]) => Promise<unknown>;
-	}>;
-	const started = (await start.execute(
-		"emit",
-		{
-			command: "emit-to-pi 'PR 42 has new feedback'; sleep 30",
-			title: "PR watcher",
-		},
-		undefined,
-		undefined,
-		context,
-	)) as { details: { id: string } };
-	try {
-		await eventually(() => deliveries.length === 1);
-		assert.equal(
-			deliveries[0].message.customType,
-			"background-terminal-notification",
-		);
-		assert.match(deliveries[0].message.content, /PR 42 has new feedback/);
-		assert.deepEqual(deliveries[0].options, {
-			deliverAs: "followUp",
-			triggerTurn: true,
-		});
-		const running = (await status.execute("status", {
-			id: started.details.id,
-		})) as { content: [{ text: string }] };
-		assert.match(running.content[0].text, /\[running\]/);
-	} finally {
-		await kill.execute("kill", { ids: [started.details.id] });
-		await handlers.get("session_shutdown")?.(
-			{ type: "session_shutdown", reason: "quit" },
-			context,
-		);
-	}
-});
+test("emit-to-pi wakes the owner while its terminal keeps running", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const deliveries: Array<{
+				message: { customType: string; content: string };
+				options: { deliverAs: string; triggerTurn: boolean };
+			}> = [];
+			const { tools, handlers } = registeredExtension((message, options) => {
+				deliveries.push({
+					message: message as { customType: string; content: string },
+					options: options as { deliverAs: string; triggerTurn: boolean },
+				});
+			});
+			const context = {
+				cwd: process.cwd(),
+				hasUI: true,
+				isIdle: () => true,
+				ui: { setStatus() {} },
+			} as unknown as ExtensionContext;
+			yield* fromPromise(
+				handlers.get("session_start")?.(
+					{ type: "session_start", reason: "startup" },
+					context,
+				),
+			);
+			const [start, status, , kill] = tools as unknown as Array<{
+				execute: (...args: unknown[]) => Promise<unknown>;
+			}>;
+			const started = (yield* Effect.promise(() =>
+				start.execute(
+					"emit",
+					{
+						command: "emit-to-pi 'PR 42 has new feedback'; sleep 30",
+						title: "PR watcher",
+					},
+					undefined,
+					undefined,
+					context,
+				),
+			)) as { details: { id: string } };
+			try {
+				yield* eventually(() => deliveries.length === 1);
+				assert.equal(
+					deliveries[0].message.customType,
+					"background-terminal-notification",
+				);
+				assert.match(deliveries[0].message.content, /PR 42 has new feedback/);
+				assert.deepEqual(deliveries[0].options, {
+					deliverAs: "followUp",
+					triggerTurn: true,
+				});
+				const running = (yield* Effect.promise(() =>
+					status.execute("status", { id: started.details.id }),
+				)) as { content: [{ text: string }] };
+				assert.match(running.content[0].text, /\[running\]/);
+			} finally {
+				yield* Effect.promise(() =>
+					kill.execute("kill", { ids: [started.details.id] }),
+				);
+				yield* fromPromise(
+					handlers.get("session_shutdown")?.(
+						{ type: "session_shutdown", reason: "quit" },
+						context,
+					),
+				);
+			}
+		}),
+	));
 
-test("concurrent emitters preserve every frame", async () => {
-	const deliveries: Array<{ content: string }> = [];
-	const { tools, handlers } = registeredExtension((message) => {
-		deliveries.push(message as { content: string });
-	});
-	const context = {
-		cwd: process.cwd(),
-		hasUI: true,
-		isIdle: () => true,
-		ui: { setStatus() {} },
-	} as unknown as ExtensionContext;
-	await handlers.get("session_start")?.(
-		{ type: "session_start", reason: "startup" },
-		context,
-	);
-	const [start, , , kill] = tools as unknown as Array<{
-		execute: (...args: unknown[]) => Promise<unknown>;
-	}>;
-	const started = (await start.execute(
-		"emit-many",
-		{
-			command:
-				"for i in $(seq 1 20); do emit-to-pi frame-$i & done; wait; sleep 30",
-			title: "concurrent watcher",
-		},
-		undefined,
-		undefined,
-		context,
-	)) as { details: { id: string } };
-	try {
-		await eventually(() =>
-			Array.from({ length: 20 }, (_, index) => `frame-${index + 1}`).every(
-				(frame) => deliveries.some(({ content }) => content.includes(frame)),
-			),
-		);
-	} finally {
-		await kill.execute("kill", { ids: [started.details.id] });
-		await handlers.get("session_shutdown")?.(
-			{ type: "session_shutdown", reason: "quit" },
-			context,
-		);
-	}
-});
+test("concurrent emitters preserve every frame", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const deliveries: Array<{ content: string }> = [];
+			const { tools, handlers } = registeredExtension((message) => {
+				deliveries.push(message as { content: string });
+			});
+			const context = {
+				cwd: process.cwd(),
+				hasUI: true,
+				isIdle: () => true,
+				ui: { setStatus() {} },
+			} as unknown as ExtensionContext;
+			yield* fromPromise(
+				handlers.get("session_start")?.(
+					{ type: "session_start", reason: "startup" },
+					context,
+				),
+			);
+			const [start, , , kill] = tools as unknown as Array<{
+				execute: (...args: unknown[]) => Promise<unknown>;
+			}>;
+			const started = (yield* Effect.promise(() =>
+				start.execute(
+					"emit-many",
+					{
+						command:
+							"for i in $(seq 1 20); do emit-to-pi frame-$i & done; wait; sleep 30",
+						title: "concurrent watcher",
+					},
+					undefined,
+					undefined,
+					context,
+				),
+			)) as { details: { id: string } };
+			try {
+				yield* eventually(() =>
+					Array.from({ length: 20 }, (_, index) => `frame-${index + 1}`).every(
+						(frame) =>
+							deliveries.some(({ content }) => content.includes(frame)),
+					),
+				);
+			} finally {
+				yield* Effect.promise(() =>
+					kill.execute("kill", { ids: [started.details.id] }),
+				);
+				yield* fromPromise(
+					handlers.get("session_shutdown")?.(
+						{ type: "session_shutdown", reason: "quit" },
+						context,
+					),
+				);
+			}
+		}),
+	));
 
-test("notifications stay with the terminal's owning client", async () => {
-	const parentMessages: unknown[] = [];
-	const childMessages: unknown[] = [];
-	const parent = registeredExtension((message) => parentMessages.push(message));
-	const child = registeredExtension((message) => childMessages.push(message));
-	const context = {
-		cwd: process.cwd(),
-		hasUI: true,
-		isIdle: () => true,
-		ui: { setStatus() {} },
-	} as unknown as ExtensionContext;
-	await parent.handlers.get("session_start")?.(
-		{ type: "session_start", reason: "startup" },
-		context,
-	);
-	await child.handlers.get("session_start")?.(
-		{ type: "session_start", reason: "startup" },
-		context,
-	);
-	const [start, , , kill] = child.tools as unknown as Array<{
-		execute: (...args: unknown[]) => Promise<unknown>;
-	}>;
-	const started = (await start.execute(
-		"emit",
-		{ command: "emit-to-pi child-only; sleep 30", title: "child watcher" },
-		undefined,
-		undefined,
-		context,
-	)) as { details: { id: string } };
-	try {
-		await eventually(() => childMessages.length === 1);
-		assert.equal(parentMessages.length, 0);
-	} finally {
-		await kill.execute("kill", { ids: [started.details.id] });
-		await child.handlers.get("session_shutdown")?.(
-			{ type: "session_shutdown", reason: "quit" },
-			context,
-		);
-		await parent.handlers.get("session_shutdown")?.(
-			{ type: "session_shutdown", reason: "quit" },
-			context,
-		);
-	}
-});
+test("notifications stay with the terminal's owning client", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const parentMessages: unknown[] = [];
+			const childMessages: unknown[] = [];
+			const parent = registeredExtension((message) =>
+				parentMessages.push(message),
+			);
+			const child = registeredExtension((message) =>
+				childMessages.push(message),
+			);
+			const context = {
+				cwd: process.cwd(),
+				hasUI: true,
+				isIdle: () => true,
+				ui: { setStatus() {} },
+			} as unknown as ExtensionContext;
+			yield* fromPromise(
+				parent.handlers.get("session_start")?.(
+					{ type: "session_start", reason: "startup" },
+					context,
+				),
+			);
+			yield* fromPromise(
+				child.handlers.get("session_start")?.(
+					{ type: "session_start", reason: "startup" },
+					context,
+				),
+			);
+			const [start, , , kill] = child.tools as unknown as Array<{
+				execute: (...args: unknown[]) => Promise<unknown>;
+			}>;
+			const started = (yield* Effect.promise(() =>
+				start.execute(
+					"emit",
+					{
+						command: "emit-to-pi child-only; sleep 30",
+						title: "child watcher",
+					},
+					undefined,
+					undefined,
+					context,
+				),
+			)) as { details: { id: string } };
+			try {
+				yield* eventually(() => childMessages.length === 1);
+				assert.equal(parentMessages.length, 0);
+			} finally {
+				yield* Effect.promise(() =>
+					kill.execute("kill", { ids: [started.details.id] }),
+				);
+				yield* fromPromise(
+					child.handlers.get("session_shutdown")?.(
+						{ type: "session_shutdown", reason: "quit" },
+						context,
+					),
+				);
+				yield* fromPromise(
+					parent.handlers.get("session_shutdown")?.(
+						{ type: "session_shutdown", reason: "quit" },
+						context,
+					),
+				);
+			}
+		}),
+	));
 
-test("explicit notifications remain queued while delivery is paused", async () => {
-	const messages: unknown[] = [];
-	const delivery = new BackgroundTerminalDelivery({
-		sendMessage(message: unknown) {
-			messages.push(message);
-		},
-	} as ExtensionAPI);
-	delivery.setContext({ isIdle: () => true } as ExtensionContext);
-	delivery.setPaused(true);
-	delivery.enqueueNotification({
-		id: "bt-1:notification-1",
-		terminalId: "bt-1",
-		title: "watcher",
-		cwd: "/repo",
-		message: "queued work",
-		createdAt: 0,
-	});
-	await Effect.runPromise(delivery.flush);
-	assert.equal(messages.length, 0);
-	delivery.setPaused(false);
-	await eventually(() => messages.length === 1);
-	delivery.clear();
-});
+test("explicit notifications remain queued while delivery is paused", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const messages: unknown[] = [];
+			const delivery = new BackgroundTerminalDelivery({
+				sendMessage(message: unknown) {
+					messages.push(message);
+				},
+			} as ExtensionAPI);
+			delivery.setContext({ isIdle: () => true } as ExtensionContext);
+			delivery.setPaused(true);
+			delivery.enqueueNotification({
+				id: "bt-1:notification-1",
+				terminalId: "bt-1",
+				title: "watcher",
+				cwd: "/repo",
+				message: "queued work",
+				createdAt: 0,
+			});
+			yield* delivery.flush;
+			assert.equal(messages.length, 0);
+			delivery.setPaused(false);
+			yield* eventually(() => messages.length === 1);
+			delivery.clear();
+		}),
+	));
 
 test("emit-to-pi fails outside an owned background terminal", () => {
 	const cli = new URL("../bin/emit-to-pi.mjs", import.meta.url);

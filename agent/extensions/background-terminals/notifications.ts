@@ -58,8 +58,7 @@ export class NotificationFrames {
 			if (frame.length > MAX_NOTIFICATION_FRAME_BYTES) continue;
 			try {
 				messages.push(
-					Schema.decodeUnknownSync(NotificationWire)(frame.toString("utf8"))
-						.message,
+					Schema.decodeSync(NotificationWire)(frame.toString("utf8")).message,
 				);
 			} catch {
 				// Only emit-to-pi frames are accepted on the private channel.

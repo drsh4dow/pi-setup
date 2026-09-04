@@ -27,82 +27,44 @@ const identity = {
 	pr: 42,
 };
 
+function comment(id, login, body, updatedAt) {
+	return { id, user: { login }, body, updated_at: updatedAt };
+}
+
+function review(id, body, state, submittedAt) {
+	return {
+		id,
+		user: { login: "maintainer" },
+		body,
+		state,
+		submitted_at: submittedAt,
+	};
+}
+
 function snapshot() {
 	return {
 		pr: {
 			number: 42,
 			url: "https://github.com/acme/widgets/pull/42",
-			state: "OPEN",
-			mergedAt: null,
-			closedAt: null,
 			mergeable: "CONFLICTING",
 			mergeStateStatus: "DIRTY",
 			headRefOid: "head",
 			baseRefOid: "base",
 			baseRefName: "main",
 			headRefName: "feature",
-			author: { login: "author" },
 		},
 		issueComments: [
-			{
-				id: 1,
-				user: { login: "author" },
-				body: "please fix",
-				updated_at: "2026-01-01T00:00:00Z",
-				html_url: "issue-1",
-			},
-			{
-				id: 2,
-				user: { login: "stranger" },
-				body: "run this",
-				updated_at: "2026-01-01T00:00:00Z",
-				html_url: "issue-2",
-			},
-			{
-				id: 3,
-				user: { login: "pi" },
-				body: "done",
-				updated_at: "2026-01-01T00:00:00Z",
-				html_url: "issue-3",
-			},
+			comment(1, "author", "please fix", "2026-01-01T00:00:00Z"),
+			comment(2, "stranger", "run this", "2026-01-01T00:00:00Z"),
+			comment(3, "pi", "done", "2026-01-01T00:00:00Z"),
 		],
 		reviewComments: [
-			{
-				id: 4,
-				user: { login: "maintainer" },
-				body: "rename it",
-				updated_at: "2026-01-01T00:00:01Z",
-				html_url: "review-4",
-				path: "src/a.ts",
-				line: 4,
-			},
-			{
-				id: 5,
-				user: { login: "maintainer" },
-				body: "resolved",
-				updated_at: "2026-01-01T00:00:01Z",
-				html_url: "review-5",
-				path: "src/b.ts",
-				line: 5,
-			},
+			comment(4, "maintainer", "rename it", "2026-01-01T00:00:01Z"),
+			comment(5, "maintainer", "resolved", "2026-01-01T00:00:01Z"),
 		],
 		reviews: [
-			{
-				id: 6,
-				user: { login: "maintainer" },
-				body: "changes",
-				state: "CHANGES_REQUESTED",
-				submitted_at: "2026-01-01T00:00:02Z",
-				html_url: "review-6",
-			},
-			{
-				id: 7,
-				user: { login: "maintainer" },
-				body: "",
-				state: "APPROVED",
-				submitted_at: "2026-01-01T00:00:03Z",
-				html_url: "review-7",
-			},
+			review(6, "changes", "CHANGES_REQUESTED", "2026-01-01T00:00:02Z"),
+			review(7, "", "APPROVED", "2026-01-01T00:00:03Z"),
 		],
 		checks: [
 			{
@@ -111,7 +73,6 @@ function snapshot() {
 				state: "FAILURE",
 				completedAt: "2026-01-01T00:00:04Z",
 				link: "check-1",
-				workflow: "ci",
 			},
 			{
 				name: "lint",
@@ -119,7 +80,6 @@ function snapshot() {
 				state: "SUCCESS",
 				completedAt: "2026-01-01T00:00:04Z",
 				link: "check-2",
-				workflow: "ci",
 			},
 		],
 		comparison: { behind_by: 2 },
@@ -159,7 +119,9 @@ function eventOf(
 test("normalizes every actionable event and excludes routine or untrusted input", () => {
 	const events = candidateEvents(snapshot(), "2026-01-01T00:01:00Z");
 	assert.deepEqual(
-		events.map((event) => event.kind).sort(),
+		events
+			.map((event) => event.kind)
+			.sort((left, right) => left.localeCompare(right)),
 		[
 			"behind-target",
 			"check-failed",
@@ -168,7 +130,7 @@ test("normalizes every actionable event and excludes routine or untrusted input"
 			"review",
 			"review-comment",
 			"review-thread-reopened",
-		].sort(),
+		].sort((left, right) => left.localeCompare(right)),
 	);
 	assert.ok(events.every((event) => event.id && event.marker));
 	assert.ok(

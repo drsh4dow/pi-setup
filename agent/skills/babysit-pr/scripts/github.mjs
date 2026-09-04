@@ -6,7 +6,6 @@ export class CommandError extends Error {
 			`${command} failed with exit ${result.status ?? "unknown"}: ${(result.stderr || result.stdout || "no output").trim()}`,
 		);
 		this.status = result.status;
-		this.stderr = result.stderr ?? "";
 	}
 }
 
@@ -21,8 +20,8 @@ export function runCommand(file, args, cwd, accepted = [0]) {
 	return result.stdout;
 }
 
-function jsonCommand(file, args, cwd, accepted) {
-	const output = runCommand(file, args, cwd, accepted);
+function jsonCommand(file, args, cwd) {
+	const output = runCommand(file, args, cwd);
 	try {
 		return JSON.parse(output);
 	} catch (error) {

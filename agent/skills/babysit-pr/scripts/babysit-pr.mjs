@@ -40,7 +40,7 @@ function compactTimestamp(value) {
 	return String(value ?? "unknown").replace(/[^0-9A-Za-z]/g, "");
 }
 
-export function eventMarker(id) {
+function eventMarker(id) {
 	return `<!-- pi-event:${id} -->`;
 }
 

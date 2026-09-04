@@ -29,14 +29,13 @@ function renderStatus(
 	label: DelegateStatus,
 	color: "muted" | "success" | "warning" | "error",
 	details: DelegateDetails,
-	includeUsage: boolean,
 	theme: Parameters<DelegateRenderResult>[2],
 ): string {
 	let text =
 		theme.fg(color, label) +
 		theme.fg("muted", " • ") +
 		theme.fg("accent", formatStatusParts(details));
-	const usage = includeUsage ? formatCompactUsage(details.childUsage) : "";
+	const usage = formatCompactUsage(details.childUsage);
 	if (usage) text += theme.fg("dim", ` • ${usage}`);
 	if (details.outputTruncated) {
 		text += theme.fg("warning", " • truncated");
@@ -219,7 +218,7 @@ export const renderDelegateResult: DelegateRenderResult = (
 	if (details?.success === false && options.isPartial) {
 		const container = new Container();
 		container.addChild(
-			new Text(renderStatus("running", "muted", details, true, theme), 0, 0),
+			new Text(renderStatus("running", "muted", details, theme), 0, 0),
 		);
 		const progress = formatProgress(details);
 		if (progress) {
@@ -240,7 +239,7 @@ export const renderDelegateResult: DelegateRenderResult = (
 			new Text(
 				theme.fg("accent", details.id) +
 					theme.fg("muted", " • ") +
-					renderStatus("running", "muted", details, true, theme) +
+					renderStatus("running", "muted", details, theme) +
 					theme.fg("dim", " • result will be delivered automatically"),
 				0,
 				0,
@@ -256,7 +255,7 @@ export const renderDelegateResult: DelegateRenderResult = (
 	}
 
 	if (details?.success === true) {
-		const line = renderStatus("done", "success", details, true, theme);
+		const line = renderStatus("done", "success", details, theme);
 		const content = result.content[0];
 		const output = content?.type === "text" ? content.text : "";
 		const container = new Container();
@@ -319,7 +318,7 @@ export const renderDelegateSessionResult: DelegateSessionRenderResult = (
 			new Text(
 				theme.fg("accent", snapshot.id) +
 					theme.fg("muted", " • ") +
-					renderStatus(snapshot.status, color, snapshot, true, theme),
+					renderStatus(snapshot.status, color, snapshot, theme),
 				0,
 				0,
 			),

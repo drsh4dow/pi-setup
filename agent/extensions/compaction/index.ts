@@ -386,6 +386,13 @@ export default function compactionExtension(
 			return;
 		}
 		if (phase === "compacting") return;
+		if (
+			event.message.role === "assistant" &&
+			event.message.stopReason === "aborted"
+		) {
+			reset();
+			return;
+		}
 		const usage = ctx.getContextUsage();
 		const overflowFromActiveModel =
 			usage !== undefined &&

@@ -46,7 +46,7 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | Extension | What it adds |
 | --- | --- |
 | `aoauth` | Anthropic OAuth login support |
-| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
+| `background-terminals` | `bg_start`, `bg_status`, `bg_wait`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
 | `codex-accounts` | Named Codex account selection |
 | `compaction` | Dense handoffs and automatic continuation after proactive compaction |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
@@ -63,6 +63,12 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 `agent/extensions/herdr-agent-state.ts` is locally patched. Herdr integration updates overwrite it; restore the repository version and run `/reload` in affected Pi sessions after updating Herdr's integration.
 
 Delegation uses the parent model unless `delegate.model` is configured in [`agent/settings.json`](agent/settings.json). A project's `.pi/delegate.json` can override that default with `{"model":"provider/model-id"}`; lookup checks the run's effective `cwd`, then the parent session's project, so an external worktree does not discard the session's choice. An explicit `delegate_run.model` overrides every file. Invalid, unavailable, or unauthenticated configured models fall back to the parent model, while an invalid explicit override fails the run. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort; a run that settles abnormally hands back the child's last messages so it can be re-briefed. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation unless `cwd` points them at one the caller prepared, so parallel mutations can otherwise conflict. A child's background terminals are its own: they never appear in the parent's list and are terminated when the child settles.
+
+A delegate stays running through its handoff, compaction, and requested continuation. The internal handoff is not a completed task result. A failed boundary compaction reports an error rather than a successful handoff.
+
+Use `bg_status` for immediate inspection. Its bounded observations distinguish the first read, changed state/output, and unchanged evidence; elapsed time alone is not a change. When blocked on a command, use `bg_wait` with its ID instead of polling or sleeping. It returns the settled result immediately if already available. Cancelling the wait leaves the command running; `bg_kill` terminates it. A successful wait consumes the completion notice so it is not delivered again. Full logs still require explicit redirection.
+
+The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity, and cancellation. Rejected edits include bounded candidate line locations and recovery guidance from the original file. These are navigation hints, never permission to apply an ambiguous replacement.
 
 ### Installed skills
 

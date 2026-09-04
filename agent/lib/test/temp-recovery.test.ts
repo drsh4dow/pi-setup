@@ -38,7 +38,7 @@ function file(
 
 test("recovery refuses to delete outside /tmp", () => {
 	assert.throws(
-		() => recoverTempSpace({ directory: process.cwd(), requiredBytes: 0 }),
+		() => recoverTempSpace({ directory: "/dev/null", requiredBytes: 0 }),
 		/only operates under \/tmp/,
 	);
 });

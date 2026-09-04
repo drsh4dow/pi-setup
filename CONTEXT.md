@@ -11,7 +11,7 @@ The earlier of 85% of the active model's context window and 250,000 tokens. Cros
 _Avoid_: Overflow threshold, fixed context limit
 
 **Handoff Turn**:
-The single extra turn injected when the Compaction Boundary is crossed, in which the acting model writes its own Model Handoff before compaction runs.
+The extra turn injected when the Compaction Boundary is crossed, in which the acting model writes its own Model Handoff before compaction runs. If queued work produces newer turns, a replacement Handoff Turn follows that work so only a current handoff controls continuation.
 _Avoid_: Summarization pass, pre-compaction hook
 
 **Model Handoff**:

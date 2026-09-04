@@ -38,6 +38,12 @@ function gate() {
 type Scenario =
 	| "ordinary"
 	| "queued-user"
+	| "continue-to-done"
+	| "continue-to-ask-user"
+	| "done-to-continue"
+	| "ask-user-to-continue"
+	| "queued-aborted"
+	| "queued-error"
 	| "continue"
 	| "done"
 	| "ask-user"
@@ -46,6 +52,22 @@ type Scenario =
 	| "handoff-aborted";
 
 const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
+	const queued =
+		scenario === "queued-user" ||
+		scenario.includes("-to-") ||
+		scenario === "queued-aborted" ||
+		scenario === "queued-error";
+	const freshChoice =
+		scenario === "continue-to-ask-user"
+			? "ask-user"
+			: scenario.endsWith("-to-continue")
+				? "continue"
+				: "done";
+	const oldChoice = scenario.startsWith("done-to")
+		? "done"
+		: scenario.startsWith("ask-user-to")
+			? "ask-user"
+			: "continue";
 	const services = yield* Effect.context<never>();
 	const cwd = yield* Effect.promise(() =>
 		mkdtemp(join(tmpdir(), "pi-settlement-")),
@@ -103,7 +125,7 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				seenUserMessages.add(text);
 			}
 			calls++;
-			if (calls === 2 && scenario === "queued-user") {
+			if (calls === 2 && queued) {
 				void session.steer("Include the revised figures");
 				void session.followUp("Also write the appendix");
 			}
@@ -111,8 +133,10 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				calls === 1
 					? "Working on the report"
 					: calls === 2
-						? `## Handoff\n- Objective: write report\n- Continuation: ${scenario === "cancel" ? "continue" : scenario === "queued-user" ? "done" : scenario}`
-						: "Report complete";
+						? `## Handoff\n- Objective: write report\n- Continuation: ${scenario === "cancel" ? "continue" : queued ? oldChoice : scenario}`
+						: calls === 5 && queued
+							? `## Handoff\n- Objective: revised report\n- Continuation: ${freshChoice}`
+							: "Report complete";
 			const message: AssistantMessage = {
 				role: "assistant",
 				content:
@@ -135,17 +159,25 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				stopReason:
 					calls === 0
 						? "toolUse"
-						: calls === 2 && scenario === "handoff-aborted"
+						: (calls === 2 && scenario === "handoff-aborted") ||
+								(calls === 4 && scenario === "queued-aborted")
 							? "aborted"
-							: "stop",
+							: calls === 4 && scenario === "queued-error"
+								? "error"
+								: "stop",
 				timestamp: 1,
 				usage: {
-					input: scenario !== "ordinary" && calls > 0 && calls < 3 ? 8600 : 100,
+					input:
+						scenario !== "ordinary" && calls > 0 && calls < (queued ? 6 : 3)
+							? 8600
+							: 100,
 					output: 20,
 					cacheRead: 0,
 					cacheWrite: 0,
 					totalTokens:
-						scenario !== "ordinary" && calls > 0 && calls < 3 ? 8620 : 120,
+						scenario !== "ordinary" && calls > 0 && calls < (queued ? 6 : 3)
+							? 8620
+							: 120,
 					cost: {
 						input: 0,
 						output: 0,
@@ -161,8 +193,15 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				void releaseContinuation.promise.then(() =>
 					stream.push({ type: "done", reason: "stop", message }),
 				);
-			} else if (message.stopReason === "aborted")
-				stream.push({ type: "error", reason: "aborted", error: message });
+			} else if (
+				message.stopReason === "aborted" ||
+				message.stopReason === "error"
+			)
+				stream.push({
+					type: "error",
+					reason: message.stopReason,
+					error: message,
+				});
 			else
 				stream.push({
 					type: "done",
@@ -241,18 +280,17 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 	);
 	yield* Effect.promise(() =>
 		session.bindExtensions({
-			mode: scenario === "queued-user" ? "tui" : "print",
-			abortHandler:
-				scenario === "queued-user"
-					? () => {
-							// InteractiveMode.restoreQueuedMessagesToEditor clears both queues
-							// before aborting the low-level agent. No terminal UI is needed here.
-							abortCalls++;
-							const { steering, followUp } = session.clearQueue();
-							restoredToEditor.push(...steering, ...followUp);
-							session.agent.abort();
-						}
-					: undefined,
+			mode: queued ? "tui" : "print",
+			abortHandler: queued
+				? () => {
+						// InteractiveMode.restoreQueuedMessagesToEditor clears both queues
+						// before aborting the low-level agent. No terminal UI is needed here.
+						abortCalls++;
+						const { steering, followUp } = session.clearQueue();
+						restoredToEditor.push(...steering, ...followUp);
+						session.agent.abort();
+					}
+				: undefined,
 			onError: ({ error }) => {
 				throw new Error(error);
 			},
@@ -291,14 +329,21 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 			assert.equal(calls, 1);
 			return;
 		}
-		if (scenario === "handoff-aborted") {
+		if (
+			scenario === "handoff-aborted" ||
+			scenario === "queued-aborted" ||
+			scenario === "queued-error"
+		) {
 			const first = yield* Effect.raceFirst(
 				Effect.promise(() => compacting.promise).pipe(Effect.as("compacting")),
 				Effect.promise(() => settled.promise).pipe(Effect.as("settled")),
 			);
 			assert.equal(first, "settled");
-			assert.equal(manager.list([job.id])[0]?.status, "cancelled");
-			assert.equal(calls, 2);
+			assert.equal(
+				manager.list([job.id])[0]?.status,
+				scenario === "queued-error" ? "error" : "cancelled",
+			);
+			assert.equal(calls, queued ? 4 : 2);
 			return;
 		}
 		yield* Effect.promise(() => compacting.promise);
@@ -309,7 +354,7 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 		assert.equal(manager.list([job.id])[0]?.status, "running");
 		assert.equal(disposed, false);
 		assertTerminalAlive();
-		if (scenario === "queued-user") {
+		if (queued) {
 			assert.equal(
 				abortCalls,
 				0,
@@ -350,8 +395,28 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 			assert.equal(result?.output, "Report complete");
 		assert.equal(
 			calls,
-			scenario === "continue" ? 3 : scenario === "queued-user" ? 4 : 2,
+			scenario === "continue"
+				? 3
+				: queued
+					? freshChoice === "continue"
+						? 6
+						: 5
+					: 2,
 		);
+		if (queued) {
+			const entries = session.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "compaction");
+			assert.equal(entries.length, 1);
+			assert.ok(entries[0]?.summary.includes("Objective: revised report"));
+			assert.ok(entries[0]?.summary.includes(`Continuation: ${freshChoice}`));
+			assert.equal(
+				result?.output,
+				freshChoice === "continue"
+					? "Report complete"
+					: `## Handoff\n- Objective: revised report\n- Continuation: ${freshChoice}`,
+			);
+		}
 		assert.deepEqual(delivered, [
 			scenario === "compaction-error" ? "error" : "done",
 		]);
@@ -373,6 +438,12 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 
 for (const scenario of [
 	"queued-user",
+	"continue-to-done",
+	"continue-to-ask-user",
+	"done-to-continue",
+	"ask-user-to-continue",
+	"queued-aborted",
+	"queued-error",
 	"ordinary",
 	"continue",
 	"done",

@@ -38,9 +38,11 @@ type Scenario =
 	| "done"
 	| "ask-user"
 	| "cancel"
-	| "compaction-error";
+	| "compaction-error"
+	| "handoff-aborted";
 
 const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
+	const services = yield* Effect.context<never>();
 	const cwd = yield* Effect.promise(() =>
 		mkdtemp(join(tmpdir(), "pi-settlement-")),
 	);
@@ -90,7 +92,8 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				api: model.api,
 				provider: model.provider,
 				model: model.id,
-				stopReason: "stop",
+				stopReason:
+					calls === 2 && scenario === "handoff-aborted" ? "aborted" : "stop",
 				timestamp: 1,
 				usage: {
 					input: calls < 3 ? 8600 : 100,
@@ -113,7 +116,9 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				void releaseContinuation.promise.then(() =>
 					stream.push({ type: "done", reason: "stop", message }),
 				);
-			} else stream.push({ type: "done", reason: "stop", message });
+			} else if (message.stopReason === "aborted")
+				stream.push({ type: "error", reason: "aborted", error: message });
+			else stream.push({ type: "done", reason: "stop", message });
 			return stream;
 		},
 	});
@@ -187,7 +192,7 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 		createSession: () => Promise.resolve(session),
 		shutdownSession: () => {
 			disposed = true;
-			return Effect.runPromise(shutdownChild(session));
+			return Effect.runPromiseWith(services)(shutdownChild(session));
 		},
 		onSettled: (snapshot) => {
 			delivered.push(snapshot.status);
@@ -201,6 +206,16 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 			cwd,
 			ctx: context,
 		});
+		if (scenario === "handoff-aborted") {
+			const first = yield* Effect.raceFirst(
+				Effect.promise(() => compacting.promise).pipe(Effect.as("compacting")),
+				Effect.promise(() => settled.promise).pipe(Effect.as("settled")),
+			);
+			assert.equal(first, "settled");
+			assert.equal(manager.list([job.id])[0]?.status, "cancelled");
+			assert.equal(calls, 2);
+			return;
+		}
 		yield* Effect.promise(() => compacting.promise);
 		// Drain runnable work while the actual SDK compaction is held open.
 		yield* Effect.callback<void>((resume) => {
@@ -257,6 +272,7 @@ for (const scenario of [
 	"ask-user",
 	"cancel",
 	"compaction-error",
+	"handoff-aborted",
 ] as const) {
 	test(`SDK compaction settlement: ${scenario}`, { timeout: 10000 }, () =>
 		Effect.runPromise(runScenario(scenario)),

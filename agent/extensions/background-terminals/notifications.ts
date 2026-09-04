@@ -7,9 +7,7 @@ const processEnvironment = process.getBuiltinModule("node:process").env;
 export const NOTIFICATION_FD = 3;
 const MAX_NOTIFICATION_FRAME_BYTES = 4 * 1024;
 const notificationBin = fileURLToPath(new URL("./bin", import.meta.url));
-const NotificationWire = Schema.fromJsonString(
-	Schema.Struct({ version: Schema.Literal(1), message: Schema.NonEmptyString }),
-);
+const NotificationWire = Schema.fromJsonString(Schema.NonEmptyString);
 
 type FrameState =
 	| { kind: "collecting"; buffered: Buffer }
@@ -56,7 +54,7 @@ export class NotificationFrames {
 			if (frame.length > MAX_NOTIFICATION_FRAME_BYTES) continue;
 			try {
 				messages.push(
-					Schema.decodeSync(NotificationWire)(frame.toString("utf8")).message,
+					Schema.decodeSync(NotificationWire)(frame.toString("utf8")),
 				);
 			} catch {
 				// Only emit-to-pi frames are accepted on the private channel.

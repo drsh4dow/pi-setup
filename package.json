@@ -5,10 +5,11 @@
   "scripts": {
     "prepare": "effect-tsgo patch && node agent/scripts/sync-pi-patches.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p cli/dumpfile/tsconfig.json",
-    "check": "biome check agent/extensions agent/lib agent/scripts cli/dumpfile/src cli/dumpfile/test",
-    "check:fix": "biome check agent/extensions agent/lib agent/scripts cli/dumpfile/src cli/dumpfile/test --write",
+    "check": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test",
+    "check:fix": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test --write",
     "test:delegate": "node --test agent/extensions/delegate/test/*.test.ts",
     "test:background-terminals": "node --test agent/extensions/background-terminals/test/*.test.ts",
+    "test:babysit-pr": "node --test agent/skills/babysit-pr/test/*.test.mjs",
     "test:process-status": "node --test agent/extensions/process-status/test/*.test.ts",
     "test:runtime-patches": "node --test agent/lib/test/*.test.ts",
     "test:compaction": "node --test agent/extensions/compaction/test/*.test.ts",
@@ -21,7 +22,7 @@
     "test:docs": "node --test agent/scripts/test/*.test.mjs && node agent/scripts/verify-docs.mjs",
     "test:dumpfile": "bash -n cli/dumpfile/setup.sh cli/dumpfile/bin/dumpfile && node --test cli/dumpfile/test/*.test.ts && wrangler deploy --dry-run --config cli/dumpfile/wrangler.jsonc",
     "test:e2e": "PI_E2E=1 node --test --test-concurrency=1 --test-timeout=900000 agent/extensions/*/test/e2e.test.ts",
-    "verify": "bun run typecheck && bun run check && bun run test:extensions && bun run test:runtime-patches && bun run test:dumpfile && bun run test:docs"
+    "verify": "bun run typecheck && bun run check && bun run test:extensions && bun run test:babysit-pr && bun run test:runtime-patches && bun run test:dumpfile && bun run test:docs"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.84.3",

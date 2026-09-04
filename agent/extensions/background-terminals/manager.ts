@@ -1,5 +1,11 @@
 import { Clock, Config, Deferred, Effect } from "effect";
 import { sacrificeKillNote, tagCommand } from "../../lib/sacrifice.ts";
+import {
+	NOTIFICATION_FD,
+	NotificationFrames,
+	notificationEnvironment,
+	type RunningTerminalNotification,
+} from "./notifications.ts";
 
 const { spawn } = process.getBuiltinModule("node:child_process");
 type ChildProcess = ReturnType<typeof spawn>;
@@ -168,6 +174,7 @@ interface ActiveTerminal {
 	child: ChildProcess;
 	stdout: Tail;
 	stderr: Tail;
+	notifications: NotificationFrames;
 	observation: ProcessObservation;
 	processError?: string;
 	settlement: Deferred.Deferred<SettledTerminalSnapshot>;
@@ -280,18 +287,24 @@ export function terminalResultFields(
 export class BackgroundTerminalManager {
 	private readonly entries = new Map<string, Entry>();
 	private counter = 0;
+	private notificationSequence = 0;
 	private lifecycle: ManagerLifecycle = { kind: "running" };
 	private readonly onSettled?: (
 		snapshot: SettledTerminalSnapshot,
 		consumed: boolean,
 	) => void;
 	private readonly allocateId: () => string;
+	private readonly onNotification?: (
+		notification: RunningTerminalNotification,
+	) => void;
 	constructor(
 		onSettled?: (snapshot: SettledTerminalSnapshot, consumed: boolean) => void,
 		allocateId?: () => string,
+		onNotification?: (notification: RunningTerminalNotification) => void,
 	) {
 		this.onSettled = onSettled;
 		this.allocateId = allocateId ?? (() => `bt-${++this.counter}`);
+		this.onNotification = onNotification;
 	}
 
 	list(): TerminalSnapshot[] {
@@ -370,9 +383,10 @@ export class BackgroundTerminalManager {
 				: { file: "/bin/sh", args: ["-c", tagCommand(options.command)] };
 		const child = spawn(invocation.file, invocation.args, {
 			cwd: options.cwd,
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: ["ignore", "pipe", "pipe", "pipe"],
 			detached: process.platform !== "win32",
 			windowsHide: true,
+			env: notificationEnvironment(),
 		});
 		const id = this.allocateId();
 		const terminal: ActiveTerminal = {
@@ -385,6 +399,7 @@ export class BackgroundTerminalManager {
 			child,
 			stdout: new Tail(),
 			stderr: new Tail(),
+			notifications: new NotificationFrames(),
 			observation: { kind: "executing" },
 			settlement: Deferred.makeUnsafe<SettledTerminalSnapshot>(),
 		};
@@ -395,6 +410,9 @@ export class BackgroundTerminalManager {
 		);
 		child.stderr?.on("data", (chunk: Buffer) =>
 			this.appendOutput(id, "stderr", chunk),
+		);
+		child.stdio[NOTIFICATION_FD]?.on("data", (chunk: Buffer) =>
+			this.appendNotification(id, chunk),
 		);
 		child.once("error", (error) => this.observeError(id, error));
 		child.once("exit", (code, signal) =>
@@ -428,6 +446,24 @@ export class BackgroundTerminalManager {
 	private appendOutput(id: string, stream: "stdout" | "stderr", chunk: Buffer) {
 		const entry = this.active(id);
 		if (entry) entry.terminal[stream].append(chunk);
+	}
+	private appendNotification(id: string, chunk: Buffer) {
+		const entry = this.active(id);
+		if (!entry) return;
+		for (const message of entry.terminal.notifications.append(chunk)) {
+			try {
+				this.onNotification?.({
+					id: `${id}:notification-${++this.notificationSequence}`,
+					terminalId: id,
+					title: entry.terminal.title,
+					cwd: entry.terminal.cwd,
+					message,
+					createdAt: Effect.runSync(Clock.currentTimeMillis),
+				});
+			} catch {
+				// Notification delivery does not own process lifecycle state.
+			}
+		}
 	}
 	private observeError(id: string, error: Error) {
 		const entry = this.active(id);
@@ -671,6 +707,7 @@ export class BackgroundTerminalManager {
 			if (!latest) return yield* Deferred.await(settlement);
 			latest.terminal.child.stdout?.destroy();
 			latest.terminal.child.stderr?.destroy();
+			latest.terminal.child.stdio[NOTIFICATION_FD]?.destroy();
 			latest.terminal.child.unref();
 			const snapshot = this.settle(id);
 			return snapshot ?? (yield* Deferred.await(settlement));

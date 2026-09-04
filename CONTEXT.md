@@ -121,5 +121,9 @@ The standing choice that work a session spawns is preferred for termination befo
 _Avoid_: Memory cap, resource limit, OOM guard
 
 **Terminal Ownership**:
-The session that started a background terminal holds it: the terminal, its output, its completion notice, and its share of concurrency capacity belong to that session and end with it. No session's usage can exhaust another's.
+The session that started a background terminal holds it: the terminal, its output, its notifications, and its share of concurrency capacity belong to that session and end with it. No session's usage can exhaust another's.
 _Avoid_: Shared terminal pool, inherited terminal, global slot budget
+
+**Terminal Notification**:
+An explicit message from a running background command that wakes the terminal's owning session without settling the command. Ordinary process output remains passive.
+_Avoid_: Completion notice, streamed output, global notification

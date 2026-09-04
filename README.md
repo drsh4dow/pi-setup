@@ -46,11 +46,12 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | Extension | What it adds |
 | --- | --- |
 | `aoauth` | Anthropic OAuth login support |
-| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes |
+| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
 | `codex-accounts` | Named Codex account selection |
 | `compaction` | Dense handoffs and automatic continuation after proactive compaction |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
+| `herdr-agent-state` | Herdr pane state and Pi session reporting when running inside Herdr |
 | `process-status` | `/ps` views for active work, worker tokens, and cost |
 | `sacrifice-preference` | Marks spawned work as the preferred target under Linux memory pressure |
 | `session-timer` | Per-run and cumulative session timing in the status bar |
@@ -62,6 +63,7 @@ Delegation uses the parent model unless `delegate.model` is configured in [`agen
 
 ### Installed skills
 
+- `babysit-pr`
 - `create-verification-skill`
 - `docs-search`
 - `dumpfile`
@@ -78,7 +80,6 @@ Delegation uses the parent model unless `delegate.model` is configured in [`agen
 ### Installed prompts
 
 - `beautify-dirty-worktree`
-- `coderabbit`
 - `handoff`
 - `implement-orchestrator`
 

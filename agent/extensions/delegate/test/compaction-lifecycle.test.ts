@@ -37,6 +37,7 @@ function gate() {
 
 type Scenario =
 	| "ordinary"
+	| "queued-user"
 	| "continue"
 	| "done"
 	| "ask-user"
@@ -59,6 +60,9 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 	const settled = gate();
 	let calls = -1;
 	let terminalPid: number | undefined;
+	let abortCalls = 0;
+	const restoredToEditor: string[] = [];
+	const seenUserMessages = new Set<string>();
 	const assertTerminalAlive = () => {
 		assert.ok(terminalPid);
 		assert.equal(processIsGone(terminalPid), false);
@@ -86,13 +90,28 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				maxTokens: 1000,
 			},
 		],
-		streamSimple: (model) => {
+		streamSimple: (model, modelContext) => {
+			for (const message of modelContext.messages) {
+				if (message.role !== "user") continue;
+				const text =
+					typeof message.content === "string"
+						? message.content
+						: message.content
+								.filter((part) => part.type === "text")
+								.map((part) => part.text)
+								.join("\n");
+				seenUserMessages.add(text);
+			}
 			calls++;
+			if (calls === 2 && scenario === "queued-user") {
+				void session.steer("Include the revised figures");
+				void session.followUp("Also write the appendix");
+			}
 			const text =
 				calls === 1
 					? "Working on the report"
 					: calls === 2
-						? `## Handoff\n- Objective: write report\n- Continuation: ${scenario === "cancel" ? "continue" : scenario}`
+						? `## Handoff\n- Objective: write report\n- Continuation: ${scenario === "cancel" ? "continue" : scenario === "queued-user" ? "done" : scenario}`
 						: "Report complete";
 			const message: AssistantMessage = {
 				role: "assistant",
@@ -137,7 +156,7 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				},
 			};
 			const stream = createAssistantMessageEventStream();
-			if (calls === 3) {
+			if (calls === 3 && scenario === "continue") {
 				continuation.resolve();
 				void releaseContinuation.promise.then(() =>
 					stream.push({ type: "done", reason: "stop", message }),
@@ -222,7 +241,18 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 	);
 	yield* Effect.promise(() =>
 		session.bindExtensions({
-			mode: "print",
+			mode: scenario === "queued-user" ? "tui" : "print",
+			abortHandler:
+				scenario === "queued-user"
+					? () => {
+							// InteractiveMode.restoreQueuedMessagesToEditor clears both queues
+							// before aborting the low-level agent. No terminal UI is needed here.
+							abortCalls++;
+							const { steering, followUp } = session.clearQueue();
+							restoredToEditor.push(...steering, ...followUp);
+							session.agent.abort();
+						}
+					: undefined,
 			onError: ({ error }) => {
 				throw new Error(error);
 			},
@@ -279,6 +309,16 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 		assert.equal(manager.list([job.id])[0]?.status, "running");
 		assert.equal(disposed, false);
 		assertTerminalAlive();
+		if (scenario === "queued-user") {
+			assert.equal(
+				abortCalls,
+				0,
+				"compaction must not invoke the TUI Escape handler",
+			);
+			assert.deepEqual(restoredToEditor, []);
+			assert.ok(seenUserMessages.has("Include the revised figures"));
+			assert.ok(seenUserMessages.has("Also write the appendix"));
+		}
 		assert.deepEqual(delivered, []);
 		if (scenario === "cancel") {
 			const [cancelled] = yield* manager.cancel([job.id]);
@@ -308,7 +348,10 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 		);
 		if (scenario === "continue")
 			assert.equal(result?.output, "Report complete");
-		assert.equal(calls, scenario === "continue" ? 3 : 2);
+		assert.equal(
+			calls,
+			scenario === "continue" ? 3 : scenario === "queued-user" ? 4 : 2,
+		);
 		assert.deepEqual(delivered, [
 			scenario === "compaction-error" ? "error" : "done",
 		]);
@@ -329,6 +372,7 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 });
 
 for (const scenario of [
+	"queued-user",
 	"ordinary",
 	"continue",
 	"done",

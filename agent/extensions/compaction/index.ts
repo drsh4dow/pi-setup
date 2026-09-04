@@ -333,7 +333,7 @@ export default function compactionExtension(
 		const handoff = pendingHandoff;
 		const activeGeneration = generation;
 		return Effect.runPromise(
-			Effect.callback<void>((resume) => {
+			Effect.callback<void, Error>((resume) => {
 				const resolve = () => resume(Effect.void);
 				ctx.compact({
 					onComplete: () => {
@@ -360,7 +360,7 @@ export default function compactionExtension(
 						pauseDelivery(false);
 						resolve();
 					},
-					onError: () => {
+					onError: (error) => {
 						if (generation !== activeGeneration) {
 							resolve();
 							return;
@@ -369,7 +369,7 @@ export default function compactionExtension(
 						armed = true;
 						pendingHandoff = undefined;
 						pauseDelivery(false);
-						resolve();
+						resume(Effect.fail(error));
 					},
 				});
 			}),

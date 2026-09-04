@@ -1,5 +1,4 @@
 import { type Static, StringEnum, Type } from "@earendil-works/pi-ai";
-import type { TruncationResult } from "@earendil-works/pi-coding-agent";
 
 export const RUN_TOOL_NAME = "delegate_run";
 export const SESSION_TOOL_NAME = "delegate_session";
@@ -127,9 +126,3 @@ export interface DelegateSnapshot extends DelegateDetails {
 export type DelegateSessionDetails =
 	| DelegateSnapshot
 	| { results: DelegateSnapshot[] };
-
-export interface DelegateOutput {
-	text: string;
-	truncation?: TruncationResult;
-	fullOutputFile?: string;
-}

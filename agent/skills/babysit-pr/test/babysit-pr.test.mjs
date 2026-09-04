@@ -10,10 +10,12 @@ import {
 	drainEvents,
 	eventMarker,
 	pendingEvents,
+	pollBaseline,
 	queueEvents,
 	reconcileUnnotifiedCheckEvents,
 	shouldEmit,
 	statePaths,
+	tryEmit,
 } from "../scripts/babysit-pr.mjs";
 import { trustedLogins } from "../scripts/github.mjs";
 
@@ -187,6 +189,53 @@ test("bot authors remain untrusted unless explicitly allowlisted", () => {
 	);
 });
 
+test("a non-collaborator PR author remains untrusted", () => {
+	assert.deepEqual(
+		[...trustedLogins(".", {}, "contributor", "pi", new Set(), new Set())],
+		[],
+	);
+});
+
+test("a trusted-bot change forces a full reconciliation", () => {
+	const previous = {
+		lastPollAt: "2026-01-01T00:00:00Z",
+		trustedBots: [],
+		threadStates: {},
+	};
+	const changed = pollBaseline(previous, new Set(["reviewer[bot]"]));
+	assert.equal(changed.previous.lastPollAt, undefined);
+	assert.deepEqual(changed.configuredTrustedBots, ["reviewer[bot]"]);
+	const unchanged = pollBaseline(
+		{ ...previous, trustedBots: ["reviewer[bot]"] },
+		new Set(["reviewer[bot]"]),
+	);
+	assert.equal(unchanged.previous.lastPollAt, previous.lastPollAt);
+});
+
+test("a trust change backfills each unresolved bot comment", () => {
+	const baseline = pollBaseline(
+		{
+			lastPollAt: "2026-01-01T00:00:00Z",
+			trustedBots: [],
+			threadStates: {},
+		},
+		new Set(["reviewer[bot]"]),
+	);
+	const input = snapshot();
+	input.initialReconciliation = !baseline.previous.lastPollAt;
+	input.reviewComments = input.reviewComments.map((comment) => ({
+		...comment,
+		user: { login: "reviewer[bot]" },
+	}));
+	input.trustedLogins = new Set(["reviewer[bot]"]);
+	assert.deepEqual(
+		candidateEvents(input, "2026-01-01T00:01:00Z")
+			.filter((event) => event.kind === "review-comment")
+			.map((event) => event.payload.comment.id),
+		[4],
+	);
+});
+
 test("comment edits produce a new event revision", () => {
 	const first = candidateEvents(snapshot(), "2026-01-01T00:01:00Z").find(
 		(event) => event.kind === "issue-comment",
@@ -241,6 +290,42 @@ test("keeps a drained check failure pending until acknowledgement", () => {
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
+});
+
+test("rejects persisted events with an invalid observation timestamp", () => {
+	const root = mkdtempSync(join(tmpdir(), "babysit-pr-timestamp-test-"));
+	try {
+		execFileSync("git", ["init", "--quiet", root]);
+		const paths = statePaths(root, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		const [event] = candidateEvents(snapshot(), "not-a-timestamp");
+		queueEvents(paths, [event]);
+		assert.throws(() => pendingEvents(paths), /Invalid babysit-pr state/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a failed owner notification stays inside the watcher error path", () => {
+	const reported = [];
+	assert.equal(
+		tryEmit(
+			"wake",
+			".",
+			() => {
+				throw new Error("closed channel");
+			},
+			(error) => reported.push(error),
+		),
+		false,
+	);
+	assert.deepEqual(reported, [
+		"babysit-pr could not notify its owner: Error: closed channel",
+	]);
 });
 
 test("debounces until quiet, with a hard cap and ten-minute reminders", () => {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -278,11 +279,47 @@ test("explicit notifications remain queued while delivery is paused", () =>
 		}),
 	));
 
+test("settlement discards notifications that could not wake the owner in time", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const messages: Array<{ content: string }> = [];
+			const delivery = new BackgroundTerminalDelivery({
+				sendMessage(message: unknown) {
+					messages.push(message as { content: string });
+				},
+			} as ExtensionAPI);
+			delivery.setContext({ isIdle: () => true } as ExtensionContext);
+			delivery.setPaused(true);
+			delivery.enqueueNotification({
+				id: "bt-1:notification-1",
+				terminalId: "bt-1",
+				title: "finished watcher",
+				cwd: "/repo",
+				message: "stale",
+				createdAt: 0,
+			});
+			delivery.enqueueNotification({
+				id: "bt-2:notification-1",
+				terminalId: "bt-2",
+				title: "running watcher",
+				cwd: "/repo",
+				message: "current",
+				createdAt: 0,
+			});
+			delivery.terminalSettled("bt-1");
+			delivery.setPaused(false);
+			yield* eventually(() => messages.length === 1);
+			assert.doesNotMatch(messages[0].content, /stale/);
+			assert.match(messages[0].content, /current/);
+			delivery.clear();
+		}),
+	));
+
 test("emit-to-pi fails outside an owned background terminal", () => {
 	const cli = new URL("../bin/emit-to-pi.mjs", import.meta.url);
 	const env = { ...process.env };
 	delete env.PI_BACKGROUND_TERMINAL_NOTIFY_FD;
-	const result = spawnSync(process.execPath, [cli.pathname, "hello"], {
+	const result = spawnSync(process.execPath, [fileURLToPath(cli), "hello"], {
 		env,
 		encoding: "utf8",
 	});

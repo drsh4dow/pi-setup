@@ -215,6 +215,16 @@ function readJson(path, validator) {
 	}
 }
 
+function acknowledge(paths, id, source) {
+	if (existsSync(paths.ackFile(id))) return;
+	atomicJson(paths.ackFile(id), {
+		version: VERSION,
+		id,
+		acknowledgedAt: new Date().toISOString(),
+		...(source ? { source } : {}),
+	});
+}
+
 function eventSubject(event) {
 	switch (event.kind) {
 		case "issue-comment":
@@ -235,8 +245,7 @@ export function reconcileSupersededEvents(paths) {
 		const subject = eventSubject(event);
 		const previous = latestBySubject.get(subject);
 		if (previous) {
-			rmSync(paths.eventFile(previous.id), { force: true });
-			rmSync(paths.notificationFile(previous.id), { force: true });
+			acknowledge(paths, previous.id, "superseded");
 			superseded.push(previous.id);
 		}
 		latestBySubject.set(subject, event);
@@ -253,8 +262,7 @@ export function queueEvents(paths, events) {
 			if (id === event.id || existsSync(paths.ackFile(id))) continue;
 			const existing = readJson(paths.eventFile(id), validEvent);
 			if (eventSubject(existing) !== eventSubject(event)) continue;
-			rmSync(paths.eventFile(id), { force: true });
-			rmSync(paths.notificationFile(id), { force: true });
+			acknowledge(paths, id, "superseded");
 		}
 		if (existsSync(paths.eventFile(event.id))) continue;
 		atomicJson(paths.eventFile(event.id), event);
@@ -317,12 +325,7 @@ export function reconcileResolvedReviewComments(
 			unresolvedReviewCommentIds.has(event.payload.comment.id)
 		)
 			continue;
-		atomicJson(paths.ackFile(event.id), {
-			version: VERSION,
-			id: event.id,
-			acknowledgedAt: new Date().toISOString(),
-			source: "thread-resolved",
-		});
+		acknowledge(paths, event.id, "thread-resolved");
 		acknowledged.push(event.id);
 	}
 	return acknowledged;
@@ -350,12 +353,7 @@ export function ackEvents(paths, ids) {
 	for (const id of [...new Set(ids)]) {
 		if (!/^[a-f0-9]{64}$/.test(id) || !existsSync(paths.eventFile(id)))
 			throw new Error(`Unknown babysit-pr event: ${id}`);
-		if (!existsSync(paths.ackFile(id)))
-			atomicJson(paths.ackFile(id), {
-				version: VERSION,
-				id,
-				acknowledgedAt: new Date().toISOString(),
-			});
+		acknowledge(paths, id);
 	}
 }
 
@@ -419,13 +417,8 @@ function reconcileResponseMarkers(paths, comments, selfLogin) {
 			ids.add(match[1]);
 	}
 	for (const id of ids)
-		if (existsSync(paths.eventFile(id)) && !existsSync(paths.ackFile(id)))
-			atomicJson(paths.ackFile(id), {
-				version: VERSION,
-				id,
-				acknowledgedAt: new Date().toISOString(),
-				source: "github-marker",
-			});
+		if (existsSync(paths.eventFile(id)))
+			acknowledge(paths, id, "github-marker");
 }
 
 function acquireLock(paths, trustedBots) {

@@ -63,6 +63,7 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 				client.delivery.enqueue(snapshot);
 			},
 			() => `bt-${++terminalSequence}`,
+			(notification) => client.delivery.enqueueNotification(notification),
 		);
 		this.clients.set(id, { ...client, manager });
 		client.updateStatus();

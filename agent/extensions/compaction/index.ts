@@ -423,7 +423,8 @@ export default function compactionExtension(
 			const handoff = extractHandoff(event.message);
 			pendingHandoff = handoff;
 			phase = "compacting";
-			ctx.abort();
+			// Let tools and queued user messages drain into agent_settled.
+			// ctx.abort() invokes the TUI Escape handler and dequeues user input.
 			return;
 		}
 

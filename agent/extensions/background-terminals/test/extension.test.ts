@@ -185,7 +185,7 @@ test("parent shutdown awaits a child shutdown already escalating", {
 	const started = yield* fromPromise(start.execute(
 		"start-stubborn-child",
 		{
-			command: "trap '' TERM; echo ready; while true; do sleep 1; done",
+			command: "trap '' TERM; echo ready; exec tail -f /dev/null",
 			title: "stubborn child",
 		},
 		undefined,

@@ -47,13 +47,6 @@ const e2eEnabled = Effect.runSync(
 	Config.option(Config.nonEmptyString("PI_E2E")),
 ).pipe(Option.exists((value) => value === "1"));
 
-export interface StartPiOptions {
-	args?: readonly string[];
-	files?: Readonly<Record<string, string>>;
-	env?: Readonly<Record<string, string>>;
-	readyTimeoutMs?: number;
-}
-
 export interface WaitOptions {
 	timeoutMs?: number;
 	scrollback?: boolean;
@@ -111,9 +104,7 @@ export function capture(session: PiSession, scrollback = false) {
 	).pipe(Effect.orElseSucceed(() => ""));
 }
 
-export const startPi = Effect.fn("startPi")(function* (
-	options: StartPiOptions = {},
-) {
+const startPi = Effect.fn("startPi")(function* () {
 	const root = yield* fs.makeTempDirectory({ prefix: "pi-e2e-" });
 	const cwd = pathService.join(root, "workspace");
 	const agentDir = pathService.join(root, "agent");
@@ -140,33 +131,32 @@ export const startPi = Effect.fn("startPi")(function* (
 		pathService.join(agentDir, "themes"),
 	);
 
-	for (const [relative, contents] of Object.entries(options.files ?? {})) {
-		const filePath = pathService.join(cwd, relative);
-		yield* fs.makeDirectory(pathService.dirname(filePath), { recursive: true });
-		yield* fs.writeFileString(filePath, contents);
-	}
-
 	const name = `pi-e2e-${process.pid}-${sessionCounter++}`;
 	const stderrPath = pathService.join(root, "pi.stderr.log");
 	const piArgs = ["pi", "--session-dir", sessionDir, "--no-extensions"];
 	for (const entry of yield* fs.readDirectory(
 		pathService.join(REPOSITORY_AGENT_DIR, "extensions"),
 	)) {
-		const extensionPath = pathService.join(
+		const entryPath = pathService.join(
 			REPOSITORY_AGENT_DIR,
 			"extensions",
 			entry,
-			"index.ts",
 		);
-		if (yield* fs.exists(extensionPath)) {
-			piArgs.push("--extension", extensionPath);
+		const info = yield* fs.stat(entryPath);
+		if (info.type === "File" && entry.endsWith(".ts")) {
+			piArgs.push("--extension", entryPath);
+		} else if (info.type === "Directory") {
+			const indexPath = pathService.join(entryPath, "index.ts");
+			if (yield* fs.exists(indexPath)) {
+				piArgs.push("--extension", indexPath);
+			}
 		}
 	}
-	piArgs.push(...(options.args ?? []));
 	const command = piArgs.map(shellQuote).join(" ");
 	const environment: Record<string, string> = {
 		PI_SKIP_VERSION_CHECK: "1",
-		...options.env,
+		// Fixture sessions must not report state to the parent's Herdr pane.
+		HERDR_ENV: "0",
 		PI_CODING_AGENT_DIR: agentDir,
 	};
 
@@ -193,7 +183,7 @@ export const startPi = Effect.fn("startPi")(function* (
 
 	const session: PiSession = { name, cwd, agentDir, stderrPath };
 	yield* waitFor(session, /\$?\s*\d+(\.\d+)?%\/\d/, {
-		timeoutMs: options.readyTimeoutMs ?? 60_000,
+		timeoutMs: 60_000,
 		description: "pi footer to render (startup)",
 	}).pipe(Effect.onError(() => stop(session)));
 	return session;
@@ -314,9 +304,6 @@ export const waitForFile = Effect.fn("waitForFile")(function* (
 		}),
 	);
 });
-
-export const workspaceFile = (session: PiSession, relative: string) =>
-	fs.readFileString(pathService.join(session.cwd, relative));
 
 export const stop = Effect.fn("stop")(function* (session: PiSession) {
 	yield* tmux("kill-session", "-t", session.name).pipe(Effect.ignore);

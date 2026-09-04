@@ -74,12 +74,15 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 	) {
 		const next = !expected;
 		yield* trigger;
-		const pane = yield* waitFor(session, noticeFor(next, model), {
-			timeoutMs: 30_000,
-			description,
-		});
+		yield* waitFor(
+			session,
+			(pane) =>
+				noticeFor(next, model).test(
+					pane.match(/^.*GPT Fast mode .*$/gm)?.at(-1) ?? "",
+				),
+			{ timeoutMs: 30_000, description },
+		);
 		expected = next;
-		assert.doesNotMatch(pane, noticeFor(!next, model));
 		assert.equal(
 			yield* persistedEnabled(session),
 			next,

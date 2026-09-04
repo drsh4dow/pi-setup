@@ -50,6 +50,7 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | `codex-accounts` | Named Codex account selection |
 | `compaction` | Dense handoffs and automatic continuation after proactive compaction |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
+| `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
 | `herdr-agent-state` | Herdr pane state and Pi session reporting, with idle reconciliation independent of background processes |
 | `process-status` | `/ps` views for active work, worker tokens, and cost |

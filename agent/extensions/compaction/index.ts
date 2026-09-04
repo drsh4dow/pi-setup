@@ -7,6 +7,7 @@ import {
 	type SessionBeforeCompactEvent,
 	type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
+import { Effect } from "effect";
 import { isAutoCompactionEnabled } from "../../lib/settings.ts";
 
 const HANDOFF_STRUCTURE = `## Handoff
@@ -301,8 +302,7 @@ export default function compactionExtension(
 	let generation = 0;
 	let armed = true;
 	let phase: "idle" | "awaiting-handoff" | "compacting" = "idle";
-	// Set immediately before ctx.compact() and consumed by the synchronous
-	// session_before_compact it triggers; any other compaction sees undefined.
+	// Captured at turn_end, then consumed by session_before_compact.
 	let pendingHandoff: Handoff | undefined;
 
 	const pauseDelivery = (paused: boolean) =>
@@ -324,6 +324,56 @@ export default function compactionExtension(
 		pendingHandoff = undefined;
 		if (handoff) return { compaction: modelHandoffCompaction(handoff, event) };
 		return createFallbackHandoff(event, ctx);
+	});
+
+	// Native compact() waits for idle. Await it here, never inside turn_end,
+	// so prompt() cannot finish while the handoff is still being compacted.
+	pi.on("agent_settled", (_event, ctx) => {
+		if (phase !== "compacting") return;
+		const handoff = pendingHandoff;
+		const activeGeneration = generation;
+		return Effect.runPromise(
+			Effect.callback<void>((resume) => {
+				const resolve = () => resume(Effect.void);
+				ctx.compact({
+					onComplete: () => {
+						if (generation !== activeGeneration) {
+							resolve();
+							return;
+						}
+						phase = "idle";
+						// Normally consumed by session_before_compact; cleared here too so a
+						// pending handoff never outlives the compaction it was captured for.
+						pendingHandoff = undefined;
+						if (!handoff || handoff.continuation === "continue") {
+							pi.sendMessage(
+								{
+									customType: "compaction-continuation",
+									content: handoff
+										? CONTINUATION_INSTRUCTION
+										: FALLBACK_CONTINUATION,
+									display: false,
+								},
+								{ triggerTurn: true },
+							);
+						}
+						pauseDelivery(false);
+						resolve();
+					},
+					onError: () => {
+						if (generation !== activeGeneration) {
+							resolve();
+							return;
+						}
+						phase = "idle";
+						armed = true;
+						pendingHandoff = undefined;
+						pauseDelivery(false);
+						resolve();
+					},
+				});
+			}),
+		);
 	});
 
 	pi.on("turn_end", (event, ctx) => {
@@ -366,36 +416,7 @@ export default function compactionExtension(
 			const handoff = extractHandoff(event.message);
 			pendingHandoff = handoff;
 			phase = "compacting";
-			const activeGeneration = generation;
-			ctx.compact({
-				onComplete: () => {
-					if (generation !== activeGeneration) return;
-					phase = "idle";
-					// Normally consumed by session_before_compact; cleared here too so a
-					// pending handoff never outlives the compaction it was captured for.
-					pendingHandoff = undefined;
-					if (!handoff || handoff.continuation === "continue") {
-						pi.sendMessage(
-							{
-								customType: "compaction-continuation",
-								content: handoff
-									? CONTINUATION_INSTRUCTION
-									: FALLBACK_CONTINUATION,
-								display: false,
-							},
-							{ triggerTurn: true },
-						);
-					}
-					pauseDelivery(false);
-				},
-				onError: () => {
-					if (generation !== activeGeneration) return;
-					phase = "idle";
-					armed = true;
-					pendingHandoff = undefined;
-					pauseDelivery(false);
-				},
-			});
+			ctx.abort();
 			return;
 		}
 

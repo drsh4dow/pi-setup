@@ -85,7 +85,6 @@ export function candidateEvents(input, observedAt) {
 	for (const comment of input.reviewComments) {
 		if (!trustedComment(comment, input)) continue;
 		if (
-			input.initialReconciliation &&
 			input.unresolvedReviewCommentIds instanceof Set &&
 			!input.unresolvedReviewCommentIds.has(comment.id)
 		)
@@ -216,9 +215,30 @@ function readJson(path, validator) {
 	}
 }
 
+function eventSubject(event) {
+	switch (event.kind) {
+		case "issue-comment":
+			return `issue-comment:${event.payload.comment.id}`;
+		case "review-comment":
+			return `review-comment:${event.payload.comment.id}`;
+		case "review":
+			return `review:${event.payload.review.id}`;
+		default:
+			return event.key;
+	}
+}
+
 export function queueEvents(paths, events) {
 	const added = [];
 	for (const event of events) {
+		for (const name of eventFiles(paths)) {
+			const id = basename(name, ".json");
+			if (id === event.id || existsSync(paths.ackFile(id))) continue;
+			const existing = readJson(paths.eventFile(id), validEvent);
+			if (eventSubject(existing) !== eventSubject(event)) continue;
+			rmSync(paths.eventFile(id), { force: true });
+			rmSync(paths.notificationFile(id), { force: true });
+		}
 		if (existsSync(paths.eventFile(event.id))) continue;
 		atomicJson(paths.eventFile(event.id), event);
 		added.push(event);
@@ -265,6 +285,28 @@ export function drainEvents(paths, now = Date.now()) {
 	const records = pendingRecords(paths);
 	markNotified(paths, records, now);
 	return records.map(({ event }) => event);
+}
+
+export function reconcileResolvedReviewComments(
+	paths,
+	unresolvedReviewCommentIds,
+) {
+	const acknowledged = [];
+	for (const { event } of pendingRecords(paths)) {
+		if (
+			event.kind !== "review-comment" ||
+			unresolvedReviewCommentIds.has(event.payload.comment.id)
+		)
+			continue;
+		atomicJson(paths.ackFile(event.id), {
+			version: VERSION,
+			id: event.id,
+			acknowledgedAt: new Date().toISOString(),
+			source: "thread-resolved",
+		});
+		acknowledged.push(event.id);
+	}
+	return acknowledged;
 }
 
 export function reconcileUnnotifiedCheckEvents(paths, currentEvents) {
@@ -442,6 +484,10 @@ function poll(cwd, reference, paths, trustedBots) {
 		paths,
 		[...snapshot.input.issueComments, ...snapshot.input.reviewComments],
 		snapshot.input.selfLogin,
+	);
+	reconcileResolvedReviewComments(
+		paths,
+		snapshot.input.unresolvedReviewCommentIds,
 	);
 	const candidates = candidateEvents(snapshot.input, observedAt);
 	reconcileUnnotifiedCheckEvents(paths, candidates);

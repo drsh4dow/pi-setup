@@ -49,7 +49,7 @@ Advisory free-text guidance for presenting a Delegate Run's result. Correct and 
 _Avoid_: Schema, structured output contract
 
 **Delegate Run**:
-One newly created child carrying out one Delegate Task Brief, either blocking or in the background.
+One newly created child carrying out one Delegate Task Brief, either blocking or in the background. A Model Handoff and its requested Compaction Continuation belong to that same run; the handoff alone is not its completed result.
 _Avoid_: Orchestration task, Delegate batch
 
 **Delegate Chain**:

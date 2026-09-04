@@ -288,7 +288,7 @@ test("bounds settlement when descendants retain inherited pipes", {
 const fromPromise = <A>(value: A | PromiseLike<A>) =>
 	Effect.promise(() => Promise.resolve(value));
 
-test("wait returns complete output, repeats settled results, and consumes completion once", () =>
+test("wait returns complete output and repeats settled results without suppressing delivery", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const notifications: boolean[] = [];
@@ -310,7 +310,7 @@ test("wait returns complete output, repeats settled results, and consumes comple
 				assert.equal(one.stdout.text, "waited");
 				assert.deepEqual(two, one);
 				assert.deepEqual(yield* manager.wait(started.id), one);
-				assert.deepEqual(notifications, [true]);
+				assert.deepEqual(notifications, [false]);
 				yield* fromPromise(
 					assert.rejects(
 						Effect.runPromise(manager.wait("foreign")),

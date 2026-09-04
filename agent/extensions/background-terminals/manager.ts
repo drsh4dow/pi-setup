@@ -177,7 +177,6 @@ interface ActiveTerminal {
 	observation: ProcessObservation;
 	processError?: string;
 	settlement: Deferred.Deferred<SettledTerminalSnapshot>;
-	waiters: { count: number };
 }
 type ActiveEntry =
 	| { kind: "running"; terminal: ActiveTerminal }
@@ -401,7 +400,6 @@ export class BackgroundTerminalManager {
 			notifications: new NotificationFrames(),
 			observation: { kind: "executing" },
 			settlement: Deferred.makeUnsafe<SettledTerminalSnapshot>(),
-			waiters: { count: 0 },
 		};
 		const entry: Entry = { kind: "running", terminal };
 		this.entries.set(id, entry);
@@ -572,8 +570,7 @@ export class BackgroundTerminalManager {
 			if (this.lifecycle.kind === "running")
 				this.onSettled?.(
 					snapshot,
-					terminal.waiters.count > 0 ||
-						(entry.kind === "terminating" && entry.intent === "kill"),
+					entry.kind === "terminating" && entry.intent === "kill",
 				);
 		} catch {
 			// Notification failures do not own process lifecycle state.
@@ -712,16 +709,7 @@ export class BackgroundTerminalManager {
 		const entry = this.entries.get(id);
 		if (!entry) throw new Error(`Unknown terminal id "${id}".`);
 		if (entry.kind === "settled") return entry.snapshot;
-		// Observations replace the terminal record, but share this waiter counter.
-		const terminal = entry.terminal;
-		terminal.waiters.count++;
-		return yield* Deferred.await(terminal.settlement).pipe(
-			Effect.ensuring(
-				Effect.sync(() => {
-					terminal.waiters.count--;
-				}),
-			),
-		);
+		return yield* Deferred.await(entry.terminal.settlement);
 	});
 
 	kill = Effect.fn("BackgroundTerminalManager.kill")(function* (

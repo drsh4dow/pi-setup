@@ -530,9 +530,6 @@ test("covers background delivery behavior", (t) =>
 				delivery.setContext({ isIdle: () => false } as ExtensionContext);
 				const base = delegateSnapshot({ output: "first child" });
 
-				const firstReservation = delivery.reserve();
-				const secondReservation = delivery.reserve();
-				delivery.attach(firstReservation, base);
 				const second = {
 					...base,
 					id: "delegate-2",
@@ -540,7 +537,6 @@ test("covers background delivery behavior", (t) =>
 					outputTruncated: true,
 					fullOutputFile: "/tmp/complete-second-child.txt",
 				};
-				delivery.attach(secondReservation, second);
 				delivery.enqueue(base);
 				delivery.enqueue(second);
 				yield* delivery.flush();
@@ -554,9 +550,6 @@ test("covers background delivery behavior", (t) =>
 				);
 				yield* delivery.flush();
 				assert.equal(messages.length, 1);
-				assert.doesNotThrow(() => {
-					for (let index = 0; index < 64; index++) delivery.reserve();
-				});
 			}
 
 			{
@@ -778,14 +771,5 @@ test("covers background delivery behavior", (t) =>
 				yield* Effect.yieldNow;
 				assert.equal(attempts, 1);
 			}
-
-			const delivery = new BackgroundDelivery({
-				sendMessage() {},
-			} as unknown as ExtensionAPI);
-			const reservations = Array.from({ length: 100 }, () =>
-				delivery.reserve(),
-			);
-			assert.equal(new Set(reservations).size, 100);
-			for (const reservation of reservations) delivery.release(reservation);
 		}),
 	));

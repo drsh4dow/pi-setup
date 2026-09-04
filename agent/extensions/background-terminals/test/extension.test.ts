@@ -71,7 +71,6 @@ test("registers five parallel tools and lifecycle hooks", () => {
 	assert.ok(tools.every((tool) => tool.executionMode === "parallel"));
 	assert.ok(
 		handlers.has("session_start") &&
-			handlers.has("agent_end") &&
 			handlers.has("agent_settled") &&
 			handlers.has("session_shutdown"),
 	);
@@ -354,7 +353,7 @@ test("a saturated child cannot exhaust the parent's terminal slots", () => Effec
 	}
 })));
 
-test("no-UI runs stop terminals before release and can start another run", () => Effect.runPromise(Effect.gen(function* () {
+test("headless terminals survive agent end and stop at session shutdown", () => Effect.runPromise(Effect.gen(function* () {
 	const { tools, handlers } = registeredExtension();
 	const context = {
 		cwd: process.cwd(),
@@ -383,7 +382,7 @@ test("no-UI runs stop terminals before release and can start another run", () =>
 			{ type: "agent_end", messages: [] },
 			context,
 		));
-		assert.ok(processIsGone(first.details.pid));
+		assert.equal(processIsGone(first.details.pid), false);
 		const second = yield* fromPromise(start.execute(
 			"2",
 			{ command: "true", title: "second" },
@@ -399,6 +398,7 @@ test("no-UI runs stop terminals before release and can start another run", () =>
 			context,
 		));
 	}
+	assert.ok(processIsGone(first.details.pid));
 })));
 
 test("session shutdown clears status, kills processes, and permits restart", () => Effect.runPromise(Effect.gen(function* () {

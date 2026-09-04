@@ -19,8 +19,10 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Deferred, Effect } from "effect";
+import { Deferred, Effect, Schema } from "effect";
+import backgroundExtension from "../../background-terminals/index.ts";
 import compactionExtension from "../../compaction/index.ts";
+import { processIsGone } from "../../test/process.ts";
 import { DelegateManager } from "../manager.ts";
 import { shutdownChild } from "../runtime.ts";
 import { context } from "./manager-fixture.ts";
@@ -34,6 +36,7 @@ function gate() {
 }
 
 type Scenario =
+	| "ordinary"
 	| "continue"
 	| "done"
 	| "ask-user"
@@ -54,7 +57,12 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 	const releaseCompaction = gate();
 	const delivered: string[] = [];
 	const settled = gate();
-	let calls = 0;
+	let calls = -1;
+	let terminalPid: number | undefined;
+	const assertTerminalAlive = () => {
+		assert.ok(terminalPid);
+		assert.equal(processIsGone(terminalPid), false);
+	};
 	const runtime = yield* Effect.promise(() =>
 		ModelRuntime.create({
 			credentials: new InMemoryCredentialStore(),
@@ -88,19 +96,37 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 						: "Report complete";
 			const message: AssistantMessage = {
 				role: "assistant",
-				content: [{ type: "text", text }],
+				content:
+					calls === 0
+						? [
+								{
+									type: "toolCall",
+									id: "start-server",
+									name: "bg_start",
+									arguments: {
+										command: "sleep 60",
+										title: "compaction server",
+									},
+								},
+							]
+						: [{ type: "text", text }],
 				api: model.api,
 				provider: model.provider,
 				model: model.id,
 				stopReason:
-					calls === 2 && scenario === "handoff-aborted" ? "aborted" : "stop",
+					calls === 0
+						? "toolUse"
+						: calls === 2 && scenario === "handoff-aborted"
+							? "aborted"
+							: "stop",
 				timestamp: 1,
 				usage: {
-					input: calls < 3 ? 8600 : 100,
+					input: scenario !== "ordinary" && calls > 0 && calls < 3 ? 8600 : 100,
 					output: 20,
 					cacheRead: 0,
 					cacheWrite: 0,
-					totalTokens: calls < 3 ? 8620 : 120,
+					totalTokens:
+						scenario !== "ordinary" && calls > 0 && calls < 3 ? 8620 : 120,
 					cost: {
 						input: 0,
 						output: 0,
@@ -118,7 +144,12 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 				);
 			} else if (message.stopReason === "aborted")
 				stream.push({ type: "error", reason: "aborted", error: message });
-			else stream.push({ type: "done", reason: "stop", message });
+			else
+				stream.push({
+					type: "done",
+					reason: message.stopReason === "toolUse" ? "toolUse" : "stop",
+					message,
+				});
 			return stream;
 		},
 	});
@@ -140,6 +171,16 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 		noThemes: true,
 		agentsFilesOverride: () => ({ agentsFiles: [] }),
 		extensionFactories: [
+			backgroundExtension,
+			(pi) => {
+				pi.on("tool_result", (event) => {
+					if (event.toolName === "bg_start") {
+						terminalPid = Schema.decodeUnknownSync(
+							Schema.Struct({ pid: Schema.Number }),
+						)(event.details).pid;
+					}
+				});
+			},
 			(pi) => {
 				pi.on("session_before_compact", (event) => {
 					if (event.reason === "manual") {
@@ -176,7 +217,7 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 			resourceLoader: loader,
 			settingsManager: settings,
 			sessionManager: SessionManager.inMemory(cwd),
-			noTools: "all",
+			noTools: "builtin",
 		}),
 	);
 	yield* Effect.promise(() =>
@@ -192,7 +233,14 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 		createSession: () => Promise.resolve(session),
 		shutdownSession: () => {
 			disposed = true;
-			return Effect.runPromiseWith(services)(shutdownChild(session));
+			return Effect.runPromiseWith(services)(
+				Effect.gen(function* () {
+					assertTerminalAlive();
+					yield* shutdownChild(session);
+					assert.ok(terminalPid);
+					assert.ok(processIsGone(terminalPid));
+				}),
+			);
 		},
 		onSettled: (snapshot) => {
 			delivered.push(snapshot.status);
@@ -206,6 +254,13 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 			cwd,
 			ctx: context,
 		});
+		if (scenario === "ordinary") {
+			yield* Effect.promise(() => settled.promise);
+			const [result] = yield* manager.wait([job.id]);
+			assert.equal(result?.status, "done");
+			assert.equal(calls, 1);
+			return;
+		}
 		if (scenario === "handoff-aborted") {
 			const first = yield* Effect.raceFirst(
 				Effect.promise(() => compacting.promise).pipe(Effect.as("compacting")),
@@ -223,6 +278,7 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 		});
 		assert.equal(manager.list([job.id])[0]?.status, "running");
 		assert.equal(disposed, false);
+		assertTerminalAlive();
 		assert.deepEqual(delivered, []);
 		if (scenario === "cancel") {
 			const [cancelled] = yield* manager.cancel([job.id]);
@@ -240,6 +296,7 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 			});
 			assert.equal(manager.list([job.id])[0]?.status, "running");
 			assert.equal(disposed, false);
+			assertTerminalAlive();
 			assert.deepEqual(delivered, []);
 			releaseContinuation.resolve();
 		}
@@ -258,15 +315,21 @@ const runScenario = Effect.fn("runScenario")(function* (scenario: Scenario) {
 	} finally {
 		releaseContinuation.resolve();
 		releaseCompaction.resolve();
-		yield* Effect.promise(() => compacted.promise);
+		if (scenario !== "ordinary") yield* Effect.promise(() => compacted.promise);
 		yield* manager.shutdown();
 		yield* Effect.promise(() => session.waitForIdle());
 		session.dispose();
+		assert.ok(terminalPid);
+		assert.ok(
+			processIsGone(terminalPid),
+			"child disposal must reap its server",
+		);
 		yield* Effect.promise(() => rm(cwd, { recursive: true, force: true }));
 	}
 });
 
 for (const scenario of [
+	"ordinary",
 	"continue",
 	"done",
 	"ask-user",

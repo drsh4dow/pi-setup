@@ -14,7 +14,6 @@ export interface TerminalClient {
 }
 
 export interface BackgroundTerminalSession {
-	isOwner(id: symbol): boolean;
 	start(
 		client: symbol,
 		options: { command: string; title: string; cwd: string },
@@ -72,10 +71,6 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 		);
 		this.clients.set(id, { ...client, manager });
 		client.updateStatus();
-	}
-
-	isOwner(id: symbol) {
-		return id === this.owner;
 	}
 
 	private joined(client: symbol): JoinedClient {

@@ -37,6 +37,10 @@ export class FakeChild {
 		return deferredPromise(this.promptCompletion);
 	}
 
+	waitForIdle() {
+		return Promise.resolve();
+	}
+
 	steer(text: string) {
 		this.steeringStarted.push(text);
 		return (

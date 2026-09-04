@@ -439,10 +439,12 @@ export class DelegateManager {
 			: job.task;
 		const promptOutcome = yield* this.untilOwnershipEnds(
 			job,
-			child.prompt(instruction, {
-				expandPromptTemplates: false,
-				source: "extension",
-			}),
+			child
+				.prompt(instruction, {
+					expandPromptTemplates: false,
+					source: "extension",
+				})
+				.then(() => child.waitForIdle()),
 		).pipe(Effect.exit);
 		if (promptOutcome._tag === "Failure") {
 			this.settleError(job, errorMessage(Cause.squash(promptOutcome.cause)));

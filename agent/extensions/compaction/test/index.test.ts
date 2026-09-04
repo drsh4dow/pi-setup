@@ -112,6 +112,7 @@ function makeContext(
 ) {
 	return {
 		model: { provider: "test", id: "model" },
+		abort() {},
 		compact(options: Record<string, unknown>) {
 			compactCalls.push(options);
 		},
@@ -197,6 +198,7 @@ test("abandons a pending handoff request when auto-compaction is disabled", () =
 
 	enabled = false;
 	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	handlers.get("agent_settled")?.({}, context);
 	assert.equal(compactCalls.length, 0);
 
 	// Re-enabling re-arms: the next boundary crossing sends a fresh request.
@@ -265,6 +267,7 @@ test("requests a model handoff at the boundary, then compacts the reply verbatim
 
 	// A second turn crossing the boundary must not send a duplicate request.
 	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	handlers.get("agent_settled")?.({}, context);
 	assert.equal(sent.length, 1);
 	assert.equal(compactCalls.length, 1);
 
@@ -333,6 +336,7 @@ test("honors the model's done and ask-user continuation choices", () => {
 			),
 			context,
 		);
+		handlers.get("agent_settled")?.({}, context);
 		handlers.get("session_before_compact")?.(compactEvent(), context);
 		(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.(
 			{},
@@ -348,6 +352,7 @@ test("uses the recovery continuation when the reply carries no handoff", () => {
 	handlers.get("session_start")?.({}, context);
 	handlers.get("turn_end")?.(turn, context);
 	handlers.get("turn_end")?.(assistantTurn("kept working instead"), context);
+	handlers.get("agent_settled")?.({}, context);
 	assert.equal(compactCalls.length, 1);
 	(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.(
 		{},
@@ -369,6 +374,7 @@ test("re-arms only after usage falls below the boundary", () => {
 
 	handlers.get("turn_end")?.(turn, context);
 	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	handlers.get("agent_settled")?.({}, context);
 	handlers.get("session_before_compact")?.(compactEvent(), context);
 	(compactCalls[0]?.onComplete as ((result: unknown) => void) | undefined)?.(
 		{},
@@ -401,6 +407,7 @@ test("skips the pending compaction when a manual compaction interleaves", () => 
 	// User ran /compact before the handoff reply landed; usage is fresh again.
 	tokens = 30_000;
 	handlers.get("turn_end")?.(assistantTurn(HANDOFF_REPLY), context);
+	handlers.get("agent_settled")?.({}, context);
 	assert.equal(compactCalls.length, 0);
 
 	// The state machine is back to idle and re-armed.
@@ -462,6 +469,7 @@ test("redacts sensitive lines and file paths from the model handoff", () => {
 - **Continuation:** continue`),
 		context,
 	);
+	handlers.get("agent_settled")?.({}, context);
 	const before = handlers.get("session_before_compact")?.(
 		compactEvent({
 			preparation: {

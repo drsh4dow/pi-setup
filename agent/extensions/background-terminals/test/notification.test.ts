@@ -168,7 +168,9 @@ test("concurrent emitters preserve every frame", () =>
 				yield* eventually(() =>
 					Array.from({ length: 20 }, (_, index) => `frame-${index + 1}`).every(
 						(frame) =>
-							deliveries.some(({ content }) => content.includes(frame)),
+							deliveries.some(({ content }) =>
+								content.split(/\r?\n/u).includes(frame),
+							),
 					),
 				);
 			} finally {

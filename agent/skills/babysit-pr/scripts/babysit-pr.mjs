@@ -113,7 +113,7 @@ export function candidateEvents(input, observedAt) {
 	}
 	for (const check of input.checks) {
 		if (check.bucket !== "fail" && check.bucket !== "cancel") continue;
-		const key = `check:${pr.headRefOid}:${check.name}:${compactTimestamp(check.completedAt)}:${check.state}`;
+		const key = `check:${pr.headRefOid}:${check.name}:${compactTimestamp(check.completedAt)}:${check.state}:${check.link}`;
 		events.push(makeEvent(pr, "check-failed", key, observedAt, { check }));
 	}
 	if (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY") {

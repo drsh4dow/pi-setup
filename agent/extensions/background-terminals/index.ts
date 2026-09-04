@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
@@ -18,6 +19,7 @@ import {
 	summary,
 	terminalMetadata,
 } from "./delivery.ts";
+import { MAX_TRACKED } from "./manager.ts";
 import {
 	type BackgroundTerminalSession,
 	joinBackgroundTerminalSession,
@@ -33,6 +35,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 	let context: ExtensionContext | undefined;
 	let session: BackgroundTerminalSession | undefined;
 	let lastStatus: string | undefined | null = null;
+	const observations = new Map<string, object>();
 	const currentSession = () => {
 		if (!session)
 			throw new Error(
@@ -77,6 +80,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 	) {
 		const joined = session;
 		session = undefined;
+		observations.clear();
 		yield* Effect.try({
 			try: () =>
 				context?.hasUI &&
@@ -119,6 +123,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			"Start a long-running non-interactive command and continue useful work instead of polling",
 		promptGuidelines: [
 			"Use meaningful titles and avoid duplicate servers or watchers.",
+			"When blocked on a bg_start command, use bg_wait with its id instead of repeated bg_status calls or shell sleeps.",
 			"Use emit-to-pi inside a bg_start command to wake the owning agent for an actionable milestone while the process keeps running.",
 			"Never use for interactive commands. Background commands and delegated children share the worktree without write isolation; avoid overlapping mutations.",
 		],
@@ -163,7 +168,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 						content: [
 							{
 								type: "text" as const,
-								text: `Started ${summary(snapshot)}\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
+								text: `Started ${summary(snapshot)}\nWhen blocked, call bg_wait with id="${snapshot.id}"; otherwise continue useful work.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
 							},
 						],
 						details: terminalMetadata(snapshot),
@@ -176,7 +181,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		name: "bg_status",
 		label: "Background Terminal Status",
 		description:
-			"Show a background terminal's state and bounded stdout/stderr tails.",
+			"Inspect state and bounded stdout/stderr tails, including changes since the previous bg_status read. When blocked on completion, use bg_wait instead.",
 		parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
 		executionMode: "parallel",
 		execute(_id, params) {
@@ -190,9 +195,32 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 						);
 					if (snapshot.state !== "running")
 						terminalSession.consume(clientId, [snapshot.id]);
+					const evidence = {
+						...terminalMetadata(snapshot),
+						process:
+							snapshot.state === "running" ? snapshot.process : snapshot.result,
+					};
+					const previous = observations.get(snapshot.id);
+					const observation =
+						previous === undefined
+							? "first"
+							: isDeepStrictEqual(previous, evidence)
+								? "unchanged"
+								: "changed";
+					observations.delete(snapshot.id);
+					observations.set(snapshot.id, evidence);
+					if (observations.size > MAX_TRACKED) {
+						const oldest = observations.keys().next();
+						if (!oldest.done) observations.delete(oldest.value);
+					}
 					return {
-						content: [{ type: "text", text: formatTerminalReport(snapshot) }],
-						details: terminalMetadata(snapshot),
+						content: [
+							{
+								type: "text",
+								text: `${formatTerminalReport(snapshot)}\nObservation: ${observation} since previous bg_status read. stdout=${snapshot.stdout.totalBytes} bytes stderr=${snapshot.stderr.totalBytes} bytes.${snapshot.state === "running" ? `\nWhen blocked, call bg_wait with id="${snapshot.id}" instead of polling or sleeping.` : ""}`,
+							},
+						],
+						details: { ...terminalMetadata(snapshot), observation },
 					};
 				}),
 			);
@@ -283,6 +311,40 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 					signal?.aborted
 						? new Error(
 								"Kill wait aborted; termination continues in the background.",
+							)
+						: error,
+				);
+			});
+		},
+	});
+	pi.registerTool({
+		name: "bg_wait",
+		label: "Wait for Background Terminal",
+		description:
+			"Wait for one session-owned terminal to settle and return its state and bounded stdout/stderr tails. Already-settled results return immediately. Cancellation stops only the wait, not the command. Use bg_kill to terminate it.",
+		promptSnippet:
+			"Wait for a background command when blocked instead of polling or sleeping",
+		parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
+		executionMode: "parallel",
+		execute(_id, params, signal) {
+			const terminalSession = currentSession();
+			return Effect.runPromise(
+				Effect.gen(function* () {
+					const snapshot = yield* terminalSession.wait(clientId, params.id);
+					terminalSession.consume(clientId, [snapshot.id]);
+					return {
+						content: [
+							{ type: "text" as const, text: formatTerminalReport(snapshot) },
+						],
+						details: terminalMetadata(snapshot),
+					};
+				}),
+				{ signal },
+			).catch((error) => {
+				throw sanitizeErrorForDisplay(
+					signal?.aborted
+						? new Error(
+								"Wait aborted; terminal continues. Use bg_wait to wait again or bg_kill to terminate it.",
 							)
 						: error,
 				);

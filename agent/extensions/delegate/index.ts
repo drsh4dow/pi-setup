@@ -425,7 +425,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		name: SESSION_TOOL_NAME,
 		label: "Delegate Session",
 		description:
-			"Manages children created by delegate_run. list recovers all ids retained for the current parent session; status inspects without waiting; wait returns outputs; send steers one running child; cancel stops work. Settled children cannot receive more messages or resume; create a new child for further work. Never start a background run and then immediately wait; use a blocking delegate_run instead.",
+			"Manages children created by delegate_run. list recovers all ids retained for the current parent session; status inspects without waiting; when blocked, use action=wait with the same ids instead of repeated status calls or shell sleeps; wait returns outputs; send steers one running child; cancel stops work. Settled children cannot receive more messages or resume; create a new child for further work. Never start a background run and then immediately wait; use a blocking delegate_run instead.",
 		promptSnippet:
 			"List, inspect, wait for, steer, or cancel existing child sessions",
 		promptGuidelines: [
@@ -477,7 +477,20 @@ export default function delegateExtension(pi: ExtensionAPI) {
 					}
 					const snapshots = manager.list(ids);
 					return {
-						content: [textContent(snapshots.map(sessionSummary).join("\n"))],
+						content: [
+							textContent(
+								[
+									snapshots.map(sessionSummary).join("\n"),
+									...(snapshots.some(
+										(snapshot) => snapshot.status === "running",
+									)
+										? [
+												"When blocked, call delegate_session with action=wait and the same ids instead of polling status or sleeping.",
+											]
+										: []),
+								].join("\n"),
+							),
+						],
 						details: { results: snapshots },
 					};
 				}),

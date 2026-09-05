@@ -116,17 +116,10 @@ export function resolvePr(cwd, reference) {
 	};
 }
 
-export function trustedLogins(
-	cwd,
-	identity,
-	prAuthor,
-	selfLogin,
-	actors,
-	trustedBots,
-) {
+export function trustedLogins(cwd, identity, prAuthor, actors, trustedBots) {
 	const trusted = new Set();
 	for (const login of new Set([...actors, prAuthor])) {
-		if (!login || login === selfLogin || trusted.has(login)) continue;
+		if (!login || trusted.has(login)) continue;
 		if (login.endsWith("[bot]")) {
 			if (trustedBots.has(login)) trusted.add(login);
 			continue;
@@ -228,7 +221,6 @@ export function fetchSnapshot(
 				cwd,
 				identity,
 				prAuthor,
-				selfLogin,
 				actors,
 				trustedBots,
 			),

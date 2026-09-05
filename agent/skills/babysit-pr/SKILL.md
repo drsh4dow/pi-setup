@@ -15,7 +15,7 @@ node "$HOME/.pi/agent/skills/babysit-pr/scripts/babysit-pr.mjs" <action> <PR-URL
 
 ## Start or resume
 
-Run `status` first. It reports the watcher PID, trusted bots, and pending count.
+Run `status` first. Verify that no babysit-pr bg terminal is running. It reports the watcher PID, trusted bots, and pending count.
 
 - If no watcher owns the PR, use `bg_start` from the repository root to run the `watch` action. Title it `babysit-pr #<number>`. Add `--trusted-bot '<login>[bot]'` only for bots named by repository policy.
 - If the bot policy is wrong, find the terminal with `bg_list`, stop it with `bg_kill`, confirm `status` reports no PID, then start the full command again. A running watcher does not reload code or arguments.

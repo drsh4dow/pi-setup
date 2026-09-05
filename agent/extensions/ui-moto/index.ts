@@ -2,6 +2,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, Path } from "effect";
 
@@ -41,7 +42,10 @@ function paint([r, g, b]: Rgb, text: string): string {
 }
 
 function gradient(text: string): string {
-	const chars = [...text];
+	const chars = Array.from(
+		new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text),
+		({ segment }) => segment,
+	);
 	const span = Math.max(chars.length - 1, 1);
 
 	return chars
@@ -62,10 +66,10 @@ function headerLine(width: number, modelId: string): string {
 	if (width <= 0) return "";
 
 	const label = ` PI / ${modelId} / ${projectName} `;
-	const labelChars = [...label];
-	if (labelChars.length >= width) return labelChars.slice(0, width).join("");
+	const labelWidth = visibleWidth(label);
+	if (labelWidth >= width) return label;
 
-	const fillWidth = width - labelChars.length;
+	const fillWidth = width - labelWidth;
 	const leftWidth = Math.floor(fillWidth / 2);
 	const rightWidth = fillWidth - leftWidth;
 
@@ -73,7 +77,15 @@ function headerLine(width: number, modelId: string): string {
 }
 
 function renderHeader(width: number, modelId: string): string[] {
-	return ["", `${BOLD}${gradient(headerLine(width, modelId))}${RESET}`, ""];
+	return [
+		"",
+		truncateToWidth(
+			`${BOLD}${gradient(headerLine(width, modelId))}${RESET}`,
+			width,
+			"",
+		),
+		"",
+	];
 }
 
 export default function (pi: ExtensionAPI) {

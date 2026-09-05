@@ -396,3 +396,46 @@ test("never prints bearer tokens or presigned URLs on upload failure", async (t)
 	assert.equal(output.includes("X-Amz-Signature"), false);
 	assert.match(output, /R2 upload failed after one retry/);
 });
+
+test("a legacy signer cache policy fails verification rather than printing a success URL", async (t) => {
+	const state = await harness(t);
+	const path = join(state.directory, "proof.png");
+	await writeFile(path, "png fixture");
+	let uploaded = false;
+	const legacyCache = "public, max-age=31536000, immutable";
+	const code = await main(["upload", path], {
+		env: { DUMPFILE_CONFIG_FILE: state.config },
+		fetch: async (input, init) => {
+			if (String(input).endsWith("/v1/uploads")) {
+				const response = authorization();
+				return Response.json(
+					{
+						...response,
+						upload: {
+							...response.upload,
+							headers: {
+								...response.upload.headers,
+								"Cache-Control": legacyCache,
+							},
+						},
+					},
+					{ status: 201 },
+				);
+			}
+			if (init?.method === "PUT") {
+				uploaded = true;
+				return new Response(null, { status: 200 });
+			}
+			const response = headResponse(11);
+			response.headers.set("Cache-Control", legacyCache);
+			return response;
+		},
+		fileBody: () => new Blob(["png fixture"]),
+		stderr: { write: (text) => state.stderr.push(text) },
+		stdout: { write: (text) => state.stdout.push(text) },
+	});
+	assert.equal(code, 1);
+	assert.equal(uploaded, true);
+	assert.deepEqual(state.stdout, []);
+	assert.match(state.stderr.join(""), /Cache-Control/);
+});

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
 	ackEvents,
 	candidateEvents,
@@ -96,7 +97,7 @@ function withState(name, run) {
 	const root = mkdtempSync(join(tmpdir(), `babysit-pr-${name}-`));
 	try {
 		execFileSync("git", ["init", "--quiet", root]);
-		return run(statePaths(root, identity));
+		return run(statePaths(root, identity), root);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -142,6 +143,72 @@ test("normalizes every actionable event and excludes routine or untrusted input"
 	);
 });
 
+test("human feedback from the authenticated account is actionable across comment kinds", () => {
+	const input = snapshot();
+	input.selfLogin = "author";
+	input.issueComments = [input.issueComments[0]];
+	input.reviewComments = [
+		{ ...input.reviewComments[0], user: { login: "author" } },
+	];
+	input.reviews = [{ ...input.reviews[0], user: { login: "author" } }];
+	const feedbackKinds = (body) => {
+		for (const item of [
+			...input.issueComments,
+			...input.reviewComments,
+			...input.reviews,
+		])
+			item.body = body;
+		return candidateEvents(input, "2026-01-01T00:01:00Z")
+			.filter((event) =>
+				["issue-comment", "review-comment", "review"].includes(event.kind),
+			)
+			.map((event) => event.kind);
+	};
+	assert.deepEqual(feedbackKinds("please fix the conflict"), [
+		"issue-comment",
+		"review-comment",
+		"review",
+	]);
+	assert.deepEqual(
+		feedbackKinds(
+			`Fixed.\n\n<!-- pi-event:${"a".repeat(64)} -->\nWritten by Pi Agent\n`,
+		),
+		[],
+	);
+	assert.deepEqual(feedbackKinds("Fixed.\n\nWritten by Pi Agent"), []);
+	assert.deepEqual(feedbackKinds("Why does it say Written by Pi Agent here?"), [
+		"issue-comment",
+		"review-comment",
+		"review",
+	]);
+});
+
+test("the authenticated account is trusted only when it has write permission", () =>
+	withState("shared-login", (_paths, cwd) => {
+		const originalPath = process.env.PATH;
+		const gh = join(cwd, "gh");
+		try {
+			process.env.PATH = `${cwd}${delimiter}${originalPath}`;
+			for (const permission of ["write", "read"]) {
+				writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' '${permission}'\n`, {
+					mode: 0o700,
+				});
+				assert.equal(
+					trustedLogins(
+						cwd,
+						identity,
+						"author",
+						new Set(["author"]),
+						new Set(),
+					).has("author"),
+					permission === "write",
+				);
+			}
+		} finally {
+			process.env.PATH = originalPath;
+		}
+	}));
+
 test("distinct failed check runs retain distinct identities", () =>
 	withState("check-identity", (paths) => {
 		const input = snapshot();
@@ -158,21 +225,10 @@ test("distinct failed check runs retain distinct identities", () =>
 test("bots are default-deny and trusted inline feedback is actionable", () => {
 	const botActors = new Set(["reviewer[bot]"]);
 	const trusted = (allowed) => [
-		...trustedLogins(
-			".",
-			{},
-			"reviewer[bot]",
-			"pi",
-			botActors,
-			new Set(allowed),
-		),
+		...trustedLogins(".", {}, "reviewer[bot]", botActors, new Set(allowed)),
 	];
 	assert.deepEqual(trusted([]), []);
 	assert.deepEqual(trusted(["reviewer[bot]"]), ["reviewer[bot]"]);
-	assert.deepEqual(
-		[...trustedLogins(".", {}, "contributor", "pi", new Set(), new Set())],
-		[],
-	);
 
 	const input = snapshot();
 	input.reviewComments = input.reviewComments.map((item) => ({
@@ -280,6 +336,48 @@ test("rejects corrupt persisted event timestamps", () =>
 		]);
 		assert.throws(() => pendingEvents(paths), /Invalid babysit-pr state/);
 	}));
+
+test("watcher notifications reach the inherited owner channel through emit-to-pi", () => {
+	const watcher = new URL("../scripts/babysit-pr.mjs", import.meta.url).href;
+	const bin = fileURLToPath(
+		new URL("../../../extensions/background-terminals/bin", import.meta.url),
+	);
+	for (const fd of [3, 5]) {
+		const result = spawnSync(
+			process.execPath,
+			[
+				"--input-type=module",
+				"-e",
+				`
+			import { tryEmit } from ${JSON.stringify(watcher)};
+			process.exitCode = tryEmit('PR 42 has new feedback', process.cwd()) ? 0 : 1;
+		`,
+			],
+			{
+				encoding: "utf8",
+				env: {
+					...process.env,
+					PATH: `${bin}${delimiter}${process.env.PATH}`,
+					PI_BACKGROUND_TERMINAL_NOTIFY_FD: String(fd),
+				},
+				stdio: [
+					"ignore",
+					"pipe",
+					"pipe",
+					...Array(fd - 3).fill("ignore"),
+					"pipe",
+				],
+				timeout: 5_000,
+			},
+		);
+		assert.equal(result.status, 0, result.stderr);
+		assert.equal(
+			result.output[fd],
+			`${JSON.stringify("PR 42 has new feedback")}\n`,
+		);
+		assert.equal(result.stdout, "");
+	}
+});
 
 test("notification failures stay inside the watcher retry path", () => {
 	const reported = [];

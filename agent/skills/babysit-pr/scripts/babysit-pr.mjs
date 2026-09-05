@@ -16,12 +16,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-	CommandError,
-	fetchSnapshot,
-	resolvePr,
-	runCommand,
-} from "./github.mjs";
+import { CommandError, fetchSnapshot, resolvePr } from "./github.mjs";
 
 const POLL_MS = 60_000;
 const DEBOUNCE_MS = 30_000;
@@ -69,8 +64,12 @@ function trustedComment(comment, input) {
 	const login = comment?.user?.login;
 	return (
 		typeof login === "string" &&
-		login !== input.selfLogin &&
-		input.trustedLogins.has(login)
+		input.trustedLogins.has(login) &&
+		!(
+			login === input.selfLogin &&
+			typeof comment.body === "string" &&
+			/(?:^|\r?\n)Written by Pi Agent\s*$/u.test(comment.body)
+		)
 	);
 }
 
@@ -448,7 +447,18 @@ function acquireLock(paths, trustedBots) {
 }
 
 function emit(message, cwd) {
-	runCommand("emit-to-pi", [message], cwd);
+	const fd = Number(process.env.PI_BACKGROUND_TERMINAL_NOTIFY_FD);
+	if (!Number.isInteger(fd) || fd < 3)
+		throw new Error(
+			"babysit-pr watch requires a Pi-owned background terminal notification channel",
+		);
+	// Node closes extra descriptors unless explicitly passed to the child.
+	execFileSync("emit-to-pi", [message], {
+		cwd,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe", fd],
+		env: { ...process.env, PI_BACKGROUND_TERMINAL_NOTIFY_FD: "3" },
+	});
 }
 
 export function tryEmit(

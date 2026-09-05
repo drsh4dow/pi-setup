@@ -637,3 +637,53 @@ effectTest(
 		);
 	},
 );
+
+effectTest(
+	"refresh rejects pre-aborted requests without sending credentials",
+	function* (t) {
+		let requests = 0;
+		mockTokenResponse(
+			t,
+			{ access_token: "synthetic", expires_in: 3600 },
+			() => requests++,
+		);
+		const controller = new AbortController();
+		controller.abort();
+		const provider: NonNullable<
+			import("@earendil-works/pi-coding-agent").ProviderConfig["oauth"]
+		> = anthropicOAuth;
+		yield* Effect.promise(() =>
+			assert.rejects(provider.refreshToken(OLD_CREDENTIALS, controller.signal)),
+		);
+		assert.equal(requests, 0);
+	},
+);
+
+effectTest(
+	"refresh cancellation aborts an in-flight token request",
+	function* (t) {
+		restoreFetch(t);
+		const started = Promise.withResolvers<AbortSignal>();
+		globalThis.fetch = (_input, init) =>
+			Effect.runPromise(
+				Effect.callback<Response>((resume) => {
+					assert.ok(init?.signal);
+					const signal = init.signal;
+					started.resolve(signal);
+					signal.addEventListener("abort", () => resume(Effect.interrupt), {
+						once: true,
+					});
+				}),
+			);
+		const controller = new AbortController();
+		const provider: NonNullable<
+			import("@earendil-works/pi-coding-agent").ProviderConfig["oauth"]
+		> = anthropicOAuth;
+		const refresh = provider.refreshToken(OLD_CREDENTIALS, controller.signal);
+		const rejected = assert.rejects(refresh);
+		const requestSignal = yield* Effect.promise(() => started.promise);
+		controller.abort();
+		yield* Effect.promise(() => rejected);
+		assert.equal(requestSignal.aborted, true);
+	},
+);

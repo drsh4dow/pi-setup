@@ -11,10 +11,14 @@ import {
 	saveDelegateOutput,
 } from "./output.ts";
 
+import {
+	MAX_MESSAGE_BYTES,
+	MAX_PROGRESS_BYTES,
+	StreamingPreview,
+} from "./streaming-preview.ts";
+
 const MAX_TRAIL_MESSAGES = 6;
 const MAX_TRAIL_TOOLS = 12;
-const MAX_MESSAGE_BYTES = 4 * 1024;
-const MAX_PROGRESS_BYTES = 240;
 const MAX_TOOL_ARGS_BYTES = 120;
 const MAX_TOOL_ERROR_BYTES = 200;
 
@@ -92,6 +96,7 @@ export class ChildState {
 	private seq = 0;
 	private lastActivityAt = Effect.runSync(Clock.currentTimeMillis);
 	private writing: string | undefined;
+	private streaming = new StreamingPreview();
 	private progress: string | undefined;
 	private omitInitialUserMessage: boolean = true;
 	private output = "";
@@ -167,11 +172,13 @@ export class ChildState {
 			event.message.role === "assistant"
 		) {
 			this.omitInitialUserMessage = false;
-			const text = extractAssistantText(event.message);
+			if (event.type === "message_start")
+				this.streaming = new StreamingPreview();
+			const { text, progress } = this.streaming.capture(event.message);
 			this.writing = text
 				? conversationMessage("Assistant (writing)", text)
 				: undefined;
-			if (text) this.progress = `writing: ${progressLine(text)}`;
+			if (text) this.progress = `writing: ${progressLine(progress)}`;
 		}
 		if (event.type !== "message_end") return;
 
@@ -189,6 +196,7 @@ export class ChildState {
 
 		this.omitInitialUserMessage = false;
 		this.writing = undefined;
+		this.streaming = new StreamingPreview();
 		const assistantText = extractAssistantText(event.message);
 		if (assistantText) {
 			this.replaceOutput(assistantText);

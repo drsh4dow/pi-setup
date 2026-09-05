@@ -155,9 +155,10 @@ describe("tps-tracker (real pi in tmux)", { skip }, () => {
 			Number(summary[2]) > 0,
 			`summary reported zero output tokens: ${summary[0]}`,
 		);
+		// Sub-50ms streams round to 0.0s; the rate uses unrounded elapsed time.
 		assert.ok(
-			Number(summary[3]) > 0,
-			`summary reported zero streaming time: ${summary[0]}`,
+			Number(summary[1]) > 0,
+			`summary reported a non-positive rate: ${summary[0]}`,
 		);
 		assert.equal(
 			summary[1],

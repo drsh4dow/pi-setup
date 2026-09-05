@@ -84,3 +84,53 @@ test("reports live and completed throughput from assistant stream timing", () =>
 			assert.equal(statuses.at(-1), "done — 20 tok/s");
 		}),
 	));
+
+test("preserves positive throughput when a short stream rounds to 0.0s", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			let now = 0;
+			const statuses: string[] = [];
+			const notifications: Array<[string, string]> = [];
+			const context = unsafeFixture<ExtensionContext>({
+				hasUI: true,
+				ui: unsafeFixture<ExtensionContext["ui"]>({
+					theme: { fg: (_color: string, text: string) => text },
+					setStatus: (_key: string, value: string) => statuses.push(value),
+					notify: (message: string, level: string) =>
+						notifications.push([message, level]),
+				}),
+			});
+			const adapter = extensionTestAdapter();
+			tpsTracker(adapter.api, { now: () => now });
+
+			yield* Effect.promise(() =>
+				adapter.emit("agent_start", { type: "agent_start" }, context),
+			);
+			yield* Effect.promise(() =>
+				adapter.emit(
+					"message_start",
+					{ type: "message_start", message: assistant(0) },
+					context,
+				),
+			);
+			now = 500;
+			yield* Effect.promise(() =>
+				adapter.emit("message_update", update(0, "12345678"), context),
+			);
+			now = 525;
+			yield* Effect.promise(() =>
+				adapter.emit(
+					"message_end",
+					{ type: "message_end", message: assistant(40) },
+					context,
+				),
+			);
+			yield* Effect.promise(() =>
+				adapter.emit("agent_end", { type: "agent_end", messages: [] }, context),
+			);
+			assert.equal(statuses.at(-1), "done — 1600 tok/s");
+			assert.deepEqual(notifications, [
+				["✓ 1600 tok/s  40 tokens in 0.0s streaming", "info"],
+			]);
+		}),
+	));

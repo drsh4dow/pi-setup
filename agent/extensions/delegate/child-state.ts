@@ -201,6 +201,9 @@ export class ChildState {
 		) {
 			this.assistantStop = event.message.stopReason;
 			this.assistantError = event.message.errorMessage;
+		} else {
+			this.assistantStop = undefined;
+			this.assistantError = undefined;
 		}
 		const usage = event.message.usage;
 		this.usage.turns++;

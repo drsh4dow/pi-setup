@@ -272,6 +272,7 @@ export function queueEvents(paths, events) {
 		pendingBySubject.set(subject, pending);
 	}
 	for (const event of events) {
+		if (stored.has(event.id)) continue;
 		const subject = eventSubject(event);
 		const pending = pendingBySubject.get(subject) ?? new Set();
 		for (const id of pending) {
@@ -279,7 +280,6 @@ export function queueEvents(paths, events) {
 			acknowledge(paths, id, "superseded");
 			pending.delete(id);
 		}
-		if (stored.has(event.id)) continue;
 		atomicJson(paths.eventFile(event.id), event);
 		stored.add(event.id);
 		if (!existsSync(paths.ackFile(event.id))) pending.add(event.id);

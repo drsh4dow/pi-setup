@@ -474,9 +474,10 @@ export const anthropicOAuth = {
 	name: "Anthropic (Claude Pro/Max)",
 	usesCallbackServer: true,
 	login: (callbacks) => Effect.runPromise(loginAnthropic(callbacks)),
-	refreshToken: (credentials) =>
+	refreshToken: (credentials, signal?: AbortSignal) =>
 		Effect.runPromise(
 			Effect.gen(function* () {
+				if (signal?.aborted) return yield* Effect.interrupt;
 				const token = yield* runTokenRequest(
 					"token refresh",
 					{
@@ -496,6 +497,7 @@ export const anthropicOAuth = {
 					expires: yield* credentialExpiry(token.expiresIn),
 				};
 			}),
+			{ signal },
 		),
 	getApiKey(credentials) {
 		return credentials.access;

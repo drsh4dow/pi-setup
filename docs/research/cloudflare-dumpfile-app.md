@@ -1,6 +1,6 @@
 # Cloudflare dumpfile app
 
-Research date: 2026-08-21. Primary sources only.
+Research date: 2026-08-21. Retention and provisioning sources rechecked 2026-09-05 for audit #19. Primary sources only.
 
 ## Decision context
 
@@ -14,7 +14,7 @@ The recommended first version is an authenticated Worker that generates a random
 
 R2 can expose a bucket through a custom domain or a Cloudflare-managed `r2.dev` hostname. The two settings are independent. Cloudflare calls `r2.dev` a non-production option and reserves custom domains for production features such as cache, WAF rules, access controls, and URL-level analytics ([public buckets](https://developers.cloudflare.com/r2/buckets/public-buckets/)). The `r2.dev` endpoint has variable request and bandwidth throttling. Cloudflare says throttling can begin at hundreds of requests per second and recommends a custom domain for production use ([R2 limits](https://developers.cloudflare.com/r2/platform/limits/#rate-limiting-on-managed-public-buckets-through-r2dev)).
 
-Use `files.example.com` as the public custom domain. Keep `r2.dev` disabled after initial setup. A custom domain must belong to a zone in the same Cloudflare account as the bucket ([public buckets](https://developers.cloudflare.com/r2/buckets/public-buckets/#custom-domains)). Custom-domain delivery can use Cloudflare Cache, while direct `r2.dev` delivery cannot use the same cache, WAF, or analytics controls ([public buckets](https://developers.cloudflare.com/r2/buckets/public-buckets/)). R2 has no Internet egress charge for either Standard or Infrequent Access storage ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). Cache hits can reduce R2 Class B reads, but cached data can briefly lag a replaced object ([how R2 works](https://developers.cloudflare.com/r2/how-r2-works/#read-path)). Immutable keys avoid that replacement problem.
+Use `files.example.com` as the public custom domain. Keep `r2.dev` disabled after initial setup. A custom domain must belong to a zone in the same Cloudflare account as the bucket ([public buckets](https://developers.cloudflare.com/r2/buckets/public-buckets/#custom-domains)). Custom-domain delivery can use Cloudflare Cache, while direct `r2.dev` delivery cannot use the same cache, WAF, or analytics controls ([public buckets](https://developers.cloudflare.com/r2/buckets/public-buckets/)). R2 has no Internet egress charge for either Standard or Infrequent Access storage ([R2 pricing](https://developers.cloudflare.com/r2/pricing/)). Cache hits can reduce R2 Class B reads, but the current no-store policy forgoes that saving for new uploads. Cached data can briefly lag a replaced object ([how R2 works](https://developers.cloudflare.com/r2/how-r2-works/#read-path)). Immutable keys avoid that replacement problem.
 
 R2 is strongly consistent. Cloudflare commits object metadata before returning upload success, after which subsequent reads see the object ([how R2 works](https://developers.cloudflare.com/r2/how-r2-works/#write-path)). This permits the CLI to verify the public URL immediately after a successful upload.
 
@@ -38,7 +38,7 @@ Version one should accept files up to 5 GiB through one presigned `PUT`. Multipa
 
 R2's S3 API accepts `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, and `Expires` as `PutObject` system metadata ([S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/#object-level-operations)). Object metadata is limited to 8,192 bytes and keys to 1,024 bytes ([R2 limits](https://developers.cloudflare.com/r2/platform/limits/)). The signer should bind the chosen content type and cache control into the presigned request. The public custom domain then returns stored object metadata.
 
-Use `Cache-Control: public, max-age=31536000, immutable`. This is safe because keys never change. Do not store the local filename. Version one should allow `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `video/mp4`, `video/webm`, and `video/quicktime`. Reject HTML, SVG, XML, JavaScript, and unknown types. SVG and HTML can execute active content in a browser, and a client-provided MIME header does not prove file contents. Host files on a dedicated cookieless subdomain that is not a parent of an authenticated application. Add `X-Content-Type-Options: nosniff` with a custom-domain response header rule before launch.
+Use `Cache-Control: no-store`. This avoids advertising a cache lifetime beyond origin retention. Keys still never change. Do not store the local filename. Version one should allow `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `video/mp4`, `video/webm`, and `video/quicktime`. Reject HTML, SVG, XML, JavaScript, and unknown types. SVG and HTML can execute active content in a browser, and a client-provided MIME header does not prove file contents. Host files on a dedicated cookieless subdomain that is not a parent of an authenticated application. Add `X-Content-Type-Options: nosniff` with a custom-domain response header rule before launch.
 
 ## Approach comparison
 
@@ -72,7 +72,7 @@ Public reads are intentional. The risks are unauthorized writes, harmful content
 | Overwrite, delete, or list     | The public endpoint exposes reads only. The signer never signs `DELETE`, `GET`, `HEAD`, list, or caller-selected keys. Its R2 credential stays only in Worker secrets.                                                                           | The signing credential remains high value. Scope it to the one bucket and rotate it on suspected exposure.                                                                                                                         |
 | Content-type spoofing          | Allowlist types, sign `Content-Type`, isolate the public hostname, set `nosniff`, and reject active formats.                                                                                                                                     | Header checks do not inspect bytes. Add magic-byte inspection in a post-upload scanner only if abuse appears. Scanning requires quarantine or a publish step.                                                                      |
 | Storage or request cost abuse  | Authentication, 5 GiB declared-size cap, short signing expiry, a Workers Rate Limiting binding keyed by token ID, billing alerts, and daily review of bytes and operations.                                                                      | `PutObject` does not make a declaration of size trustworthy by itself, and Workers rate limits are not exact global accounting. Enforce an R2/account budget operationally; add upload records and post-upload deletion if needed. |
-| Abandoned data                 | Keep PR artifacts by default because link permanence is the product requirement. Apply only the default seven-day cleanup for incomplete multipart uploads.                                                                                      | The owner may choose a long retention period, but automatic deletion silently breaks old PRs. Prefer an explicit administrative purge process with a report.                                                                       |
+| Abandoned data                 | Expire completed objects after 30 days of object age using native R2 lifecycle. Preserve incomplete multipart cleanup.                                                                                      | Old PR links will break. Obtain explicit approval before applying the policy retroactively; keep needed evidence elsewhere.                                                                       |
 | Broken GitHub links            | Stable custom domain, immutable random keys, no overwrite, no routine lifecycle deletion, and infrastructure under an owner-controlled zone.                                                                                                     | Domain loss, account deletion, or manual object deletion still breaks links. Back up the bucket or accept this operational risk.                                                                                                   |
 | Secrets in observability       | Log token ID, key, size, type, outcome, and latency. Never log `Authorization`, S3 credentials, or presigned query strings.                                                                                                                      | Cloudflare request logs may include URLs. The signing route itself carries no secret in its URL.                                                                                                                                   |
 
@@ -125,7 +125,7 @@ Response, `201 Created`:
     "url": "https://<account>.r2.cloudflarestorage.com/dumpfile-prod/...?...",
     "headers": {
       "Content-Type": "video/mp4",
-      "Cache-Control": "public, max-age=31536000, immutable"
+      "Cache-Control": "no-store"
     },
     "expiresAt": "2026-08-21T12:05:00Z"
   }
@@ -153,7 +153,13 @@ No CORS policy is needed for this CLI. No database, queue, upload-complete endpo
 
 ### Retention and observability
 
-Do not expire completed objects automatically. Stable GitHub references outweigh storage cleanup. Keep R2's default seven-day expiry for incomplete multipart uploads ([object lifecycles](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)). Revisit retention only with a measured storage curve and a way to protect referenced objects.
+Audit #19 changes the retention decision to native R2 expiration after 30 days of object age. Keep the default seven-day incomplete multipart cleanup and all unrelated lifecycle rules. [Cloudflare's lifecycle documentation](https://developers.cloudflare.com/r2/buckets/object-lifecycles/) says actions typically execute within 24 hours of eligibility; processing existing objects can take longer. This is not an exact deletion deadline or a promise that downloaded copies disappear.
+
+The implementation uses the [R2 lifecycle API](https://developers.cloudflare.com/api/resources/r2/subresources/buckets/subresources/lifecycle/methods/update/) through `cli/dumpfile/src/retention.ts`, with an enabled rule named `dumpfile-expire-30-days`, empty prefix, and `deleteObjectsTransition.condition` of `{ "type": "Age", "maxAge": 2592000 }`. The [Wrangler lifecycle commands](https://developers.cloudflare.com/workers/wrangler/commands/r2/#r2-bucket-lifecycle-set) document full-configuration replacement. Installed Wrangler 4.125.0 confirms the age is seconds and uses this REST representation. Reading and merging before writing preserves unrelated rules; a second read verifies the result. Run one configuration writer at a time because replacement is not an atomic merge.
+
+[Wrangler auth token --json](https://developers.cloudflare.com/changelog/2025-12-18-wrangler-auth-token/) supplies the current OAuth or API token over stdin. The setup wizard performs a read-only check and requires an exact typed approval before applying expiration to existing uploads. The standalone apply command requires `--expire-existing-uploads`. All existing bucket objects are in scope, including ones already older than 30 days. No production rule was applied or checked during implementation. See [operations and demonstration commands](../../cli/dumpfile/README.md#check-or-apply-30-day-retention).
+
+New uploads use `Cache-Control: no-store`; a one-year immutable lifetime would allow stale public responses long after origin expiration. Cloudflare [default cache behavior](https://developers.cloudflare.com/cache/concepts/default-cache-behavior/) respects `no-store` unless cache configuration overrides it. Existing objects retain legacy metadata and previously cached or downloaded copies are not recalled by R2 deletion. Check cache overrides and obtain separate approval for any edge purge. Deploy the Worker and CLI together because both versions verify their own cache policy. Keep `upload.expiresAt` as the signing deadline; do not add an exact object-deletion timestamp.
 
 Emit structured Worker logs for signing decisions: timestamp, token ID, generated key, declared bytes, content type, status, and request ID. Enable Worker Logs with short retention appropriate to the account, and create alerts for authentication failures, rate-limit events, Worker errors, R2 storage growth, and spend. Cloudflare caps log data emitted by one Worker invocation at 256 KB, which is ample for one compact event ([Workers limits](https://developers.cloudflare.com/workers/platform/limits/#log-size)).
 
@@ -185,7 +191,7 @@ Multipart changes the Class A formula. Each create, uploaded part, and completio
 
 ### Phase 0: owner choices and account setup
 
-Recommended defaults are `files.example.com`, `upload.example.com`, no completed-object expiry, a 5 GiB declared-size maximum, five-minute signatures, the MIME allowlist above, and one token per independently revocable agent environment. The owner must supply the zone, decide whether old PR artifacts may ever expire, choose the initial agents, and set a monthly spend alert. These choices should not block design work; use the defaults unless the owner changes them.
+Recommended defaults are `files.example.com`, `upload.example.com`, 30-day object-age expiration, a 5 GiB declared-size maximum, five-minute signatures, the MIME allowlist above, and one token per independently revocable agent environment. The owner must supply the zone, explicitly approve retroactive expiration of existing artifacts, choose the initial agents, and set a monthly spend alert. Implement the defaults, but keep retroactive expiration behind explicit approval.
 
 Create the bucket, custom domain, scoped R2 credentials, Worker route, secrets, response-header rule, and Workers Rate Limiting binding as infrastructure configuration. Record recovery ownership for the domain and Cloudflare account.
 
@@ -193,7 +199,7 @@ Verification:
 
 1. Upload a harmless fixture through the dashboard, fetch it from the custom domain, and confirm `r2.dev` is disabled.
 2. Confirm an unknown key returns not found and no bucket index is exposed.
-3. Confirm the response has the expected `Content-Type`, immutable cache policy, and `X-Content-Type-Options: nosniff`.
+3. Confirm the response has the expected `Content-Type`, no-store cache policy, and `X-Content-Type-Options: nosniff`.
 
 ### Phase 1: signer
 
@@ -224,10 +230,10 @@ Add multipart direct upload when files exceed 5 GiB or upload reliability is poo
 
 ## Launch blockers
 
-The launch blockers are a custom public domain, direct-to-R2 upload, authenticated signing, generated immutable keys, a strict media allowlist, active-content rejection, `nosniff`, a 5 GiB declared-size cap, five-minute signatures, rate limiting, secret redaction, no completed-object lifecycle deletion, spend alerts, and the end-to-end checks above.
+The launch blockers are a custom public domain, direct-to-R2 upload, authenticated signing, generated immutable keys, a strict media allowlist, active-content rejection, `nosniff`, a 5 GiB declared-size cap, five-minute signatures, rate limiting, secret redaction, explicitly approved native 30-day object-age expiration, spend alerts, and the end-to-end checks above.
 
 Multipart upload, browser CORS, a web UI, malware scanning, a database, self-service deletion, and content deduplication can wait.
 
 ## Recommended decision
 
-Build a small authenticated Worker that returns a five-minute presigned R2 `PUT` for a server-generated immutable key. Upload bytes directly to R2, serve them publicly from `files.example.com`, and have the CLI print that stable URL only after a public `HEAD` succeeds. Launch with single-part files up to 5 GiB, no completed-object expiry, no browser CORS, strict media types, isolated public hosting, rate limits, and spend alerts. Do not distribute R2 credentials to agents and do not proxy file bytes through the Worker.
+Build a small authenticated Worker that returns a five-minute presigned R2 `PUT` for a server-generated immutable key. Upload bytes directly to R2, serve them publicly from `files.example.com`, and have the CLI print that stable URL only after a public `HEAD` succeeds. Launch with single-part files up to 5 GiB, 30-day object-age expiration, no browser CORS, strict media types, isolated public hosting, rate limits, and spend alerts. Do not distribute R2 credentials to agents and do not proxy file bytes through the Worker.

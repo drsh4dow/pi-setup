@@ -1,8 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Effect } from "effect";
 import { eventually } from "./eventually.ts";
 import { context, harness } from "./manager-fixture.ts";
+
+function failedAssistant(
+	stopReason: "error" | "aborted",
+	errorMessage: string,
+): AssistantMessage {
+	return {
+		role: "assistant",
+		api: "openai-responses",
+		provider: "test",
+		model: "test",
+		timestamp: 0,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		content: [],
+		stopReason,
+		errorMessage,
+	};
+}
 
 test("a successful retry replaces the failed assistant outcome before idle settlement", () =>
 	Effect.runPromise(
@@ -13,30 +38,7 @@ test("a successful retry replaces the failed assistant outcome before idle settl
 				yield* eventually(() => sessions.length === 1);
 				sessions[0].emit({
 					type: "message_end",
-					message: {
-						role: "assistant",
-						api: "openai-responses",
-						provider: "test",
-						model: "test",
-						timestamp: 0,
-						usage: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							totalTokens: 0,
-							cost: {
-								input: 0,
-								output: 0,
-								cacheRead: 0,
-								cacheWrite: 0,
-								total: 0,
-							},
-						},
-						content: [],
-						stopReason: "error",
-						errorMessage: "temporary failure",
-					},
+					message: failedAssistant("error", "temporary failure"),
 				});
 				sessions[0].emit({
 					type: "auto_retry_start",
@@ -69,30 +71,7 @@ for (const stopReason of ["error", "aborted"] as const) {
 					sessions[0].emitAssistant("earlier response", 15);
 					sessions[0].emit({
 						type: "message_end",
-						message: {
-							role: "assistant",
-							api: "openai-responses",
-							provider: "test",
-							model: "test",
-							timestamp: 0,
-							usage: {
-								input: 0,
-								output: 0,
-								cacheRead: 0,
-								cacheWrite: 0,
-								totalTokens: 0,
-								cost: {
-									input: 0,
-									output: 0,
-									cacheRead: 0,
-									cacheWrite: 0,
-									total: 0,
-								},
-							},
-							content: [],
-							stopReason,
-							errorMessage: "terminal failure",
-						},
+						message: failedAssistant(stopReason, "terminal failure"),
 					});
 					sessions[0].finishWithoutResponse();
 					const [result] = yield* manager.wait([job.id]);

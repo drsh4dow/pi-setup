@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { type Component, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import { Effect } from "effect";
 import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import uiMoto from "../index.ts";
@@ -98,5 +98,45 @@ test("installs, updates, and removes the session header", () =>
 				),
 			);
 			assert.equal(renders, 1);
+		}),
+	));
+
+test("header preserves graphemes within terminal column limits", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			let factory: Parameters<ExtensionContext["ui"]["setHeader"]>[0];
+			const context = unsafeFixture<ExtensionContext>({
+				mode: "tui",
+				hasUI: true,
+				model: { id: "项目👩‍💻é" },
+				ui: {
+					setHeader: (value: typeof factory) => {
+						factory = value;
+					},
+				},
+			});
+			const adapter = extensionTestAdapter();
+			uiMoto(adapter.api);
+			yield* Effect.promise(() =>
+				adapter.emit(
+					"session_start",
+					{ type: "session_start", reason: "startup" },
+					context,
+				),
+			);
+			assert.ok(factory);
+			const header = factory(
+				unsafeFixture<TUI>({ requestRender() {} }),
+				unsafeFixture({}),
+			);
+			for (let width = 0; width <= 80; width++) {
+				for (const line of header.render(width))
+					assert.ok(
+						visibleWidth(line) <= width,
+						`width ${width}: ${plain(line)}`,
+					);
+			}
+			assert.match(header.render(80)[1] ?? "", /👩‍💻/);
+			assert.match(header.render(80)[1] ?? "", /é/);
 		}),
 	));

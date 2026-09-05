@@ -370,15 +370,15 @@ HEADERS=$(mktemp)
 trap 'rm -f "$FIXTURE" "$FETCHED" "$HEADERS"' EXIT
 printf '%s' '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415408d763f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082' | xxd -r -p > "$FIXTURE"
 PUBLIC_URL=$(_existing DUMPFILE_VERIFIED_URL || true)
-if [[ "$PUBLIC_URL" != https://files.drsh4dow.dev/* ]] || ! curl -fsSI "$PUBLIC_URL" >/dev/null; then
+if [[ "$PUBLIC_URL" != https://files.drsh4dow.dev/* ]] || ! curl -fsSI "$PUBLIC_URL" > "$HEADERS" || ! grep -Eiq '^cache-control: no-store[[:space:]]*$' "$HEADERS"; then
   PUBLIC_URL=$("$HOME/.local/bin/dumpfile" upload "$FIXTURE")
   write_env DUMPFILE_VERIFIED_URL "$PUBLIC_URL"
 else
-  note "reusing the verified fixture from the previous setup run"
+  note "reusing the previous fixture with the current cache policy"
 fi
 curl -fsSI "$PUBLIC_URL" > "$HEADERS"
 grep -Eiq '^content-type: image/png' "$HEADERS" || { warn "public Content-Type is wrong"; exit 1; }
-grep -Eiq '^cache-control: public, max-age=31536000, immutable' "$HEADERS" || { warn "public Cache-Control is wrong"; exit 1; }
+grep -Eiq '^cache-control: no-store[[:space:]]*$' "$HEADERS" || { warn "public Cache-Control is wrong"; exit 1; }
 grep -Eiq '^content-disposition: inline' "$HEADERS" || { warn "public Content-Disposition is wrong"; exit 1; }
 grep -Eiq '^x-content-type-options: nosniff' "$HEADERS" || { warn "public nosniff header is missing"; exit 1; }
 curl -fsS "$PUBLIC_URL" > "$FETCHED"

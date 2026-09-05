@@ -258,16 +258,32 @@ function eventSubject(event) {
 
 export function queueEvents(paths, events) {
 	const added = [];
+	if (events.length === 0) return added;
+	const stored = new Set();
+	const pendingBySubject = new Map();
+	for (const name of eventFiles(paths)) {
+		const id = basename(name, ".json");
+		stored.add(id);
+		if (existsSync(paths.ackFile(id))) continue;
+		const existing = readJson(paths.eventFile(id), validEvent);
+		const subject = eventSubject(existing);
+		const pending = pendingBySubject.get(subject) ?? new Set();
+		pending.add(id);
+		pendingBySubject.set(subject, pending);
+	}
 	for (const event of events) {
-		for (const name of eventFiles(paths)) {
-			const id = basename(name, ".json");
-			if (id === event.id || existsSync(paths.ackFile(id))) continue;
-			const existing = readJson(paths.eventFile(id), validEvent);
-			if (eventSubject(existing) !== eventSubject(event)) continue;
+		const subject = eventSubject(event);
+		const pending = pendingBySubject.get(subject) ?? new Set();
+		for (const id of pending) {
+			if (id === event.id) continue;
 			acknowledge(paths, id, "superseded");
+			pending.delete(id);
 		}
-		if (existsSync(paths.eventFile(event.id))) continue;
+		if (stored.has(event.id)) continue;
 		atomicJson(paths.eventFile(event.id), event);
+		stored.add(event.id);
+		if (!existsSync(paths.ackFile(event.id))) pending.add(event.id);
+		pendingBySubject.set(subject, pending);
 		added.push(event);
 	}
 	return added;

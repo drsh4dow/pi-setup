@@ -6,7 +6,6 @@ import {
 	type RunningTerminalSnapshot,
 	type TerminalMetadata,
 	type TerminalSnapshot,
-	terminalResultFields,
 } from "./manager.ts";
 
 export interface TerminalClient {
@@ -58,13 +57,6 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 					client.delivery.consume([snapshot.id]);
 					return;
 				}
-				if (
-					snapshot.state === "done" &&
-					snapshot.stdout.totalBytes === 0 &&
-					snapshot.stderr.totalBytes === 0 &&
-					!terminalResultFields(snapshot).error
-				)
-					return;
 				client.delivery.enqueue(snapshot);
 			},
 			() => `bt-${++terminalSequence}`,

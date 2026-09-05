@@ -301,13 +301,7 @@ export class BackgroundTerminalDelivery {
 						},
 						{
 							deliverAs: "followUp",
-							triggerTurn:
-								batch.kind === "notification" ||
-								batch.items.some(
-									(item) =>
-										item.kind === "completion" &&
-										item.snapshot.state !== "done",
-								),
+							triggerTurn: true,
 						},
 					);
 					this.consume(ids);

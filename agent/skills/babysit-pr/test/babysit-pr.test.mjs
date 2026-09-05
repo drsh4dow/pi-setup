@@ -484,5 +484,8 @@ test("one batch supersedes each revision and replay never revives acknowledgemen
 		);
 		ackEvents(paths, [other.id]);
 		assert.deepEqual(queueEvents(paths, [first, other, edited]), []);
-		assert.deepEqual(pendingEvents(paths), []);
+		assert.deepEqual(
+			pendingEvents(paths).map((event) => event.id),
+			[edited.id],
+		);
 	}));

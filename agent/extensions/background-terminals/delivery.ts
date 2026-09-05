@@ -7,6 +7,7 @@ import { truncateUtf8Tail } from "../../lib/text.ts";
 import {
 	MAX_TRACKED,
 	type SettledTerminalSnapshot,
+	type TerminalMetadata,
 	type TerminalSnapshot,
 	terminalResultFields,
 } from "./manager.ts";
@@ -50,14 +51,14 @@ function tail(text: string, maxBytes = MAX_TEXT): string {
 		.slice(-MAX_LINES)
 		.join("\n");
 }
-function elapsed(snapshot: TerminalSnapshot): string {
+function elapsed(snapshot: TerminalMetadata): string {
 	const end =
 		snapshot.state === "running"
 			? Effect.runSync(Clock.currentTimeMillis)
 			: snapshot.settledAt;
 	return `${Math.max(0, Math.round((end - snapshot.createdAt) / 1000))}s`;
 }
-export function statusSummary(snapshot: TerminalSnapshot): string {
+export function statusSummary(snapshot: TerminalMetadata): string {
 	const fields = terminalResultFields(snapshot);
 	const exit =
 		snapshot.state === "running"
@@ -68,10 +69,10 @@ export function statusSummary(snapshot: TerminalSnapshot): string {
 					: `exit ${fields.exitCode}`));
 	return `[${snapshot.state}] ${sanitizeInline(snapshot.title)} · ${exit} · ${elapsed(snapshot)}`;
 }
-export function summary(snapshot: TerminalSnapshot): string {
+export function summary(snapshot: TerminalMetadata): string {
 	return `${sanitizeInline(snapshot.id)} ${statusSummary(snapshot)}`;
 }
-export function terminalMetadata(snapshot: TerminalSnapshot) {
+export function terminalMetadata(snapshot: TerminalMetadata) {
 	const fields = terminalResultFields(snapshot);
 	return {
 		id: sanitizeInline(snapshot.id),

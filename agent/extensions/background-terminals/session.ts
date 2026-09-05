@@ -4,6 +4,7 @@ import {
 	BackgroundTerminalManager,
 	MAX_RUNNING_PER_OWNER,
 	type RunningTerminalSnapshot,
+	type TerminalMetadata,
 	type TerminalSnapshot,
 	terminalResultFields,
 } from "./manager.ts";
@@ -18,7 +19,7 @@ export interface BackgroundTerminalSession {
 		client: symbol,
 		options: { command: string; title: string; cwd: string },
 	): RunningTerminalSnapshot;
-	list(client: symbol): TerminalSnapshot[];
+	list(client: symbol): TerminalMetadata[];
 	get(client: symbol, id: string): TerminalSnapshot | undefined;
 	wait(
 		client: symbol,

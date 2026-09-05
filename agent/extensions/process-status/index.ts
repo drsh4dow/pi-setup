@@ -6,7 +6,7 @@ import {
 	FooterComponent,
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { isAutoCompactionEnabled } from "../../lib/settings.ts";
+import { observeAutoCompaction } from "../../lib/settings.ts";
 import {
 	type ProcessStatusView,
 	processStatusUsage,
@@ -22,9 +22,7 @@ function roundUsd(cost: number): number {
 
 export default function processStatus(
 	pi: ExtensionAPI,
-	autoCompactionEnabled: (
-		ctx: ExtensionContext,
-	) => boolean = isAutoCompactionEnabled,
+	autoCompactionEnabled?: (ctx: ExtensionContext) => boolean,
 ) {
 	let currentModel: Parameters<typeof pi.setModel>[0] | undefined;
 	let requestFooterRender: (() => void) | undefined;
@@ -117,15 +115,19 @@ export default function processStatus(
 				getContextUsage: () => ctx.getContextUsage(),
 			} as unknown as AgentSession;
 			const footer = new FooterComponent(session, footerData);
+			const settings = autoCompactionEnabled
+				? { enabled: () => autoCompactionEnabled(ctx), dispose() {} }
+				: observeAutoCompaction(ctx, () => tui.requestRender());
 			const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
 			requestFooterRender = () => tui.requestRender();
 			return {
 				invalidate: () => tui.requestRender(),
 				render(width: number) {
-					footer.setAutoCompactEnabled(autoCompactionEnabled(ctx));
+					footer.setAutoCompactEnabled(settings.enabled());
 					return footer.render(width);
 				},
 				dispose() {
+					settings.dispose();
 					unsubscribe();
 					footer.dispose();
 					requestFooterRender = undefined;

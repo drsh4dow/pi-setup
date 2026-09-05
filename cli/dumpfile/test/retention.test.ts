@@ -129,3 +129,77 @@ for (const failure of ["read", "malformed", "write", "read-back"]) {
 		assert.equal(output.join("").includes("synthetic-token"), false);
 	});
 }
+
+test("retention check treats omitted rules as unconfigured without writing", async () => {
+	const output: string[] = [];
+	const methods: unknown[] = [];
+	const code = await main(["check", account], {
+		auth,
+		fetch: async (_url, init) => {
+			methods.push(init?.method);
+			return Response.json({ success: true, result: {} });
+		},
+		write: (text) => output.push(text),
+	});
+	assert.equal(code, 1);
+	assert.deepEqual(methods, ["GET"]);
+	assert.equal(output.join(""), "30-day lifecycle not configured.\n");
+});
+
+for (const readBack of ["configured", "omitted"]) {
+	test(`approved apply starts from omitted rules and verifies ${readBack} read-back`, async () => {
+		const methods: unknown[] = [];
+		const output: string[] = [];
+		let applied = false;
+		const code = await main(["apply", account, "--expire-existing-uploads"], {
+			auth,
+			fetch: async (_url, init) => {
+				methods.push(init?.method);
+				if (init?.method === "PUT") {
+					assert.deepEqual(JSON.parse(String(init.body)), { rules: [desired] });
+					applied = true;
+					return Response.json({ success: true });
+				}
+				return Response.json({
+					success: true,
+					result:
+						applied && readBack === "configured" ? { rules: [desired] } : {},
+				});
+			},
+			write: (text) => output.push(text),
+		});
+		assert.deepEqual(methods, ["GET", "PUT", "GET"]);
+		assert.equal(code, readBack === "configured" ? 0 : 1);
+		assert.match(
+			output.join(""),
+			readBack === "configured"
+				? /30-day lifecycle configured/
+				: /No deployment is verified/,
+		);
+	});
+}
+
+for (const rules of [null, {}, "invalid", 0, false, [null]]) {
+	for (const mode of ["check", "apply"]) {
+		test(`${mode} rejects present malformed rules ${JSON.stringify(rules)}`, async () => {
+			const methods: unknown[] = [];
+			const output: string[] = [];
+			const code = await main(
+				mode === "check"
+					? [mode, account]
+					: [mode, account, "--expire-existing-uploads"],
+				{
+					auth,
+					fetch: async (_url, init) => {
+						methods.push(init?.method);
+						return Response.json({ success: true, result: { rules } });
+					},
+					write: (text) => output.push(text),
+				},
+			);
+			assert.equal(code, 1);
+			assert.deepEqual(methods, ["GET"]);
+			assert.match(output.join(""), /No deployment is verified/);
+		});
+	}
+}

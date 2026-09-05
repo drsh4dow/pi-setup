@@ -460,3 +460,29 @@ test("linked worktrees share durable, idempotent event state", () => {
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("one batch supersedes each revision and replay never revives acknowledgements", () =>
+	withState("batch-edits", (paths) => {
+		const first = eventOf("issue-comment");
+		const editedInput = snapshot();
+		editedInput.issueComments[0].updated_at = "2026-01-01T00:02:00Z";
+		const edited = eventOf(
+			"issue-comment",
+			editedInput,
+			"2026-01-01T00:02:00Z",
+		);
+		const other = eventOf("review-comment");
+		assert.deepEqual(
+			queueEvents(paths, [first, other, edited, edited]).map(
+				(event) => event.id,
+			),
+			[first.id, other.id, edited.id],
+		);
+		assert.deepEqual(
+			new Set(pendingEvents(paths).map((event) => event.id)),
+			new Set([other.id, edited.id]),
+		);
+		ackEvents(paths, [other.id]);
+		assert.deepEqual(queueEvents(paths, [first, other, edited]), []);
+		assert.deepEqual(pendingEvents(paths), []);
+	}));

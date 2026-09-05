@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { setTimeout } from "node:timers/promises";
 import { Effect } from "effect";
+import { nodeCommand } from "./node-command.ts";
 
 const { BackgroundTerminalManager, RETAINED_BYTES } = await import(
 	process.argv[2] ?? "../manager.ts"
@@ -11,7 +12,9 @@ const manager = new BackgroundTerminalManager();
 const original = Buffer.prototype.toString;
 try {
 	const run = manager.start({
-		command: `node -e 'process.stdout.write("x".repeat(${RETAINED_BYTES})); setInterval(()=>{},1000)'`,
+		command: nodeCommand(
+			`process.stdout.write("x".repeat(${RETAINED_BYTES})); setInterval(()=>{},1000)`,
+		),
 		title: "listing probe",
 		cwd: process.cwd(),
 	});

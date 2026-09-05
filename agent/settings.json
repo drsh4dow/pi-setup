@@ -1,18 +1,17 @@
 {
-  "lastChangelogVersion": "0.85.0",
+  "lastChangelogVersion": "0.85.1",
   "packages": [
     "npm:pi-mcp-adapter"
   ],
   "defaultProvider": "openai-codex-cyber",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultModel": "gpt-6-astra",
   "enabledModels": [
-    "openai-codex/gpt-5.6-sol",
     "openai-codex-cyber/gpt-daybreak-blue-latest",
-    "openai-codex-cyber/gpt-5.6-sol",
-    "opencode-go/glm-5.3-flash"
+    "openai-codex/gpt-6-astra",
+    "openai-codex-cyber/gpt-6-astra"
   ],
   "delegate": {
-    "model": "openai-codex/gpt-5.6-sol"
+    "model": "openai-codex-cyber/gpt-6-astra"
   },
   "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,

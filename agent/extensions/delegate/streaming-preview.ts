@@ -1,4 +1,7 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	AssistantMessageEvent,
+} from "@earendil-works/pi-ai";
 
 interface TextPart {
 	consumed: number;
@@ -28,22 +31,77 @@ function edges(text: string, start = 0, end = text.length) {
 	return text.slice(start, headEnd) + text.slice(tailStart, end);
 }
 
-/** Streaming text parts append in place; message_end is authoritative. */
-export class StreamingPreview {
-	private readonly parts = new Map<number, TextPart>();
+interface Preview {
+	text: string;
+	progress: string;
+}
 
-	capture(message: AssistantMessage) {
-		let text = "";
-		let progress = "";
-		for (const [index, part] of message.content.entries()) {
-			if (part.type !== "text") continue;
-			const end = completeEnd(part.text, part.text.length);
-			let cached = this.parts.get(index);
-			if (!cached || end < cached.consumed) {
-				cached = { consumed: 0, start: undefined, end: 0, progress: "" };
-				this.parts.set(index, cached);
+function combine(left: Preview, right: Preview): Preview {
+	const progress = [left.progress, right.progress].filter(Boolean).join(" ");
+	return {
+		text: edges(
+			left.text && right.text
+				? `${left.text}\n${right.text}`
+				: left.text || right.text,
+		),
+		progress: progress.slice(
+			0,
+			completeEnd(progress, Math.min(progress.length, PROGRESS_UNITS)),
+		),
+	};
+}
+
+/** One bounded prefix and one incremental block, never one cache per index.
+ * SDK text events carry indexed snapshots; Responses slots can interleave and
+ * text_end can replace text. Earlier-index updates rebuild rather than losing
+ * evicted parts. Ordered appends only visit the current/new content blocks.
+ */
+export class StreamingPreview {
+	private index = -1;
+	private part: TextPart = {
+		consumed: 0,
+		start: undefined,
+		end: 0,
+		progress: "",
+	};
+	private prefix: Preview = { text: "", progress: "" };
+	private current: Preview = { text: "", progress: "" };
+
+	capture(message: AssistantMessage, event?: AssistantMessageEvent): Preview {
+		if (
+			event &&
+			event.type !== "text_start" &&
+			event.type !== "text_delta" &&
+			event.type !== "text_end"
+		) {
+			return combine(this.prefix, this.current);
+		}
+		const target = event?.contentIndex ?? message.content.length - 1;
+		if (target < this.index) {
+			this.index = -1;
+			this.prefix = { text: "", progress: "" };
+			this.current = { text: "", progress: "" };
+		}
+		// Include later active slots when rebuilding an interleaved snapshot.
+		const endIndex = Math.max(target, message.content.length - 1);
+		for (let index = Math.max(0, this.index); index <= endIndex; index++) {
+			const block = message.content[index];
+			if (block?.type !== "text") continue;
+			if (index !== this.index) {
+				this.prefix = combine(this.prefix, this.current);
+				this.current = { text: "", progress: "" };
+				this.part = { consumed: 0, start: undefined, end: 0, progress: "" };
+				this.index = index;
 			}
-			const delta = part.text.slice(cached.consumed, end);
+			const end = completeEnd(block.text, block.text.length);
+			if (
+				end < this.part.consumed ||
+				(event?.type === "text_end" && index === target)
+			) {
+				this.part = { consumed: 0, start: undefined, end: 0, progress: "" };
+			}
+			const cached = this.part;
+			const delta = block.text.slice(cached.consumed, end);
 			if (cached.start === undefined) {
 				const first = delta.search(/\S/u);
 				if (first !== -1) cached.start = cached.consumed + first;
@@ -60,17 +118,14 @@ export class StreamingPreview {
 				);
 			}
 			cached.consumed = end;
-			if (cached.start === undefined) continue;
-			const excerpt = edges(part.text, cached.start, cached.end);
-			text = edges(text ? `${text}\n${excerpt}` : excerpt);
-			if (progress.length < PROGRESS_UNITS) {
-				progress = `${progress ? `${progress} ` : ""}${cached.progress.trim()}`;
-				progress = progress.slice(
-					0,
-					completeEnd(progress, Math.min(progress.length, PROGRESS_UNITS)),
-				);
-			}
+			this.current =
+				cached.start === undefined
+					? { text: "", progress: "" }
+					: {
+							text: edges(block.text, cached.start, cached.end),
+							progress: cached.progress.trim(),
+						};
 		}
-		return { text, progress };
+		return combine(this.prefix, this.current);
 	}
 }

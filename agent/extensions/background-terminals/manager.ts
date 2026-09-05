@@ -85,6 +85,15 @@ export type TerminalSnapshot =
 	| RunningTerminalSnapshot
 	| SettledTerminalSnapshot;
 
+type WithoutOutputText<T> = T extends TerminalSnapshot
+	? Omit<T, "stdout" | "stderr"> & {
+			stdout: Omit<OutputTail, "text">;
+			stderr: Omit<OutputTail, "text">;
+		}
+	: never;
+export type TerminalMetadata = WithoutOutputText<TerminalSnapshot>;
+type RunningTerminalMetadata = WithoutOutputText<RunningTerminalSnapshot>;
+
 export interface TerminalResultFields {
 	exitCode: number | undefined;
 	signal: string | undefined;
@@ -148,12 +157,14 @@ class Tail {
 			...this.chunks.slice(1),
 		]);
 	}
-	view(): OutputTail {
+	metadata(): Omit<OutputTail, "text"> {
 		return {
-			text: this.buffer().toString("utf8"),
 			totalBytes: this.totalBytes,
 			truncatedBytes: this.totalBytes - this.retainedBytes,
 		};
+	}
+	view(): OutputTail {
+		return { ...this.metadata(), text: this.buffer().toString("utf8") };
 	}
 }
 
@@ -233,7 +244,7 @@ function observationExit(observation: ProcessObservation): ProcessExit {
 			return assertNever(observation);
 	}
 }
-function snapshotExit(snapshot: TerminalSnapshot): ProcessExit | undefined {
+function snapshotExit(snapshot: TerminalMetadata): ProcessExit | undefined {
 	if (snapshot.state === "running")
 		return snapshot.process.kind === "executing"
 			? undefined
@@ -249,7 +260,7 @@ function snapshotExit(snapshot: TerminalSnapshot): ProcessExit | undefined {
 			return assertNever(snapshot);
 	}
 }
-function snapshotError(snapshot: TerminalSnapshot): string | undefined {
+function snapshotError(snapshot: TerminalMetadata): string | undefined {
 	switch (snapshot.state) {
 		case "running":
 			return snapshot.process.error;
@@ -271,7 +282,7 @@ function snapshotError(snapshot: TerminalSnapshot): string | undefined {
 	}
 }
 export function terminalResultFields(
-	snapshot: TerminalSnapshot,
+	snapshot: TerminalMetadata,
 ): TerminalResultFields {
 	const exit = snapshotExit(snapshot);
 	return {
@@ -305,8 +316,22 @@ export class BackgroundTerminalManager {
 		this.onNotification = onNotification;
 	}
 
-	list(): TerminalSnapshot[] {
-		return [...this.entries.values()].map((entry) => this.snapshot(entry));
+	list(): TerminalMetadata[] {
+		return [...this.entries.values()].map((entry) => {
+			if (entry.kind !== "settled") return this.activeMetadata(entry);
+			const { stdout, stderr, ...metadata } = entry.snapshot;
+			return {
+				...metadata,
+				stdout: {
+					totalBytes: stdout.totalBytes,
+					truncatedBytes: stdout.truncatedBytes,
+				},
+				stderr: {
+					totalBytes: stderr.totalBytes,
+					truncatedBytes: stderr.truncatedBytes,
+				},
+			};
+		});
 	}
 	get(id: string): TerminalSnapshot | undefined {
 		const entry = this.entries.get(id);
@@ -324,6 +349,13 @@ export class BackgroundTerminalManager {
 		}
 	}
 	private activeSnapshot(entry: ActiveEntry): RunningTerminalSnapshot {
+		return {
+			...this.activeMetadata(entry),
+			stdout: entry.terminal.stdout.view(),
+			stderr: entry.terminal.stderr.view(),
+		};
+	}
+	private activeMetadata(entry: ActiveEntry): RunningTerminalMetadata {
 		const terminal = entry.terminal;
 		const process: RunningTerminalSnapshot["process"] =
 			terminal.observation.kind === "executing"
@@ -345,8 +377,8 @@ export class BackgroundTerminalManager {
 			state: "running",
 			createdAt: terminal.createdAt,
 			process,
-			stdout: terminal.stdout.view(),
-			stderr: terminal.stderr.view(),
+			stdout: terminal.stdout.metadata(),
+			stderr: terminal.stderr.metadata(),
 		};
 	}
 	private prune(limit = MAX_TRACKED) {
@@ -421,7 +453,6 @@ export class BackgroundTerminalManager {
 		);
 		return this.activeSnapshot(entry);
 	}
-
 	private active(id: string): ActiveEntry | undefined {
 		const entry = this.entries.get(id);
 		return entry?.kind === "running" || entry?.kind === "terminating"
@@ -495,7 +526,6 @@ export class BackgroundTerminalManager {
 		});
 		this.settleWhenProcessGroupExits(id);
 	}
-
 	private processGroupExists(entry: ActiveEntry): boolean {
 		if (process.platform === "win32" || !entry.terminal.pid) return false;
 		try {
@@ -516,7 +546,6 @@ export class BackgroundTerminalManager {
 		}
 		schedule(GROUP_CHECK_MS, () => this.settleWhenProcessGroupExits(id));
 	}
-
 	private settle(id: string): SettledTerminalSnapshot | undefined {
 		const entry = this.active(id);
 		if (!entry) return;
@@ -579,7 +608,6 @@ export class BackgroundTerminalManager {
 		this.prune();
 		return snapshot;
 	}
-
 	private setProcessError(id: string, message: string) {
 		const entry = this.active(id);
 		if (!entry) return;
@@ -640,7 +668,6 @@ export class BackgroundTerminalManager {
 			);
 		},
 	);
-
 	private waitForSettlement = Effect.fn(
 		"BackgroundTerminalManager.waitForSettlement",
 	)(function* (

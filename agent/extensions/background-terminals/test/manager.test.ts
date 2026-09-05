@@ -368,3 +368,25 @@ test("shutdown settles outstanding waiters and clears tracked results", () =>
 			assert.deepEqual(manager.list(), []);
 		}),
 	));
+
+test("list returns output-free metadata while detail and wait retain output", () => Effect.runPromise(Effect.gen(function* () {
+	const manager = new BackgroundTerminalManager();
+	try {
+		const run = manager.start({ command: "printf 'é'; printf err >&2; sleep 30", title: "metadata", cwd });
+		const deadline = now() + 5000;
+		while (manager.get(run.id)?.stderr.text !== "err" && now() < deadline)
+			yield* Effect.sleep(20);
+		const detail = manager.get(run.id);
+		assert.ok(detail);
+		assert.equal(detail.stdout.text, "é");
+		const { stdout, stderr, ...metadata } = detail;
+		assert.deepEqual(manager.list(), [{ ...metadata, stdout: { totalBytes: 2, truncatedBytes: 0 }, stderr: { totalBytes: 3, truncatedBytes: 0 } }]);
+		yield* manager.kill([run.id]);
+		const result = yield* manager.wait(run.id);
+		assert.equal(result.stdout.text, "é");
+		assert.equal(result.stderr.text, "err");
+		assert.equal("text" in manager.list()[0].stdout, false);
+	} finally {
+		yield* manager.shutdown();
+	}
+})));

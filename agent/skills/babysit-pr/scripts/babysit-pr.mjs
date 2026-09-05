@@ -16,7 +16,13 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { CommandError, fetchSnapshot, resolvePr } from "./github.mjs";
+import {
+	CommandError,
+	DEFAULT_TRUSTED_BOTS,
+	fetchSnapshot,
+	resolvePr,
+	terminalState,
+} from "./github.mjs";
 
 const POLL_MS = 60_000;
 const DEBOUNCE_MS = 30_000;
@@ -73,30 +79,11 @@ function trustedComment(comment, input) {
 	);
 }
 
-function codeRabbitIssueSummary(comment) {
-	return (
-		comment?.user?.login?.endsWith("[bot]") &&
-		typeof comment.body === "string" &&
-		comment.body.includes(
-			"<!-- This is an auto-generated comment: summarize by coderabbit.ai -->",
-		)
-	);
-}
-
-function aggregateBotReview(review) {
-	return (
-		review?.user?.login?.endsWith("[bot]") &&
-		typeof review.body === "string" &&
-		/^\*\*Actionable comments posted: \d+\*\*/u.test(review.body.trimStart())
-	);
-}
-
 export function candidateEvents(input, observedAt) {
 	const { pr } = input;
 	const events = [];
 	for (const comment of input.issueComments) {
-		if (!trustedComment(comment, input) || codeRabbitIssueSummary(comment))
-			continue;
+		if (!trustedComment(comment, input)) continue;
 		const key = `issue-comment:${comment.id}:${compactTimestamp(comment.updated_at)}`;
 		events.push(makeEvent(pr, "issue-comment", key, observedAt, { comment }));
 	}
@@ -111,7 +98,7 @@ export function candidateEvents(input, observedAt) {
 		events.push(makeEvent(pr, "review-comment", key, observedAt, { comment }));
 	}
 	for (const review of input.reviews) {
-		if (!trustedComment(review, input) || aggregateBotReview(review)) continue;
+		if (!trustedComment(review, input)) continue;
 		const state = String(review.state ?? "").toUpperCase();
 		const body = typeof review.body === "string" ? review.body.trim() : "";
 		if (!body && state !== "CHANGES_REQUESTED") continue;
@@ -506,6 +493,7 @@ function poll(cwd, reference, paths, trustedBots) {
 	const previous = readMeta(paths);
 	const observedAt = new Date().toISOString();
 	const snapshot = fetchSnapshot(cwd, reference, previous, trustedBots);
+	if (snapshot.input === null) return snapshot;
 	reconcileResponseMarkers(
 		paths,
 		[...snapshot.input.issueComments, ...snapshot.input.reviewComments],
@@ -520,18 +508,13 @@ function poll(cwd, reference, paths, trustedBots) {
 	queueEvents(paths, candidates);
 	atomicJson(paths.meta, {
 		version: VERSION,
+		lastPolledAt: new Date().toISOString(),
 		pr: snapshot.pr,
 		selfLogin: snapshot.input.selfLogin,
 		trustedBots: [...trustedBots].sort(),
 		threadStates: Object.fromEntries(snapshot.input.threadStates),
 	});
 	return snapshot;
-}
-
-function terminalState(pr) {
-	if (pr.mergedAt) return "merged";
-	if (pr.state === "CLOSED" || pr.closedAt) return "closed";
-	return null;
 }
 
 function sleep(ms) {
@@ -633,6 +616,7 @@ async function watch(cwd, reference, trustedBots) {
 				backoff = 5_000;
 				await sleep(POLL_MS);
 			} catch (error) {
+				process.stderr.write(`babysit-pr poll failed: ${error}\n`);
 				const now = Date.now();
 				failureStartedAt ??= now;
 				if (
@@ -668,7 +652,7 @@ function print(value) {
 }
 
 function parseTrustedBots(args) {
-	const bots = new Set();
+	const bots = new Set(DEFAULT_TRUSTED_BOTS);
 	for (let index = 0; index < args.length; index += 2) {
 		if (args[index] !== "--trusted-bot" || !args[index + 1])
 			throw new Error("watch accepts repeated --trusted-bot <login> pairs");
@@ -713,11 +697,21 @@ async function main() {
 					owner = JSON.parse(
 						readFileSync(join(paths.lock, "owner.json"), "utf8"),
 					);
-				} catch {}
+					if (!Number.isInteger(owner?.pid) || owner.pid <= 0)
+						throw new Error("Invalid watcher PID");
+					try {
+						process.kill(owner.pid, 0);
+					} catch (error) {
+						if (error.code !== "EPERM") throw error;
+					}
+				} catch {
+					owner = null;
+				}
 			print({
 				pr: pr.url,
 				state: terminalState(pr) ?? "open",
 				watcherPid: owner?.pid ?? null,
+				lastPolledAt: meta.lastPolledAt ?? null,
 				trustedBots: owner?.trustedBots ?? meta.trustedBots ?? [],
 				pending: pendingEvents(paths).length,
 				statePath: paths.root,

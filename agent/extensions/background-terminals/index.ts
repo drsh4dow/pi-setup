@@ -106,13 +106,13 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		name: "bg_start",
 		label: "Start Background Terminal",
 		description:
-			"Start a non-interactive, session-scoped shell command in the background. The command can run emit-to-pi <message> to wake its owning agent without exiting. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
+			"Start a non-interactive, session-scoped shell command in the background. Completion automatically wakes the owning agent with the real exit code; no emit-to-pi is needed. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
 		promptSnippet:
 			"Start a long-running non-interactive command and continue useful work instead of polling",
 		promptGuidelines: [
 			"Use meaningful titles and avoid duplicate servers or watchers.",
 			"When blocked on a bg_start command, use bg_wait with its id instead of repeated bg_status calls or shell sleeps.",
-			"Use emit-to-pi inside a bg_start command to wake the owning agent for an actionable milestone while the process keeps running.",
+			"Run finite bg_start jobs directly to preserve their exit status. Success and failure automatically wake the owner with the real exit code. Use emit-to-pi only for actionable intermediate milestones, never as a completion signal or a trailing command that masks the work's exit code.",
 			"Never use for interactive commands. Background commands and delegated children share the worktree without write isolation; avoid overlapping mutations.",
 		],
 		parameters: Type.Object({
@@ -156,7 +156,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 						content: [
 							{
 								type: "text" as const,
-								text: `Started ${summary(snapshot)}\nWhen blocked, call bg_wait with id="${snapshot.id}"; otherwise continue useful work.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
+								text: `Started ${summary(snapshot)}\nCompletion automatically wakes you with the real exit code; no emit-to-pi is needed. When blocked, call bg_wait with id="${snapshot.id}"; otherwise continue useful work.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
 							},
 						],
 						details: terminalMetadata(snapshot),

@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
 
+export const DEFAULT_TRUSTED_BOTS = Object.freeze(["coderabbitai[bot]"]);
+
 export class CommandError extends Error {
 	constructor(command, result) {
 		super(
@@ -141,14 +143,33 @@ export function trustedLogins(cwd, identity, prAuthor, actors, trustedBots) {
 	return trusted;
 }
 
+export function terminalState(pr) {
+	if (pr.mergedAt || pr.state === "MERGED") return "merged";
+	if (pr.state === "CLOSED" || pr.closedAt) return "closed";
+	return null;
+}
+
 export function fetchSnapshot(
 	cwd,
 	reference,
 	previous,
-	trustedBots = new Set(),
+	trustedBots = new Set(DEFAULT_TRUSTED_BOTS),
 ) {
 	const resolved = resolvePr(cwd, reference);
-	const { pr, identity } = resolved;
+	if (terminalState(resolved.pr)) return { ...resolved, input: null };
+	const { identity } = resolved;
+	const target = jsonCommand(
+		"gh",
+		[
+			"api",
+			`repos/${identity.owner}/${identity.repo}/git/ref/heads/${encodeURIComponent(resolved.pr.baseRefName)}`,
+		],
+		cwd,
+	);
+	if (typeof target?.object?.sha !== "string" || !target.object.sha)
+		throw new Error("GitHub did not return the current target commit");
+	// A PR's baseRefOid can remain at its recorded base after the target advances.
+	const pr = { ...resolved.pr, baseRefOid: target.object.sha };
 	const issueComments = paginatedGh(
 		`repos/${identity.owner}/${identity.repo}/issues/${pr.number}/comments`,
 		cwd,
@@ -184,6 +205,8 @@ export function fetchSnapshot(
 		],
 		cwd,
 	);
+	if (!Number.isInteger(comparison?.behind_by) || comparison.behind_by < 0)
+		throw new Error("GitHub returned invalid target comparison data");
 	const threads = fetchThreads(cwd, identity.owner, identity.repo, pr.number);
 	const selfLogin = runCommand(
 		"gh",
@@ -206,6 +229,7 @@ export function fetchSnapshot(
 		throw new Error("GitHub did not return the PR author");
 	return {
 		...resolved,
+		pr,
 		input: {
 			pr,
 			issueComments,

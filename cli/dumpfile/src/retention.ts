@@ -64,13 +64,15 @@ export async function main(
 				!response.ok ||
 				!record(body) ||
 				body.success !== true ||
-				!record(body.result) ||
-				!Array.isArray(body.result.rules)
+				!record(body.result)
 			) {
 				throw new Error("Could not read lifecycle configuration");
 			}
+			const rawRules = "rules" in body.result ? body.result.rules : [];
+			if (!Array.isArray(rawRules))
+				throw new Error("Could not read lifecycle configuration");
 			const rules: Record<string, unknown>[] = [];
-			for (const item of body.result.rules) {
+			for (const item of rawRules) {
 				if (
 					!record(item) ||
 					typeof item.id !== "string" ||

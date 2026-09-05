@@ -32,8 +32,20 @@ export default function sessionTimer(
 		return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
 	}
 
-	pi.on("agent_start", (_event, ctx) => {
+	function stop() {
 		stopTicker?.();
+		stopTicker = undefined;
+	}
+
+	pi.on("session_shutdown", (_event, ctx) => {
+		stop();
+		sessionTotalMs = 0;
+		if (ctx.mode === "tui") ctx.ui.setStatus("session-timer", undefined);
+	});
+
+	pi.on("agent_start", (_event, ctx) => {
+		stop();
+		if (ctx.mode !== "tui") return;
 		runStart = dependencies.now();
 		stopTicker = dependencies.everySecond(() => {
 			ctx.ui.setStatus(
@@ -44,8 +56,8 @@ export default function sessionTimer(
 	});
 
 	pi.on("agent_end", (_event, ctx) => {
-		stopTicker?.();
-		stopTicker = undefined;
+		if (!stopTicker) return;
+		stop();
 		const runMs = dependencies.now() - runStart;
 		sessionTotalMs += runMs;
 		const theme = ctx.ui.theme;

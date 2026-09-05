@@ -454,63 +454,44 @@ test("session shutdown clears status, kills processes, and permits restart", () 
 	));
 })));
 
-test("successful completions are passive while failures trigger a turn", () => Effect.runPromise(Effect.gen(function* () {
-	const deliveries: Array<{ options: { triggerTurn: boolean } }> = [];
-	const { tools, handlers } = registeredExtension((_message, options) => {
-		deliveries.push({ options: options as { triggerTurn: boolean } });
-	});
-	const context = {
-		cwd: process.cwd(),
-		hasUI: true,
-		isIdle: () => true,
-		ui: { setStatus() {} },
-	} as unknown as ExtensionContext;
-	yield* fromPromise(handlers.get("session_start")?.(
-		{ type: "session_start", reason: "startup" },
-		context,
-	));
-	const [start, status] = tools as unknown as Array<{
-		execute: (...args: unknown[]) => Promise<unknown>;
-	}>;
-	assert.ok(start);
-	assert.ok(status);
-	try {
-		const silent = (yield* fromPromise(start.execute(
-			"1",
-			{ command: "true", title: "silent success" },
-			undefined,
-			undefined,
-			context,
-		))) as { details: { id: string } };
-		yield* eventually(() => status.execute("status-1", { id: silent.details.id }).then(
-			(result) => (result as { content: [{ text: string }] }).content[0].text.includes("[done]"),
-		));
-		assert.equal(deliveries.length, 0);
-		yield* fromPromise(start.execute(
-			"2",
-			{ command: "printf ok", title: "success" },
-			undefined,
-			undefined,
-			context,
-		));
-		yield* eventually(() => deliveries.length === 1);
-		assert.equal(deliveries[0].options.triggerTurn, false);
-		yield* fromPromise(start.execute(
-			"3",
-			{ command: "false", title: "failure" },
-			undefined,
-			undefined,
-			context,
-		));
-		yield* eventually(() => deliveries.length === 2);
-		assert.equal(deliveries[1].options.triggerTurn, true);
-	} finally {
-		yield* fromPromise(handlers.get("session_shutdown")?.(
-			{ type: "session_shutdown", reason: "quit" },
-			context,
-		));
-	}
-})));
+for (const { command, state, exitCode } of [
+	{ command: "true", state: "done", exitCode: 0 },
+	{ command: "printf ok", state: "done", exitCode: 0 },
+	{ command: "exit 23", state: "failed", exitCode: 23 },
+]) {
+	test(`natural completion wakes only its owner with real exit ${exitCode}: ${command}`, () => Effect.runPromise(Effect.gen(function* () {
+		const deliveries: Array<{ message: unknown; options: unknown }> = [];
+		const foreignMessages: unknown[] = [];
+		const foreign = registeredExtension((message) => foreignMessages.push(message));
+		const owner = registeredExtension((message, options) => deliveries.push({ message, options }));
+		const context = {
+			cwd: process.cwd(),
+			hasUI: false,
+			isIdle: () => true,
+		} as ExtensionContext;
+		foreign.handlers.get("session_start")?.({}, context);
+		owner.handlers.get("session_start")?.({}, context);
+		try {
+			const start = owner.tools.find((tool) => tool.name === "bg_start");
+			assert.ok(start);
+			yield* fromPromise(start.execute("start", { command, title: "natural completion" }, undefined, undefined, context));
+			yield* eventually(() => deliveries.length === 1);
+			assert.deepEqual(deliveries[0].options, { deliverAs: "followUp", triggerTurn: true });
+			const message = deliveries[0].message;
+			assert.ok(message && typeof message === "object");
+			assert.ok("customType" in message);
+			assert.equal(message.customType, "background-terminal-results");
+			assert.ok("content" in message && typeof message.content === "string");
+			assert.ok(message.content.includes(`[${state}] natural completion · exit ${exitCode}`));
+			assert.deepEqual(foreignMessages, []);
+			yield* fromPromise(owner.handlers.get("agent_settled")?.({}, context));
+			assert.equal(deliveries.length, 1);
+		} finally {
+			yield* fromPromise(owner.handlers.get("session_shutdown")?.({}, context));
+			yield* fromPromise(foreign.handlers.get("session_shutdown")?.({}, context));
+		}
+	})));
+}
 
 test("completion delivery pauses without dropping results and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
 	const messages: unknown[] = [];

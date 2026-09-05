@@ -66,6 +66,8 @@ Delegation uses the parent model unless `delegate.model` is configured in [`agen
 
 A delegate stays running through its handoff, compaction, and requested continuation. The internal handoff is not a completed task result. A failed boundary compaction reports an error rather than a successful handoff.
 
+Run finite background commands directly. Their natural exit wakes the owner with the actual exit status, including success; no notification suffix is needed. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
+
 Use `bg_status` for immediate inspection. Its bounded observations distinguish the first read, changed state/output, and unchanged evidence; elapsed time alone is not a change. When blocked on a command, use `bg_wait` with its ID instead of polling or sleeping. It returns the settled result immediately if already available. Cancelling the wait leaves the command running; `bg_kill` terminates it. A successful wait consumes the completion notice so it is not delivered again. Full logs still require explicit redirection.
 
 The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity, and cancellation. Rejected edits include bounded candidate line locations and recovery guidance from the original file. These are navigation hints, never permission to apply an ambiguous replacement.

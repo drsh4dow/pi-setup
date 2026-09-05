@@ -107,14 +107,15 @@ test("emit-to-pi wakes only the owner while its terminal keeps running", () =>
 				start.execute(
 					"emit",
 					{
-						command: "emit-to-pi 'PR 42 has new feedback'; sleep 30",
+						command:
+							"trap 'exit 23' USR1; emit-to-pi 'PR 42 has new feedback'; while :; do sleep 0.1; done",
 						title: "PR watcher",
 					},
 					undefined,
 					undefined,
 					context,
 				),
-			)) as { details: { id: string } };
+			)) as { details: { id: string; pid: number } };
 			try {
 				yield* eventually(() => childMessages.length === 1);
 				assert.equal(parentMessages.length, 0);
@@ -131,6 +132,18 @@ test("emit-to-pi wakes only the owner while its terminal keeps running", () =>
 					status.execute("status", { id: started.details.id }),
 				)) as { content: [{ text: string }] };
 				assert.match(running.content[0].text, /\[running\]/);
+				process.kill(started.details.pid, "SIGUSR1");
+				yield* eventually(() => childMessages.length === 2);
+				assert.equal(
+					childMessages[1].customType,
+					"background-terminal-results",
+				);
+				assert.match(childMessages[1].content, /\[failed\].*exit 23/);
+				assert.deepEqual(childMessages[1].options, {
+					deliverAs: "followUp",
+					triggerTurn: true,
+				});
+				assert.equal(parentMessages.length, 0);
 			} finally {
 				yield* Effect.promise(() =>
 					kill.execute("kill", { ids: [started.details.id] }),

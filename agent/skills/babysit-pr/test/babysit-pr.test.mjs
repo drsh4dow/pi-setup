@@ -244,7 +244,7 @@ test("bots are default-deny and trusted inline feedback is actionable", () => {
 	);
 });
 
-test("CodeRabbit summaries are ignored while its inline feedback remains actionable", () => {
+test("CodeRabbit summaries and aggregate-only findings are reported alongside inline feedback", () => {
 	const input = snapshot();
 	input.issueComments = [
 		{
@@ -260,7 +260,7 @@ test("CodeRabbit summaries are ignored while its inline feedback remains actiona
 		{
 			...input.reviews[0],
 			user: { login: "reviewer[bot]" },
-			body: "**Actionable comments posted: 2**",
+			body: "**Actionable comments posted: 2**\n\n<details><summary>Outside diff range comments</summary>Fix the stale target ref.</details>",
 		},
 	];
 	input.trustedLogins = new Set(["reviewer[bot]"]);
@@ -270,7 +270,7 @@ test("CodeRabbit summaries are ignored while its inline feedback remains actiona
 	);
 	assert.deepEqual(
 		feedback.map((event) => event.kind),
-		["review-comment"],
+		["issue-comment", "review-comment", "review"],
 	);
 });
 

@@ -236,9 +236,21 @@ if bunx wrangler r2 bucket list | grep -Fq 'dumpfile-prod'; then
 else
   bunx wrangler r2 bucket create dumpfile-prod
 fi
-say "Completed objects must have no expiration rule. The seven-day incomplete multipart cleanup is safe."
+say "Uploads become eligible for deletion at 30 days of object age, including existing uploads."
 bunx wrangler r2 bucket lifecycle list dumpfile-prod
-confirm "Does the list contain no completed-object expiration rule?" || { warn "remove completed-object expiration rules before continuing"; exit 1; }
+if ! bunx wrangler auth token --json | bun "$COMPONENT_DIR/src/retention.ts" check "$CLOUDFLARE_ACCOUNT_ID"; then
+  warn "Retention is not verified. Applying it can expire every existing upload older than 30 days."
+  say "Deletion is asynchronous and cannot be undone. Review other lifecycle rules above."
+  say "To approve ALL existing and future uploads, type exactly: expire dumpfile-prod uploads"
+  RETENTION_APPROVAL=""
+  read -r RETENTION_APPROVAL || true
+  if [[ "$RETENTION_APPROVAL" == "expire dumpfile-prod uploads" ]]; then
+    bunx wrangler auth token --json | bun "$COMPONENT_DIR/src/retention.ts" apply "$CLOUDFLARE_ACCOUNT_ID" --expire-existing-uploads
+  else
+    SKIPPED+=("30-day retention was not applied or verified; see cli/dumpfile/README.md")
+    warn "Continuing without changing retention."
+  fi
+fi
 
 stage "Bucket-scoped R2 credentials"
 say "Create one credential that can write objects only in dumpfile-prod. It stays in this shell until Worker deployment."

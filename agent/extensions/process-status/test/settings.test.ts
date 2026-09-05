@@ -105,6 +105,23 @@ test("mounted footer observes persisted settings and stops observing on disposal
 				}).pipe(Effect.timeout(3000));
 				assert.equal(footer.render(100).join("\n").includes("(auto)"), enabled);
 			}
+			// An unrelated write under a held lock must not replace false with
+			// the SDK's fallback true. Releasing the lock does not touch settings.
+			yield* fs.makeDirectory(`${projectPath}.lock`);
+			yield* fs.writeFileString(
+				projectPath,
+				'{"compaction":{"enabled":false},"quietStartup":true}',
+			);
+			yield* Effect.sleep(1000);
+			assert.equal(footer.render(100).join("\n").includes("(auto)"), false);
+			yield* fs.writeFileString(projectPath, '{"compaction":{"enabled":true}}');
+			yield* Effect.sleep(1000);
+			assert.equal(footer.render(100).join("\n").includes("(auto)"), false);
+			yield* fs.remove(`${projectPath}.lock`, { recursive: true });
+			yield* Effect.gen(function* () {
+				while (!footer.render(100).join("\n").includes("(auto)"))
+					yield* Effect.sleep(25);
+			}).pipe(Effect.timeout(7000));
 			footer.dispose?.();
 			footer.dispose?.();
 			const before = renders;

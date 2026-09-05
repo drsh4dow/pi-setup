@@ -174,7 +174,12 @@ export class ChildState {
 			this.omitInitialUserMessage = false;
 			if (event.type === "message_start")
 				this.streaming = new StreamingPreview();
-			const { text, progress } = this.streaming.capture(event.message);
+			const { text, progress } = this.streaming.capture(
+				event.message,
+				event.type === "message_update"
+					? event.assistantMessageEvent
+					: undefined,
+			);
 			this.writing = text
 				? conversationMessage("Assistant (writing)", text)
 				: undefined;

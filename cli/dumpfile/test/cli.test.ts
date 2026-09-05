@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { main } from "../src/cli.ts";
 import { CACHE_CONTROL } from "../src/contract.ts";
 
@@ -24,8 +24,9 @@ interface TestAuthorization {
 	};
 }
 
-async function harness(): Promise<Harness> {
+async function harness(t: TestContext): Promise<Harness> {
 	const directory = await mkdtemp(join(tmpdir(), "dumpfile-test-"));
+	t.after(() => rm(directory, { recursive: true, force: true }));
 	const config = join(directory, "config.env");
 	await writeFile(
 		config,
@@ -75,8 +76,8 @@ function headResponse(
 	});
 }
 
-test("uploads a file, verifies public metadata, and prints only its URL", async () => {
-	const state = await harness();
+test("uploads a file, verifies public metadata, and prints only its URL", async (t) => {
+	const state = await harness(t);
 	const path = join(state.directory, "proof image.png");
 	await writeFile(path, "png fixture");
 	const requests: Array<{ init?: RequestInit; url: string }> = [];
@@ -127,8 +128,8 @@ test("uploads a file, verifies public metadata, and prints only its URL", async 
 	assert.equal(state.stderr.join("").includes("local-secret-token"), false);
 });
 
-test("uses a fresh authorization for the one allowed PUT retry", async () => {
-	const state = await harness();
+test("uses a fresh authorization for the one allowed PUT retry", async (t) => {
+	const state = await harness(t);
 	const path = join(state.directory, "recording.webm");
 	await writeFile(path, "video");
 	let authorizations = 0;
@@ -175,8 +176,8 @@ test("uses a fresh authorization for the one allowed PUT retry", async () => {
 	});
 });
 
-test("uploads unknown extensions as forced downloads", async () => {
-	const state = await harness();
+test("uploads unknown extensions as forced downloads", async (t) => {
+	const state = await harness(t);
 	const path = join(state.directory, "archive.xyzzy");
 	await writeFile(path, "archive");
 	let signerRequest: Record<string, unknown> = {};
@@ -212,8 +213,8 @@ test("uploads unknown extensions as forced downloads", async () => {
 	});
 });
 
-test("rejects oversized files before reading configuration or contacting the service", async () => {
-	const state = await harness();
+test("rejects oversized files before reading configuration or contacting the service", async (t) => {
+	const state = await harness(t);
 	const path = join(state.directory, "huge.bin");
 	await writeFile(path, "");
 	await truncate(path, 5 * 1024 * 1024 * 1024 + 1);
@@ -233,7 +234,7 @@ test("rejects oversized files before reading configuration or contacting the ser
 	assert.match(state.stderr.join(""), /up to 5 GiB/);
 });
 
-test("rejects signer responses that redirect either public or upload bytes", async () => {
+test("rejects signer responses that redirect either public or upload bytes", async (t) => {
 	const unsafeResponses = [
 		{
 			...authorization(
@@ -264,7 +265,7 @@ test("rejects signer responses that redirect either public or upload bytes", asy
 	];
 
 	for (const unsafeResponse of unsafeResponses) {
-		const state = await harness();
+		const state = await harness(t);
 		const path = join(state.directory, "proof.png");
 		await writeFile(path, "proof");
 		let requests = 0;
@@ -284,8 +285,8 @@ test("rejects signer responses that redirect either public or upload bytes", asy
 	}
 });
 
-test("requires Content-Length during public verification", async () => {
-	const state = await harness();
+test("requires Content-Length during public verification", async (t) => {
+	const state = await harness(t);
 	const path = join(state.directory, "proof.png");
 	await writeFile(path, "proof");
 	const fetcher: typeof fetch = async (input, init) => {
@@ -316,8 +317,8 @@ test("requires Content-Length during public verification", async () => {
 	assert.match(state.stderr.join(""), /Content-Length did not match/);
 });
 
-test("explains how to repair a missing public nosniff rule", async () => {
-	const state = await harness();
+test("explains how to repair a missing public nosniff rule", async (t) => {
+	const state = await harness(t);
 	const path = join(state.directory, "proof.png");
 	await writeFile(path, "proof");
 	const fetcher: typeof fetch = async (input, init) => {
@@ -349,8 +350,8 @@ test("explains how to repair a missing public nosniff rule", async () => {
 	assert.match(state.stderr.join(""), /files\.drsh4dow\.dev/);
 });
 
-test("rejects a group-readable token file", async () => {
-	const state = await harness();
+test("rejects a group-readable token file", async (t) => {
+	const state = await harness(t);
 	await chmod(state.config, 0o640);
 	const path = join(state.directory, "proof.png");
 	await writeFile(path, "proof");
@@ -364,8 +365,8 @@ test("rejects a group-readable token file", async () => {
 	assert.match(state.stderr.join(""), /mode 0600/);
 });
 
-test("never prints bearer tokens or presigned URLs on upload failure", async () => {
-	const state = await harness();
+test("never prints bearer tokens or presigned URLs on upload failure", async (t) => {
+	const state = await harness(t);
 	const path = join(state.directory, "proof.png");
 	await writeFile(path, "proof");
 	const fetcher: typeof fetch = async (input) => {

@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, FileSystem } from "effect";
+import { observeAutoCompaction } from "../../../lib/settings.ts";
 import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import extension from "../index.ts";
 
@@ -125,8 +126,59 @@ test("mounted footer observes persisted settings and stops observing on disposal
 			footer.dispose?.();
 			footer.dispose?.();
 			const before = renders;
-			yield* fs.writeFileString(projectPath, '{"compaction":{"enabled":true}}');
+			yield* fs.writeFileString(
+				projectPath,
+				'{"compaction":{"enabled":false}}',
+			);
 			yield* Effect.sleep(500);
 			assert.equal(renders, before);
+		}).pipe(Effect.provide(BunFileSystem.layer)),
+	));
+
+test("initial settings contention recovers without another write and disposal cancels recovery", (t) =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const root = yield* fs.makeTempDirectory({ prefix: "pi-settings-lock-" });
+			// @effect-diagnostics-next-line processEnvInEffect:off
+			const original = process.env.PI_CODING_AGENT_DIR;
+			// @effect-diagnostics-next-line processEnvInEffect:off
+			process.env.PI_CODING_AGENT_DIR = root;
+			t.after(() => {
+				// @effect-diagnostics-next-line processEnv:off
+				if (original === undefined) delete process.env.PI_CODING_AGENT_DIR;
+				// @effect-diagnostics-next-line processEnv:off
+				else process.env.PI_CODING_AGENT_DIR = original;
+				return Effect.runPromise(
+					fs.remove(root, { recursive: true, force: true }),
+				);
+			});
+			const path = `${root}/settings.json`;
+			yield* fs.writeFileString(path, '{"compaction":{"enabled":false}}');
+			yield* fs.makeDirectory(`${path}.lock`);
+			const context = unsafeFixture<ExtensionContext>({
+				cwd: root,
+				isProjectTrusted: () => false,
+			});
+			let changes = 0;
+			const live = observeAutoCompaction(context, () => changes++);
+			t.after(live.dispose);
+			let disposedChanges = 0;
+			const disposed = observeAutoCompaction(context, () => disposedChanges++);
+			t.after(disposed.dispose);
+			assert.equal(live.enabled(), true);
+			assert.equal(disposed.enabled(), true);
+			yield* Effect.sleep(1000);
+			disposed.dispose();
+			disposed.dispose();
+			yield* fs.remove(`${path}.lock`, { recursive: true });
+			yield* Effect.gen(function* () {
+				while (changes === 0) yield* Effect.sleep(25);
+			}).pipe(Effect.timeout(7000));
+			assert.equal(live.enabled(), false);
+			assert.equal(changes, 1);
+			yield* Effect.sleep(1000);
+			assert.equal(disposed.enabled(), true);
+			assert.equal(disposedChanges, 0);
 		}).pipe(Effect.provide(BunFileSystem.layer)),
 	));

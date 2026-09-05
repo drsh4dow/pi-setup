@@ -17,6 +17,7 @@ import {
 	type SettledTerminalSnapshot,
 	terminalResultFields,
 } from "../manager.ts";
+import { nodeCommand } from "./node-command.ts";
 
 const cwd = mkdtempSync(join(tmpdir(), "pi-bg-test-"));
 test.after(() => rmSync(cwd, { recursive: true, force: true }));
@@ -372,7 +373,7 @@ test("shutdown settles outstanding waiters and clears tracked results", () =>
 test("list returns output-free metadata while detail and wait retain output", () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
 	try {
-		const run = manager.start({ command: "printf 'é'; printf err >&2; sleep 30", title: "metadata", cwd });
+		const run = manager.start({ command: nodeCommand('process.stdout.write("é"); process.stderr.write("err"); setTimeout(() => {}, 30000)'), title: "metadata", cwd });
 		const deadline = now() + 5000;
 		while (manager.get(run.id)?.stderr.text !== "err" && now() < deadline)
 			yield* Effect.sleep(20);

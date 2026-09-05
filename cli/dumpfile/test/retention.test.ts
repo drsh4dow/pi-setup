@@ -103,3 +103,29 @@ test("first apply preserves unrelated deletion rules and reports their possible 
 	assert.equal(code, 0);
 	assert.match(output.join(""), /Other expiration rules remain/);
 });
+
+for (const failure of ["read", "malformed", "write", "read-back"]) {
+	test(`retention fails closed on ${failure} failure without reporting deployment`, async () => {
+		let writes = 0;
+		const output: string[] = [];
+		const code = await main(["apply", account, "--expire-existing-uploads"], {
+			auth,
+			fetch: async (_url, init) => {
+				if (init?.method === "PUT") {
+					writes++;
+					return Response.json({ success: failure !== "write" });
+				}
+				if (failure === "read") throw new Error("synthetic-token");
+				return Response.json({
+					success: true,
+					result: { rules: failure === "malformed" ? [null] : [unrelated] },
+				});
+			},
+			write: (text) => output.push(text),
+		});
+		assert.equal(code, 1);
+		assert.equal(writes, failure === "read" || failure === "malformed" ? 0 : 1);
+		assert.match(output.join(""), /No deployment is verified/);
+		assert.equal(output.join("").includes("synthetic-token"), false);
+	});
+}

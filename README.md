@@ -84,7 +84,7 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 
 ### Installed CLI tools
 
-- [`dumpfile`](cli/dumpfile/README.md) publishes screenshots, recordings, and other review evidence to immutable public R2 URLs. Run `./cli/dumpfile/setup.sh` once to provision Cloudflare and install the command.
+- [`dumpfile`](cli/dumpfile/README.md) publishes screenshots, recordings, and other review evidence to immutable public R2 URLs with opt-in provisioning of 30-day object-age retention. Links are not permanent; deletion is asynchronous. Run `./cli/dumpfile/setup.sh` once to provision Cloudflare and install the command.
 
 ### Installed prompts
 

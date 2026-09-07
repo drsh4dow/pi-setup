@@ -531,8 +531,18 @@ test("completion delivery pauses without dropping results and closed delivery st
 	idle = false;
 	delivery.enqueue(snapshot);
 	delivery.clear();
+	delivery.enqueue(snapshot);
+	delivery.setPaused(false);
 	yield* delivery.flush;
 	assert.equal(messages.length, 1);
+
+	delivery.setContext({ isIdle: () => false } as ExtensionContext);
+	yield* delivery.flush;
+	assert.equal(messages.length, 1, "closed delivery discarded the queued result");
+	delivery.enqueue(snapshot);
+	yield* delivery.flush;
+	assert.equal(messages.length, 2, "new context reopens delivery");
+	delivery.clear();
 })));
 
 test("bounds complete delivery batches with worst-case metadata", () => Effect.runPromise(Effect.gen(function* () {

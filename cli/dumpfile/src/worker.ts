@@ -6,9 +6,9 @@ import {
 	MAX_UPLOAD_BYTES,
 	PUBLIC_BASE_URL,
 	SIGNATURE_TTL_SECONDS,
-	type StoredDisposition,
 	type UploadAuthorization,
 	type UploadAuthorizationRequest,
+	type UploadHeaders,
 } from "./contract.ts";
 
 interface RateLimiter {
@@ -26,11 +26,9 @@ export interface WorkerEnv {
 }
 
 interface PresignInput {
-	readonly contentType: string;
-	readonly disposition: StoredDisposition;
 	readonly env: WorkerEnv;
 	readonly key: string;
-	readonly size: number;
+	readonly headers: UploadHeaders;
 }
 
 interface WorkerDependencies {
@@ -192,12 +190,6 @@ function objectKey(now: Date, extension: string, bytes: Uint8Array): string {
 }
 
 export async function presignUpload(input: PresignInput): Promise<string> {
-	const headers = new Headers({
-		"Cache-Control": CACHE_CONTROL,
-		"Content-Disposition": input.disposition,
-		"Content-Length": String(input.size),
-		"Content-Type": input.contentType,
-	});
 	const endpoint = new URL(
 		`https://${input.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`,
 	);
@@ -214,7 +206,7 @@ export async function presignUpload(input: PresignInput): Promise<string> {
 		service: "s3",
 	});
 	const signed = await client.sign(
-		new Request(endpoint, { headers, method: "PUT" }),
+		new Request(endpoint, { headers: { ...input.headers }, method: "PUT" }),
 		{ aws: { allHeaders: true, signQuery: true } },
 	);
 	return signed.url;
@@ -333,19 +325,13 @@ export function createDumpfileWorker(
 					disposition === "inline"
 						? parsed.contentType
 						: "application/octet-stream";
-				const uploadUrl = await dependencies.presign({
-					contentType: storedContentType,
-					disposition,
-					env,
-					key,
-					size: parsed.size,
-				});
-				const headers = {
+				const headers: UploadHeaders = {
 					"Cache-Control": CACHE_CONTROL,
 					"Content-Disposition": disposition,
 					"Content-Length": String(parsed.size),
 					"Content-Type": storedContentType,
 				};
+				const uploadUrl = await dependencies.presign({ env, key, headers });
 				const authorization: UploadAuthorization = {
 					key,
 					publicUrl: `${PUBLIC_BASE_URL}/${key}`,

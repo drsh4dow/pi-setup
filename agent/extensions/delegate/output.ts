@@ -34,13 +34,6 @@ export function extractMessageText(message: unknown): string {
 		.join("\n");
 }
 
-export function extractAssistantText(message: {
-	role?: unknown;
-	content?: unknown;
-}): string {
-	return message.role === "assistant" ? extractMessageText(message) : "";
-}
-
 function delegateOutputPath(directory = tmpdir()) {
 	return join(
 		directory,

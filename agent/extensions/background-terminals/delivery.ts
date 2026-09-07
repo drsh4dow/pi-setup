@@ -145,7 +145,6 @@ export class BackgroundTerminalDelivery {
 	private readonly failed = new Set<string>();
 	private retryGeneration = 0;
 	private flushState: "idle" | "flushing" = "idle";
-	private lifecycle: "open" | "closed" = "closed";
 	private paused = false;
 	private readonly pi: Pick<ExtensionAPI, "sendMessage">;
 	private readonly reportError: (message: string) => void;
@@ -162,7 +161,6 @@ export class BackgroundTerminalDelivery {
 	}
 	setContext(context: ExtensionContext) {
 		this.context = context;
-		this.lifecycle = "open";
 		this.paused = false;
 	}
 	setPaused(paused: boolean) {
@@ -177,7 +175,7 @@ export class BackgroundTerminalDelivery {
 		if (!oldest.done) this.failed.delete(oldest.value);
 	}
 	private queue(item: DeliveryItem) {
-		if (this.lifecycle === "closed" || !this.context) return;
+		if (!this.context) return;
 		const sameKind = [...this.pending.values()].filter(
 			(pending) => pending.kind === item.kind,
 		);
@@ -262,7 +260,7 @@ export class BackgroundTerminalDelivery {
 		return items.length ? { kind, items, content: parts.join("") } : undefined;
 	}
 	private scheduleRetry(attempt: number) {
-		if (this.lifecycle === "closed") return;
+		if (!this.context) return;
 		const generation = ++this.retryGeneration;
 		Effect.runFork(
 			Effect.sleep(
@@ -277,13 +275,7 @@ export class BackgroundTerminalDelivery {
 		);
 	}
 	flush = Effect.sync(() => {
-		if (
-			this.flushState === "flushing" ||
-			this.lifecycle === "closed" ||
-			this.paused ||
-			!this.context
-		)
-			return;
+		if (this.flushState === "flushing" || this.paused || !this.context) return;
 		this.retryGeneration++;
 		this.flushState = "flushing";
 		try {
@@ -330,7 +322,6 @@ export class BackgroundTerminalDelivery {
 		}
 	});
 	clear() {
-		this.lifecycle = "closed";
 		this.context = undefined;
 		this.retryGeneration++;
 		this.pending.clear();

@@ -13,7 +13,7 @@
   "delegate": {
     "model": "openai-codex-cyber/gpt-6-astra"
   },
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "low",
   "hideThinkingBlock": false,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",

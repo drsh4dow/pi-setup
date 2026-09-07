@@ -1,22 +1,14 @@
 ---
-description: Implement the task end to end
-argument-hint: "Issue URL or Number"
+description: Implement and deliver the task directly, delegating only when useful
+argument-hint: "Issue URL, number, or task"
 ---
 
-Implement the work described in $1 , work on a different git worktree directory.
-If there is no ticket for it create one on github, in that ticket capture a checklist
-of tasks you must do, the problem you are solving, and our shared understanding we reached so even if the context gets compacted it will survive on memory and you will retain the key tasks/decisions.
-Use tdd skill where possible, at pre-agreed seams.
-Run typechecking regularly, single test files regularly, and the full test suite once at the end.
+Implement $1 in a separate Git worktree. Read the relevant requirements and repo rules. Use an existing ticket when provided; create one only if requested or required by the repository.
 
-Act as a planner and orchestrator. Delegate implementation to subagents intelligently, parallelizing when useful. Use separate Git worktrees/directories for parallel work to avoid interfering with the current working tree.
+Implement directly by default. Use independent workers when they shorten delivery or provide a worthwhile independent assessment. If the user explicitly requests an orchestrator-only role, delegate implementation and own integration and verification.
 
-After implementation:
+Use TDD where practical at agreed public interfaces. Run focused tests and typechecking during implementation. Review the integrated diff against the requirements and repo rules in one pass, using the code-review skill. Fix evidenced defects, then run final repository verification and repeat the affected end-user workflow.
 
-1. Spawn a subagent with the `code-review` skill to review the changes.
-2. Address all valid findings.
-3. Create a PR against `main`.
-4. Immediately use the `babysit-pr` skill to start the session-owned PR watcher. Starting the watcher does not block this workflow.
-5. Record a video demonstrating the functionality end to end as its end user. Use the dumpfile skill and upload the media so it can be reviewed from the PR.
+Create a PR against `main`. Use the babysit-pr skill to monitor it and address valid findings. Demonstrate application changes through the ordinary user interface with ordinary permissions, automating the actions a user takes. Attach end-to-end media using dumpfile when it demonstrates the change. For libraries and CLIs, exercise the public interface. Report any unverified behavior and stop owned processes when finished.
 
 ${@:2}

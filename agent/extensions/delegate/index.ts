@@ -333,11 +333,8 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		promptSnippet:
 			"Create exactly one fresh child, blocking by default or delivering later in background",
 		promptGuidelines: [
-			"Use one delegate_run call per child. Issue independent calls together for parallel work; for dependent work, wait and compose a new self-contained task from the earlier result.",
-			"Child context is fresh and cannot see the parent conversation; include every fact and permission it needs in the task.",
-			"Never start background then immediately wait; use a blocking run. For background runs, continue useful parent work and wait only when blocked.",
-			"Concurrent children share the same worktree without isolation or write-conflict protection.",
-			"Parent owns final integration and verification unless the task explicitly delegates them.",
+			"Give each delegate_run a self-contained task and separate write targets for parallel work; the parent owns integration and verification.",
+			"Use a blocking delegate_run for a single task you immediately need. Use background runs for useful overlap or to receive a group in completion order with delegate_session mode=next.",
 		],
 		parameters: DelegateRunParams,
 		executionMode: "parallel",
@@ -425,13 +422,11 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		name: SESSION_TOOL_NAME,
 		label: "Delegate Session",
 		description:
-			"Manages children created by delegate_run. list recovers all ids retained for the current parent session; status inspects without waiting; when blocked, use action=wait with the same ids instead of repeated status calls or shell sleeps; wait returns outputs; send steers one running child; cancel stops work. Settled children cannot receive more messages or resume; create a new child for further work. Never start a background run and then immediately wait; use a blocking delegate_run instead.",
+			"Manages children created by delegate_run. list recovers all ids retained for the current parent session; status inspects without waiting; when blocked, use action=wait with the same ids instead of repeated status calls or shell sleeps; wait returns all requested results by default, or one completed result with mode=next while other children continue; remove returned ids before waiting again. send steers one running child; cancel stops work. Settled children cannot receive more messages or resume; handle small follow-ups directly.",
 		promptSnippet:
 			"List, inspect, wait for, steer, or cancel existing child sessions",
 		promptGuidelines: [
-			"Use send only to steer a running child. A child sees its own session, not the parent conversation, so include any new context it needs.",
-			"After a background run, continue useful parent work and wait only when blocked.",
-			"A settled child is finished and cannot be resumed; use delegate_run for new work. Tracked ids last only for the current parent session.",
+			"Use delegate_session send to steer a running child with the context it needs. Tracked ids last only for the current parent session.",
 		],
 		parameters: DelegateSessionParams,
 		executionMode: "parallel",
@@ -467,7 +462,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 					if (params.action === "wait" || params.action === "cancel") {
 						const snapshots =
 							params.action === "wait"
-								? yield* manager.wait(ids, signal)
+								? yield* manager.wait(ids, signal, params.mode)
 								: yield* manager.cancel(ids);
 						delivery.consume(snapshots);
 						return {

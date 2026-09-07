@@ -284,6 +284,7 @@ test("covers delegate configuration and rendering", () => {
 		"action",
 		"id",
 		"ids",
+		"mode",
 		"message",
 	]);
 	assert.deepEqual(

@@ -69,6 +69,13 @@ export const DelegateSessionParams = Type.Object({
 			description: "Child ids for wait, cancel, or status",
 		}),
 	),
+	mode: Type.Optional(
+		StringEnum(["all", "next"], {
+			description:
+				'For wait: "all" waits for every requested id; "next" returns one settled result immediately or waits for the first completion. Other children keep running. Remove returned ids before waiting again.',
+			default: "all",
+		}),
+	),
 	message: Type.Optional(
 		Type.String({
 			maxLength: 64_000,
@@ -80,6 +87,7 @@ export const DelegateSessionParams = Type.Object({
 
 export type DelegateRunParams = Static<typeof DelegateRunParams>;
 export type DelegateSessionParams = Static<typeof DelegateSessionParams>;
+export type DelegateWaitMode = NonNullable<DelegateSessionParams["mode"]>;
 export type DelegateEffort = "fast" | "thorough";
 export type DelegateThinking = "low" | "high";
 export type DelegateStatus = "running" | "done" | "error" | "cancelled";

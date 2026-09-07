@@ -24,6 +24,18 @@ import { createChild, shutdownChild } from "../runtime.ts";
 import { snapshot } from "./snapshot.ts";
 
 const settingsDir = mkdtempSync(join(tmpdir(), "pi-delegate-test-"));
+const agentDir = join(settingsDir, "agent");
+mkdirSync(agentDir);
+writeFileSync(
+	join(agentDir, "APPEND_SYSTEM.md"),
+	"GLOBAL SHARED POLICY",
+	"utf8",
+);
+writeFileSync(
+	join(agentDir, "settings.json"),
+	'{"defaultProjectTrust":"always"}',
+	"utf8",
+);
 
 const childConfig = (extensionPath = "") =>
 	ConfigProvider.fromUnknown({ PI_CHILD_EXTENSION_PATHS: extensionPath });
@@ -83,6 +95,7 @@ test("covers delegated runtime behavior", () =>
 				settingsDir,
 				undefined,
 				"low",
+				agentDir,
 			).pipe(
 				Effect.provideService(
 					ConfigProvider.ConfigProvider,
@@ -93,43 +106,17 @@ test("covers delegated runtime behavior", () =>
 					),
 				),
 			);
+			const policy = "GLOBAL SHARED POLICY";
+			assert.equal(promptChild.systemPrompt.split(policy).length - 1, 1);
+			assert.match(promptChild.systemPrompt, /Available tools:/);
 			assert.match(
 				promptChild.systemPrompt,
-				/^You are Pi, running as a delegated child in a fresh context\./,
-			);
-			assert.match(
-				promptChild.systemPrompt,
-				/The parent assigned you one bounded task/,
-			);
-			assert.match(
-				promptChild.systemPrompt,
-				/Deliver the assigned outcome within its stated scope, permissions, and output contract/,
+				/You are handling one delegated task/,
 			);
 			assert.match(
 				promptChild.systemPrompt,
-				/## Principle: Type System Discipline/,
+				/Finish when the assignment is satisfied/,
 			);
-			assert.match(
-				promptChild.systemPrompt,
-				/## Principle: Never Block on the Human/,
-			);
-			assert.doesNotMatch(
-				promptChild.systemPrompt,
-				/exhaust safe in-scope alternatives/,
-			);
-			assert.doesNotMatch(
-				promptChild.systemPrompt,
-				/Do not stop because the run is long/,
-			);
-			assert.doesNotMatch(
-				promptChild.systemPrompt,
-				/never to the effort you spend/,
-			);
-			assert.doesNotMatch(
-				promptChild.systemPrompt,
-				/your job is to collaborate with them until their goal is genuinely handled/,
-			);
-			assert.doesNotMatch(promptChild.systemPrompt, /Final report:/);
 			assert.ok(promptChild.getActiveToolNames().includes("session_usage"));
 			promptChild.dispose();
 
@@ -140,18 +127,29 @@ test("covers delegated runtime behavior", () =>
 				"PROJECT DELEGATE PROMPT",
 				"utf8",
 			);
+			writeFileSync(
+				join(projectDir, ".pi", "APPEND_SYSTEM.md"),
+				"PROJECT SHARED POLICY",
+				"utf8",
+			);
 			const customizedChild = yield* createChild(
 				projectDir,
 				undefined,
 				"low",
+				agentDir,
 			).pipe(
 				Effect.provideService(ConfigProvider.ConfigProvider, childConfig()),
 			);
 			assert.match(customizedChild.systemPrompt, /PROJECT DELEGATE PROMPT/);
-			assert.doesNotMatch(
-				customizedChild.systemPrompt,
-				/You are Pi, running as a delegated child in a fresh context\./,
+			assert.equal(
+				customizedChild.systemPrompt.split("PROJECT SHARED POLICY").length - 1,
+				1,
 			);
+			assert.match(
+				customizedChild.systemPrompt,
+				/You are handling one delegated task/,
+			);
+			assert.ok(!customizedChild.systemPrompt.includes(policy));
 			customizedChild.dispose();
 
 			const backgroundExtension = fileURLToPath(
@@ -161,6 +159,7 @@ test("covers delegated runtime behavior", () =>
 				settingsDir,
 				undefined,
 				"low",
+				agentDir,
 			).pipe(
 				Effect.provideService(
 					ConfigProvider.ConfigProvider,
@@ -188,7 +187,12 @@ test("covers delegated runtime behavior", () =>
 `,
 				"utf8",
 			);
-			const failure = yield* createChild(settingsDir, undefined, "low").pipe(
+			const failure = yield* createChild(
+				settingsDir,
+				undefined,
+				"low",
+				agentDir,
+			).pipe(
 				Effect.provideService(
 					ConfigProvider.ConfigProvider,
 					childConfig(failingExtension),

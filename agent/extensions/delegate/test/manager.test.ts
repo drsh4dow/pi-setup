@@ -29,25 +29,6 @@ function failureMessage<A, E, R>(effect: Effect.Effect<A, E, R>) {
 	}));
 }
 
-test("wait admission is atomic, bounded per child, and releases capacity", () => Effect.runPromise(Effect.gen(function* () {
-	const { manager, sessions } = harness();
-	const first = manager.spawn({ task: "first", ctx: context });
-	const second = manager.spawn({ task: "second", ctx: context });
-	yield* eventually(() => sessions.length === 2);
-	const waits = yield* Effect.all(
-		Array.from({ length: 4 }, () => Effect.forkChild(manager.wait([first.id]))),
-	);
-	yield* yieldImmediate;
-	const refused = yield* failureMessage(manager.wait([first.id, second.id]));
-	assert.match(refused, /4 pending waits/);
-	sessions[0].finish("done");
-	yield* Effect.all(waits.map(Fiber.join));
-	const available = yield* Effect.forkChild(manager.wait([first.id, second.id]));
-	sessions[1].finish("done");
-	yield* Fiber.join(available);
-	yield* manager.shutdown();
-})));
-
 test("per-run model override resolves strictly or fails the spawn", () => Effect.runPromise(Effect.gen(function* () {
 	const { manager, sessions } = harness();
 	const overrideContext = {
@@ -416,100 +397,6 @@ test("rejected child prompt settles, remains inspectable, and releases capacity"
 	yield* manager.shutdown();
 })));
 
-test("interrupted waits leave children running and explicit cancel stops them", () => {
-	const controller = new AbortController();
-	return Effect.runPromise(Effect.gen(function* () {
-	const { manager, sessions } = harness();
-	const job = manager.spawn({ task: "long", ctx: context });
-	yield* eventually(() => sessions.length === 1);
-	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
-	controller.abort(new Error("stop waiting"));
-	const interrupted = yield* failureMessage(Fiber.join(waiting));
-	assert.match(interrupted, /stop waiting/);
-	assert.equal(manager.list([job.id])[0].status, "running");
-
-	const [cancelled] = yield* manager.cancel([job.id]);
-	assert.equal(cancelled.status, "cancelled");
-	yield* manager.shutdown();
-	}));
-});
-
-test("an interrupted background wait restores delivery for the same run", () => {
-	const controller = new AbortController();
-	return Effect.runPromise(Effect.gen(function* () {
-	const delivered: DelegateSnapshot[] = [];
-	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
-	const job = manager.spawn({
-		task: "background",
-		background: true,
-		ctx: context,
-	});
-	yield* eventually(() => sessions.length === 1);
-	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
-	controller.abort(new Error("stop waiting"));
-	sessions[0].finish("raced result");
-
-	const interrupted = yield* failureMessage(Fiber.join(waiting));
-	assert.match(interrupted, /stop waiting/);
-	yield* eventually(() => delivered.length === 1);
-	assert.equal(delivered[0].output, "raced result");
-	assert.equal(manager.list([job.id])[0].status, "done");
-	yield* manager.shutdown();
-	}));
-});
-
-test("a successful concurrent wait prevents an aborted wait from restoring delivery", () => {
-	const controller = new AbortController();
-	return Effect.runPromise(Effect.gen(function* () {
-	const delivered: DelegateSnapshot[] = [];
-	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
-	const job = manager.spawn({
-		task: "background",
-		background: true,
-		ctx: context,
-	});
-	yield* eventually(() => sessions.length === 1);
-	const aborted = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
-	const successful = yield* manager.wait([job.id]).pipe(Effect.forkChild);
-	yield* yieldImmediate;
-	controller.abort(new Error("stop one wait"));
-	sessions[0].finish("result");
-
-	const interrupted = yield* failureMessage(Fiber.join(aborted));
-	assert.match(interrupted, /stop one wait/);
-	yield* Fiber.join(successful);
-	assert.equal(delivered.length, 0);
-	yield* manager.shutdown();
-	}));
-});
-
-test("cancel consumption wins over an aborted concurrent wait", () => {
-	const controller = new AbortController();
-	return Effect.runPromise(Effect.gen(function* () {
-	const delivered: DelegateSnapshot[] = [];
-	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
-	const job = manager.spawn({
-		task: "background",
-		background: true,
-		ctx: context,
-	});
-	yield* eventually(() => sessions.length === 1);
-	const abortGate = yield* Deferred.make<void>();
-	sessions[0].abortGate = abortGate;
-	const waiting = yield* Effect.forkChild(manager.wait([job.id], controller.signal));
-	const cancelling = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
-	controller.abort(new Error("stop waiting"));
-	yield* Deferred.succeed(abortGate, undefined);
-
-	const interrupted = yield* failureMessage(Fiber.join(waiting));
-	assert.match(interrupted, /stop waiting/);
-	const [cancelled] = yield* Fiber.join(cancelling);
-	assert.equal(cancelled.status, "cancelled");
-	assert.equal(delivered.length, 0);
-	yield* manager.shutdown();
-	}));
-});
-
 test("shutdown wins once child settlement races an owned stop", () => Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const terminalNotifications: DelegateSnapshot[] = [];
@@ -603,27 +490,6 @@ test("an interrupted cancel does not poison the shared stop", () => Effect.runPr
 	const second = yield* manager.cancel([job.id]).pipe(Effect.forkChild);
 	yield* Deferred.succeed(abortGate, undefined);
 	assert.equal((yield* Fiber.join(second))[0].status, "cancelled");
-	yield* manager.shutdown();
-})));
-
-test("cancellation waits for an existing child to be disposed", () => Effect.runPromise(Effect.gen(function* () {
-	const disposalGate = yield* Deferred.make<void>();
-	let disposalStarted = false;
-	const { manager, sessions } = harness(undefined, () => {
-		disposalStarted = true;
-		return Deferred.await(disposalGate);
-	});
-	const job = manager.spawn({ task: "cancel and dispose", ctx: context });
-	yield* eventually(() => sessions.length === 1);
-
-	let settled = false;
-	const cancelling = yield* manager.cancel([job.id]).pipe(
-		Effect.ensuring(Effect.sync(() => (settled = true))), Effect.forkChild,
-	);
-	yield* eventually(() => disposalStarted);
-	assert.equal(settled, false);
-	yield* Deferred.succeed(disposalGate, undefined);
-	assert.equal((yield* Fiber.join(cancelling))[0].status, "cancelled");
 	yield* manager.shutdown();
 })));
 

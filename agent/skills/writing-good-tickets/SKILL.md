@@ -18,10 +18,9 @@ be lost in context or conversation if not captured here.
 A good ticket should contain the contract of what does it means for this ticket to be done,
 basically a list of acceptance criteria.
 
-It should contain general pointers regarding the how, but it is up to the implementer the specifics.
+It should contain general pointers regarding the how, and the decided architecture using the C4 model, but it is up to the implementer the line by line code specifics.
 
-Decisions made during a grilling session, or decisions that are non negotiables captured in a conversation should be part of the ticket
-as long as they impact directly in the outcome of such ticket.
+Decisions made during a grilling session, or decisions that are non negotiables captured in a conversation should be part of the ticket as long as they impact directly in the outcome of such ticket.
 
 If the ticket is related to other one that already explains the details and specifics instead of duplicating the information it should be referenced and ask in the ticket itself to read such related ticket.
 

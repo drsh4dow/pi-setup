@@ -5,11 +5,7 @@ const { unlinkSync } = process.getBuiltinModule("fs");
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { truncateUtf8Head, truncateUtf8Window } from "../../lib/text.ts";
 import { type DelegateUsageStats, MAX_CHILD_OUTPUT_BYTES } from "./contract.ts";
-import {
-	extractAssistantText,
-	extractMessageText,
-	saveDelegateOutput,
-} from "./output.ts";
+import { extractMessageText, saveDelegateOutput } from "./output.ts";
 
 import {
 	MAX_MESSAGE_BYTES,
@@ -202,11 +198,10 @@ export class ChildState {
 		this.omitInitialUserMessage = false;
 		this.writing = undefined;
 		this.streaming = new StreamingPreview();
-		const assistantText = extractAssistantText(event.message);
-		if (assistantText) {
-			this.replaceOutput(assistantText);
-			this.append(conversationMessage("Assistant", assistantText));
-			this.progress = `said: ${progressLine(assistantText)}`;
+		if (text) {
+			this.replaceOutput(text);
+			this.append(conversationMessage("Assistant", text));
+			this.progress = `said: ${progressLine(text)}`;
 		}
 		if (
 			event.message.stopReason === "error" ||

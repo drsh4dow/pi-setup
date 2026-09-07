@@ -1,4 +1,7 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import {
@@ -45,49 +48,33 @@ const FastModeSettings = Schema.fromJsonString(
 	}),
 );
 
-type PiModel = { provider?: string; id?: string };
-type ProviderPayload = Record<string, unknown>;
+type PiModel = Pick<NonNullable<ExtensionContext["model"]>, "provider" | "id">;
 
 function providerFamily(provider: string): string {
 	return provider.startsWith("openai-codex-") ? "openai-codex" : provider;
 }
 
-export function modelKey(model: PiModel): string {
-	return `${model.provider}/${model.id}`;
-}
-export function isSupportedModel(model: PiModel | undefined): boolean {
-	return Boolean(
-		model?.provider &&
-			model.id &&
-			SUPPORTED_MODELS.has(`${providerFamily(model.provider)}/${model.id}`),
-	);
-}
 export function fastServiceTier(
 	model: PiModel | undefined,
 ): string | undefined {
-	if (!isSupportedModel(model)) return undefined;
-	return model?.provider && providerFamily(model.provider) === "openai-codex"
+	if (!model) return undefined;
+	const provider = providerFamily(model.provider);
+	if (!SUPPORTED_MODELS.has(`${provider}/${model.id}`)) return undefined;
+	return provider === "openai-codex"
 		? CODEX_FAST_SERVICE_TIER
 		: OPENAI_FAST_SERVICE_TIER;
-}
-export function shouldApplyFastMode(
-	model: PiModel | undefined,
-	payload: unknown,
-): boolean {
-	return Boolean(
-		payload &&
-			typeof payload === "object" &&
-			fastServiceTier(model) &&
-			(payload as ProviderPayload).model === model?.id,
-	);
 }
 export function withFastServiceTier(
 	model: PiModel | undefined,
 	payload: unknown,
 ): unknown {
 	const serviceTier = fastServiceTier(model);
-	return serviceTier && payload && typeof payload === "object"
-		? { ...(payload as ProviderPayload), service_tier: serviceTier }
+	return serviceTier &&
+		payload &&
+		typeof payload === "object" &&
+		"model" in payload &&
+		payload.model === model?.id
+		? { ...payload, service_tier: serviceTier }
 		: payload;
 }
 
@@ -170,31 +157,22 @@ export const saveEnabled = Effect.fn("saveEnabled")(function* (
 	);
 });
 
-function notify(
-	ctx: unknown,
-	message: string,
-	level: "info" | "warning" | "error" = "info",
-): void {
-	(
-		ctx as
-			| { ui?: { notify?: (message: string, level?: string) => void } }
-			| undefined
-	)?.ui?.notify?.(message, level);
-}
-function announceState(ctx: unknown, enabled: boolean): void {
+function announceState(ctx: ExtensionContext, enabled: boolean): void {
 	if (!enabled) {
-		notify(ctx, "GPT Fast mode disabled.");
+		ctx.ui.notify("GPT Fast mode disabled.", "info");
 		return;
 	}
-	const model = (ctx as { model?: PiModel } | undefined)?.model;
+	const model = ctx.model;
 	const serviceTier = fastServiceTier(model);
 	if (serviceTier) {
-		notify(ctx, `GPT Fast mode enabled (service_tier: ${serviceTier}).`);
+		ctx.ui.notify(
+			`GPT Fast mode enabled (service_tier: ${serviceTier}).`,
+			"info",
+		);
 		return;
 	}
-	notify(
-		ctx,
-		`GPT Fast mode enabled, but ${model?.provider && model.id ? modelKey(model) : "unknown model"} is not supported.`,
+	ctx.ui.notify(
+		`GPT Fast mode enabled, but ${model ? `${model.provider}/${model.id}` : "unknown model"} is not supported.`,
 		"warning",
 	);
 }
@@ -204,7 +182,7 @@ const [initialEnabled, initialShortcuts] = await runtime.runPromise(
 );
 export default function fastModeExtension(pi: ExtensionAPI): void {
 	let enabled = initialEnabled;
-	const toggle = (ctx: unknown) => {
+	const toggle = (ctx: ExtensionContext) => {
 		const nextEnabled = !enabled;
 		return runtime.runPromise(
 			saveEnabled(nextEnabled).pipe(
@@ -216,7 +194,7 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
 				),
 				Effect.catch(() =>
 					Effect.sync(() =>
-						notify(ctx, "Could not save GPT Fast mode setting.", "error"),
+						ctx.ui.notify("Could not save GPT Fast mode setting.", "error"),
 					),
 				),
 			),
@@ -240,8 +218,6 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
 		),
 	);
 	pi.on("before_provider_request", (event, ctx) =>
-		enabled && shouldApplyFastMode(ctx.model, event.payload)
-			? withFastServiceTier(ctx.model, event.payload)
-			: undefined,
+		enabled ? withFastServiceTier(ctx.model, event.payload) : undefined,
 	);
 }

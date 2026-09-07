@@ -44,7 +44,7 @@ export {
 	type DelegateThinking,
 	type DelegateUsageStats,
 } from "./contract.ts";
-export { extractAssistantText, formatDelegateOutput } from "./output.ts";
+export { formatDelegateOutput } from "./output.ts";
 export {
 	childExtensionPaths,
 	DELEGATION_TOOL_DENYLIST,

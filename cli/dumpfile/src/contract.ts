@@ -4,43 +4,29 @@ export const CACHE_CONTROL = "no-store";
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
 export const SIGNATURE_TTL_SECONDS = 300;
 
-const inlineContentTypes: ReadonlySet<string> = new Set([
-	"application/pdf",
-	"audio/flac",
-	"audio/mp4",
-	"audio/mpeg",
-	"audio/ogg",
-	"audio/wav",
-	"image/avif",
-	"image/gif",
-	"image/jpeg",
-	"image/png",
-	"image/webp",
-	"text/plain",
-	"video/mp4",
-	"video/quicktime",
-	"video/webm",
+const extensionContentTypes: ReadonlyMap<string, string> = new Map([
+	["avif", "image/avif"],
+	["flac", "audio/flac"],
+	["gif", "image/gif"],
+	["jpeg", "image/jpeg"],
+	["jpg", "image/jpeg"],
+	["log", "text/plain"],
+	["m4a", "audio/mp4"],
+	["mov", "video/quicktime"],
+	["mp3", "audio/mpeg"],
+	["mp4", "video/mp4"],
+	["ogg", "audio/ogg"],
+	["pdf", "application/pdf"],
+	["png", "image/png"],
+	["txt", "text/plain"],
+	["wav", "audio/wav"],
+	["webm", "video/webm"],
+	["webp", "image/webp"],
 ]);
 
-const extensionContentTypes: Readonly<Record<string, string>> = {
-	avif: "image/avif",
-	flac: "audio/flac",
-	gif: "image/gif",
-	jpeg: "image/jpeg",
-	jpg: "image/jpeg",
-	log: "text/plain",
-	m4a: "audio/mp4",
-	mov: "video/quicktime",
-	mp3: "audio/mpeg",
-	mp4: "video/mp4",
-	ogg: "audio/ogg",
-	pdf: "application/pdf",
-	png: "image/png",
-	txt: "text/plain",
-	wav: "audio/wav",
-	webm: "video/webm",
-	webp: "image/webp",
-};
+const inlineContentTypes: ReadonlySet<string> = new Set(
+	extensionContentTypes.values(),
+);
 
 export type StoredDisposition = "attachment" | "inline";
 
@@ -69,7 +55,7 @@ export interface UploadAuthorization {
 }
 
 export function contentTypeForExtension(extension: string): string {
-	return extensionContentTypes[extension] ?? "application/octet-stream";
+	return extensionContentTypes.get(extension) ?? "application/octet-stream";
 }
 
 export function dispositionForContentType(

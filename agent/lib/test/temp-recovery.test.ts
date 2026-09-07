@@ -8,18 +8,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { recoverTempSpace } from "../../scripts/recover-temp-space.mjs";
 
-const roots: string[] = [];
-test.afterEach(() => {
-	for (const root of roots.splice(0))
-		rmSync(root, { recursive: true, force: true });
-});
-
-function fixture(): string {
+function fixture(t: TestContext): string {
 	const root = mkdtempSync(join(tmpdir(), "pi-temp-recovery-test-"));
-	roots.push(root);
+	t.after(() => rmSync(root, { recursive: true, force: true }));
 	return root;
 }
 
@@ -43,8 +37,8 @@ test("recovery refuses to delete outside /tmp", () => {
 	);
 });
 
-test("disposable Pi files are evicted before unrelated older entries", () => {
-	const root = fixture();
+test("disposable Pi files are evicted before unrelated older entries", (t) => {
+	const root = fixture(t);
 	const unrelatedOld = file(root, "research-old", 30);
 	const piOutput = file(root, "pi-output-test.log", 1);
 	const unrelatedNew = file(root, "research-new", 0);
@@ -58,8 +52,8 @@ test("disposable Pi files are evicted before unrelated older entries", () => {
 	assert.equal(existsSync(unrelatedNew), true);
 });
 
-test("recovery escalates oldest-first when Pi artifacts are insufficient", () => {
-	const root = fixture();
+test("recovery escalates oldest-first when Pi artifacts are insufficient", (t) => {
+	const root = fixture(t);
 	const piOutput = file(root, "pi-bash-test.log", 1, 4 * 1024);
 	const unrelatedOld = file(root, "research-old", 30);
 	const unrelatedNew = file(root, "research-new", 0);
@@ -73,8 +67,8 @@ test("recovery escalates oldest-first when Pi artifacts are insufficient", () =>
 	assert.equal(existsSync(unrelatedNew), true);
 });
 
-test("recovery reports insufficient space instead of deleting a protected entry", () => {
-	const root = fixture();
+test("recovery reports insufficient space instead of deleting a protected entry", (t) => {
+	const root = fixture(t);
 	const protectedFile = file(root, "active-research", 30);
 
 	const result = recoverTempSpace({
@@ -88,8 +82,8 @@ test("recovery reports insufficient space instead of deleting a protected entry"
 	assert.equal(existsSync(protectedFile), true);
 });
 
-test("live paths are protected while enough space is removed for new data", () => {
-	const root = fixture();
+test("live paths are protected while enough space is removed for new data", (t) => {
+	const root = fixture(t);
 	const protectedOld = file(root, "active-research", 30);
 	const removableOld = file(root, "inactive-research", 20);
 	const removableNew = file(root, "new-research", 0);

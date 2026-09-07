@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import type { UploadHeaders } from "../src/contract.ts";
 import {
 	createDumpfileWorker,
 	presignUpload,
@@ -45,10 +46,8 @@ test("authorizes an immutable direct upload and logs only safe fields", async ()
 		now: () => now,
 		presign: async (input) => {
 			signed.push({
-				contentType: input.contentType,
-				disposition: input.disposition,
+				headers: input.headers,
 				key: input.key,
-				size: input.size,
 			});
 			return "https://account.r2.cloudflarestorage.com/bucket/key?X-Amz-Signature=secret";
 		},
@@ -64,10 +63,8 @@ test("authorizes an immutable direct upload and logs only safe fields", async ()
 	const body = await response.json();
 	assert.deepEqual(signed, [
 		{
-			contentType: "image/png",
-			disposition: "inline",
+			headers: body.upload.headers,
 			key: "2026/08/21/000102030405060708090a0b0c0d0e0f.png",
-			size: 42,
 		},
 	]);
 	assert.deepEqual(body, {
@@ -93,11 +90,11 @@ test("authorizes an immutable direct upload and logs only safe fields", async ()
 });
 
 test("forces executable and unknown content to download", async () => {
-	let disposition = "";
+	let signedHeaders: UploadHeaders | undefined;
 	const worker = createDumpfileWorker({
 		log: () => {},
 		presign: async (input) => {
-			disposition = input.disposition;
+			signedHeaders = input.headers;
 			return "https://account.r2.cloudflarestorage.com/key?signature=safe";
 		},
 	});
@@ -106,10 +103,14 @@ test("forces executable and unknown content to download", async () => {
 		environment(),
 	);
 	assert.equal(response.status, 201);
-	assert.equal(disposition, "attachment");
 	const body = await response.json();
-	assert.equal(body.upload.headers["Content-Disposition"], "attachment");
-	assert.equal(body.upload.headers["Content-Type"], "application/octet-stream");
+	assert.deepEqual(signedHeaders, body.upload.headers);
+	assert.deepEqual(body.upload.headers, {
+		"Cache-Control": "no-store",
+		"Content-Disposition": "attachment",
+		"Content-Length": "3",
+		"Content-Type": "application/octet-stream",
+	});
 });
 
 test("rejects unauthenticated, malformed, oversized, and rate-limited requests", async () => {
@@ -157,11 +158,14 @@ test("rejects unauthenticated, malformed, oversized, and rate-limited requests",
 
 test("aws4fetch presigns one PUT with all stored metadata bound", async () => {
 	const url = await presignUpload({
-		contentType: "video/mp4",
-		disposition: "inline",
 		env: environment(),
 		key: "2026/08/21/abc def.mp4",
-		size: 42,
+		headers: {
+			"Cache-Control": "no-store",
+			"Content-Disposition": "inline",
+			"Content-Length": "42",
+			"Content-Type": "video/mp4",
+		},
 	});
 	const parsed = new URL(url);
 	assert.equal(

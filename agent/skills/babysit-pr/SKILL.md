@@ -1,6 +1,6 @@
 ---
 name: babysit-pr
-description: Use always after creating a PR or resuming work on a PR previously watched by Pi.
+description: Use after creating a PR or when the user says babysit the PR.
 ---
 
 # Babysit a PR
@@ -49,7 +49,7 @@ Written by Pi Agent
 
 Read the reply back from its original thread. The marker prevents replay if the process stops before local acknowledgement.
 
-After any push, re-read the PR title, description, test plan, and media. Update stale text, preserve valid human context, and regenerate user-visible evidence with `dumpfile` when behavior changed.
+After any push, re-read the PR title, description, architecture diagrams, test plan, and media. Update stale text, preserve valid human context, and regenerate user-visible evidence with `dumpfile` when behavior changed.
 
 Run `ack <PR-URL> <event-id>...` only after code is pushed, required thread replies are verified, and PR text and media are current. Leave unfinished events pending and tell the supervising user what blocks them.
 

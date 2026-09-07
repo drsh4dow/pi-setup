@@ -3,15 +3,14 @@
   "packages": [
     "npm:pi-mcp-adapter"
   ],
-  "defaultProvider": "openai-codex-cyber",
+  "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6-astra",
   "enabledModels": [
-    "openai-codex-cyber/gpt-daybreak-blue-latest",
-    "openai-codex-cyber/gpt-6-astra",
+    "openai-codex/gpt-6-astra",
     "opencode-go/omen-alpha"
   ],
   "delegate": {
-    "model": "openai-codex-cyber/gpt-6-astra"
+    "model": "openai-codex/gpt-6-astra"
   },
   "defaultThinkingLevel": "low",
   "hideThinkingBlock": false,

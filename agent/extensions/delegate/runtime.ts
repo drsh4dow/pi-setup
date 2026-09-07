@@ -1,7 +1,6 @@
 const { existsSync, readFileSync } = process.getBuiltinModule("fs");
 const { delimiter, join } = process.getBuiltinModule("path");
 
-import { fileURLToPath } from "node:url";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
@@ -220,6 +219,7 @@ export const createChild = Effect.fn("createChild")(function* (
 	cwd: string,
 	model: ExtensionContext["model"],
 	thinking: DelegateThinking,
+	agentDir = getAgentDir(),
 ) {
 	const services = yield* Effect.context<never>();
 	const extensionPaths = yield* Config.string(CHILD_EXTENSION_PATHS_ENV).pipe(
@@ -230,14 +230,17 @@ export const createChild = Effect.fn("createChild")(function* (
 		try: () =>
 			new DefaultResourceLoader({
 				cwd,
-				agentDir: getAgentDir(),
+				agentDir,
 				additionalExtensionPaths: childExtensionPaths({
 					[CHILD_EXTENSION_PATHS_ENV]: extensionPaths,
 				}),
 				systemPrompt: existsSync(projectSystemPrompt)
 					? projectSystemPrompt
-					: fileURLToPath(new URL("./SYSTEM.md", import.meta.url)),
-				appendSystemPromptOverride: () => [],
+					: undefined,
+				appendSystemPromptOverride: (prompts) => [
+					...prompts,
+					readFileSync(new URL("./SYSTEM.md", import.meta.url), "utf8"),
+				],
 			}),
 		catch: delegateError,
 	});
@@ -251,7 +254,7 @@ export const createChild = Effect.fn("createChild")(function* (
 	>((resume, signal) => {
 		createAgentSession({
 			cwd,
-			agentDir: getAgentDir(),
+			agentDir,
 			resourceLoader,
 			sessionManager: SessionManager.inMemory(cwd),
 			model,

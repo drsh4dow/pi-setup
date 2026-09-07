@@ -12,6 +12,7 @@ import {
 	type DelegateEffort,
 	type DelegateSnapshot,
 	type DelegateThinking,
+	type DelegateWaitMode,
 	MAX_EXECUTION_MS,
 	MAX_EXECUTION_TOKENS,
 } from "./contract.ts";
@@ -251,6 +252,7 @@ export class DelegateManager {
 		this: DelegateManager,
 		ids: readonly string[],
 		signal?: AbortSignal,
+		mode: DelegateWaitMode = "all",
 	) {
 		const jobs = [...new Set(ids)].map((id) => this.requireJob(id));
 		if (jobs.length === 0) throw new Error("Provide at least one delegate id.");
@@ -265,15 +267,16 @@ export class DelegateManager {
 		}
 		for (const job of jobs) job.waiters++;
 		const claims = jobs.filter((job) => job.state.claimDelivery());
-		let completed = false;
-		return yield* Effect.all(
-			jobs.map((job) =>
-				job.state.isActive()
-					? Deferred.await(job.completion)
-					: Effect.succeed(this.snapshot(job)),
-			),
-			{ concurrency: "unbounded" },
-		).pipe(
+		const completions = jobs.map((job) =>
+			job.state.isActive()
+				? Deferred.await(job.completion)
+				: Effect.succeed(this.snapshot(job)),
+		);
+		const wait =
+			mode === "next"
+				? Effect.raceAll(completions).pipe(Effect.map((snapshot) => [snapshot]))
+				: Effect.all(completions, { concurrency: "unbounded" });
+		return yield* wait.pipe(
 			signal ? Effect.raceFirst(abortSignal(signal)) : (effect) => effect,
 			Effect.flatMap((snapshots) =>
 				signal?.aborted
@@ -282,16 +285,16 @@ export class DelegateManager {
 			),
 			Effect.tap((snapshots) =>
 				Effect.sync(() => {
-					completed = true;
-					for (const job of claims) job.state.consumeDelivery();
-					return snapshots;
+					for (const snapshot of snapshots) {
+						this.requireJob(snapshot.id).state.consumeDelivery();
+					}
 				}),
 			),
 			Effect.ensuring(
 				Effect.sync(() => {
 					for (const job of jobs) job.waiters--;
 					for (const job of claims) {
-						if (!completed && job.state.releaseDeliveryClaim()) {
+						if (job.state.releaseDeliveryClaim()) {
 							this.onSettled?.(this.snapshot(job));
 						}
 					}

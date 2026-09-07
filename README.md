@@ -47,7 +47,6 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | --- | --- |
 | `aoauth` | Anthropic OAuth login support |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_wait`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
-| `codex-accounts` | Named Codex account selection |
 | `compaction` | Dense handoffs and automatic continuation after proactive compaction |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
 | `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |

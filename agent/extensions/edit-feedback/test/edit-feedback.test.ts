@@ -218,38 +218,34 @@ test("the installed CLI loads the extension and executes its registered edit too
 
 test("escaped control characters cannot exceed the diagnostic byte budget", () =>
 	fixture(`repeat${"\u0001".repeat(1000)}\n`.repeat(100), (cwd, path) =>
-		Effect.gen(function* () {
-			yield* Effect.promise(() =>
-				assert.rejects(
-					createDiagnosticEditTool(cwd).execute("test", {
-						path,
-						edits: [{ oldText: "repeat", newText: "changed" }],
-					}),
-					(error) => {
-						assert.ok(error instanceof Error);
-						assert.ok(Buffer.byteLength(error.message) <= 8192);
-						return true;
-					},
-				),
-			);
-		}),
+		Effect.promise(() =>
+			assert.rejects(
+				createDiagnosticEditTool(cwd).execute("test", {
+					path,
+					edits: [{ oldText: "repeat", newText: "changed" }],
+				}),
+				(error) => {
+					assert.ok(error instanceof Error);
+					assert.ok(Buffer.byteLength(error.message) <= 8192);
+					return true;
+				},
+			),
+		),
 	));
 
 test("multiline ambiguity locates whole oldText rather than unrelated first lines", () =>
 	fixture(
 		`${"start\nother\n".repeat(5)}start\nwanted\nend\nstart\nwanted\nend\n`,
 		(cwd, path) =>
-			Effect.gen(function* () {
-				yield* Effect.promise(() =>
-					assert.rejects(
-						createDiagnosticEditTool(cwd).execute("test", {
-							path,
-							edits: [{ oldText: "start\nwanted", newText: "changed" }],
-						}),
-						/11: "start"[\s\S]*14: "start"/,
-					),
-				);
-			}),
+			Effect.promise(() =>
+				assert.rejects(
+					createDiagnosticEditTool(cwd).execute("test", {
+						path,
+						edits: [{ oldText: "start\nwanted", newText: "changed" }],
+					}),
+					/11: "start"[\s\S]*14: "start"/,
+				),
+			),
 	));
 
 test("queued cancellation waits for the builtin mutation queue and never writes", () =>

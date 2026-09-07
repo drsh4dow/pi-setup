@@ -14,12 +14,12 @@ import { DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
 import { ConfigProvider, Effect } from "effect";
 import {
 	childExtensionPaths,
-	extractAssistantText,
 	formatDelegateOutput,
 	resultText,
 	selectChildToolNames,
 	thinkingForEffort,
 } from "../index.ts";
+import { extractMessageText } from "../output.ts";
 import { createChild, shutdownChild } from "../runtime.ts";
 import { snapshot } from "./snapshot.ts";
 
@@ -58,7 +58,7 @@ test("covers delegated runtime helpers", () => {
 	);
 
 	assert.equal(
-		extractAssistantText({
+		extractMessageText({
 			role: "assistant",
 			content: [
 				{ type: "text", text: " first " },
@@ -68,7 +68,12 @@ test("covers delegated runtime helpers", () => {
 		}),
 		"first\nsecond",
 	);
-	assert.equal(extractAssistantText({ role: "user", content: "ignored" }), "");
+	assert.equal(extractMessageText({ content: " user text " }), "user text");
+	assert.equal(extractMessageText(null), "");
+	assert.equal(
+		extractMessageText({ content: [{ type: "text", text: 42 }] }),
+		"",
+	);
 });
 
 test("covers delegated runtime behavior", () =>

@@ -14,25 +14,6 @@ export function tagCommand(command: string): string {
 	return LINUX ? `${SACRIFICE_COMMAND_PREFIX}\n${command}` : command;
 }
 
-// exec-ing through "$@" keeps the original argv untouched by shell quoting and
-// guarantees the tag lands before the target can run or fork.
-export function tagInvocation(
-	command: string,
-	args: string[],
-): { command: string; args: string[] } {
-	if (!LINUX) return { command, args };
-	return {
-		command: "/bin/sh",
-		args: [
-			"-c",
-			`${SACRIFICE_COMMAND_PREFIX}; exec "$@"`,
-			"sh",
-			command,
-			...args,
-		],
-	};
-}
-
 const JOURNAL_TIMEOUT_MS = 1_500;
 const JOURNAL_MAX_BYTES = 256 * 1024;
 

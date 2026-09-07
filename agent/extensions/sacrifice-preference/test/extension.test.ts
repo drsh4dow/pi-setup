@@ -10,7 +10,6 @@ import {
 	SACRIFICE_COMMAND_PREFIX,
 	sacrificeKillNote,
 	tagCommand,
-	tagInvocation,
 } from "../../../lib/sacrifice.ts";
 import {
 	BackgroundTerminalManager,
@@ -73,21 +72,6 @@ test("tag statement produces no output or failure", { skip: !linux }, () => {
 		{ encoding: "utf8" },
 	);
 	assert.equal(output, "ok\n");
-});
-
-test("tagInvocation tags before exec and preserves argv", {
-	skip: !linux,
-}, () => {
-	const score = tagInvocation("cat", ["/proc/self/oom_score_adj"]);
-	assert.equal(
-		execFileSync(score.command, score.args, { encoding: "utf8" }).trim(),
-		"500",
-	);
-	const argv = tagInvocation("printf", ["%s|", "a b", "$HOME", "'q'"]);
-	assert.equal(
-		execFileSync(argv.command, argv.args, { encoding: "utf8" }),
-		"a b|$HOME|'q'|",
-	);
 });
 
 test("earlyoomKillSince reads journal evidence", { skip: !linux }, () => {

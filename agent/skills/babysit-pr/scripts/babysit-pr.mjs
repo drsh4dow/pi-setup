@@ -585,26 +585,18 @@ async function watch(cwd, reference, trustedBots) {
 		for (;;) {
 			try {
 				let snapshot = poll(cwd, reference, paths, trustedBots);
+				if (!terminalState(snapshot.pr))
+					snapshot = await settleDebounce(
+						cwd,
+						reference,
+						paths,
+						snapshot,
+						trustedBots,
+					);
 				const ended = terminalState(snapshot.pr);
 				if (ended) {
 					emit(
 						`babysit-pr: PR #${snapshot.pr.number} was ${ended}; monitoring stopped and its local state was removed.`,
-						cwd,
-					);
-					rmSync(paths.root, { recursive: true, force: true });
-					return;
-				}
-				snapshot = await settleDebounce(
-					cwd,
-					reference,
-					paths,
-					snapshot,
-					trustedBots,
-				);
-				const endedAfterDebounce = terminalState(snapshot.pr);
-				if (endedAfterDebounce) {
-					emit(
-						`babysit-pr: PR #${snapshot.pr.number} was ${endedAfterDebounce}; monitoring stopped and its local state was removed.`,
 						cwd,
 					);
 					rmSync(paths.root, { recursive: true, force: true });

@@ -50,15 +50,11 @@ const FastModeSettings = Schema.fromJsonString(
 
 type PiModel = Pick<NonNullable<ExtensionContext["model"]>, "provider" | "id">;
 
-function providerFamily(provider: string): string {
-	return provider.startsWith("openai-codex-") ? "openai-codex" : provider;
-}
-
 export function fastServiceTier(
 	model: PiModel | undefined,
 ): string | undefined {
 	if (!model) return undefined;
-	const provider = providerFamily(model.provider);
+	const { provider } = model;
 	if (!SUPPORTED_MODELS.has(`${provider}/${model.id}`)) return undefined;
 	return provider === "openai-codex"
 		? CODEX_FAST_SERVICE_TIER

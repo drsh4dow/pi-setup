@@ -14,7 +14,6 @@
     "test:runtime-patches": "node --test agent/lib/test/*.test.ts",
     "test:compaction": "node --test agent/extensions/compaction/test/*.test.ts",
     "test:aoauth": "node --test agent/extensions/aoauth/test/*.test.ts",
-    "test:codex-accounts": "node --test agent/extensions/codex-accounts/test/*.test.ts",
     "test:skill-visibility": "node --test agent/extensions/skill-visibility/test/*.test.ts",
     "test:gpt-fast-mode": "node --test agent/extensions/gpt-fast-mode/test/*.test.ts",
     "test:sacrifice-preference": "node --test agent/extensions/sacrifice-preference/test/*.test.ts",

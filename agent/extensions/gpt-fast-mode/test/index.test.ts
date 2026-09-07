@@ -6,7 +6,6 @@ describe("gpt-fast-mode request mapping", () => {
 	for (const [provider, tier] of [
 		["openai", "fast"],
 		["openai-codex", "priority"],
-		["openai-codex-cyber", "priority"],
 	]) {
 		test(`uses ${tier} for ${provider} without mutating the payload`, () => {
 			const model = { provider, id: "gpt-5.6-sol" };

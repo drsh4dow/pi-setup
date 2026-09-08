@@ -145,7 +145,6 @@ export class BackgroundTerminalDelivery {
 	private readonly failed = new Set<string>();
 	private retryGeneration = 0;
 	private flushState: "idle" | "flushing" = "idle";
-	private paused = false;
 	private readonly pi: Pick<ExtensionAPI, "sendMessage">;
 	private readonly reportError: (message: string) => void;
 	constructor(
@@ -161,12 +160,6 @@ export class BackgroundTerminalDelivery {
 	}
 	setContext(context: ExtensionContext) {
 		this.context = context;
-		this.paused = false;
-	}
-	setPaused(paused: boolean) {
-		if (this.paused === paused) return;
-		this.paused = paused;
-		if (!paused && this.context?.isIdle()) Effect.runFork(this.flush);
 	}
 	private markFailed(id: string) {
 		this.failed.add(id);
@@ -275,7 +268,7 @@ export class BackgroundTerminalDelivery {
 		);
 	}
 	flush = Effect.sync(() => {
-		if (this.flushState === "flushing" || this.paused || !this.context) return;
+		if (this.flushState === "flushing" || !this.context) return;
 		this.retryGeneration++;
 		this.flushState = "flushing";
 		try {
@@ -327,6 +320,5 @@ export class BackgroundTerminalDelivery {
 		this.pending.clear();
 		this.attempts.clear();
 		this.failed.clear();
-		this.paused = false;
 	}
 }

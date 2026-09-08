@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+// Use Node's hash as an independent oracle for the OAuth PKCE challenge.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import { createHash } from "node:crypto";
 import { connect } from "node:net";
 import test, { type TestContext } from "node:test";

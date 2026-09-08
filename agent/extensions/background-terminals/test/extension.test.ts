@@ -1,4 +1,5 @@
 // biome-ignore-all format: Effect test boundaries stay compact to keep the conversion deletion-first.
+/** biome-ignore-all lint/style/noExcessiveLinesPerFile: single file test */
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {

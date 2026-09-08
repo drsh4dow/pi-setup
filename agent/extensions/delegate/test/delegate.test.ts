@@ -471,14 +471,11 @@ test("covers background delivery behavior", (t) =>
 					} as unknown as ExtensionAPI,
 					() => Effect.succeed("background result"),
 				);
-				delivery.setContext({ isIdle: () => true } as ExtensionContext);
-				delivery.setPaused(true);
+				delivery.setContext({ isIdle: () => false } as ExtensionContext);
 				delivery.enqueue(delegateSnapshot());
-				yield* delivery.flush();
 				assert.equal(messages.length, 0);
 
-				delivery.setPaused(false);
-				yield* Effect.yieldNow;
+				yield* delivery.flush();
 				assert.equal(messages.length, 1);
 			}
 

@@ -13,12 +13,6 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
-export function isAutoCompactionEnabled(ctx: ExtensionContext): boolean {
-	return SettingsManager.create(ctx.cwd, getAgentDir(), {
-		projectTrusted: ctx.isProjectTrusted(),
-	}).getCompactionEnabled();
-}
-
 /** Observe persisted settings, including creation/replacement of either file. */
 export function observeAutoCompaction(
 	ctx: ExtensionContext,

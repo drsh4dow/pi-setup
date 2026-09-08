@@ -194,7 +194,7 @@ test("concurrent emitters preserve every frame", () =>
 		}),
 	));
 
-test("paused delivery keeps live notifications and drops settled ones", () =>
+test("queued delivery keeps live notifications and drops settled ones", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const messages: Array<{ content: string }> = [];
@@ -203,8 +203,7 @@ test("paused delivery keeps live notifications and drops settled ones", () =>
 					messages.push(message as { content: string });
 				},
 			} as ExtensionAPI);
-			delivery.setContext(context);
-			delivery.setPaused(true);
+			delivery.setContext({ ...context, isIdle: () => false });
 			delivery.enqueueNotification({
 				id: "bt-1:notification-1",
 				terminalId: "bt-1",
@@ -217,10 +216,9 @@ test("paused delivery keeps live notifications and drops settled ones", () =>
 				title: "running watcher",
 				message: "current",
 			});
-			yield* delivery.flush;
 			assert.equal(messages.length, 0);
 			delivery.terminalSettled("bt-1");
-			delivery.setPaused(false);
+			yield* delivery.flush;
 			yield* eventually(() => messages.length === 1);
 			assert.doesNotMatch(messages[0].content, /stale/);
 			assert.match(messages[0].content, /current/);

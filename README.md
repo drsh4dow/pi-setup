@@ -10,7 +10,7 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 - Additional model: `opencode-go/kimi-k3`
 - Child-agent model: `openai-codex/gpt-5.6-sol`
 - Theme: Catppuccin Mocha; Gruvbox Dark Hard is also included
-- Dense handoff compaction at 85% context usage or 250k tokens, whichever comes first
+- Pi's built-in compaction with default settings
 - GPT Fast mode enabled
 
 Pi loads [`agent/APPEND_SYSTEM.md`](agent/APPEND_SYSTEM.md) as this setup's active system-prompt addition. It defines the agent's behavior and engineering standards.
@@ -29,7 +29,7 @@ pi
 
 Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exists, move or merge it before cloning.
 
-`bun install` applies the repository's runtime patches to the local dependency and, when present, the active `pi` executable on `PATH`. Rerun it after updating Pi. Installation reports when no active Pi is available and still fails when the active version differs or a patched source file is missing.
+`bun install` installs extension dependencies and enables Effect's TypeScript diagnostics. It does not patch the Pi runtime.
 
 Pi automatically discovers the extensions, skills, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
 
@@ -42,10 +42,6 @@ ln -s ../.pi/agent/skills ~/.agents/skills
 
 If `~/.agents/skills` already exists, merge any skills you want to keep into `agent/skills`, then move the original directory aside before creating the link.
 
-### Temporary quota recovery
-
-When saving full command output fails with `EDQUOT`, Pi remains running and removes oldest temporary entries until it has freed the output observed at failure plus a 30% per-user quota reserve. It deletes disposable Pi output logs first. If those are insufficient, it deletes oldest user-owned top-level entries under `/tmp`, including unrelated checkouts or build trees. Paths visible through `/proc` as a working directory or open file of a live process are protected, and entries containing files owned by another user are skipped. The failed command must be retried because its complete output cannot be reconstructed after the write failure.
-
 ## Installed components
 
 The inventories below are checked against git-tracked setup files by `agent/scripts/verify-docs.mjs`.
@@ -56,7 +52,6 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | --- | --- |
 | `aoauth` | Anthropic OAuth login support |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_wait`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
-| `compaction` | Dense handoffs and automatic continuation after proactive compaction |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
 | `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
@@ -76,7 +71,7 @@ Children use normal Pi prompt discovery and the applicable `APPEND_SYSTEM.md`, p
 
 `delegate_session` with `action: "wait"` defaults to `mode: "all"`. Use `mode: "next"` to return one settled result without waiting for the others. Remove returned ids before waiting again. Unreturned children retain their background completion notifications; cancelling a wait leaves them running.
 
-A delegate stays running through its handoff, compaction, and requested continuation. The internal handoff is not a completed task result. A failed boundary compaction reports an error rather than a successful handoff.
+A delegate stays running through Pi's built-in automatic compaction and retries until its session settles.
 
 Run finite background commands directly. Their natural exit wakes the owner with the actual exit status, including success; no notification suffix is needed. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
 

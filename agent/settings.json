@@ -20,7 +20,7 @@
       "thinking": "low"
     }
   },
-  "defaultThinkingLevel": "low",
+  "defaultThinkingLevel": "medium",
   "hideThinkingBlock": false,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",
@@ -29,11 +29,6 @@
   },
   "warnings": {
     "anthropicExtraUsage": false
-  },
-  "compaction": {
-    "enabled": true,
-    "reserveTokens": 16384,
-    "keepRecentTokens": 30000
   },
   "tuiMode": "fullscreen"
 }

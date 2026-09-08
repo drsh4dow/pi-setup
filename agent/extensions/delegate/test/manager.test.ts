@@ -33,32 +33,26 @@ function failureMessage<A, E, R>(effect: Effect.Effect<A, E, R>) {
 }
 
 test("constructor snapshots mutable options", () => Effect.runPromise(Effect.gen(function* () {
-	const sessions: FakeChild[] = [];
 	let originalAccepted = 0;
 	let replacementAccepted = 0;
 	const options: DelegateManagerOptions = {
 		onAccepted: () => originalAccepted++,
-		createSession: () => {
-			const child = new FakeChild();
-			setImmediate(() => sessions.push(child));
-			return Promise.resolve(child as unknown as ChildSession);
-		},
-		shutdownSession: (child) => {
-			(child as unknown as FakeChild).disposeNow();
-			return Promise.resolve();
-		},
+		createSession: () => Promise.reject(new Error("original factory failure")),
 	};
 	const manager = new DelegateManager(options);
 	options.onAccepted = () => replacementAccepted++;
 	options.createSession = () => Promise.reject(new Error("replacement called"));
 
-	const job = manager.spawn({ task: "stable options", ctx: context });
-	assert.equal(originalAccepted, 1);
-	assert.equal(replacementAccepted, 0);
-	yield* eventually(() => sessions.length === 1);
-	sessions[0].finish("done");
-	assert.equal((yield* manager.wait([job.id]))[0].output, "done");
-	yield* manager.shutdown();
+	try {
+		const job = manager.spawn({ task: "stable options", ctx: context });
+		assert.equal(originalAccepted, 1);
+		assert.equal(replacementAccepted, 0);
+		const [snapshot] = yield* manager.wait([job.id]);
+		assert.equal(snapshot.status, "error");
+		assert.equal(snapshot.error, "original factory failure");
+	} finally {
+		yield* manager.shutdown();
+	}
 })));
 
 test("per-run model override resolves strictly or fails the spawn", () => Effect.runPromise(Effect.gen(function* () {

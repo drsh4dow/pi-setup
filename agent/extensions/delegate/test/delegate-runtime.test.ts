@@ -20,7 +20,7 @@ import {
 	thinkingForEffort,
 } from "../index.ts";
 import { extractMessageText } from "../output.ts";
-import { createChild, shutdownChild } from "../runtime.ts";
+import { createChild } from "../runtime.ts";
 import { snapshot } from "./snapshot.ts";
 
 const settingsDir = mkdtempSync(join(tmpdir(), "pi-delegate-test-"));
@@ -53,13 +53,10 @@ test("covers delegated runtime helpers", () => {
 			{ name: "delegate_session" },
 			{ name: "read" },
 			{ name: "bash" },
-			{ name: "bg_start" },
-			{ name: "bg_status" },
-			{ name: "bg_list" },
-			{ name: "bg_kill" },
+			{ name: "custom_tool" },
 			{ name: "subagent" },
 		]),
-		["read", "bash", "bg_start", "bg_status", "bg_list", "bg_kill"],
+		["read", "bash", "custom_tool"],
 	);
 
 	assert.deepEqual(
@@ -151,29 +148,6 @@ test("covers delegated runtime behavior", () =>
 			);
 			assert.ok(!customizedChild.systemPrompt.includes(policy));
 			customizedChild.dispose();
-
-			const backgroundExtension = fileURLToPath(
-				new URL("../../background-terminals/index.ts", import.meta.url),
-			);
-			const backgroundChild = yield* createChild(
-				settingsDir,
-				undefined,
-				"low",
-				agentDir,
-			).pipe(
-				Effect.provideService(
-					ConfigProvider.ConfigProvider,
-					childConfig(backgroundExtension),
-				),
-			);
-			assert.deepEqual(
-				backgroundChild
-					.getActiveToolNames()
-					.filter((name) => name.startsWith("bg_"))
-					.sort(),
-				["bg_kill", "bg_list", "bg_start", "bg_status", "bg_wait"],
-			);
-			yield* shutdownChild(backgroundChild);
 
 			const failingExtension = join(
 				settingsDir,

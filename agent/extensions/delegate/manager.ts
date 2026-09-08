@@ -29,6 +29,7 @@ import {
 	shutdownChild,
 	thinkingForEffort,
 } from "./runtime.ts";
+import { aggregateDelegateUsage } from "./usage.ts";
 
 const MAX_PENDING_SENDS = 8;
 const DISPOSAL_TIMEOUT_MS = 16_000;
@@ -66,6 +67,8 @@ interface Run {
 	pendingSends: number;
 	waiters: number;
 	readonly state: RunState;
+	childSessionId?: string;
+	childSessionFile?: string;
 }
 
 export interface DelegateManagerOptions {
@@ -76,7 +79,11 @@ export interface DelegateManagerOptions {
 		signal: AbortSignal,
 	) => Promise<ChildSession>;
 	shutdownSession?: (child: ChildSession) => Promise<void>;
+	onAccepted?: (snapshot: DelegateSnapshot) => void;
+	onStarted?: (snapshot: DelegateSnapshot) => void;
+	onSettlement?: (snapshot: DelegateSnapshot) => void;
 	onSettled?: (snapshot: DelegateSnapshot) => void;
+	recovered?: readonly DelegateSnapshot[];
 }
 
 function isDirectory(path: string) {
@@ -127,8 +134,12 @@ function waitUntil(
 export class DelegateManager {
 	// The product contract deliberately admits every run immediately and retains it for the parent session; the user accepts unbounded aggregate use instead of backpressure or eviction.
 	private readonly jobs = new Map<string, Run>();
+	private readonly recovered = new Map<string, DelegateSnapshot>();
 	private readonly createSession?: DelegateManagerOptions["createSession"];
 	private readonly shutdownSession?: DelegateManagerOptions["shutdownSession"];
+	private readonly onAccepted?: (snapshot: DelegateSnapshot) => void;
+	private readonly onStarted?: (snapshot: DelegateSnapshot) => void;
+	private readonly onSettlement?: (snapshot: DelegateSnapshot) => void;
 	private readonly onSettled?: (snapshot: DelegateSnapshot) => void;
 	private readonly listeners = new Set<(snapshot: DelegateSnapshot) => void>();
 	private readonly runTasks = new Set<Fiber.Fiber<void, never>>();
@@ -145,7 +156,18 @@ export class DelegateManager {
 	constructor(options: DelegateManagerOptions = {}) {
 		this.createSession = options.createSession;
 		this.shutdownSession = options.shutdownSession;
+		this.onAccepted = options.onAccepted;
+		this.onStarted = options.onStarted;
 		this.onSettled = options.onSettled;
+		this.onSettlement = options.onSettlement;
+		for (const snapshot of options.recovered ?? [])
+			this.recovered.set(snapshot.id, snapshot);
+		this.nextId = Math.max(
+			0,
+			...[...this.recovered].map(
+				([id]) => Number(id.replace(/^delegate-/, "")) || 0,
+			),
+		);
 	}
 
 	subscribe(listener: (snapshot: DelegateSnapshot) => void): () => void {
@@ -154,14 +176,12 @@ export class DelegateManager {
 	}
 
 	sessionUsage() {
-		let tokens = 0;
-		let cost = 0;
-		for (const job of this.jobs.values()) {
-			const usage = job.childState.state().usage;
-			tokens += usage.totalTokens;
-			cost += usage.cost;
-		}
-		return { tokens, cost };
+		return aggregateDelegateUsage(
+			this.list().map((snapshot) => ({
+				usage: snapshot.childUsage,
+				unavailable: snapshot.childUsageUnavailable ?? [],
+			})),
+		);
 	}
 
 	spawn(request: DelegateRequest): DelegateSnapshot {
@@ -215,6 +235,7 @@ export class DelegateManager {
 		};
 		this.jobs.set(job.id, job);
 		const snapshot = this.snapshot(job);
+		this.onAccepted?.(snapshot);
 		this.notify(snapshot);
 		const task = Effect.runFork(
 			this.run(job).pipe(
@@ -232,18 +253,28 @@ export class DelegateManager {
 
 	list(ids?: readonly string[]): DelegateSnapshot[] {
 		if (ids) {
-			return [...new Set(ids)].map((id) => this.snapshot(this.requireJob(id)));
+			return [...new Set(ids)].map(
+				(id) => this.recovered.get(id) ?? this.snapshot(this.requireJob(id)),
+			);
 		}
 		return [...this.jobs.values()]
+			.map((job) => this.snapshot(job))
+			.concat([...this.recovered.values()])
 			.sort(
 				(a, b) =>
-					Number(!a.state.isActive()) - Number(!b.state.isActive()) ||
-					b.state.settlementOrder() - a.state.settlementOrder(),
-			)
-			.map((job) => this.snapshot(job));
+					Number(a.status !== "running") - Number(b.status !== "running") ||
+					(b.settledAt ?? 0) - (a.settledAt ?? 0),
+			);
 	}
 
 	trail(id: string): readonly string[] {
+		const recovered = this.recovered.get(id);
+		if (recovered)
+			return recovered.checkpoint
+				? [recovered.checkpoint]
+				: recovered.output
+					? [`Assistant\n\n${recovered.output}`]
+					: [];
 		return this.requireJob(id).childState.trail();
 	}
 
@@ -413,13 +444,20 @@ export class DelegateManager {
 						),
 					catch: delegateError,
 				})
-			: createChild(request.cwd, job.modelChoice, job.thinking).pipe(
-					Effect.mapError(delegateError),
-				);
+			: createChild(
+					request.cwd,
+					job.modelChoice,
+					job.thinking,
+					undefined,
+					job.ctx.sessionManager,
+				).pipe(Effect.mapError(delegateError));
+		job.childSessionId = child.sessionManager.getSessionId();
+		job.childSessionFile = child.sessionManager.getSessionFile();
 		if (!job.state.isActive()) {
 			yield* this.disposeOwned(child, job.id);
 			return;
 		}
+		this.onStarted?.(this.snapshot(job));
 		job.model = modelName(child.model ?? job.modelChoice);
 		if (!job.state.startSubscribing(child)) {
 			yield* this.disposeOwned(child, job.id);
@@ -546,6 +584,7 @@ export class DelegateManager {
 					`[delegate] abort failed for ${job.id}: ${evidence}`,
 				);
 			}
+			job.childState.synchronizeUsage(child.sessionManager.getEntries());
 			if (
 				(!stopped || child.isStreaming) &&
 				job.state.releaseStoppingChild(child)
@@ -622,7 +661,12 @@ export class DelegateManager {
 		if (transition.kind === "unchanged") return;
 		this.nextSettlementOrder = settlementOrder;
 		this.endOwnership(job, new Error(`Delegate ${job.id} ownership ended.`));
+		if (transition.child)
+			job.childState.synchronizeUsage(
+				transition.child.sessionManager.getEntries(),
+			);
 		const snapshot = this.snapshot(job);
+		this.onSettlement?.(snapshot);
 		Effect.runSync(Deferred.succeed(job.completion, snapshot));
 		this.notify(snapshot);
 		if (job.state.shouldDeliverSettlement()) this.onSettled?.(snapshot);
@@ -633,6 +677,11 @@ export class DelegateManager {
 	}
 
 	private snapshot(job: Run): DelegateSnapshot {
+		const child = job.state.runningChild();
+		if (child) {
+			job.childSessionFile = child.sessionManager.getSessionFile();
+			job.childState.synchronizeUsage(child.sessionManager.getEntries());
+		}
 		const childState = job.childState.state();
 		const state = job.state.view();
 		const status = state.status;
@@ -651,6 +700,8 @@ export class DelegateManager {
 			output: childState.output,
 			outputTruncated: childState.outputTruncated,
 			fullOutputFile: childState.fullOutputFile,
+			childSessionId: job.childSessionId,
+			childSessionFile: job.childSessionFile,
 			success: status === "done",
 			assignedTask: job.task,
 			effort: job.effort,
@@ -663,6 +714,11 @@ export class DelegateManager {
 			toolCalls: childState.toolCalls,
 			failedToolCalls: childState.failedToolCalls,
 			childUsage: childState.usage,
+			childUsageUnavailable: Object.entries(childState.usageReported)
+				.filter(([, reported]) => !reported)
+				.map(
+					([field]) => field as keyof Omit<typeof childState.usage, "turns">,
+				),
 			aborted: status === "cancelled",
 			error,
 			progress: status === "running" ? childState.progress : undefined,
@@ -685,6 +741,8 @@ export class DelegateManager {
 	}
 
 	private requireJob(id: string): Run {
+		if (this.recovered.has(id))
+			throw new Error(`Delegate ${id} was recovered for inspection only.`);
 		const job = this.jobs.get(id);
 		if (!job) throw new Error(`Unknown delegate id "${id}".`);
 		return job;

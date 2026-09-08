@@ -76,8 +76,12 @@ function taskPreview(task: string): string {
 
 export function sessionSummary(snapshot: DelegateSnapshot): string {
 	const line = `${summary(snapshot)} · ${taskPreview(snapshot.assignedTask) || "(empty task)"}`;
-	const progress = formatProgress(snapshot);
-	return progress ? `${line}\n  ${progress}` : line;
+	const details = [
+		formatProgress(snapshot),
+		snapshot.childSessionId ? `session ${snapshot.childSessionId}` : "",
+		snapshot.childSessionFile ? `file ${snapshot.childSessionFile}` : "",
+	].filter(Boolean);
+	return details.length > 0 ? `${line}\n  ${details.join(" · ")}` : line;
 }
 
 export function formatCollapsedPreview(text: string): {

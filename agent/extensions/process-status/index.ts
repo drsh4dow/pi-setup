@@ -7,11 +7,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { observeAutoCompaction } from "../../lib/settings.ts";
+import { accountingText, sessionAccounting } from "./accounting.ts";
 import {
 	type ProcessStatusView,
 	processStatusUsage,
 	processStatusView,
-	sessionCost,
 } from "./status.ts";
 
 const ENTRY_TYPE = "process-status";
@@ -61,35 +61,9 @@ export default function processStatus(
 		ctx.ui.setFooter((tui, _theme, footerData) => {
 			const sessionManager = new Proxy(ctx.sessionManager, {
 				get(target, property) {
-					if (property === "getEntries") {
-						return () => {
-							const entries = target.getEntries();
-							const workerCost = processStatusUsage(pi).cost;
-							if (workerCost === 0) return entries;
-							return [
-								{
-									type: "message",
-									message: {
-										role: "assistant",
-										usage: {
-											input: 0,
-											output: 0,
-											cacheRead: 0,
-											cacheWrite: 0,
-											cost: {
-												input: 0,
-												output: 0,
-												cacheRead: 0,
-												cacheWrite: 0,
-												total: workerCost,
-											},
-										},
-									},
-								},
-								...entries,
-							];
-						};
-					}
+					// Pi owns context/model layout; our accounting line owns cumulative usage.
+					if (property === "getEntries") return () => [];
+
 					const value = Reflect.get(target, property, target);
 					return typeof value === "function" ? value.bind(target) : value;
 				},
@@ -111,7 +85,7 @@ export default function processStatus(
 				},
 				sessionManager,
 				modelRegistry: ctx.modelRegistry,
-				modelRuntime,
+				modelRuntime: { ...modelRuntime, isUsingSubscription: () => false },
 				getContextUsage: () => ctx.getContextUsage(),
 			} as unknown as AgentSession;
 			const footer = new FooterComponent(session, footerData);
@@ -124,7 +98,35 @@ export default function processStatus(
 				invalidate: () => tui.requestRender(),
 				render(width: number) {
 					footer.setAutoCompactEnabled(settings.enabled());
-					return footer.render(width);
+					const entries = ctx.sessionManager.getEntries();
+					const totals = sessionAccounting(entries, processStatusUsage(pi));
+					const subscription =
+						currentModel !== undefined &&
+						(currentModel.provider === "kimi-coding" ||
+							modelRuntime.isUsingSubscription(currentModel.provider));
+					// Pi hardcodes Kimi's subscription cost even with no entries. Remove that
+					// empty-account placeholder; only the shared totals may display money.
+					const nativeCost =
+						currentModel?.provider === "kimi-coding" ? "$0.000 (sub) " : "";
+					const lines = footer
+						.render(width + nativeCost.length)
+						.map((line, index) =>
+							truncateToWidth(
+								index === 1 && nativeCost ? line.replace(nativeCost, "") : line,
+								width,
+								"...",
+							),
+						);
+					lines.splice(
+						1,
+						0,
+						truncateToWidth(
+							accountingText(totals.total, entries, subscription),
+							width,
+							"...",
+						),
+					);
+					return lines;
 				},
 				dispose() {
 					settings.dispose();
@@ -156,12 +158,22 @@ export default function processStatus(
 		parameters: Type.Object({}),
 		executionMode: "parallel",
 		execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-			const main = sessionCost(ctx.sessionManager.getEntries());
-			const delegates = processStatusUsage(pi).cost;
+			const totals = sessionAccounting(
+				ctx.sessionManager.getEntries(),
+				processStatusUsage(pi),
+			);
+			const account = (source: typeof totals.total) => ({
+				inputTokens: source.input,
+				outputTokens: source.output,
+				cacheReadTokens: source.cacheRead,
+				cacheWriteTokens: source.cacheWrite,
+				totalTokens: source.totalTokens,
+				usd: source.cost === null ? null : roundUsd(source.cost),
+			});
 			const usage = {
-				totalUsd: roundUsd(main + delegates),
-				mainUsd: roundUsd(main),
-				delegatesUsd: roundUsd(delegates),
+				parent: account(totals.parent),
+				delegates: account(totals.delegates),
+				total: account(totals.total),
 			};
 			return Promise.resolve({
 				content: [{ type: "text" as const, text: JSON.stringify(usage) }],

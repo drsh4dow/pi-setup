@@ -15,6 +15,8 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 
 Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as this setup's active system prompt. It defines the agent's behavior and engineering standards.
 
+Historical prompts are preserved in [`agent/OLD.md`](agent/OLD.md) (the previous system prompt) and [`agent/PRINCIPLES.md`](agent/PRINCIPLES.md) (the full hardcoded pstack principles from `APPEND_SYSTEM.md`). These files are reference copies, not active prompts.
+
 ## Install
 
 Requires Node.js 22.19 or newer and [Bun](https://bun.sh). Install Pi and clone this repository into its global configuration directory:
@@ -51,6 +53,7 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | Extension | What it adds |
 | --- | --- |
 | `aoauth` | Anthropic OAuth login support |
+| `background-terminals` | `bg_start`, `bg_status`, `bg_wait`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
 | `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
@@ -64,7 +67,7 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 
 `agent/extensions/herdr-agent-state.ts` is locally patched. Herdr integration updates overwrite it; restore the repository version and run `/reload` in affected Pi sessions after updating Herdr's integration.
 
-Delegation selects a model and reasoning profile from `delegate.fast` or `delegate.thorough` in [`agent/settings.json`](agent/settings.json). Each accepts `model` and `thinking`, for example `{"fast":{"model":"openai-codex/gpt-5.6-luna","thinking":"high"},"thorough":{"model":"openai-codex/gpt-6-astra","thinking":"low"}}`. Thinking accepts Pi's levels from `off` through `max`. Missing fields inherit from the next configuration source. Legacy `delegate.model` and `delegate.thinking` apply to both profiles, with profile-specific fields taking precedence within a file. Without configuration, delegates use the parent model and low reasoning for fast or high for thorough. A project's `.pi/delegate.json` can override that default with `{"model":"provider/model-id"}`; lookup checks the run's effective `cwd`, then the parent session's project, so an external worktree does not discard the session's choice. Project files also accept `fast` and `thorough` profiles. An explicit `delegate_run.model` overrides every file's model, retaining the selected profile's reasoning. Invalid, unavailable, or unauthenticated configured models fall back to the parent model, while an invalid explicit override fails the run. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort; a run that settles abnormally hands back the child's last messages so it can be re-briefed. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation unless `cwd` points them at one the caller prepared, so parallel mutations can otherwise conflict.
+Delegation selects a model and reasoning profile from `delegate.fast` or `delegate.thorough` in [`agent/settings.json`](agent/settings.json). Each accepts `model` and `thinking`, for example `{"fast":{"model":"openai-codex/gpt-5.6-luna","thinking":"high"},"thorough":{"model":"openai-codex/gpt-6-astra","thinking":"low"}}`. Thinking accepts Pi's levels from `off` through `max`. Missing fields inherit from the next configuration source. Legacy `delegate.model` and `delegate.thinking` apply to both profiles, with profile-specific fields taking precedence within a file. Without configuration, delegates use the parent model and low reasoning for fast or high for thorough. A project's `.pi/delegate.json` can override that default with `{"model":"provider/model-id"}`; lookup checks the run's effective `cwd`, then the parent session's project, so an external worktree does not discard the session's choice. Project files also accept `fast` and `thorough` profiles. An explicit `delegate_run.model` overrides every file's model, retaining the selected profile's reasoning. Invalid, unavailable, or unauthenticated configured models fall back to the parent model, while an invalid explicit override fails the run. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort; a run that settles abnormally hands back the child's last messages so it can be re-briefed. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation unless `cwd` points them at one the caller prepared, so parallel mutations can otherwise conflict. A child's background terminals are its own: they never appear in the parent's list and are terminated when the child settles.
 
 Children use normal Pi prompt discovery and the applicable `APPEND_SYSTEM.md`, plus a short [child role](agent/extensions/delegate/SYSTEM.md). A project's `.pi/DELEGATE_SYSTEM.md` still replaces the child's base prompt; the shared append policy and child role remain appended.
 
@@ -72,11 +75,16 @@ Children use normal Pi prompt discovery and the applicable `APPEND_SYSTEM.md`, p
 
 A delegate stays running through Pi's built-in automatic compaction and retries until its session settles.
 
+Run finite background commands directly. Their natural exit wakes the owner with the actual exit status, including success; no notification suffix is needed. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
+
+Use `bg_status` for immediate inspection. Its bounded observations distinguish the first read, changed state/output, and unchanged evidence; elapsed time alone is not a change. When blocked on a command, use `bg_wait` with its ID instead of polling or sleeping. It returns the settled result immediately if already available. Cancelling the wait leaves the command running; `bg_kill` terminates it. A successful wait consumes the completion notice so it is not delivered again. Full logs still require explicit redirection.
+
 The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity, and cancellation. Rejected edits include bounded candidate line locations and recovery guidance from the original file. These are navigation hints, never permission to apply an ambiguous replacement.
 
 ### Installed skills
 
 - `agent-browser`
+- `babysit-pr`
 - `blast-radius`
 - `code-review`
 - `codebase-design`

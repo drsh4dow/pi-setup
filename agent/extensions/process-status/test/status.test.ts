@@ -52,7 +52,7 @@ function reportedUsage(
 
 function activity(
 	id: string,
-	kind: "subagents",
+	kind: "subagents" | "terminals",
 	active: boolean,
 	summary: string,
 	tokens = 0,
@@ -98,17 +98,24 @@ test("lists each activity on its own line with aggregate usage", () => {
 		],
 		() => ({ tokens: 2000, cost: 0.3 }),
 	);
+	registerProcessStatusSource({ events }, "terminals", () => [
+		activity("t1", "terminals", true, "[running] test watcher"),
+		activity("t2", "terminals", false, "[failed] build"),
+	]);
 
 	const view = processStatusView({ events });
 	assert.deepEqual(view.collapsed.split("\n"), [
 		"2,000 tokens · $0.3000",
 		"d1 [running] read · model",
+		"t1 [running] test watcher",
 	]);
 	assert.deepEqual(view.expanded.split("\n"), [
 		"2,000 tokens · $0.3000",
 		"d1 [running] read · model",
 		"d2 [done] read · model",
 		"d3 [done] report",
+		"t1 [running] test watcher",
+		"t2 [failed] build",
 	]);
 });
 
@@ -196,13 +203,13 @@ test("reports unknown and duplicate ids without hiding valid entries", () => {
 		activity("d1", "subagents", true, "first"),
 	]);
 	registerProcessStatusSource({ events }, "second", () => [
-		activity("d1", "subagents", true, "duplicate"),
-		activity("d2", "subagents", true, "valid"),
+		activity("d1", "terminals", true, "duplicate"),
+		activity("t1", "terminals", true, "valid"),
 	]);
 
 	const list = processStatusView({ events }).expanded;
 	assert.match(list, /d1 first/);
-	assert.match(list, /d2 valid/);
+	assert.match(list, /t1 valid/);
 	assert.match(list, /second: error=duplicate-id id=d1/);
 	const unknown = processStatusView({ events }, "missing").collapsed;
 	assert.equal(unknown, "error: unknown-id · id: missing · action: /ps");

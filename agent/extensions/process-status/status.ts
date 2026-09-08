@@ -14,13 +14,26 @@ const MAX_DETAIL_BYTES = 64 * 1024;
 
 type ProcessStatusKind = "subagents" | "terminals";
 
-interface ProcessStatusUsage {
-	tokens: number;
-	cost: number;
+export interface ProcessStatusUsage {
+	cost: number | null;
+	input?: number | null;
+	output?: number | null;
+	cacheRead?: number | null;
+	cacheWrite?: number | null;
+	totalTokens?: number | null;
 }
 
-export function sessionCost(entries: readonly SessionEntry[]): number {
-	let total = 0;
+export function sessionReportedUsage(entries: readonly SessionEntry[]) {
+	const totals = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: 0,
+	};
+	const unavailable = new Set<keyof typeof totals>();
+	let sawUsage = false;
 	for (const entry of entries) {
 		let usage: Usage | undefined;
 		if (
@@ -32,10 +45,42 @@ export function sessionCost(entries: readonly SessionEntry[]): number {
 		} else if (entry.type === "branch_summary" || entry.type === "compaction") {
 			usage = entry.usage;
 		}
-		if (!usage) continue;
-		total += usage.cost.total;
+		if (!usage) {
+			if (
+				usage !== undefined ||
+				(entry.type === "message" && entry.message.role === "assistant")
+			)
+				for (const field of Object.keys(totals) as (keyof typeof totals)[])
+					unavailable.add(field);
+			continue;
+		}
+		sawUsage = true;
+		const values = {
+			input: usage.input,
+			output: usage.output,
+			cacheRead: usage.cacheRead,
+			cacheWrite: usage.cacheWrite,
+			totalTokens: usage.totalTokens,
+			cost: usage.cost?.total,
+		};
+		for (const field of Object.keys(totals) as (keyof typeof totals)[]) {
+			const value = values[field];
+			if (typeof value === "number" && Number.isFinite(value) && value >= 0)
+				totals[field] += value;
+			else unavailable.add(field);
+		}
 	}
-	return total;
+	if (!sawUsage)
+		for (const field of Object.keys(totals) as (keyof typeof totals)[])
+			unavailable.add(field);
+	return {
+		input: unavailable.has("input") ? null : totals.input,
+		output: unavailable.has("output") ? null : totals.output,
+		cacheRead: unavailable.has("cacheRead") ? null : totals.cacheRead,
+		cacheWrite: unavailable.has("cacheWrite") ? null : totals.cacheWrite,
+		totalTokens: unavailable.has("totalTokens") ? null : totals.totalTokens,
+		cost: unavailable.has("cost") ? null : totals.cost,
+	};
 }
 
 interface ProcessStatusActivity {
@@ -94,11 +139,18 @@ function boundedDetail(text: string): string {
 }
 
 function validUsage(usage: ProcessStatusUsage): boolean {
-	return (
-		Number.isFinite(usage.tokens) &&
-		usage.tokens >= 0 &&
-		Number.isFinite(usage.cost) &&
-		usage.cost >= 0
+	return [
+		usage.cost,
+		usage.input,
+		usage.output,
+		usage.cacheRead,
+		usage.cacheWrite,
+		usage.totalTokens,
+	].every(
+		(value) =>
+			value === undefined ||
+			value === null ||
+			(Number.isFinite(value) && value >= 0),
 	);
 }
 
@@ -124,7 +176,14 @@ function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 		subagents: 0,
 		terminals: 0,
 	};
-	const usage: ProcessStatusUsage = { tokens: 0, cost: 0 };
+	const usage: ProcessStatusUsage = {
+		cost: 0,
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+	};
 	const errors: string[] = [];
 	const ids = new Set<string>();
 	let sourceCount = 0;
@@ -145,8 +204,20 @@ function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 				if (loadUsage) {
 					const sourceUsage = loadUsage();
 					if (!validUsage(sourceUsage)) throw new Error("invalid usage");
-					usage.tokens += sourceUsage.tokens;
-					usage.cost += sourceUsage.cost;
+
+					for (const field of [
+						"cost",
+						"input",
+						"output",
+						"cacheRead",
+						"cacheWrite",
+						"totalTokens",
+					] as const) {
+						const value = sourceUsage[field];
+						if (usage[field] === null || value === null || value === undefined)
+							usage[field] = null;
+						else usage[field] = (usage[field] ?? 0) + value;
+					}
 				}
 				if (!includeActivities) return;
 				const activities = load();
@@ -200,7 +271,7 @@ function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 }
 
 function usageText(usage: ProcessStatusUsage): string {
-	return `${usage.tokens.toLocaleString("en-US")} tokens · $${usage.cost.toFixed(4)}`;
+	return `${usage.totalTokens?.toLocaleString("en-US") ?? "unavailable"} tokens · ${usage.cost === null ? "USD unavailable" : `$${usage.cost.toFixed(4)}`}`;
 }
 
 function listText(

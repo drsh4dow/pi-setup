@@ -379,7 +379,14 @@ test("rejected child prompt settles, remains inspectable, and releases capacity"
 			},
 		},
 	} as AgentSessionEvent);
-	assert.deepEqual(manager.sessionUsage(), { tokens: 3, cost: 0.0123 });
+	assert.deepEqual(manager.sessionUsage(), {
+		cost: 0.0123,
+		input: 1,
+		output: 2,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 3,
+	});
 	sessions[0].rejectPrompt(new Error("prompt transport rejected"));
 
 	const [snapshot] = yield* manager.wait([failed.id]);

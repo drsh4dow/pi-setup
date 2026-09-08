@@ -10,12 +10,24 @@ import { observeAutoCompaction } from "../../../lib/settings.ts";
 import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import extension from "../index.ts";
 
-function restoreAgentDirectory(original: string | undefined) {
-	// @effect-diagnostics-next-line processEnv:off
-	if (original === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	// @effect-diagnostics-next-line processEnv:off
-	else process.env.PI_CODING_AGENT_DIR = original;
-}
+const useAgentDirectory = (root: string) =>
+	Effect.acquireRelease(
+		Effect.sync(() => {
+			// The SDK resolves its settings directory from the process environment.
+			// @effect-diagnostics-next-line processEnvInEffect:off
+			const original = process.env.PI_CODING_AGENT_DIR;
+			// @effect-diagnostics-next-line processEnvInEffect:off
+			process.env.PI_CODING_AGENT_DIR = root;
+			return original;
+		}),
+		(original) =>
+			Effect.sync(() => {
+				// @effect-diagnostics-next-line processEnvInEffect:off
+				if (original === undefined) delete process.env.PI_CODING_AGENT_DIR;
+				// @effect-diagnostics-next-line processEnvInEffect:off
+				else process.env.PI_CODING_AGENT_DIR = original;
+			}),
+	);
 
 test(
 	"mounted footer observes persisted settings and stops observing on disposal",
@@ -24,20 +36,10 @@ test(
 		Effect.runPromise(
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
-				const root = yield* fs.makeTempDirectory({
+				const root = yield* fs.makeTempDirectoryScoped({
 					prefix: "pi-footer-settings-",
 				});
-				// The SDK resolves its settings directory from the process environment.
-				// @effect-diagnostics-next-line processEnvInEffect:off
-				const original = process.env.PI_CODING_AGENT_DIR;
-				// @effect-diagnostics-next-line processEnvInEffect:off
-				process.env.PI_CODING_AGENT_DIR = root;
-				yield* Effect.addFinalizer(() =>
-					Effect.sync(() => restoreAgentDirectory(original)).pipe(
-						Effect.andThen(fs.remove(root, { recursive: true, force: true })),
-						Effect.orDie,
-					),
-				);
+				yield* useAgentDirectory(root);
 				const globalPath = `${root}/settings.json`;
 				const projectPath = `${root}/.pi/settings.json`;
 				yield* fs.makeDirectory(`${root}/.pi`);
@@ -160,19 +162,10 @@ test(
 		Effect.runPromise(
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
-				const root = yield* fs.makeTempDirectory({
+				const root = yield* fs.makeTempDirectoryScoped({
 					prefix: "pi-settings-lock-",
 				});
-				// @effect-diagnostics-next-line processEnvInEffect:off
-				const original = process.env.PI_CODING_AGENT_DIR;
-				// @effect-diagnostics-next-line processEnvInEffect:off
-				process.env.PI_CODING_AGENT_DIR = root;
-				yield* Effect.addFinalizer(() =>
-					Effect.sync(() => restoreAgentDirectory(original)).pipe(
-						Effect.andThen(fs.remove(root, { recursive: true, force: true })),
-						Effect.orDie,
-					),
-				);
+				yield* useAgentDirectory(root);
 				const path = `${root}/settings.json`;
 				yield* fs.writeFileString(path, '{"compaction":{"enabled":false}}');
 				yield* fs.makeDirectory(`${path}.lock`);

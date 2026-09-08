@@ -85,8 +85,8 @@ export class DelegateManager {
 	private shutdownEffect?: Effect.Effect<void>;
 
 	constructor(options: DelegateManagerOptions = {}) {
-		this.options = options;
-		for (const snapshot of options.recovered ?? [])
+		this.options = { ...options };
+		for (const snapshot of this.options.recovered ?? [])
 			this.recovered.set(snapshot.id, snapshot);
 		this.nextId = Math.max(
 			0,

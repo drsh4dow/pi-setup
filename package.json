@@ -6,6 +6,7 @@
     "prepare": "effect-tsgo patch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p cli/dumpfile/tsconfig.json",
     "check": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test",
+    "lint": "bun run check",
     "check:fix": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test --write",
     "test:delegate": "node --test agent/extensions/delegate/test/*.test.ts",
     "test:background-terminals": "node --test agent/extensions/background-terminals/test/*.test.ts",

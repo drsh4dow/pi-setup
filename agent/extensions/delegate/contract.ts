@@ -1,4 +1,5 @@
 import { type Static, StringEnum, Type } from "@earendil-works/pi-ai";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 export const RUN_TOOL_NAME = "delegate_run";
 export const SESSION_TOOL_NAME = "delegate_session";
@@ -39,7 +40,7 @@ export const DelegateRunParams = Type.Object({
 	effort: Type.Optional(
 		StringEnum(["fast", "thorough"], {
 			description:
-				"Reasoning depth for the child agent. Fast is the default for scouting, research, review, critique, and debugging. Use thorough only when explicitly requested, after a fast run demonstrates reasoning-limited uncertainty, or when an error would be costly and hard to detect or rerun.",
+				"Configured model and reasoning profile for the child agent. Fast is the default for scouting, research, review, critique, and debugging. Use thorough only when explicitly requested, after a fast run demonstrates reasoning-limited uncertainty, or when an error would be costly and hard to detect or rerun.",
 			default: "fast",
 		}),
 	),
@@ -89,7 +90,7 @@ export type DelegateRunParams = Static<typeof DelegateRunParams>;
 export type DelegateSessionParams = Static<typeof DelegateSessionParams>;
 export type DelegateWaitMode = NonNullable<DelegateSessionParams["mode"]>;
 export type DelegateEffort = "fast" | "thorough";
-export type DelegateThinking = "low" | "high";
+export type DelegateThinking = AgentSession["thinkingLevel"];
 export type DelegateStatus = "running" | "done" | "error" | "cancelled";
 
 export interface DelegateUsageStats {

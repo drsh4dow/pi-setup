@@ -121,12 +121,9 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 		const clients = [...this.clients.values()];
 		this.clients.clear();
 		for (const client of clients) client.delivery.clear();
-		yield* Effect.all(
-			clients.map((client) => client.manager.shutdown()),
-			{
-				concurrency: "unbounded",
-			},
-		);
+		yield* Effect.forEach(clients, (client) => client.manager.shutdown(), {
+			concurrency: "unbounded",
+		});
 	});
 }
 

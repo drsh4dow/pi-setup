@@ -472,9 +472,11 @@ effectTest(
 				},
 			}),
 		);
-		let outcome = yield* Effect.raceFirst(
-			loginOutcome(login),
-			Effect.sleep(100).pipe(Effect.as("still waiting")),
+		let outcome = yield* loginOutcome(login).pipe(
+			Effect.timeoutOrElse({
+				duration: 100,
+				orElse: () => Effect.succeed("still waiting"),
+			}),
 		);
 		if (outcome === "still waiting") {
 			assert.ok(denialUrl);
@@ -511,9 +513,11 @@ effectTest(
 		);
 		// Wall-clock bound: cancellation must settle login without the stalled
 		// socket being destroyed first. Slack is 8x SERVER_CLOSE_GRACE_MS.
-		const outcome = yield* Effect.raceFirst(
-			loginOutcome(login),
-			Effect.sleep(2_000).pipe(Effect.as("still waiting")),
+		const outcome = yield* loginOutcome(login).pipe(
+			Effect.timeoutOrElse({
+				duration: 2_000,
+				orElse: () => Effect.succeed("still waiting"),
+			}),
 		);
 		assert.equal(outcome, "Login cancelled");
 		socket?.destroy();

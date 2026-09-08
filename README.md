@@ -51,7 +51,7 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | Extension | What it adds |
 | --- | --- |
 | `aoauth` | Anthropic OAuth login support |
-| `background-terminals` | `bg_start`, `bg_status`, `bg_wait`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
+| `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
 | `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
@@ -73,9 +73,9 @@ Children use normal Pi prompt discovery and the applicable `APPEND_SYSTEM.md`, p
 
 A delegate stays running through Pi's built-in automatic compaction and retries until its session settles.
 
-Run finite background commands directly. Their natural exit wakes the owner with the actual exit status, including success; no notification suffix is needed. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
+Use `bash` by default. Use `bg_start` for services and watchers. Use it for finite commands when there is useful independent work to do. A finite command's natural exit wakes the owner with its actual exit status, including success. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
 
-Use `bg_status` for immediate inspection. Its bounded observations distinguish the first read, changed state/output, and unchanged evidence; elapsed time alone is not a change. When blocked on a command, use `bg_wait` with its ID instead of polling or sleeping. It returns the settled result immediately if already available. Cancelling the wait leaves the command running; `bg_kill` terminates it. A successful wait consumes the completion notice so it is not delivered again. Full logs still require explicit redirection.
+Use `bg_status` for immediate inspection, not polling. Its bounded observations distinguish the first read, changed state/output, and unchanged evidence; elapsed time alone is not a change. Completion and `emit-to-pi` events wake the owner. When no useful independent work remains, answer the user. Use `bg_kill` to terminate a command. Full logs still require explicit redirection.
 
 The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity, and cancellation. Rejected edits include bounded candidate line locations and recovery guidance from the original file. These are navigation hints, never permission to apply an ambiguous replacement.
 

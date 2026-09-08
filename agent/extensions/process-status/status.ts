@@ -12,7 +12,7 @@ const MAX_ACTIVITIES_PER_KIND = 64;
 const MAX_SUMMARY_CHARACTERS = 240;
 const MAX_DETAIL_BYTES = 64 * 1024;
 
-type ProcessStatusKind = "subagents" | "terminals";
+type ProcessStatusKind = "subagents";
 
 interface ProcessStatusUsage {
 	tokens: number;
@@ -118,11 +118,9 @@ export function registerProcessStatusSource(
 function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 	const groups: Record<ProcessStatusKind, ProcessStatusActivity[]> = {
 		subagents: [],
-		terminals: [],
 	};
 	const omitted: Record<ProcessStatusKind, number> = {
 		subagents: 0,
-		terminals: 0,
 	};
 	const usage: ProcessStatusUsage = { tokens: 0, cost: 0 };
 	const errors: string[] = [];

@@ -1,6 +1,6 @@
 # pi-setup
 
-Global Pi configuration: system prompt, vendored TypeScript extensions, skills, themes, and prompts. Pi loads [`agent/APPEND_SYSTEM.md`](agent/APPEND_SYSTEM.md) as the active system-prompt addition.
+Global Pi configuration: system prompt, vendored TypeScript extensions, skills, themes, and prompts. Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as the active system prompt.
 
 Run `bun run verify` before reporting a change to `agent/extensions`, `agent/lib`, or `agent/scripts`.
 

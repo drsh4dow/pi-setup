@@ -113,9 +113,11 @@ try {
 	);
 	rmSync(join(fixture, "agent/extensions/effect-suggestion.ts"));
 
+	const warningLines =
+		biome.linter.rules.style.noExcessiveLinesPerFile.options.maxLines + 1;
 	writeFileSync(
 		join(fixture, "agent/extensions/biome-warning.ts"),
-		`${Array.from({ length: 801 }, (_, index) => `export const line${index} = ${index};`).join("\n")}\n`,
+		`${Array.from({ length: warningLines }, (_, index) => `export const line${index} = ${index};`).join("\n")}\n`,
 	);
 	requireDiagnostic(
 		"Biome warning must fail check",

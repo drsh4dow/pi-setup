@@ -102,13 +102,13 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		name: "bg_start",
 		label: "Start Background Terminal",
 		description:
-			"Start a non-interactive, session-scoped shell command in the background. Completion automatically wakes the owning agent with the real exit code; no emit-to-pi is needed. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
+			"Start a non-interactive, session-scoped shell command in the background. Use bash by default; use bg_start for services and watchers, or finite commands when there is useful independent work to do. Completion automatically wakes the owning agent with the real exit code. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
 		promptSnippet:
-			"Start a long-running non-interactive command and continue useful work instead of polling",
+			"Start a service or watcher, or run a finite command alongside useful independent work",
 		promptGuidelines: [
+			"Use bash by default. Use bg_start for services and watchers, or finite commands when there is useful independent work to do.",
 			"Use meaningful titles and avoid duplicate servers or watchers.",
-			"When blocked on a bg_start command, use bg_wait with its id instead of repeated bg_status calls or shell sleeps.",
-			"Run finite bg_start jobs directly to preserve their exit status. Success and failure automatically wake the owner with the real exit code. Use emit-to-pi only for actionable intermediate milestones, never as a completion signal or a trailing command that masks the work's exit code.",
+			"Run finite bg_start jobs without a notification wrapper to preserve their exit status. Success and failure automatically wake the owner with the real exit code. Use emit-to-pi only for actionable intermediate milestones, never as a completion signal or a trailing command that masks the work's exit code.",
 			"Never use for interactive commands. Background commands and delegated children share the worktree without write isolation; avoid overlapping mutations.",
 		],
 		parameters: Type.Object({
@@ -152,7 +152,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 						content: [
 							{
 								type: "text" as const,
-								text: `Started ${summary(snapshot)}\nCompletion automatically wakes you with the real exit code; no emit-to-pi is needed. When blocked, call bg_wait with id="${snapshot.id}"; otherwise continue useful work.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
+								text: `Started ${summary(snapshot)}\nCompletion automatically wakes you with the real exit code; no emit-to-pi is needed. Continue useful independent work, or answer the user when none remains.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
 							},
 						],
 						details: terminalMetadata(snapshot),
@@ -165,7 +165,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		name: "bg_status",
 		label: "Background Terminal Status",
 		description:
-			"Inspect state and bounded stdout/stderr tails, including changes since the previous bg_status read. When blocked on completion, use bg_wait instead.",
+			"Inspect state and bounded stdout/stderr tails, including changes since the previous bg_status read. Use for immediate inspection, not polling.",
 		parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
 		executionMode: "parallel",
 		execute(_id, params) {
@@ -201,7 +201,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 						content: [
 							{
 								type: "text",
-								text: `${formatTerminalReport(snapshot)}\nObservation: ${observation} since previous bg_status read. stdout=${snapshot.stdout.totalBytes} bytes stderr=${snapshot.stderr.totalBytes} bytes.${snapshot.state === "running" ? `\nWhen blocked, call bg_wait with id="${snapshot.id}" instead of polling or sleeping.` : ""}`,
+								text: `${formatTerminalReport(snapshot)}\nObservation: ${observation} since previous bg_status read. stdout=${snapshot.stdout.totalBytes} bytes stderr=${snapshot.stderr.totalBytes} bytes.${snapshot.state === "running" ? "\nCompletion or an emit-to-pi event will wake you; do not poll." : ""}`,
 							},
 						],
 						details: { ...terminalMetadata(snapshot), observation },
@@ -295,40 +295,6 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 					signal?.aborted
 						? new Error(
 								"Kill wait aborted; termination continues in the background.",
-							)
-						: error,
-				);
-			});
-		},
-	});
-	pi.registerTool({
-		name: "bg_wait",
-		label: "Wait for Background Terminal",
-		description:
-			"Wait for one session-owned terminal to settle and return its state and bounded stdout/stderr tails. Already-settled results return immediately. Cancellation stops only the wait, not the command. Use bg_kill to terminate it.",
-		promptSnippet:
-			"Wait for a background command when blocked instead of polling or sleeping",
-		parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
-		executionMode: "parallel",
-		execute(_id, params, signal) {
-			const terminalSession = currentSession();
-			return Effect.runPromise(
-				Effect.gen(function* () {
-					const snapshot = yield* terminalSession.wait(clientId, params.id);
-					terminalSession.consume(clientId, [snapshot.id]);
-					return {
-						content: [
-							{ type: "text" as const, text: formatTerminalReport(snapshot) },
-						],
-						details: terminalMetadata(snapshot),
-					};
-				}),
-				{ signal },
-			).catch((error) => {
-				throw sanitizeErrorForDisplay(
-					signal?.aborted
-						? new Error(
-								"Wait aborted; terminal continues. Use bg_wait to wait again or bg_kill to terminate it.",
 							)
 						: error,
 				);

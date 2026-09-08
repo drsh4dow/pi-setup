@@ -729,16 +729,6 @@ export class BackgroundTerminalManager {
 		Effect.uninterruptible,
 	);
 
-	wait = Effect.fn("BackgroundTerminalManager.wait")(function* (
-		this: BackgroundTerminalManager,
-		id: string,
-	) {
-		const entry = this.entries.get(id);
-		if (!entry) throw new Error(`Unknown terminal id "${id}".`);
-		if (entry.kind === "settled") return entry.snapshot;
-		return yield* Deferred.await(entry.terminal.settlement);
-	});
-
 	kill = Effect.fn("BackgroundTerminalManager.kill")(function* (
 		this: BackgroundTerminalManager,
 		ids: readonly string[],

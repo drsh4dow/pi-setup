@@ -18,6 +18,7 @@
 		"plugins": [
 			{
 				"name": "@effect/language-service",
+				"ignoreEffectSuggestionsInTscExitCode": false,
 				"diagnosticSeverity": {
 					"importFromBarrel": "error",
 					"anyUnknownInErrorContext": "error",

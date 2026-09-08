@@ -261,6 +261,8 @@ test("queued cancellation waits for the builtin mutation queue and never writes"
 				return release.promise;
 			});
 			yield* Effect.promise(() => entered.promise);
+			// Caller-owned cancellation must interrupt the queued public tool request.
+			// @effect-diagnostics-next-line abortControllerInEffect:off
 			const controller = new AbortController();
 			const pending = createDiagnosticEditTool(cwd).execute(
 				"test",

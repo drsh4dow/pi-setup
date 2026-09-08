@@ -180,7 +180,7 @@ test("blocking completion persists settlement independently of background delive
 				task: "durable blocking completion",
 				ctx: context,
 			});
-			const waiting = Effect.runFork(manager.wait([run.id]));
+			const waiting = yield* Effect.forkChild(manager.wait([run.id]));
 			yield* eventually(() => child.isStreaming);
 			child.finish("saved result");
 			yield* Fiber.join(waiting);

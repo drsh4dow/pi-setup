@@ -29,10 +29,33 @@ function localReference(raw) {
 	return { path: decodeURIComponent(path), fragment };
 }
 
+function withoutFencedCode(markdown) {
+	let fence;
+	return markdown
+		.split("\n")
+		.map((line) => {
+			if (fence) {
+				const closing = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)?.[1];
+				if (closing?.[0] === fence[0] && closing.length >= fence.length)
+					fence = undefined;
+				return "";
+			}
+			const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+			if (opening && !(opening[1][0] === "`" && opening[2].includes("`"))) {
+				fence = opening[1];
+				return "";
+			}
+			return line;
+		})
+		.join("\n");
+}
+
 function headingAnchors(markdown) {
 	const anchors = new Set();
 	const duplicates = new Map();
-	for (const match of markdown.matchAll(/^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm)) {
+	for (const match of withoutFencedCode(markdown).matchAll(
+		/^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm,
+	)) {
 		const heading = match[1]
 			.replace(/!?\[([^\]]+)\]\([^)]*\)/g, "$1")
 			.replace(/<[^>]+>/g, "")
@@ -50,7 +73,7 @@ function headingAnchors(markdown) {
 for (const markdown of tracked.filter(
 	(path) => extname(path).toLowerCase() === ".md",
 )) {
-	const text = readFileSync(resolve(root, markdown), "utf8");
+	const text = withoutFencedCode(readFileSync(resolve(root, markdown), "utf8"));
 	const targets = [
 		...[...text.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g)].map((match) => match[1]),
 		...[...text.matchAll(/^\s*\[[^\]]+\]:\s*(\S+)/gm)].map((match) => match[1]),

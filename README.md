@@ -15,8 +15,6 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 
 Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as this setup's active system prompt. It defines the agent's behavior and engineering standards.
 
-Historical prompts are preserved in [`agent/OLD.md`](agent/OLD.md) (the previous system prompt) and [`agent/PRINCIPLES.md`](agent/PRINCIPLES.md) (the full hardcoded pstack principles from `APPEND_SYSTEM.md`). These files are reference copies, not active prompts.
-
 ## Install
 
 Requires Node.js 22.19 or newer and [Bun](https://bun.sh). Install Pi and clone this repository into its global configuration directory:
@@ -83,11 +81,11 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 
 ### Installed skills
 
-- `agent-browser`
 - `babysit-pr`
 - `blast-radius`
 - `code-review`
 - `codebase-design`
+- `create-verification-skill`
 - `diagnosing-bugs`
 - `docs-search`
 - `domain-modeling`
@@ -95,14 +93,46 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 - `grill-me`
 - `grill-with-docs`
 - `grilling`
+- `how`
+- `implement`
+- `implement-spec`
 - `improve-codebase-architecture`
+- `maintain-verification-skill`
+- `principle-attack-the-premise`
+- `principle-boundary-discipline`
+- `principle-build-the-lever`
+- `principle-encode-lessons-in-structure`
+- `principle-exhaust-the-design-space`
+- `principle-experience-first`
+- `principle-fix-root-causes`
+- `principle-foundational-thinking`
+- `principle-guard-the-context-window`
+- `principle-laziness-protocol`
+- `principle-make-operations-idempotent`
+- `principle-migrate-callers-then-delete-legacy-apis`
+- `principle-minimize-reader-load`
+- `principle-model-the-domain`
+- `principle-never-block-on-the-human`
+- `principle-outcome-oriented-execution`
+- `principle-prove-it-works`
+- `principle-redesign-from-first-principles`
+- `principle-separate-before-serializing-shared-state`
+- `principle-sequence-verifiable-units`
+- `principle-subtract-before-you-add`
+- `principle-test-behavior-not-implementation`
+- `principle-type-system-discipline`
 - `prototype`
 - `research`
 - `resolving-merge-conflicts`
 - `show-me`
 - `tdd`
+- `to-spec`
+- `to-tickets`
+- `typescript-best-practices`
+- `unslop`
 - `using-subagents`
 - `web-search`
+- `why`
 - `wizard`
 - `writing-for-agents`
 - `writing-good-prs`
@@ -116,7 +146,6 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 
 - `beautify-dirty-worktree`
 - `handoff`
-- `implement-orchestrator`
 
 ### Installed themes
 

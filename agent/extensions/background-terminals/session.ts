@@ -20,10 +20,6 @@ export interface BackgroundTerminalSession {
 	): RunningTerminalSnapshot;
 	list(client: symbol): TerminalMetadata[];
 	get(client: symbol, id: string): TerminalSnapshot | undefined;
-	wait(
-		client: symbol,
-		id: string,
-	): ReturnType<BackgroundTerminalManager["wait"]>;
 	kill(
 		client: symbol,
 		ids: readonly string[],
@@ -83,7 +79,7 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 			.filter((snapshot) => snapshot.state === "running").length;
 		if (running >= MAX_RUNNING_PER_OWNER) {
 			throw new Error(
-				`Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${running}. Kill one with bg_kill or use bg_wait with its id.`,
+				`Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${running}. Kill one with bg_kill.`,
 			);
 		}
 		const snapshot = joined.manager.start(options);
@@ -97,10 +93,6 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 
 	get(client: symbol, id: string) {
 		return this.clients.get(client)?.manager.get(id);
-	}
-
-	wait(client: symbol, id: string) {
-		return this.joined(client).manager.wait(id);
 	}
 
 	kill(client: symbol, ids: readonly string[]) {

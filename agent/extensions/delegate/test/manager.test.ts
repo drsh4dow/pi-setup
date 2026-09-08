@@ -531,13 +531,14 @@ test("cancellation settles all gated sends", () => Effect.runPromise(Effect.gen(
 	const job = manager.spawn({ task: "gated steering", ctx: context });
 	yield* eventually(() => sessions.length === 1);
 	sessions[0].steerGate = yield* Deferred.make<void>();
-	const sends = yield* Effect.all(
-		Array.from({ length: 8 }, (_, index) => manager.send(job.id, `message ${index}`).pipe(Effect.exit, Effect.forkChild)),
+	const sends = yield* Effect.forEach(
+		Array.from({ length: 8 }),
+		(_, index) => manager.send(job.id, `message ${index}`).pipe(Effect.exit, Effect.forkChild),
 	);
 	yield* eventually(() => sessions[0].steeringStarted.length === 1);
 
 	yield* manager.cancel([job.id]);
-	const results = yield* Effect.all(sends.map(Fiber.join));
+	const results = yield* Effect.forEach(sends, Fiber.join);
 	assert.equal(
 		results.every((result) => result._tag === "Failure"),
 		true,
@@ -594,14 +595,15 @@ test("pending sends are capped", () => Effect.runPromise(Effect.gen(function* ()
 	yield* eventually(() => sessions.length === 1);
 	const steerGate = yield* Deferred.make<void>();
 	sessions[0].steerGate = steerGate;
-	const sends = yield* Effect.all(
-		Array.from({ length: 8 }, (_, index) => Effect.forkChild(manager.send(job.id, `message ${index}`))),
+	const sends = yield* Effect.forEach(
+		Array.from({ length: 8 }),
+		(_, index) => Effect.forkChild(manager.send(job.id, `message ${index}`)),
 	);
 	yield* yieldImmediate;
 	const overflow = yield* failureMessage(manager.send(job.id, "overflow"));
 	assert.match(overflow, /8 pending messages/);
 	yield* Deferred.succeed(steerGate, undefined);
-	yield* Effect.all(sends.map(Fiber.join));
+	yield* Effect.forEach(sends, Fiber.join);
 	sessions[0].finish("done");
 	yield* manager.wait([job.id]);
 	yield* manager.shutdown();

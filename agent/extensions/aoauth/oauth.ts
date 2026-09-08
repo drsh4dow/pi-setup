@@ -258,10 +258,13 @@ const startCallbackServer = Effect.fn("startCallbackServer")(function* (
 	const start =
 		"Bun" in globalThis ? startBunCallbackServer : startNodeCallbackServer;
 	const server = yield* start(expectedState, CALLBACK_PORT, settle).pipe(
-		Effect.catch((error) =>
-			(error.cause as { code?: string } | undefined)?.code === "EADDRINUSE"
-				? start(expectedState, 0, settle)
-				: Effect.fail(error),
+		Effect.catchIf(
+			(error) =>
+				typeof error.cause === "object" &&
+				error.cause !== null &&
+				"code" in error.cause &&
+				error.cause.code === "EADDRINUSE",
+			() => start(expectedState, 0, settle),
 		),
 	);
 	return { ...server, result: Deferred.await(deferred) };

@@ -63,6 +63,36 @@ test("accepts matching tracked inventory and resolving links", (t) => {
 	assert.equal(result.status, 0, result.stderr);
 });
 
+test("ignores example links and headings inside fenced code", (t) => {
+	const root = repository(t, validReadme, {
+		"docs/guide.md": [
+			"````md",
+			"```md",
+			"[Example](missing.md)",
+			"```",
+			"````",
+			"   ~~~md",
+			"[example]: also-missing.md",
+			"# Start",
+			"   ~~~~",
+			"# Start",
+			"[Real](#start)",
+		].join("\n"),
+	});
+	const result = run(root);
+	assert.equal(result.status, 0, result.stderr);
+});
+
+test("still checks links after a fenced example", (t) => {
+	const root = repository(t, validReadme, {
+		"docs/guide.md": "```md\n[Example](ignored.md)\n```\n[Real](missing.md)\n",
+	});
+	const result = run(root);
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /missing\.md/);
+	assert.doesNotMatch(result.stderr, /ignored\.md/);
+});
+
 test("reports a broken link in any tracked Markdown file", (t) => {
 	const root = repository(t, validReadme, {
 		"docs/guide.md": "[Missing](nested/nope.md)\n",

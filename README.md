@@ -13,7 +13,7 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 - Pi's built-in compaction with default settings
 - GPT Fast mode enabled
 
-Pi loads [`agent/APPEND_SYSTEM.md`](agent/APPEND_SYSTEM.md) as this setup's active system-prompt addition. It defines the agent's behavior and engineering standards.
+Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as this setup's active system prompt. It defines the agent's behavior and engineering standards.
 
 ## Install
 
@@ -80,7 +80,6 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 - `blast-radius`
 - `code-review`
 - `codebase-design`
-- `create-verification-skill`
 - `diagnosing-bugs`
 - `docs-search`
 - `domain-modeling`
@@ -88,18 +87,14 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 - `grill-me`
 - `grill-with-docs`
 - `grilling`
-- `how`
 - `improve-codebase-architecture`
-- `maintain-verification-skill`
 - `prototype`
 - `research`
 - `resolving-merge-conflicts`
 - `show-me`
 - `tdd`
-- `unslop`
 - `using-subagents`
 - `web-search`
-- `why`
 - `wizard`
 - `writing-for-agents`
 - `writing-good-prs`
@@ -132,7 +127,7 @@ Custom keybindings:
 
 ```text
 agent/
-├── APPEND_SYSTEM.md   # active system-prompt addition
+├── SYSTEM.md          # active system prompt
 ├── settings.json      # models, thinking level, theme, and delegate model
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions

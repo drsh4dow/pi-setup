@@ -27,6 +27,7 @@ export const SUPPORTED_MODELS = new Set([
 	"openai-codex/gpt-5.6-sol",
 	"openai-codex/gpt-5.6-terra",
 	"openai-codex/gpt-5.6-luna",
+	"openai-codex/gpt-6-astra",
 ]);
 export const OPENAI_FAST_SERVICE_TIER = "fast";
 export const CODEX_FAST_SERVICE_TIER = "priority";

@@ -2,8 +2,12 @@ import { Clock, Effect } from "effect";
 
 const { unlinkSync } = process.getBuiltinModule("fs");
 
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentSessionEvent,
+	SessionEntry,
+} from "@earendil-works/pi-coding-agent";
 import { truncateUtf8Head, truncateUtf8Window } from "../../lib/text.ts";
+import { sessionReportedUsage } from "../process-status/status.ts";
 import { type DelegateUsageStats, MAX_CHILD_OUTPUT_BYTES } from "./contract.ts";
 import { extractMessageText, saveDelegateOutput } from "./output.ts";
 
@@ -102,6 +106,14 @@ export class ChildState {
 	private assistantError?: string;
 	private toolCalls = 0;
 	private failedToolCalls = 0;
+	private readonly usageReported = {
+		input: false,
+		output: false,
+		cacheRead: false,
+		cacheWrite: false,
+		totalTokens: false,
+		cost: false,
+	};
 	private readonly usage: DelegateUsageStats = {
 		turns: 0,
 		input: 0,
@@ -111,6 +123,11 @@ export class ChildState {
 		totalTokens: 0,
 		cost: 0,
 	};
+
+	private readonly archiveOutput: boolean;
+	constructor(archiveOutput = true) {
+		this.archiveOutput = archiveOutput;
+	}
 
 	trail(): readonly string[] {
 		const entries = [
@@ -135,6 +152,7 @@ export class ChildState {
 			toolCalls: this.toolCalls,
 			failedToolCalls: this.failedToolCalls,
 			usage: { ...this.usage },
+			usageReported: { ...this.usageReported },
 		};
 	}
 
@@ -214,13 +232,52 @@ export class ChildState {
 			this.assistantError = undefined;
 		}
 		const usage = event.message.usage;
+		const firstUsage = this.usage.turns === 0;
 		this.usage.turns++;
-		this.usage.input += usage?.input ?? 0;
-		this.usage.output += usage?.output ?? 0;
-		this.usage.cacheRead += usage?.cacheRead ?? 0;
-		this.usage.cacheWrite += usage?.cacheWrite ?? 0;
-		this.usage.totalTokens += usage?.totalTokens ?? 0;
-		this.usage.cost += usage?.cost?.total ?? 0;
+		if (firstUsage) {
+			for (const field of Object.keys(
+				this.usageReported,
+			) as (keyof typeof this.usageReported)[])
+				this.usageReported[field] = true;
+		}
+		const add = (
+			field: "input" | "output" | "cacheRead" | "cacheWrite" | "totalTokens",
+			value: unknown,
+		) => {
+			if (typeof value === "number" && Number.isFinite(value) && value >= 0)
+				this.usage[field] += value;
+			else this.usageReported[field] = false;
+		};
+		add("input", usage?.input);
+		add("output", usage?.output);
+		add("cacheRead", usage?.cacheRead);
+		add("cacheWrite", usage?.cacheWrite);
+		add("totalTokens", usage?.totalTokens);
+		const cost = usage?.cost?.total;
+		if (typeof cost === "number" && Number.isFinite(cost) && cost >= 0)
+			this.usage.cost += cost;
+		else this.usageReported.cost = false;
+	}
+
+	synchronizeUsage(entries: readonly SessionEntry[]) {
+		const turns = entries.filter(
+			(entry) => entry.type === "message" && entry.message.role === "assistant",
+		).length;
+		// Pi emits message_end before persisting it. Do not replace a newer event total with an older file total.
+		if (turns < this.usage.turns || entries.length === 0) return;
+		const reported = sessionReportedUsage(entries);
+		this.usage.turns = turns;
+		for (const field of [
+			"input",
+			"output",
+			"cacheRead",
+			"cacheWrite",
+			"totalTokens",
+			"cost",
+		] as const) {
+			this.usage[field] = reported[field] ?? 0;
+			this.usageReported[field] = reported[field] !== null;
+		}
 	}
 
 	cleanup() {
@@ -245,6 +302,15 @@ export class ChildState {
 		this.outputTruncated = false;
 		if (Buffer.byteLength(text, "utf8") <= MAX_CHILD_OUTPUT_BYTES) {
 			this.output = text;
+			return;
+		}
+		if (!this.archiveOutput) {
+			this.outputTruncated = true;
+			this.output = truncateUtf8Head(
+				text,
+				MAX_CHILD_OUTPUT_BYTES,
+				"\n[truncated; see native child session]",
+			);
 			return;
 		}
 		try {

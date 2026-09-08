@@ -39,8 +39,8 @@ A Delegate Run that returns its identity immediately and delivers its result aft
 _Avoid_: Non-blocking orchestration, detached Delegate
 
 **Delegate Session**:
-The parent-session-scoped record of one delegated child, retained after settlement for inspection, steering, waiting, or cancellation where applicable.
-_Avoid_: Orchestration plan, resumable Delegate
+The parent-session-owned record of one delegated child. A persistent parent retains settled children across reopen for inspection, including each child's native Pi conversation file. Recovered children cannot continue or restart. A fork owns none of the source parent's Delegate Sessions.
+_Avoid_: Orchestration plan, resumable Delegate, fork-inherited Delegate
 
 **Delegate Effort**:
 The reasoning depth chosen for a Delegate Run. It selects the child's thinking level and nothing else.
@@ -67,8 +67,8 @@ _Avoid_: Isolation mode, managed worktree, sandbox
 ### Local tools
 
 **Session Usage**:
-The cumulative provider-reported USD cost of one Pi session and every Delegate Run it owns, including settled Delegate Runs. It is split into main-thread and aggregate delegate cost; exact totals extend through the latest completed provider response.
-_Avoid_: Running cost, live cost, token budget
+The cumulative provider-reported tokens and USD cost of one Pi session and every Delegate Run it owns, including failed, cancelled, settled, and recovered runs. It reports parent, delegates, and total with input, output, cache-read, cache-write, total-token, and USD fields through the latest completed provider response. A reported zero remains zero. Missing or invalid provider fields are unavailable, never estimated.
+_Avoid_: Running cost, live cost, token budget, estimated cost
 
 **Session Response Archive**:
 A bounded collection of text responses retained for later retrieval within one Pi session, including resumed use of that same session.

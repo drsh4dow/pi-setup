@@ -15,7 +15,7 @@ import extension from "../index.ts";
 import {
 	processStatusView,
 	registerProcessStatusSource,
-	sessionCost,
+	sessionReportedUsage,
 } from "../status.ts";
 
 function eventBus() {
@@ -64,13 +64,13 @@ function activity(
 		kind,
 		active,
 		summary,
-		usage: { tokens, cost },
+		usage: { totalTokens: tokens, cost },
 		detail: detail === undefined ? undefined : () => detail,
 	};
 }
 
 test("aggregates all provider-reported session cost", () => {
-	const cost = sessionCost([
+	const cost = sessionReportedUsage([
 		{
 			type: "message",
 			message: { role: "assistant", usage: reportedUsage(10, 5, 2, 3, 0.2) },
@@ -83,7 +83,7 @@ test("aggregates all provider-reported session cost", () => {
 		{ type: "message", message: { role: "user" } },
 	] as never);
 
-	assert.equal(cost, 0.35);
+	assert.equal(cost.cost, 0.35);
 });
 
 test("lists each activity on its own line with aggregate usage", () => {
@@ -96,7 +96,7 @@ test("lists each activity on its own line with aggregate usage", () => {
 			activity("d2", "subagents", false, "[done] read · model", 800, 0.2),
 			activity("d3", "subagents", false, "[done] report"),
 		],
-		() => ({ tokens: 2000, cost: 0.3 }),
+		() => ({ totalTokens: 2000, cost: 0.3 }),
 	);
 	registerProcessStatusSource({ events }, "terminals", () => [
 		activity("t1", "terminals", true, "[running] test watcher"),
@@ -136,7 +136,7 @@ test("ignores retained collection requests after synchronous delivery", () => {
 		},
 		() => {
 			usageLoads++;
-			return { tokens: 10, cost: 0.1 };
+			return { totalTokens: 10, cost: 0.1 };
 		},
 	);
 
@@ -269,7 +269,14 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 			),
 			activity("d2", "subagents", false, `[done] review ${"x".repeat(80)}`),
 		],
-		() => ({ tokens: 200, cost: 0.75 }),
+		() => ({
+			cost: 0.75,
+			input: 100,
+			output: 50,
+			cacheRead: 25,
+			cacheWrite: 25,
+			totalTokens: 200,
+		}),
 	);
 	let handler:
 		| ((args: string, ctx: ExtensionCommandContext) => Promise<void>)
@@ -413,6 +420,33 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 	footer.dispose?.();
 });
 
+test("reported usage preserves zero and marks invalid fields unavailable", () => {
+	assert.deepEqual(
+		sessionReportedUsage([
+			{
+				type: "message",
+				message: { role: "assistant", usage: reportedUsage(0, 0, 0, 0, 0) },
+			},
+		] as never),
+		{
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: 0,
+		},
+	);
+	const invalid = reportedUsage(1, 2, 0, 0, 0);
+	invalid.input = Number.NaN;
+	assert.equal(
+		sessionReportedUsage([
+			{ type: "message", message: { role: "assistant", usage: invalid } },
+		] as never).input,
+		null,
+	);
+});
+
 test("exposes cumulative session and delegate usage to the model", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
@@ -421,7 +455,14 @@ test("exposes cumulative session and delegate usage to the model", () =>
 				{ events },
 				"delegate",
 				() => [],
-				() => ({ tokens: 200, cost: 0.1236 }),
+				() => ({
+					cost: 0.1236,
+					input: 100,
+					output: 50,
+					cacheRead: 25,
+					cacheWrite: 25,
+					totalTokens: 200,
+				}),
 			);
 			let usageTool: ToolDefinition | undefined;
 			extension({
@@ -460,12 +501,65 @@ test("exposes cumulative session and delegate usage to the model", () =>
 			const result = yield* Effect.promise(() =>
 				tool.execute("usage-call", {}, undefined, undefined, context),
 			);
-			const expected = { totalUsd: 0.424, mainUsd: 0.3, delegatesUsd: 0.124 };
+			const expected = {
+				parent: {
+					inputTokens: 20,
+					outputTokens: 10,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					totalTokens: 30,
+					usd: 0.3,
+				},
+				delegates: {
+					inputTokens: 100,
+					outputTokens: 50,
+					cacheReadTokens: 25,
+					cacheWriteTokens: 25,
+					totalTokens: 200,
+					usd: 0.124,
+				},
+				total: {
+					inputTokens: 120,
+					outputTokens: 60,
+					cacheReadTokens: 25,
+					cacheWriteTokens: 25,
+					totalTokens: 230,
+					usd: 0.424,
+				},
+			};
 			assert.deepEqual(result.details, expected);
 			const text = result.content.find((part) => part.type === "text")?.text;
 			assert.equal(
 				text,
-				'{"totalUsd":0.424,"mainUsd":0.3,"delegatesUsd":0.124}',
+				'{"parent":{"inputTokens":20,"outputTokens":10,"cacheReadTokens":0,"cacheWriteTokens":0,"totalTokens":30,"usd":0.3},"delegates":{"inputTokens":100,"outputTokens":50,"cacheReadTokens":25,"cacheWriteTokens":25,"totalTokens":200,"usd":0.124},"total":{"inputTokens":120,"outputTokens":60,"cacheReadTokens":25,"cacheWriteTokens":25,"totalTokens":230,"usd":0.424}}',
 			);
 		}),
 	));
+
+test("a later assistant without provider usage invalidates totals, not routine tool results", () => {
+	const good = {
+		type: "message",
+		message: { role: "assistant", usage: reportedUsage(10, 5, 2, 0, 0) },
+	};
+	const routine = { type: "message", message: { role: "toolResult" } };
+	assert.equal(
+		sessionReportedUsage([good, routine] as unknown as Parameters<
+			typeof sessionReportedUsage
+		>[0]).totalTokens,
+		17,
+	);
+	const missing = { type: "message", message: { role: "assistant" } };
+	assert.deepEqual(
+		sessionReportedUsage([good, routine, missing] as unknown as Parameters<
+			typeof sessionReportedUsage
+		>[0]),
+		{
+			input: null,
+			output: null,
+			cacheRead: null,
+			cacheWrite: null,
+			totalTokens: null,
+			cost: null,
+		},
+	);
+});

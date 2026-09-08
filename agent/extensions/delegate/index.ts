@@ -30,6 +30,11 @@ import { cancelTimer, scheduleTimer } from "./host-timers.ts";
 import { DelegateManager } from "./manager.ts";
 import { formatDelegateOutput } from "./output.ts";
 import {
+	DELEGATE_STATE_ENTRY,
+	delegateStateRecord,
+	recoverDelegateStates,
+} from "./persistence.ts";
+import {
 	renderDelegateCall,
 	renderDelegateResult,
 	renderDelegateSessionCall,
@@ -91,6 +96,9 @@ export const resultText = Effect.fn("resultText")(function* (
 		if (snapshot.error) text += `\nError: ${snapshot.error}`;
 		if (snapshot.checkpoint) {
 			text += `\n\nCheckpoint (child's last activity):\n${snapshot.checkpoint}`;
+		}
+		if (snapshot.childSessionFile) {
+			text += `\nNative child session: ${snapshot.childSessionId ?? "unknown"}\nConversation file: ${snapshot.childSessionFile}`;
 		}
 		if (snapshot.fullOutputFile) {
 			text += `\nFull output (until parent session ends): ${snapshot.fullOutputFile}`;
@@ -267,13 +275,29 @@ export class BackgroundDelivery {
 }
 
 export default function delegateExtension(pi: ExtensionAPI) {
-	let manager!: DelegateManager;
+	let manager = new DelegateManager();
 	const delivery = new BackgroundDelivery(pi, resultText, (ids) =>
 		manager.acknowledge(ids),
 	);
-	manager = new DelegateManager({
-		onSettled: (snapshot) => delivery.enqueue(snapshot),
-	});
+	const openManager = (ctx: ExtensionContext) => {
+		const persist = (
+			kind: "accepted" | "started" | "settled",
+			snapshot: DelegateSnapshot,
+		) => {
+			if (!ctx.sessionManager.getSessionFile()) return;
+			pi.appendEntry(
+				DELEGATE_STATE_ENTRY,
+				delegateStateRecord(ctx.sessionManager.getSessionId(), kind, snapshot),
+			);
+		};
+		return new DelegateManager({
+			recovered: recoverDelegateStates(ctx.sessionManager),
+			onAccepted: (snapshot) => persist("accepted", snapshot),
+			onStarted: (snapshot) => persist("started", snapshot),
+			onSettlement: (snapshot) => persist("settled", snapshot),
+			onSettled: (snapshot) => delivery.enqueue(snapshot),
+		});
+	};
 	registerProcessStatusSource(
 		pi,
 		"delegate",
@@ -289,15 +313,22 @@ export default function delegateExtension(pi: ExtensionAPI) {
 						.filter(Boolean)
 						.join(" · "),
 					usage: {
-						tokens: snapshot.childUsage.totalTokens,
-						cost: snapshot.childUsage.cost,
+						totalTokens: snapshot.childUsageUnavailable?.includes("totalTokens")
+							? null
+							: snapshot.childUsage.totalTokens,
+						cost: snapshot.childUsageUnavailable?.includes("cost")
+							? null
+							: snapshot.childUsage.cost,
 					},
 					detail: () => delegateDetail(manager, snapshot.id),
 				})),
 		() => manager.sessionUsage(),
 	);
 
-	pi.on("session_start", (_event, ctx) => delivery.setContext(ctx));
+	pi.on("session_start", (_event, ctx) => {
+		manager = openManager(ctx);
+		delivery.setContext(ctx);
+	});
 	pi.on("agent_settled", () => Effect.runPromise(delivery.flush()));
 	pi.on("session_shutdown", () => {
 		delivery.clear();
@@ -364,9 +395,13 @@ export default function delegateExtension(pi: ExtensionAPI) {
 								`Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Use delegate_session wait with ids=["${result.id}"] to recover retained output.${checkpoint}`,
 							);
 						}
+						const inspection = result.childSessionFile
+							? `\n\nDelegate ${result.id} native session ${result.childSessionId ?? "unknown"}: ${result.childSessionFile}`
+							: "";
 						const output = yield* formatDelegateOutput(
-							result.output ||
-								"Delegated task completed without a final response.",
+							(result.output ||
+								"Delegated task completed without a final response.") +
+								inspection,
 							result.fullOutputFile,
 						);
 						return {

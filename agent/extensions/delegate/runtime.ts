@@ -264,11 +264,24 @@ export function childExtensionPaths(
 	];
 }
 
+export function createChildSessionManager(
+	cwd: string,
+	parent: ExtensionContext["sessionManager"],
+): SessionManager {
+	if (!parent.getSessionFile()) return SessionManager.inMemory(cwd);
+	return SessionManager.create(
+		cwd,
+		join(parent.getSessionDir(), "delegates", parent.getSessionId()),
+		{ parentSession: parent.getSessionFile() },
+	);
+}
+
 export const createChild = Effect.fn("createChild")(function* (
 	cwd: string,
 	model: ExtensionContext["model"],
 	thinking: DelegateThinking,
 	agentDir = getAgentDir(),
+	parentSessionManager?: ExtensionContext["sessionManager"],
 ) {
 	const services = yield* Effect.context<never>();
 	const extensionPaths = yield* Config.string(CHILD_EXTENSION_PATHS_ENV).pipe(
@@ -305,7 +318,9 @@ export const createChild = Effect.fn("createChild")(function* (
 			cwd,
 			agentDir,
 			resourceLoader,
-			sessionManager: SessionManager.inMemory(cwd),
+			sessionManager: parentSessionManager
+				? createChildSessionManager(cwd, parentSessionManager)
+				: SessionManager.inMemory(cwd),
 			model,
 			thinkingLevel: thinking,
 			excludeTools: [...DELEGATION_TOOL_DENYLIST],

@@ -1,6 +1,7 @@
-import type {
-	AgentSessionEvent,
-	ExtensionContext,
+import {
+	type AgentSessionEvent,
+	type ExtensionContext,
+	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Deferred, Effect } from "effect";
 import type { DelegateSnapshot } from "../contract.ts";
@@ -18,6 +19,10 @@ export const context = {
 } as unknown as ExtensionContext;
 
 export class FakeChild {
+	readonly sessionManager: SessionManager;
+	constructor(sessionManager = SessionManager.inMemory(process.cwd())) {
+		this.sessionManager = sessionManager;
+	}
 	readonly model = { provider: "test", id: "child" };
 	readonly prompts: string[] = [];
 	readonly steering: string[] = [];
@@ -117,6 +122,13 @@ export class FakeChild {
 	}
 
 	emit(event: AgentSessionEvent) {
+		if (
+			event.type === "message_end" &&
+			(event.message.role === "assistant" ||
+				event.message.role === "user" ||
+				event.message.role === "toolResult")
+		)
+			this.sessionManager.appendMessage(event.message);
 		for (const listener of this.listeners) listener(event);
 	}
 

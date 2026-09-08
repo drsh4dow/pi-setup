@@ -398,8 +398,8 @@ test("settled sessions and usage remain for the parent session", () => Effect.ru
 	}
 
 	assert.equal(manager.list().length, 65);
-	assert.equal(manager.sessionUsage().tokens, 65 * 16);
-	assert.ok(Math.abs(manager.sessionUsage().cost - 65 * 0.011) < 1e-10);
+	assert.equal(manager.sessionUsage().totalTokens, 65 * 16);
+	assert.ok(Math.abs((manager.sessionUsage().cost ?? Number.NaN) - 65 * 0.011) < 1e-10);
 	yield* manager.shutdown();
 })));
 

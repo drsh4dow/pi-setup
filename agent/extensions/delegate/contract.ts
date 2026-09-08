@@ -115,6 +115,7 @@ export interface DelegateDetails {
 	toolCalls: number;
 	failedToolCalls: number;
 	childUsage: DelegateUsageStats;
+	childUsageUnavailable?: readonly (keyof Omit<DelegateUsageStats, "turns">)[];
 	aborted: boolean;
 	error?: string;
 	progress?: string;
@@ -122,6 +123,9 @@ export interface DelegateDetails {
 	checkpoint?: string;
 	outputTruncated?: boolean;
 	fullOutputFile?: string;
+	/** Native child session identity and file for full conversation inspection. */
+	childSessionId?: string;
+	childSessionFile?: string;
 }
 
 export interface DelegateSnapshot extends DelegateDetails {

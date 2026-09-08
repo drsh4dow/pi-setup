@@ -35,5 +35,3 @@ Finish when the requested behavior and relevant checks are satisfied. Review fin
 ## Keep communication small
 
 Be concise and concrete. Explain consequential decisions, blockers, and results rather than narrating routine work.
-
-Update existing documentation when the change makes it wrong. Create documentation only when requested or when necessary information has no suitable home. Keep one authoritative explanation. Prefer clear code and focused tests over commentary and repeated rules.

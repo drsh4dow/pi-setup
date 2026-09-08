@@ -30,46 +30,26 @@ export function sessionAccounting(
 	};
 }
 
-export function accountingText(
-	total: ReturnType<typeof sessionAccounting>["total"],
+export function sessionDuration(
+	startedAt: string | undefined,
 	entries: readonly SessionEntry[],
-	subscription: boolean,
 ) {
-	const tokens = (value: number | null) =>
-		value === null ? "?" : value.toLocaleString("en-US");
-	const parts = [
-		`↑${tokens(total.input)}`,
-		`↓${tokens(total.output)}`,
-		`R${tokens(total.cacheRead)}`,
-		`W${tokens(total.cacheWrite)}`,
-		`Σ${tokens(total.totalTokens)}`,
-	];
-	// Match Pi's latest-parent-response cache hit semantics, never the delegates' ratio.
-	const parent = sessionReportedUsage(entries);
-	const latest = entries.findLast(
-		(entry) => entry.type === "message" && entry.message.role === "assistant",
-	);
-	if (latest?.type === "message" && latest.message.role === "assistant") {
-		const usage = latest.message.usage;
-		if (
-			usage &&
-			[usage.input, usage.cacheRead, usage.cacheWrite].every(
-				(value) => Number.isFinite(value) && value >= 0,
-			)
-		) {
-			const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
-			if (
-				prompt > 0 &&
-				((total.cacheRead ?? parent.cacheRead ?? 0) > 0 ||
-					(total.cacheWrite ?? parent.cacheWrite ?? 0) > 0)
-			)
-				parts.push(`CH${((usage.cacheRead / prompt) * 100).toFixed(1)}%`);
-		}
-	}
-	parts.push(
-		total.cost === null ? "USD unavailable" : `$${total.cost.toFixed(3)}`,
-	);
-	if (subscription) parts.push("(sub)");
-	if (Object.values(total).includes(null)) parts.push("?=unavailable");
-	return parts.join(" ");
+	const latest = entries.findLast((entry) => entry.type === "message");
+	if (!latest) return "0s";
+	const elapsed = Date.parse(latest.timestamp) - Date.parse(startedAt ?? "");
+	if (!Number.isFinite(elapsed)) return "?";
+	const seconds = Math.max(0, Math.floor(elapsed / 1000));
+	const hours = Math.floor(seconds / 3600);
+	const minutes = Math.floor((seconds % 3600) / 60);
+	return [
+		hours ? `${hours}h` : "",
+		minutes ? `${minutes}m` : "",
+		`${seconds % 60}s`,
+	]
+		.filter(Boolean)
+		.join(" ");
+}
+
+export function accountingText(cost: number | null, subscription: boolean) {
+	return `USD ${cost === null ? "?" : cost.toFixed(3)}${subscription ? " (sub)" : ""}`;
 }

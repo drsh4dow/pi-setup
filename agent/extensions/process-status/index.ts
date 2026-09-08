@@ -5,9 +5,18 @@ import {
 	type ExtensionContext,
 	FooterComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+	Box,
+	Text,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import { observeAutoCompaction } from "../../lib/settings.ts";
-import { accountingText, sessionAccounting } from "./accounting.ts";
+import {
+	accountingText,
+	sessionAccounting,
+	sessionDuration,
+} from "./accounting.ts";
 import {
 	type ProcessStatusView,
 	processStatusUsage,
@@ -58,7 +67,7 @@ export default function processStatus(
 	pi.on("session_start", (_event, ctx) => {
 		currentModel = ctx.model;
 		if (ctx.mode !== "tui") return;
-		ctx.ui.setFooter((tui, _theme, footerData) => {
+		ctx.ui.setFooter((tui, theme, footerData) => {
 			const sessionManager = new Proxy(ctx.sessionManager, {
 				get(target, property) {
 					// Pi owns context/model layout; our accounting line owns cumulative usage.
@@ -108,23 +117,21 @@ export default function processStatus(
 					// empty-account placeholder; only the shared totals may display money.
 					const nativeCost =
 						currentModel?.provider === "kimi-coding" ? "$0.000 (sub) " : "";
-					const lines = footer
-						.render(width + nativeCost.length)
-						.map((line, index) =>
-							truncateToWidth(
-								index === 1 && nativeCost ? line.replace(nativeCost, "") : line,
-								width,
-								"...",
-							),
-						);
-					lines.splice(
-						1,
-						0,
-						truncateToWidth(
-							accountingText(totals.total, entries, subscription),
-							width,
-							"...",
-						),
+					const duration = sessionDuration(
+						ctx.sessionManager.getHeader()?.timestamp,
+						entries,
+					);
+					const prefix = `${accountingText(totals.total.cost, subscription)} · ${duration} · `;
+					const lines = footer.render(width);
+					const stats =
+						footer.render(
+							Math.max(1, width - visibleWidth(prefix)) + nativeCost.length,
+						)[1] ?? "";
+					lines[1] = truncateToWidth(
+						theme.fg("dim", prefix) +
+							(nativeCost ? stats.replace(nativeCost, "") : stats),
+						width,
+						theme.fg("dim", "..."),
 					);
 					return lines;
 				},

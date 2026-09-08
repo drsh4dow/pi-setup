@@ -422,7 +422,7 @@ for (const ending of ["cancel", "shutdown", "failure"] as const) {
 						usd: 1,
 					},
 				});
-				assert.match(view.render(), /↑20 ↓10 R4 W0 Σ34 CH16\.7% \$1\.000/);
+				assert.match(view.render(), /USD 1\.000/);
 				assert.match(view.render(), /10\.0%\/1\.0k/);
 				assert.match(view.render(), /test-model/);
 				view.dispose();

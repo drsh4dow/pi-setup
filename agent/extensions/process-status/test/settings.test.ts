@@ -52,6 +52,7 @@ test("mounted footer observes persisted settings and stops observing on disposal
 				modelRegistry: {},
 				getContextUsage: () => undefined,
 				sessionManager: {
+					getHeader: () => null,
 					getEntries: () => [],
 					getCwd: () => root,
 					getSessionName: () => undefined,
@@ -79,7 +80,7 @@ test("mounted footer observes persisted settings and stops observing on disposal
 						renders++;
 					},
 				}),
-				unsafeFixture({}),
+				unsafeFixture({ fg: (_color: string, text: string) => text }),
 				{
 					getGitBranch: () => null,
 					getExtensionStatuses: () => new Map(),

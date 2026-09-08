@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { stripVTControlCharacters } from "node:util";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { usageView } from "./usage-fixture.ts";
@@ -67,11 +68,11 @@ for (const missing of [false, true]) {
 						usd: 0,
 					},
 				});
-				assert.match(
-					view.render(),
-					missing
-						? /↑\? ↓55 R230 W0 Σ395 CH75\.0% \$0\.000 \?=unavailable/
-						: /↑110 ↓55 R230 W0 Σ395 CH75\.0% \$0\.000/,
+				assert.equal(
+					stripVTControlCharacters(view.render())
+						.split("\n")[1]
+						?.split(" · ")[0],
+					"USD 0.000",
 				);
 				assert.match(view.render(), /10\.0%\/1\.0k/);
 				assert.equal(parent.getEntries().length, 1);
@@ -140,7 +141,10 @@ test("unknown delegate cost stays unavailable in footer and session_usage", () =
 					usd: null,
 				},
 			});
-			assert.match(view.render(), /↑10 ↓5 R0 W0 Σ15 USD unavailable/);
+			assert.equal(
+				stripVTControlCharacters(view.render()).split("\n")[1]?.split(" · ")[0],
+				"USD ? (sub)",
+			);
 			assert.doesNotMatch(view.render(), /\$0/);
 			view.dispose();
 		}),

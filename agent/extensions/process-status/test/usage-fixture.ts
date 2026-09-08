@@ -75,12 +75,21 @@ export function usageView(
 	assert.ok(tool);
 	const usageTool = tool;
 	initTheme();
-	const footer = factory({ requestRender() {} } as never, {} as never, {
-		getGitBranch: () => null,
-		getExtensionStatuses: () => new Map(),
-		getAvailableProviderCount: () => 1,
-		onBranchChange: () => () => {},
-	});
+	const footer = factory(
+		{ requestRender() {} } as never,
+		{
+			fg: (color: string, text: string) => {
+				assert.equal(color, "dim");
+				return `\x1b[90m${text}\x1b[39m`;
+			},
+		} as never,
+		{
+			getGitBranch: () => null,
+			getExtensionStatuses: () => new Map(),
+			getAvailableProviderCount: () => 1,
+			onBranchChange: () => () => {},
+		},
+	);
 	return {
 		query: () => usageTool.execute("usage", {}, undefined, undefined, ctx),
 		render: () => footer.render(200).join("\n"),

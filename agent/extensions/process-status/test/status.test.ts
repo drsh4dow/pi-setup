@@ -352,6 +352,7 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 			},
 		},
 		sessionManager: {
+			getHeader: () => null,
 			getEntries: () => [parentEntry],
 			getCwd: () => "/tmp/project",
 			getSessionName: () => undefined,
@@ -406,14 +407,18 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 
 	assert.ok(footerFactory);
 	initTheme();
-	const footer = footerFactory({ requestRender() {} } as never, {} as never, {
-		getGitBranch: () => null,
-		getExtensionStatuses: () => new Map(),
-		getAvailableProviderCount: () => 1,
-		onBranchChange: () => () => {},
-	});
+	const footer = footerFactory(
+		{ requestRender() {} } as never,
+		{ fg: (_color: string, text: string) => text } as never,
+		{
+			getGitBranch: () => null,
+			getExtensionStatuses: () => new Map(),
+			getAvailableProviderCount: () => 1,
+			onBranchChange: () => () => {},
+		},
+	);
 	const footerText = footer.render(100).join("\n");
-	assert.match(footerText, /\$1\.000/);
+	assert.match(footerText, /USD 1\.000/);
 	assert.doesNotMatch(footerText, /\(auto\)/);
 	autoCompactionEnabled = true;
 	assert.match(footer.render(100).join("\n"), /\(auto\)/);
@@ -480,6 +485,7 @@ test("exposes cumulative session and delegate usage to the model", () =>
 			const tool = usageTool;
 			const context = {
 				sessionManager: {
+					getHeader: () => null,
 					getEntries: () => [
 						{
 							type: "message",

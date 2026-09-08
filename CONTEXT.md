@@ -4,36 +4,6 @@ Opinionated configuration and extensions that define how Pi behaves and exposes 
 
 ## Language
 
-### Session continuity
-
-**Compaction Boundary**:
-The earlier of 85% of the active model's context window and 250,000 tokens. Crossing it triggers one Handoff Turn followed by compaction at the end of the current model/tool turn; another cannot start until observed usage first falls below the boundary.
-_Avoid_: Overflow threshold, fixed context limit
-
-**Handoff Turn**:
-The extra turn injected when the Compaction Boundary is crossed, in which the acting model writes its own Model Handoff before compaction runs. If queued work produces newer turns, a replacement Handoff Turn follows that work so only a current handoff controls continuation.
-_Avoid_: Summarization pass, pre-compaction hook
-
-**Model Handoff**:
-The handoff the acting model writes to its future self during the Handoff Turn, embedded verbatim as the compaction summary: objective, Stance Labels, state, next action, and continuation choice. Newer retained messages override it; deterministic filtering removes recognized credentials, personal data, and secret paths. When no Model Handoff exists — manual compaction, overflow, or a malformed reply — a summarizer produces the same structure from the transcript alone.
-_Avoid_: Dense handoff, resume contract, transcript summary
-
-**Stance Label**:
-The per-artifact label in a Model Handoff — editing, reviewing, executing, or reference — recording the session's relationship to a file or skill so a resumed model does not mistake a work object for instructions to follow.
-_Avoid_: Role, file mode
-
-**Compaction Continuation**:
-At most one automatic recovery turn after boundary-triggered compaction, sent only when the Model Handoff chose continue; done and ask-user suppress it and leave the session waiting for the user. Boundary compactions that fell back to a summarizer always continue. Manual compaction remains user-controlled, while overflow recovery remains a retry of the interrupted turn.
-_Avoid_: Auto-retry, automatic handoff
-
-**Retained Conversation Tail**:
-Approximately 30,000 tokens of the newest raw conversation kept alongside the compaction summary. The system prompt, tool definitions, and summary are outside this budget.
-_Avoid_: Total compacted context, summary budget
-
-**Overflow Recovery**:
-Pi's last-resort compaction and retry when a model call exceeds its context window before boundary compaction can run. It preserves the interrupted turn rather than creating a Compaction Continuation.
-_Avoid_: Compaction Continuation, proactive compaction
-
 ### Delegation
 
 **Delegate Trail**:
@@ -49,7 +19,7 @@ Advisory free-text guidance for presenting a Delegate Run's result. Correct and 
 _Avoid_: Schema, structured output contract
 
 **Delegate Run**:
-One newly created child carrying out one Delegate Task Brief, either blocking or in the background. A Model Handoff and its requested Compaction Continuation belong to that same run; the handoff alone is not its completed result.
+One newly created child carrying out one Delegate Task Brief, either blocking or in the background, until its session settles.
 _Avoid_: Orchestration task, Delegate batch
 
 **Delegate Chain**:

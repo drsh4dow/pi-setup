@@ -1,3 +1,5 @@
+// Archive filenames need unseeded randomness even under deterministic Effect tests.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import { randomUUID } from "node:crypto";
 
 const { writeFileSync } = process.getBuiltinModule("fs");

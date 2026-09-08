@@ -493,7 +493,7 @@ for (const { command, state, exitCode } of [
 	})));
 }
 
-test("completion delivery pauses without dropping results and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
+test("completion delivery consumes results and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
 	const messages: unknown[] = [];
 	let idle = false;
 	const delivery = new BackgroundTerminalDelivery({
@@ -519,20 +519,15 @@ test("completion delivery pauses without dropping results and closed delivery st
 	yield* delivery.flush;
 	assert.equal(messages.length, 0);
 
-	delivery.setPaused(true);
 	idle = true;
 	delivery.enqueue(snapshot);
 	yield* delivery.flush;
-	assert.equal(messages.length, 0);
-	delivery.setPaused(false);
-	yield* Effect.yieldNow;
 	assert.equal(messages.length, 1);
 
 	idle = false;
 	delivery.enqueue(snapshot);
 	delivery.clear();
 	delivery.enqueue(snapshot);
-	delivery.setPaused(false);
 	yield* delivery.flush;
 	assert.equal(messages.length, 1);
 

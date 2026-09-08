@@ -7,7 +7,6 @@ import type {
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { COMPACTION_DELIVERY_PAUSE_CHANNEL } from "../compaction/index.ts";
 import { registerProcessStatusSource } from "../process-status/status.ts";
 import {
 	BackgroundTerminalDelivery,
@@ -90,9 +89,6 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		if (joined) yield* joined.leave(clientId);
 	});
 
-	pi.events.on(COMPACTION_DELIVERY_PAUSE_CHANNEL, (paused) => {
-		if (typeof paused === "boolean") delivery.setPaused(paused);
-	});
 	pi.on("session_start", (_event, ctx) => {
 		context = ctx;
 		delivery.setContext(ctx);

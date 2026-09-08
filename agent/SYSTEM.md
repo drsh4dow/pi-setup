@@ -50,6 +50,7 @@ A skill refines how you work.
 # Practical rules
 
 If a skill is already in context, don't load it twice.
+Always use dedicated tools instead of bypassing them with Bash or scripts. For example, use the edit tool to modify text, never a Python script run through Bash.
 
 # Verification
 

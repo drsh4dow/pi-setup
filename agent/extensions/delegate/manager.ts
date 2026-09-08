@@ -173,16 +173,15 @@ export class DelegateManager {
 			throw new Error(`Delegate cwd is not a directory: ${cwd}`);
 		}
 
+		const effort = request.effort === "thorough" ? "thorough" : "fast";
+		const setting = readProjectDelegateModelSetting(cwd, {
+			parentCwd: request.ctx.cwd,
+			effort,
+		});
 		const modelChoice =
 			request.model !== undefined
 				? resolveRequestedModel(request.ctx, request.model)
-				: resolveDelegateModel(
-						request.ctx,
-						readProjectDelegateModelSetting(cwd, {
-							parentCwd: request.ctx.cwd,
-						}),
-					);
-		const effort = request.effort === "thorough" ? "thorough" : "fast";
+				: resolveDelegateModel(request.ctx, setting);
 		let job: Run;
 		const timer = scheduleTimer(
 			() =>
@@ -198,7 +197,7 @@ export class DelegateManager {
 			task: request.task,
 			cwd,
 			effort,
-			thinking: thinkingForEffort(effort),
+			thinking: setting.thinking ?? thinkingForEffort(effort),
 			outputFormat: request.outputFormat,
 			ctx: request.ctx,
 			requestedModel: modelChoice.requestedModel,

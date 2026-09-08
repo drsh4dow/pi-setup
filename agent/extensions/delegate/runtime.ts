@@ -56,11 +56,17 @@ export function modelName(
 		: undefined;
 }
 
-type DelegateModelSetting = { model?: string; problem?: string };
+type DelegateModelSetting = {
+	model?: string;
+	thinking?: DelegateThinking;
+	problem?: string;
+};
 
 function readDelegateModelSources(
 	sources: readonly { path: string; project: boolean }[],
+	effort: DelegateEffort = "fast",
 ): DelegateModelSetting {
+	const result: DelegateModelSetting = {};
 	for (const source of sources) {
 		let settings: unknown;
 		try {
@@ -90,41 +96,84 @@ function readDelegateModelSources(
 					: `"delegate" in ${source.path} must be an object.`,
 			};
 		}
-		const model = (delegate as { model?: unknown }).model;
-		if (model === undefined) continue;
-		if (typeof model !== "string" || model.trim() === "") {
+		const config = delegate as Record<string, unknown>;
+		const profile = config[effort];
+		if (
+			profile !== undefined &&
+			(!profile || typeof profile !== "object" || Array.isArray(profile))
+		) {
+			return { problem: `"${effort}" in ${source.path} must be an object.` };
+		}
+		const selected = profile as Record<string, unknown> | undefined;
+		const thinking =
+			selected?.thinking !== undefined ? selected.thinking : config.thinking;
+		if (
+			thinking !== undefined &&
+			thinking !== "off" &&
+			thinking !== "minimal" &&
+			thinking !== "low" &&
+			thinking !== "medium" &&
+			thinking !== "high" &&
+			thinking !== "xhigh" &&
+			thinking !== "max"
+		) {
+			return {
+				problem: `"thinking" in ${source.path} must be off, minimal, low, medium, high, xhigh, or max.`,
+			};
+		}
+		if (result.thinking === undefined && thinking !== undefined)
+			result.thinking = thinking;
+		const model = selected?.model !== undefined ? selected.model : config.model;
+		if (
+			model !== undefined &&
+			(typeof model !== "string" || model.trim() === "")
+		) {
 			return {
 				problem: `"${source.project ? "model" : "delegate.model"}" in ${source.path} must be a "provider/model-id" string.`,
 			};
 		}
-		return { model: model.trim() };
+		if (result.model === undefined && typeof model === "string")
+			result.model = model.trim();
+		if (result.model !== undefined && result.thinking !== undefined)
+			return result;
 	}
-	return {};
+	return result;
 }
 
 export function readDelegateModelSetting(
 	settingsPath = join(getAgentDir(), "settings.json"),
+	effort: DelegateEffort = "fast",
 ): DelegateModelSetting {
-	return readDelegateModelSources([{ path: settingsPath, project: false }]);
+	return readDelegateModelSources(
+		[{ path: settingsPath, project: false }],
+		effort,
+	);
 }
 
 export function readProjectDelegateModelSetting(
 	cwd: string,
-	options: { parentCwd?: string; settingsPath?: string } = {},
+	options: {
+		parentCwd?: string;
+		settingsPath?: string;
+		effort?: DelegateEffort;
+	} = {},
 ): DelegateModelSetting {
 	const projectCwds = [
 		...new Set(options.parentCwd ? [cwd, options.parentCwd] : [cwd]),
 	];
-	return readDelegateModelSources([
-		...projectCwds.map((projectCwd) => ({
-			path: join(projectCwd, ".pi", "delegate.json"),
-			project: true,
-		})),
-		{
-			path: options.settingsPath ?? join(getAgentDir(), "settings.json"),
-			project: false,
-		},
-	]);
+	return readDelegateModelSources(
+		[
+			...projectCwds.map((projectCwd) => ({
+				path: join(projectCwd, ".pi", "delegate.json"),
+				project: true,
+			})),
+			{
+				path: options.settingsPath ?? join(getAgentDir(), "settings.json"),
+				project: false,
+			},
+		],
+		options.effort,
+	);
 }
 
 export interface DelegateModelChoice {

@@ -22,10 +22,8 @@ test("wait admission is atomic, bounded per child, and releases capacity", () =>
 			const first = manager.spawn({ task: "first", ctx: context });
 			const second = manager.spawn({ task: "second", ctx: context });
 			yield* eventually(() => sessions.length === 2);
-			const waits = yield* Effect.all(
-				Array.from({ length: 4 }, () =>
-					Effect.forkChild(manager.wait([first.id])),
-				),
+			const waits = yield* Effect.forEach(Array.from({ length: 4 }), () =>
+				Effect.forkChild(manager.wait([first.id])),
 			);
 			yield* yieldImmediate;
 			const refused = yield* failureMessage(
@@ -33,7 +31,7 @@ test("wait admission is atomic, bounded per child, and releases capacity", () =>
 			);
 			assert.match(refused, /4 pending waits/);
 			sessions[0].finish("done");
-			yield* Effect.all(waits.map(Fiber.join));
+			yield* Effect.forEach(waits, Fiber.join);
 			const available = yield* Effect.forkChild(
 				manager.wait([first.id, second.id]),
 			);
@@ -178,6 +176,8 @@ test("aborting a next wait restores all background deliveries without stopping c
 					manager.spawn({ task, background: true, ctx: context }),
 				);
 				yield* eventually(() => sessions.length === 2);
+				// Caller-owned cancellation is the behavior under test, including its reason.
+				// @effect-diagnostics-next-line abortControllerInEffect:off
 				const controller = new AbortController();
 				const waiting = yield* Effect.forkChild(
 					manager.wait(

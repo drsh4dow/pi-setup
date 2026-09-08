@@ -739,8 +739,9 @@ export class BackgroundTerminalManager {
 			if (!entry) throw new Error(`Unknown terminal id "${id}".`);
 			return { id, wasRunning: entry.kind !== "settled" };
 		});
-		const snapshots = yield* Effect.all(
-			entries.map(({ id }) => this.terminate(id, "kill")),
+		const snapshots = yield* Effect.forEach(
+			entries,
+			({ id }) => this.terminate(id, "kill"),
 			{ concurrency: "unbounded" },
 		);
 		return entries.map(({ id, wasRunning }, index) => {
@@ -774,10 +775,11 @@ export class BackgroundTerminalManager {
 		const manager = this;
 		const exit = yield* Effect.exit(
 			Effect.gen(function* () {
-				yield* Effect.all(
-					[...manager.entries.entries()]
-						.filter(([, entry]) => entry.kind !== "settled")
-						.map(([id]) => manager.terminate(id, "shutdown")),
+				yield* Effect.forEach(
+					[...manager.entries.entries()].filter(
+						([, entry]) => entry.kind !== "settled",
+					),
+					([id]) => manager.terminate(id, "shutdown"),
 					{ concurrency: "unbounded" },
 				);
 				manager.entries.clear();

@@ -7,8 +7,7 @@
   "defaultModel": "gpt-6-astra",
   "enabledModels": [
     "openai-codex/gpt-6-astra",
-    "opencode-go/omen-alpha",
-    "opencode/claude-fable-5-1"
+    "opencode-go/glm-5.3-flash"
   ],
   "delegate": {
     "fast": {

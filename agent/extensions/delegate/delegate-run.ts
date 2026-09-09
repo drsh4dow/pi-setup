@@ -40,7 +40,6 @@ const USAGE_FIELDS = [
 	"totalTokens",
 	"cost",
 ] satisfies readonly UsageField[];
-export const MAX_CONCURRENT_WAITS_PER_CHILD = 4;
 
 export interface DelegateRunRequest {
 	task: string;
@@ -126,7 +125,6 @@ export class DelegateRun {
 	private readonly sendSemaphore = Semaphore.makeUnsafe(1);
 	private readonly state: RunState;
 	private pendingSends = 0;
-	private waiters = 0;
 	private model?: string;
 	private childSessionId?: string;
 	private childSessionFile?: string;
@@ -165,24 +163,6 @@ export class DelegateRun {
 
 	trail() {
 		return this.childState.trail();
-	}
-
-	claimWait(): boolean {
-		if (this.waiters >= MAX_CONCURRENT_WAITS_PER_CHILD) return false;
-		this.waiters++;
-		return true;
-	}
-
-	releaseWait(): void {
-		this.waiters--;
-	}
-
-	claimDelivery() {
-		return this.state.claimDelivery();
-	}
-
-	releaseDeliveryClaim() {
-		return this.state.releaseDeliveryClaim();
 	}
 
 	consumeDelivery() {

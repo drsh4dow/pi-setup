@@ -69,8 +69,6 @@ Delegation selects a model and reasoning profile from `delegate.fast` or `delega
 
 Children use normal Pi prompt discovery and the applicable `APPEND_SYSTEM.md`, plus a short [child role](agent/extensions/delegate/SYSTEM.md). A project's `.pi/DELEGATE_SYSTEM.md` still replaces the child's base prompt; the shared append policy and child role remain appended.
 
-`delegate_session` with `action: "wait"` defaults to `mode: "all"`. Use `mode: "next"` to return one settled result without waiting for the others. Remove returned ids before waiting again. Unreturned children retain their background completion notifications; cancelling a wait leaves them running.
-
 A delegate stays running through Pi's built-in automatic compaction and retries until its session settles.
 
 Use `bash` by default. Use `bg_start` for services and watchers. Use it for finite commands when there is useful independent work to do. A finite command's natural exit wakes the owner with its actual exit status, including success. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.

@@ -54,9 +54,9 @@ export const DelegateRunParams = Type.Object({
 });
 
 export const DelegateSessionParams = Type.Object({
-	action: StringEnum(["list", "status", "wait", "send", "cancel"], {
+	action: StringEnum(["list", "status", "send", "cancel"], {
 		description:
-			"list all children; inspect status; wait for results; steer one running child; or cancel children",
+			"list all children; inspect status; steer one running child; or cancel children",
 	}),
 	id: Type.Optional(
 		Type.String({
@@ -67,14 +67,7 @@ export const DelegateSessionParams = Type.Object({
 	// Session batches are deliberately unbounded: the product contract requires every parent-owned id to remain manageable without aggregate cutoffs.
 	ids: Type.Optional(
 		Type.Array(Type.String({ maxLength: 64 }), {
-			description: "Child ids for wait, cancel, or status",
-		}),
-	),
-	mode: Type.Optional(
-		StringEnum(["all", "next"], {
-			description:
-				'For wait: "all" waits for every requested id; "next" returns one settled result immediately or waits for the first completion. Other children keep running. Remove returned ids before waiting again.',
-			default: "all",
+			description: "Child ids for cancel or status",
 		}),
 	),
 	message: Type.Optional(
@@ -88,7 +81,6 @@ export const DelegateSessionParams = Type.Object({
 
 export type DelegateRunParams = Static<typeof DelegateRunParams>;
 export type DelegateSessionParams = Static<typeof DelegateSessionParams>;
-export type DelegateWaitMode = NonNullable<DelegateSessionParams["mode"]>;
 export type DelegateEffort = "fast" | "thorough";
 export type DelegateThinking = AgentSession["thinkingLevel"];
 export type DelegateStatus = "running" | "done" | "error" | "cancelled";

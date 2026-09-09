@@ -284,7 +284,6 @@ test("covers delegate configuration and rendering", () => {
 		"action",
 		"id",
 		"ids",
-		"mode",
 		"message",
 	]);
 	assert.deepEqual(
@@ -293,7 +292,7 @@ test("covers delegate configuration and rendering", () => {
 				action: { enum: string[] };
 			}
 		).action.enum,
-		["list", "status", "wait", "send", "cancel"],
+		["list", "status", "send", "cancel"],
 	);
 	assert.equal(
 		(sessionProperties as { ids: { maxItems?: number } }).ids.maxItems,
@@ -336,13 +335,13 @@ test("covers delegate configuration and rendering", () => {
 	);
 
 	const callText = renderDelegateSessionCall(
-		{ action: "wait", ids: ["delegate-10", "delegate-11"] },
+		{ action: "status", ids: ["delegate-10", "delegate-11"] },
 		theme,
 		{} as never,
 	)
 		.render(120)
 		.join("\n");
-	assert.match(callText, /delegate_session.*wait.*delegate-10, delegate-11/);
+	assert.match(callText, /delegate_session.*status.*delegate-10, delegate-11/);
 
 	const sessionText = renderDelegateSessionResult(
 		{
@@ -358,7 +357,7 @@ test("covers delegate configuration and rendering", () => {
 						id: "delegate-11",
 						status: "running",
 						success: false,
-						assignedTask: "wait for another child",
+						assignedTask: "inspect another child",
 						output: "",
 					}),
 					delegateSnapshot({
@@ -606,7 +605,7 @@ test("covers background delivery behavior", (t) =>
 							return snapshots.map((snapshot) => snapshot.output).join(",");
 						}),
 				);
-				const consumed = delegateSnapshot({ output: "recovered by wait" });
+				const consumed = delegateSnapshot({ output: "superseded result" });
 				let idle = false;
 				delivery.setContext({ isIdle: () => idle } as ExtensionContext);
 				delivery.enqueue(consumed);
@@ -643,7 +642,7 @@ test("covers background delivery behavior", (t) =>
 					);
 					assert.doesNotMatch(
 						(messages[0] as { content: string }).content,
-						/recovered by wait/,
+						/superseded result/,
 					);
 				} finally {
 					delivery.clear();
@@ -679,7 +678,10 @@ test("covers background delivery behavior", (t) =>
 					assert.equal(diagnostics.length, 1);
 					assert.match(diagnostics[0], /delegate-1/);
 					assert.match(diagnostics[0], /transport unavailable/);
-					assert.match(diagnostics[0], /delegate_session wait/);
+					assert.match(
+						diagnostics[0],
+						/retained status or native child session/,
+					);
 
 					delivery.consume([snapshot]);
 					yield* delivery.flush();

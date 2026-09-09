@@ -345,11 +345,11 @@ export default function delegateExtension(pi: ExtensionAPI) {
 	pi.registerTool<typeof DelegateRunParams, DelegateSnapshot>({
 		name: RUN_TOOL_NAME,
 		label: "Delegate Run",
-		description: `Creates one child with fresh context for one self-contained task. State the objective, relevant context and files, mutation permission, constraints, verification, and expected result. Multiple delegate_run calls issued together execute concurrently and settle independently; chain dependent work by using each completed result to compose the next task. By default the call blocks until completion; background=true returns the child id immediately and delivers the result later. Every run is terminated at ${MAX_EXECUTION_MS / 60_000} minutes of wall time or ${MAX_EXECUTION_TOKENS.toLocaleString("en-US")} tokens whatever its effort, so size a task by the minutes it needs. Children share one worktree without write isolation unless you point them elsewhere with cwd. output_format is advisory: correct and complete information takes precedence over exact formatting.`,
+		description: `Creates one child with fresh context for one bounded assignment. State the objective, relevant context and files, mutation permission, constraints, verification, and expected result. Multiple delegate_run calls issued together execute concurrently and settle independently; chain dependent work by using each completed result to compose the next task. By default the call blocks until completion; background=true returns the child id immediately and delivers the result later. Every run is terminated at ${MAX_EXECUTION_MS / 60_000} minutes of wall time or ${MAX_EXECUTION_TOKENS.toLocaleString("en-US")} tokens whatever its effort, so size a task by the minutes it needs. Children share one worktree without write isolation unless you point them elsewhere with cwd. output_format is advisory: correct and complete information takes precedence over exact formatting.`,
 		promptSnippet:
 			"Create exactly one fresh child, blocking by default or delivering later in background",
 		promptGuidelines: [
-			"Give each delegate_run a self-contained task and separate write targets for parallel work; the parent owns integration and verification.",
+			"Give each child a bounded assignment with sufficient context. Keep concurrent write targets separate.",
 			"Use a blocking delegate_run when its result is required before continuing. Use background runs for useful independent work; their results arrive automatically.",
 		],
 		parameters: DelegateRunParams,

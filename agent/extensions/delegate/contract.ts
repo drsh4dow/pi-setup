@@ -14,7 +14,7 @@ export const DelegateRunParams = Type.Object({
 	task: Type.String({
 		maxLength: 100_000,
 		description:
-			"Self-contained task for a fresh child that cannot see the parent conversation. Include the objective, relevant context/files, constraints, permissions, verification, and expected output.",
+			"Self-contained task for a fresh child that cannot see the parent conversation. Include the objective, relevant context/files, constraints, permissions, checks relevant to the assignment, and expected output.",
 	}),
 	background: Type.Optional(
 		Type.Boolean({

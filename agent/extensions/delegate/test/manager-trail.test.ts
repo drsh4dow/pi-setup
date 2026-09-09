@@ -152,38 +152,25 @@ test("trail bounds oversized tool arguments", () => Effect.runPromise(Effect.gen
 	yield* manager.shutdown();
 })));
 
-test("only unconsumed background runs trigger automatic delivery", () => Effect.runPromise(Effect.gen(function* () {
+test("background runs deliver automatically unless cancelled", () => Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
-	const automatic = manager.spawn({
-		task: "automatic",
-		background: true,
-		ctx: context,
-	});
+	const first = manager.spawn({ task: "first", background: true, ctx: context });
 	yield* eventually(() => sessions.length === 1);
-	sessions[0].finish("delivered");
+	sessions[0].finish("first result");
 	yield* eventually(() => delivered.length === 1);
-	assert.equal(delivered[0].id, automatic.id);
+	assert.equal(delivered[0].id, first.id);
 
-	const consumed = manager.spawn({
-		task: "consumed",
-		background: true,
-		ctx: context,
-	});
-	const waiting = yield* manager.wait([consumed.id]).pipe(Effect.forkChild);
+	const second = manager.spawn({ task: "second", background: true, ctx: context });
 	yield* eventually(() => sessions.length === 2);
-	sessions[1].finish("waited");
-	yield* Fiber.join(waiting);
-	assert.equal(delivered.length, 1);
+	sessions[1].finish("second result");
+	yield* eventually(() => delivered.length === 2);
+	assert.equal(delivered[1].id, second.id);
 
-	const cancelled = manager.spawn({
-		task: "cancelled",
-		background: true,
-		ctx: context,
-	});
+	const cancelled = manager.spawn({ task: "cancelled", background: true, ctx: context });
 	yield* eventually(() => sessions.length === 3);
 	yield* manager.cancel([cancelled.id]);
-	assert.equal(delivered.length, 1);
+	assert.equal(delivered.length, 2);
 	yield* manager.shutdown();
 })));
 

@@ -242,7 +242,7 @@ export class BackgroundDelivery {
 						.slice(0, 512);
 					for (const id of exhausted) {
 						yield* Effect.logError(
-							`[delegate] background delivery failed for ${id}; use delegate_session wait to recover retained results: ${evidence}`,
+							`[delegate] background delivery failed for ${id}; inspect the retained status or native child session: ${evidence}`,
 						);
 					}
 				}
@@ -343,7 +343,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 			"Create exactly one fresh child, blocking by default or delivering later in background",
 		promptGuidelines: [
 			"Give each delegate_run a self-contained task and separate write targets for parallel work; the parent owns integration and verification.",
-			"Use a blocking delegate_run for a single task you immediately need. Use background runs for useful overlap or to receive a group in completion order with delegate_session mode=next.",
+			"Use a blocking delegate_run when its result is required before continuing. Use background runs for useful independent work; their results arrive automatically.",
 		],
 		parameters: DelegateRunParams,
 		executionMode: "parallel",
@@ -371,7 +371,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 						return {
 							content: [
 								textContent(
-									`${summary(snapshot)}\nResult will be delivered automatically; continue useful work and wait only when blocked.`,
+									`${summary(snapshot)}\nResult will be delivered automatically; the parent may end its turn.`,
 								),
 							],
 							details: snapshot,
@@ -392,7 +392,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 								? `\n\nCheckpoint (child's last activity):\n${result.checkpoint}`
 								: "";
 							throw new Error(
-								`Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Use delegate_session wait with ids=["${result.id}"] to recover retained output.${checkpoint}`,
+								`Delegated task ${result.id} failed: ${reason} (${formatStatusParts(result)}). Inspect delegate_session status or the retained native child session.${checkpoint}`,
 							);
 						}
 						const inspection = result.childSessionFile
@@ -435,15 +435,14 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		name: SESSION_TOOL_NAME,
 		label: "Delegate Session",
 		description:
-			"Manages children created by delegate_run. list recovers all ids retained for the current parent session; status inspects without waiting; when blocked, use action=wait with the same ids instead of repeated status calls or shell sleeps; wait returns all requested results by default, or one completed result with mode=next while other children continue; remove returned ids before waiting again. send steers one running child; cancel stops work. Settled children cannot receive more messages or resume; handle small follow-ups directly.",
-		promptSnippet:
-			"List, inspect, wait for, steer, or cancel existing child sessions",
+			"Manages children created by delegate_run. list recovers all ids retained for the current parent session; status inspects current state; send steers one running child; cancel stops work. Background results arrive automatically. Settled children cannot receive more messages or resume; handle small follow-ups directly.",
+		promptSnippet: "List, inspect, steer, or cancel existing child sessions",
 		promptGuidelines: [
 			"Use delegate_session send to steer a running child with the context it needs. Tracked ids last only for the current parent session.",
 		],
 		parameters: DelegateSessionParams,
 		executionMode: "parallel",
-		execute(_toolCallId, params, signal) {
+		execute(_toolCallId, params) {
 			return Effect.runPromise(
 				Effect.gen(function* () {
 					if (params.action === "send") {
@@ -472,11 +471,8 @@ export default function delegateExtension(pi: ExtensionAPI) {
 					if (ids.length === 0) {
 						throw new Error("Provide at least one delegate id.");
 					}
-					if (params.action === "wait" || params.action === "cancel") {
-						const snapshots =
-							params.action === "wait"
-								? yield* manager.wait(ids, signal, params.mode)
-								: yield* manager.cancel(ids);
+					if (params.action === "cancel") {
+						const snapshots = yield* manager.cancel(ids);
 						delivery.consume(snapshots);
 						return {
 							content: [textContent(yield* resultText(snapshots))],
@@ -485,20 +481,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 					}
 					const snapshots = manager.list(ids);
 					return {
-						content: [
-							textContent(
-								[
-									snapshots.map(sessionSummary).join("\n"),
-									...(snapshots.some(
-										(snapshot) => snapshot.status === "running",
-									)
-										? [
-												"When blocked, call delegate_session with action=wait and the same ids instead of polling status or sleeping.",
-											]
-										: []),
-								].join("\n"),
-							),
-						],
+						content: [textContent(snapshots.map(sessionSummary).join("\n"))],
 						details: { results: snapshots },
 					};
 				}),

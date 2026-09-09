@@ -61,7 +61,7 @@ type RunLifecycle =
 
 type Delivery =
 	| { readonly kind: "foreground" }
-	| { readonly kind: "pending"; readonly waiters: number }
+	| { readonly kind: "pending" }
 	| { readonly kind: "consumed" };
 
 export type RunStateView =
@@ -99,7 +99,7 @@ export class RunState {
 	static creating(timer: ExecutionTimer, background: boolean): RunState {
 		return new RunState(
 			{ kind: "creating", timer },
-			background ? { kind: "pending", waiters: 0 } : { kind: "foreground" },
+			background ? { kind: "pending" } : { kind: "foreground" },
 		);
 	}
 
@@ -312,24 +312,6 @@ export class RunState {
 		);
 	}
 
-	claimDelivery(): boolean {
-		if (this.delivery.kind !== "pending") return false;
-		this.delivery = {
-			kind: "pending",
-			waiters: this.delivery.waiters + 1,
-		};
-		return true;
-	}
-
-	releaseDeliveryClaim(): boolean {
-		if (this.delivery.kind !== "pending" || this.delivery.waiters === 0) {
-			return false;
-		}
-		const waiters = this.delivery.waiters - 1;
-		this.delivery = { kind: "pending", waiters };
-		return waiters === 0 && this.lifecycle.kind === "settled";
-	}
-
 	consumeDelivery(): void {
 		if (this.delivery.kind === "pending") {
 			this.delivery = { kind: "consumed" };
@@ -337,7 +319,7 @@ export class RunState {
 	}
 
 	shouldDeliverSettlement(): boolean {
-		return this.delivery.kind === "pending" && this.delivery.waiters === 0;
+		return this.delivery.kind === "pending";
 	}
 
 	private stop(

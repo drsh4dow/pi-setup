@@ -144,6 +144,7 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 
 - `beautify-dirty-worktree`
 - `handoff`
+- `wait-what`
 
 ### Installed themes
 

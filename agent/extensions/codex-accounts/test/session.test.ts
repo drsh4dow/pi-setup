@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { mkdirSync, mkdtempSync, rmSync, writeFileSync } =
+const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } =
 	process.getBuiltinModule("fs");
 const { tmpdir } = process.getBuiltinModule("os");
 const { join } = process.getBuiltinModule("path");
@@ -443,6 +443,43 @@ test("usage command reuses fresh cache without changing the pin", () =>
 				assert.equal(calls, 0);
 				assert.equal(pins(session).length, 1);
 				assert.equal(session.model?.provider, "openai-codex@beta");
+			} finally {
+				for (const session of sessions) session.dispose();
+				globalThis.fetch = originalFetch;
+				rmSync(fixture.dir, { recursive: true, force: true });
+			}
+		}),
+	));
+
+test("missing configuration creates an empty scaffold and retains default Codex", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const fixture = makeFixture([]);
+			const configPath = join(fixture.dir, "codex-accounts.json");
+			rmSync(configPath);
+			const originalFetch = globalThis.fetch;
+			const sessions: Session[] = [];
+			const requests: string[] = [];
+			try {
+				globalThis.fetch = (_input, init) => {
+					requests.push(
+						new Headers(init?.headers).get("chatgpt-account-id") ?? "missing",
+					);
+					return Promise.resolve(sse());
+				};
+				const session = yield* createSession(fixture);
+				sessions.push(session);
+				assert.equal(
+					readFileSync(configPath, "utf8"),
+					'{\n  "accounts": []\n}\n',
+				);
+				assert.equal(session.model?.provider, "openai-codex");
+				yield* prompt(session);
+				assert.deepEqual(requests, ["openai-codex-identity"]);
+				writeFileSync(configPath, '{ "accounts": [] }\n');
+				yield* Effect.tryPromise(() => session.reload());
+				assert.equal(readFileSync(configPath, "utf8"), '{ "accounts": [] }\n');
+				assert.equal(session.model?.provider, "openai-codex");
 			} finally {
 				for (const session of sessions) session.dispose();
 				globalThis.fetch = originalFetch;

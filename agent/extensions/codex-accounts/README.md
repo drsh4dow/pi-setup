@@ -1,6 +1,8 @@
 # Codex accounts
 
-Add account labels to `~/.pi/agent/codex-accounts.json`, or the agent directory selected by `PI_CODING_AGENT_DIR`:
+On first startup, Pi creates `~/.pi/agent/codex-accounts.json` with `{"accounts":[]}`. An empty account list preserves the default Codex login and makes no allowance queries. Existing configuration is never overwritten.
+
+Add account labels to that file, or the agent directory selected by `PI_CODING_AGENT_DIR`:
 
 ```json
 {
@@ -27,7 +29,7 @@ A new session selects the account with the highest fresh weekly percentage remai
 
 The account stays pinned while models can change. Resume and reload preserve the pin. Forks and newly spawned delegates select independently, even if their initial model names contain a parent's account alias. Sessions with existing Codex history keep their original login rather than selecting another account.
 
-Unknown, stale, or exhausted weekly readings are ineligible. If none qualify, selection fails with an explanation. A pinned account never automatically changes because its quota, credentials, or configuration become unavailable. Reauthenticating its label to a different ChatGPT account blocks requests in that session. Restore the original account or start a new session.
+Unknown, stale, or exhausted weekly readings are ineligible. If none qualify, interactive startup shows a warning and leaves Pi usable for login and configuration commands. Codex requests remain blocked until an account qualifies; headless and delegated runs report the selection failure. A pinned account never automatically changes because its quota, credentials, or configuration become unavailable. Reauthenticating its label to a different ChatGPT account blocks requests in that session. Restore the original account or start a new session.
 
 Configuration changes take effect after `/reload`. Keep labels stable while sessions using them remain in use.
 

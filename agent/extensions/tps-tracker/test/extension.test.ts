@@ -81,7 +81,7 @@ test("reports live and completed throughput from assistant stream timing", () =>
 			assert.deepEqual(notifications, [
 				["✓ 20 tok/s  40 tokens in 2.0s streaming", "info"],
 			]);
-			assert.equal(statuses.at(-1), "done — 20 tok/s");
+			assert.equal(statuses.at(-1), "done – 20 tok/s");
 		}),
 	));
 
@@ -128,7 +128,7 @@ test("preserves positive throughput when a short stream rounds to 0.0s", () =>
 			yield* Effect.promise(() =>
 				adapter.emit("agent_end", { type: "agent_end", messages: [] }, context),
 			);
-			assert.equal(statuses.at(-1), "done — 1600 tok/s");
+			assert.equal(statuses.at(-1), "done – 1600 tok/s");
 			assert.deepEqual(notifications, [
 				["✓ 1600 tok/s  40 tokens in 0.0s streaming", "info"],
 			]);

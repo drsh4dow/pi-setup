@@ -65,6 +65,7 @@ export function usageView(
 			setFooter(value: typeof factory) {
 				factory = value;
 			},
+			setStatus() {},
 		},
 	} as unknown as ExtensionContext;
 	lifecycle.get("session_start")?.(

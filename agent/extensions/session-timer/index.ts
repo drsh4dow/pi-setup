@@ -24,7 +24,6 @@ export default function sessionTimer(
 	dependencies: TimerDependencies = liveTimer,
 ): void {
 	let runStart = 0;
-	let sessionTotalMs = 0;
 	let stopTicker: (() => void) | undefined;
 
 	function fmt(ms: number): string {
@@ -39,7 +38,6 @@ export default function sessionTimer(
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		stop();
-		sessionTotalMs = 0;
 		if (ctx.mode === "tui") ctx.ui.setStatus("session-timer", undefined);
 	});
 
@@ -58,12 +56,6 @@ export default function sessionTimer(
 	pi.on("agent_end", (_event, ctx) => {
 		if (!stopTicker) return;
 		stop();
-		const runMs = dependencies.now() - runStart;
-		sessionTotalMs += runMs;
-		const theme = ctx.ui.theme;
-		ctx.ui.setStatus(
-			"session-timer",
-			`${theme.fg("accent", `⏱ ${fmt(runMs)}`)} ${theme.fg("dim", `(session ${fmt(sessionTotalMs)})`)}`,
-		);
+		ctx.ui.setStatus("session-timer", undefined);
 	});
 }

@@ -18,7 +18,9 @@ import {
 	sessionDuration,
 } from "./accounting.ts";
 import {
+	observeProcessStatusRefresh,
 	type ProcessStatusView,
+	processStatusSummary,
 	processStatusUsage,
 	processStatusView,
 } from "./status.ts";
@@ -35,6 +37,8 @@ export default function processStatus(
 ) {
 	let currentModel: Parameters<typeof pi.setModel>[0] | undefined;
 	let requestFooterRender: (() => void) | undefined;
+	let refreshStatus: (() => void) | undefined;
+	observeProcessStatusRefresh(pi, () => refreshStatus?.());
 
 	pi.registerEntryRenderer<ProcessStatusView>(
 		ENTRY_TYPE,
@@ -67,6 +71,9 @@ export default function processStatus(
 	pi.on("session_start", (_event, ctx) => {
 		currentModel = ctx.model;
 		if (ctx.mode !== "tui") return;
+		refreshStatus = () =>
+			ctx.ui.setStatus("process-status", processStatusSummary(pi));
+		refreshStatus();
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const sessionManager = new Proxy(ctx.sessionManager, {
 				get(target, property) {
@@ -152,7 +159,11 @@ export default function processStatus(
 	pi.on("thinking_level_select", () => requestFooterRender?.());
 	pi.on("session_shutdown", (_event, ctx) => {
 		requestFooterRender = undefined;
-		if (ctx.mode === "tui") ctx.ui.setFooter(undefined);
+		refreshStatus = undefined;
+		if (ctx.mode === "tui") {
+			ctx.ui.setStatus("process-status", undefined);
+			ctx.ui.setFooter(undefined);
+		}
 	});
 
 	pi.registerTool({

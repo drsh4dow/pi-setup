@@ -1,13 +1,13 @@
 import { isDeepStrictEqual } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { registerProcessStatusSource } from "../process-status/status.ts";
+import {
+	registerProcessStatusSource,
+	requestProcessStatusRefresh,
+} from "../process-status/status.ts";
 import {
 	BackgroundTerminalDelivery,
 	formatTerminalDetails,
@@ -31,9 +31,7 @@ const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
 export default function backgroundTerminals(pi: ExtensionAPI) {
 	const delivery = new BackgroundTerminalDelivery(pi);
 	const clientId = Symbol("background-terminal-client");
-	let context: ExtensionContext | undefined;
 	let session: BackgroundTerminalSession | undefined;
-	let lastStatus: string | undefined | null = null;
 	const observations = new Map<string, object>();
 	const currentSession = () => {
 		if (!session)
@@ -42,22 +40,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			);
 		return session;
 	};
-	const updateStatus = () => {
-		if (!session) return;
-		const running = session
-			.list(clientId)
-			.filter((snapshot) => snapshot.state === "running").length;
-		const status = running ? `${running} bg · /ps` : undefined;
-		if (status === lastStatus) return;
-		try {
-			if (!context?.hasUI) return;
-			context.ui.setStatus("background-terminals", status);
-			lastStatus = status;
-		} catch {
-			// A client can outlive its context, which rejects every access once stale.
-			lastStatus = null;
-		}
-	};
+	const updateStatus = () => requestProcessStatusRefresh(pi);
 	const client = { delivery, updateStatus };
 
 	registerProcessStatusSource(pi, "background-terminals", () => {
@@ -78,19 +61,11 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		const joined = session;
 		session = undefined;
 		observations.clear();
-		yield* Effect.try({
-			try: () =>
-				context?.hasUI &&
-				context.ui.setStatus("background-terminals", undefined),
-			catch: () => undefined,
-		}).pipe(Effect.ignore);
-		lastStatus = null;
-		context = undefined;
+		updateStatus();
 		if (joined) yield* joined.leave(clientId);
 	});
 
 	pi.on("session_start", (_event, ctx) => {
-		context = ctx;
 		delivery.setContext(ctx);
 		if (!session) session = joinBackgroundTerminalSession(clientId, client);
 		updateStatus();

@@ -119,9 +119,29 @@ export default function codexAccounts(pi: ExtensionAPI): Promise<void> {
 			const configPath = path.join(getAgentDir(), "codex-accounts.json");
 			const cachePath = path.join(getAgentDir(), "codex-usage.json");
 			// Configuration is parsed once per extension load; /reload applies edits.
-			const text = (yield* fs.exists(configPath))
-				? yield* fs.readFileString(configPath)
-				: '{"accounts":[]}';
+			if (!(yield* fs.exists(configPath))) {
+				yield* fs.makeDirectory(path.dirname(configPath), { recursive: true });
+				yield* Effect.scoped(
+					Effect.gen(function* () {
+						const temporary = yield* fs.makeTempFileScoped({
+							directory: path.dirname(configPath),
+							prefix: ".codex-accounts-",
+							suffix: ".tmp",
+						});
+						yield* fs.writeFileString(temporary, '{\n  "accounts": []\n}\n', {
+							mode: 0o600,
+						});
+						// Publish complete contents without overwriting another startup or the user.
+						yield* fs.link(temporary, configPath).pipe(
+							Effect.catchIf(
+								(error) => error.reason._tag === "AlreadyExists",
+								() => Effect.void,
+							),
+						);
+					}),
+				);
+			}
+			const text = yield* fs.readFileString(configPath);
 			const config = yield* Schema.decodeEffect(
 				Schema.fromJsonString(Schema.Unknown),
 			)(text);
@@ -278,7 +298,13 @@ export default function codexAccounts(pi: ExtensionAPI): Promise<void> {
 						previousProvider =
 							startsUnselected || pin ? undefined : legacyProvider(ctx);
 						yield* ensurePin(ctx);
-					}),
+					}).pipe(
+						Effect.catchIf(
+							() => ctx.hasUI,
+							(error) =>
+								Effect.sync(() => ctx.ui.notify(error.message, "warning")),
+						),
+					),
 				),
 			);
 			pi.on("model_select", (_event, ctx) =>

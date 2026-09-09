@@ -9,6 +9,7 @@ run-history.jsonl
 codex.md
 auth.json
 codex-accounts.json
+.codex-accounts-*.tmp
 codex-usage.json*
 telemetry-minimal
 telemetry-minimal.json

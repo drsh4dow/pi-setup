@@ -2,12 +2,11 @@ const { statSync } = process.getBuiltinModule("fs");
 const { resolve } = process.getBuiltinModule("path");
 
 import { Cause, Clock, Effect, Fiber } from "effect";
-import type { DelegateSnapshot, DelegateWaitMode } from "./contract.ts";
+import type { DelegateSnapshot } from "./contract.ts";
 import {
 	DelegateRun,
 	type DelegateRunOptions,
 	type DelegateRunRequest,
-	MAX_CONCURRENT_WAITS_PER_CHILD,
 } from "./delegate-run.ts";
 import { delegateError, errorMessage } from "./errors.ts";
 import {
@@ -20,8 +19,6 @@ import {
 import { aggregateDelegateUsage } from "./usage.ts";
 
 const SHUTDOWN_TIMEOUT_MS = 5_000;
-
-export { MAX_CONCURRENT_WAITS_PER_CHILD };
 
 export interface DelegateRequest extends DelegateRunRequest {}
 
@@ -200,28 +197,14 @@ export class DelegateManager {
 		this: DelegateManager,
 		ids: readonly string[],
 		signal?: AbortSignal,
-		mode: DelegateWaitMode = "all",
 	) {
 		const runs = [...new Set(ids)].map((id) => this.requireJob(id));
 		if (runs.length === 0) throw new Error("Provide at least one delegate id.");
 		if (signal?.aborted) throw abortError(signal);
-		const claimed: DelegateRun[] = [];
-		for (const run of runs) {
-			if (!run.claimWait()) {
-				for (const prior of claimed) prior.releaseWait();
-				throw new Error(
-					`Delegate ${run.id} already has ${MAX_CONCURRENT_WAITS_PER_CHILD} pending waits.`,
-				);
-			}
-			claimed.push(run);
-		}
-		const deliveryClaims = runs.filter((run) => run.claimDelivery());
-		const completions = runs.map((run) => run.awaitCompletion());
-		const wait =
-			mode === "next"
-				? Effect.raceAll(completions).pipe(Effect.map((snapshot) => [snapshot]))
-				: Effect.all(completions, { concurrency: "unbounded" });
-		return yield* wait.pipe(
+		const completions = Effect.forEach(runs, (run) => run.awaitCompletion(), {
+			concurrency: "unbounded",
+		});
+		return yield* completions.pipe(
 			signal ? Effect.raceFirst(abortSignal(signal)) : (effect) => effect,
 			signal
 				? Effect.filterOrFail(
@@ -229,23 +212,6 @@ export class DelegateManager {
 						() => delegateError(abortError(signal)),
 					)
 				: (effect) => effect,
-			Effect.tap((snapshots) =>
-				Effect.sync(() => {
-					for (const snapshot of snapshots) {
-						this.requireJob(snapshot.id).consumeDelivery();
-					}
-				}),
-			),
-			Effect.ensuring(
-				Effect.sync(() => {
-					for (const run of runs) run.releaseWait();
-					for (const run of deliveryClaims) {
-						if (run.releaseDeliveryClaim()) {
-							this.options.onSettled?.(run.snapshot());
-						}
-					}
-				}),
-			),
 		);
 	});
 

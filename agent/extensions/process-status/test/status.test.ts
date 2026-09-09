@@ -13,6 +13,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { Effect } from "effect";
 import extension from "../index.ts";
 import {
+	processStatusSummary,
 	processStatusView,
 	registerProcessStatusSource,
 	sessionReportedUsage,
@@ -84,6 +85,21 @@ test("aggregates all provider-reported session cost", () => {
 	] as never);
 
 	assert.equal(cost.cost, 0.35);
+});
+
+test("summarizes running process counts and hides zeros", () => {
+	const events = eventBus();
+	registerProcessStatusSource({ events }, "delegate", () => [
+		activity("d1", "subagents", true, "running"),
+		activity("d2", "subagents", true, "running"),
+		activity("d3", "subagents", false, "done"),
+	]);
+	registerProcessStatusSource({ events }, "terminals", () => [
+		activity("t1", "terminals", true, "running"),
+	]);
+
+	assert.equal(processStatusSummary({ events }), "1 bg · 2 dg");
+	assert.equal(processStatusSummary({ events: eventBus() }), undefined);
 });
 
 test("lists each activity on its own line with aggregate usage", () => {
@@ -334,6 +350,7 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 		setFooter(factory: typeof footerFactory) {
 			footerFactory = factory;
 		},
+		setStatus() {},
 	};
 	const model = {
 		id: "test-model",

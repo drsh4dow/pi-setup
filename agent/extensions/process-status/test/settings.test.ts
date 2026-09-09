@@ -55,7 +55,7 @@ test(
 					registerCommand() {},
 					registerEntryRenderer() {},
 					getThinkingLevel: () => "off",
-					events: { emit() {} },
+					events: { emit() {}, on: () => () => {} },
 				});
 				const context = unsafeFixture<ExtensionContext>({
 					cwd: root,
@@ -73,6 +73,7 @@ test(
 						setFooter: (value: typeof factory) => {
 							factory = value;
 						},
+						setStatus() {},
 					},
 				});
 				extension(api);

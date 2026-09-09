@@ -7,6 +7,7 @@ import { truncateUtf8Window } from "../../lib/text.ts";
 import {
 	MAX_ACTIVITIES_PER_SOURCE,
 	registerProcessStatusSource,
+	requestProcessStatusRefresh,
 } from "../process-status/status.ts";
 import {
 	DelegateRunParams,
@@ -293,8 +294,14 @@ export default function delegateExtension(pi: ExtensionAPI) {
 		return new DelegateManager({
 			recovered: recoverDelegateStates(ctx.sessionManager),
 			onAccepted: (snapshot) => persist("accepted", snapshot),
-			onStarted: (snapshot) => persist("started", snapshot),
-			onSettlement: (snapshot) => persist("settled", snapshot),
+			onStarted: (snapshot) => {
+				persist("started", snapshot);
+				requestProcessStatusRefresh(pi);
+			},
+			onSettlement: (snapshot) => {
+				persist("settled", snapshot);
+				requestProcessStatusRefresh(pi);
+			},
 			onSettled: (snapshot) => delivery.enqueue(snapshot),
 		});
 	};

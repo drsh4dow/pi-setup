@@ -53,31 +53,58 @@ export const DelegateRunParams = Type.Object({
 	),
 });
 
-export const DelegateSessionParams = Type.Object({
+const DelegateSessionFields = Type.Object({
 	action: StringEnum(["list", "status", "send", "cancel"], {
 		description:
 			"list all children; inspect status; steer one running child; or cancel children",
 	}),
 	id: Type.Optional(
 		Type.String({
+			minLength: 1,
 			maxLength: 64,
 			description: "Child id required by send",
 		}),
 	),
 	// Session batches are deliberately unbounded: the product contract requires every parent-owned id to remain manageable without aggregate cutoffs.
 	ids: Type.Optional(
-		Type.Array(Type.String({ maxLength: 64 }), {
+		Type.Array(Type.String({ minLength: 1, maxLength: 64 }), {
+			minItems: 1,
 			description: "Child ids for cancel or status",
 		}),
 	),
 	message: Type.Optional(
 		Type.String({
+			minLength: 1,
 			maxLength: 64_000,
 			description:
 				"Message required by send. It steers a running child, which sees only its own session; include any new context from the parent conversation that the child needs.",
 		}),
 	),
 });
+
+export const DelegateSessionParams = Type.Intersect(
+	[
+		DelegateSessionFields,
+		Type.Union([
+			Type.Object({ action: Type.Literal("list") }),
+			Type.Object({
+				action: Type.Literal("send"),
+				...Type.Required(Type.Pick(DelegateSessionFields, ["id", "message"]))
+					.properties,
+			}),
+			Type.Object({
+				action: StringEnum(["status", "cancel"] as const),
+				...Type.Required(Type.Pick(DelegateSessionFields, ["ids"])).properties,
+			}),
+		]),
+	],
+	{
+		// Providers need root object fields; Pi validates the action union locally.
+		type: "object",
+		properties: DelegateSessionFields.properties,
+		required: DelegateSessionFields.required,
+	},
+);
 
 export type DelegateRunParams = Static<typeof DelegateRunParams>;
 export type DelegateSessionParams = Static<typeof DelegateSessionParams>;
@@ -130,4 +157,5 @@ export interface DelegateSnapshot extends DelegateDetails {
 
 export type DelegateSessionDetails =
 	| DelegateSnapshot
-	| { results: DelegateSnapshot[] };
+	| { results: DelegateSnapshot[] }
+	| undefined;

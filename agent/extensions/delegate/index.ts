@@ -438,7 +438,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 			"Manages children created by delegate_run. list recovers all ids retained for the current parent session; status inspects current state; send steers one running child; cancel stops work. Background results arrive automatically. Settled children cannot receive more messages or resume; handle small follow-ups directly.",
 		promptSnippet: "List, inspect, steer, or cancel existing child sessions",
 		promptGuidelines: [
-			"Use delegate_session send to steer a running child with the context it needs. Tracked ids last only for the current parent session.",
+			"Use delegate_session send only for new facts, corrections, or changed scope. It is not required after spawning and does not wake, poll, or restart a child. Success confirms queuing, not that the child has read or followed the message. Tracked ids last only for the current parent session.",
 		],
 		parameters: DelegateSessionParams,
 		executionMode: "parallel",
@@ -446,16 +446,12 @@ export default function delegateExtension(pi: ExtensionAPI) {
 			return Effect.runPromise(
 				Effect.gen(function* () {
 					if (params.action === "send") {
-						if (!params.id || !params.message) {
-							throw new Error("send requires id and message.");
-						}
-						const snapshot = yield* manager.send(params.id, params.message);
+						yield* manager.send(params.id, params.message);
 						return {
-							content: [textContent(`Message sent. ${summary(snapshot)}`)],
-							details: snapshot,
+							content: [textContent(`Steering queued for ${params.id}.`)],
+							details: undefined,
 						};
 					}
-					const ids = params.ids ?? [];
 					if (params.action === "list") {
 						const snapshots = manager.list();
 						const output = yield* formatDelegateOutput(
@@ -468,9 +464,7 @@ export default function delegateExtension(pi: ExtensionAPI) {
 							details: { results: snapshots },
 						};
 					}
-					if (ids.length === 0) {
-						throw new Error("Provide at least one delegate id.");
-					}
+					const ids = params.ids;
 					if (params.action === "cancel") {
 						const snapshots = yield* manager.cancel(ids);
 						delivery.consume(snapshots);

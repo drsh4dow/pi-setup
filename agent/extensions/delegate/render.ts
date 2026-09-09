@@ -295,6 +295,35 @@ export const renderDelegateSessionResult: DelegateSessionRenderResult = (
 		return new Text(theme.fg("error", `failed • ${text}`), 0, 0);
 	}
 
+	if (context.args?.action === "send") {
+		const container = new Container();
+		container.addChild(new Text(theme.fg("success", text), 0, 0));
+		const message = context.args.message ?? "";
+		const preview = formatCollapsedPreview(message);
+		container.addChild(
+			new Text(
+				theme.fg("toolOutput", options.expanded ? message : preview.text),
+				0,
+				0,
+			),
+		);
+		if (preview.truncated) {
+			container.addChild(
+				new Text(
+					keyHint(
+						"app.tools.expand",
+						options.expanded
+							? "collapse steering message"
+							: "… expand steering message",
+					),
+					0,
+					0,
+				),
+			);
+		}
+		return container;
+	}
+
 	const details = result.details;
 	const snapshots = details
 		? "results" in details

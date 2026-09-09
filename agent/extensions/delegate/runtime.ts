@@ -11,6 +11,7 @@ import {
 	type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { Config, Effect } from "effect";
+import { ALIAS_PREFIX, LOGICAL_PROVIDER } from "../codex-accounts/accounts.ts";
 import {
 	CHILD_EXTENSION_PATHS_ENV,
 	type DelegateEffort,
@@ -184,7 +185,10 @@ export interface DelegateModelChoice {
 
 type DelegateModelContext = {
 	model: ExtensionContext["model"];
-	modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
+	modelRegistry: Pick<
+		ModelRegistry,
+		"find" | "hasConfiguredAuth" | "getAvailable"
+	>;
 };
 
 function findConfiguredModel(
@@ -200,7 +204,19 @@ function findConfiguredModel(
 		return { problem: `"${spec}" was not found in the model registry.` };
 	}
 	if (!registry.hasConfiguredAuth(model)) {
-		return { problem: `"${spec}" has no auth configured.` };
+		// Logical Codex requests select credentials when the child starts. The
+		// original login need not exist when labeled accounts are available.
+		const hasCodexAccount =
+			model.provider === LOGICAL_PROVIDER &&
+			registry
+				.getAvailable()
+				.some(
+					(candidate) =>
+						candidate.provider.startsWith(ALIAS_PREFIX) &&
+						candidate.id === model.id,
+				);
+		if (!hasCodexAccount)
+			return { problem: `"${spec}" has no auth configured.` };
 	}
 	return { model };
 }

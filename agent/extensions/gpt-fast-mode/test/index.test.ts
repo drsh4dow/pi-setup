@@ -19,6 +19,13 @@ describe("gpt-fast-mode request mapping", () => {
 		});
 	}
 
+	test("uses priority for a labeled Codex account", () => {
+		assert.equal(
+			fastServiceTier({ provider: "openai-codex@work", id: "gpt-5.6-sol" }),
+			"priority",
+		);
+	});
+
 	test("uses priority for Codex gpt-6-astra", () => {
 		const model = { provider: "openai-codex", id: "gpt-6-astra" };
 		assert.equal(fastServiceTier(model), "priority");

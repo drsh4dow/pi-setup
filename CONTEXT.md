@@ -64,6 +64,18 @@ _Avoid_: Isolation mode, managed worktree, sandbox
 
 ### Codex accounts
 
+**Codex Account**:
+A separately authenticated ChatGPT account available for Codex requests, independent of the chosen model.
+_Avoid_: Model, provider
+
+**Codex Account Pin**:
+The Codex Account assigned at a session's first Codex use and retained across resume and reload. New sessions, forks, and Delegate Runs select independently; an unavailable pinned account does not trigger automatic reassignment.
+_Avoid_: Model pin, per-prompt rotation
+
+**Codex Weekly Allowance**:
+The provider-reported percentage remaining in a Codex Account's weekly usage window, distinct from Session Usage.
+_Avoid_: Session usage, token budget
+
 ### Local tools
 
 **Session Usage**:

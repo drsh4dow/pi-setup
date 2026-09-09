@@ -8,7 +8,6 @@ import {
 	type PiSession,
 	prompt,
 	readStderr,
-	sessionElapsedSeconds,
 	setupPiSession,
 	testEffect,
 } from "../../test/tmux.ts";
@@ -18,9 +17,9 @@ const skip = e2eUnavailable();
 const TURN_TIMEOUT_MS = 180_000;
 const FRAME_POLL_MS = 100;
 
-const SESSION_TIMER_PREFIX = /^⏱ (?:\d+m)?\d+s (?:\(session (?:\d+m)?\d+s\) )?/;
+const SESSION_TIMER_PREFIX = /^⏱ (?:\d+m)?\d+s /;
 const STREAMING_STATUS = /^\d+ tok\/s \(~?\d+ tok \/ \d+\.\d+s\)$/;
-const DONE_STATUS = /^done — \d+ tok\/s$/;
+const DONE_STATUS = /^done – \d+ tok\/s$/;
 
 function statusLine(pane: string): string {
 	const lines = pane.split("\n").map((line) => line.trimEnd());
@@ -34,7 +33,6 @@ const runTaskSamplingStatus = Effect.fn("runTaskSamplingStatus")(function* (
 	session: PiSession,
 	text: string,
 ) {
-	const before = sessionElapsedSeconds(yield* capture(session));
 	const frames: string[] = [];
 	const seen = new Set<string>();
 
@@ -50,10 +48,7 @@ const runTaskSamplingStatus = Effect.fn("runTaskSamplingStatus")(function* (
 			frames.push(line);
 		}
 
-		const now = sessionElapsedSeconds(pane);
-		if (now !== undefined && (before === undefined || now > before)) {
-			return { done: true, pane };
-		}
+		if (DONE_STATUS.test(line)) return { done: true, pane };
 		if (yield* isDead(session)) {
 			return yield* Effect.die(
 				new Error(
@@ -131,10 +126,10 @@ describe("tps-tracker (real pi in tmux)", { skip }, () => {
 	);
 
 	test("settles on a done readout with a positive rate", () => {
-		const done = /done — (\d+) tok\/s/.exec(statusLine(settledPane));
+		const done = /done – (\d+) tok\/s/.exec(statusLine(settledPane));
 		assert.ok(
 			done,
-			`no 'done — N tok/s' status after the turn:\n${settledPane}`,
+			`no 'done – N tok/s' status after the turn:\n${settledPane}`,
 		);
 		assert.ok(
 			Number(done[1]) > 0,
@@ -162,7 +157,7 @@ describe("tps-tracker (real pi in tmux)", { skip }, () => {
 		);
 		assert.equal(
 			summary[1],
-			/done — (\d+) tok\/s/.exec(statusLine(settledPane))?.[1],
+			/done – (\d+) tok\/s/.exec(statusLine(settledPane))?.[1],
 			`notification and status bar disagree on the rate:\n${settledPane}`,
 		);
 	});

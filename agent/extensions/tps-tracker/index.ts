@@ -104,6 +104,6 @@ export default function tpsTracker(
 		);
 
 		ctx.ui.notify(`${icon} ${tpsLabel}  ${detail}`, "info");
-		ctx.ui.setStatus("tps", `${theme.fg("dim", "done —")} ${tpsLabel}`);
+		ctx.ui.setStatus("tps", `${theme.fg("dim", "done –")} ${tpsLabel}`);
 	});
 }

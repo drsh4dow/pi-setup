@@ -244,29 +244,21 @@ export const prompt = Effect.fn("prompt")(function* (
 export const sendKeys = (session: PiSession, ...keys: string[]) =>
 	tmux("send-keys", "-t", session.name, ...keys).pipe(Effect.asVoid);
 
-/** Cumulative run time emitted at agent_end. */
-export function sessionElapsedSeconds(pane: string): number | undefined {
-	const match = /\(session (?:(\d+)m)?(\d+)s\)/.exec(pane);
-	if (!match) return undefined;
-	return Number(match[1] ?? 0) * 60 + Number(match[2]);
-}
-
-/** Waits for the cumulative timer to move past the previous turn. */
+/** Waits for the retained throughput status after a turn settles. */
 export const runTask = Effect.fn("runTask")(function* (
 	session: PiSession,
 	text: string,
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 ) {
-	const before = sessionElapsedSeconds(yield* capture(session));
 	yield* prompt(session, text);
-	return yield* waitFor(
-		session,
-		(pane) => {
-			const now = sessionElapsedSeconds(pane);
-			return now !== undefined && (before === undefined || now > before);
-		},
-		{ timeoutMs, description: `task to settle: ${text.slice(0, 60)}` },
-	);
+	yield* waitFor(session, /generating\.\.\./, {
+		timeoutMs,
+		description: `task to start: ${text.slice(0, 60)}`,
+	});
+	return yield* waitFor(session, /done – (?:\d+ tok\/s|N\/A)/, {
+		timeoutMs,
+		description: `task to settle: ${text.slice(0, 60)}`,
+	});
 });
 
 export const waitForFile = Effect.fn("waitForFile")(function* (

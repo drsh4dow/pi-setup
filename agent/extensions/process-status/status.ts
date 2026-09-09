@@ -6,6 +6,7 @@ import type {
 import { truncateUtf8Window } from "../../lib/text.ts";
 
 const COLLECT_CHANNEL = "process-status:collect";
+const REFRESH_CHANNEL = "process-status:refresh";
 const MAX_SOURCES = 16;
 export const MAX_ACTIVITIES_PER_SOURCE = 192;
 const MAX_ACTIVITIES_PER_KIND = 64;
@@ -154,6 +155,19 @@ function validUsage(usage: ProcessStatusUsage): boolean {
 	);
 }
 
+export function requestProcessStatusRefresh(
+	pi: Pick<ExtensionAPI, "events">,
+): void {
+	pi.events.emit(REFRESH_CHANNEL, undefined);
+}
+
+export function observeProcessStatusRefresh(
+	pi: Pick<ExtensionAPI, "events">,
+	refresh: () => void,
+): () => void {
+	return pi.events.on(REFRESH_CHANNEL, refresh);
+}
+
 export function registerProcessStatusSource(
 	pi: Pick<ExtensionAPI, "events">,
 	name: string,
@@ -295,6 +309,26 @@ function listText(
 	return entries.length > 0
 		? [usage, ...entries].join("\n")
 		: `${usage} · idle`;
+}
+
+export function processStatusSummary(
+	pi: Pick<ExtensionAPI, "events">,
+): string | undefined {
+	const groups = collect(pi).groups;
+	const counts = [
+		{
+			count: groups.terminals.filter((activity) => activity.active).length,
+			label: "bg",
+		},
+		{
+			count: groups.subagents.filter((activity) => activity.active).length,
+			label: "dg",
+		},
+	];
+	const parts = counts
+		.filter(({ count }) => count !== 0)
+		.map(({ count, label }) => `${count} ${label}`);
+	return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 export function processStatusUsage(

@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import sessionTimer from "../index.ts";
 
-test("reports deterministic run and session time and stops each ticker", () =>
+test("reports live time and removes the timer when each run settles", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			let now = 0;
@@ -41,7 +41,7 @@ test("reports deterministic run and session time and stops each ticker", () =>
 			yield* Effect.promise(() =>
 				adapter.emit("agent_end", { type: "agent_end", messages: [] }, context),
 			);
-			assert.equal(statuses.at(-1), "⏱ 2s (session 2s)");
+			assert.equal(statuses.at(-1), undefined);
 			assert.equal(stops, 1);
 
 			now = 2_000;
@@ -52,7 +52,7 @@ test("reports deterministic run and session time and stops each ticker", () =>
 			yield* Effect.promise(() =>
 				adapter.emit("agent_end", { type: "agent_end", messages: [] }, context),
 			);
-			assert.equal(statuses.at(-1), "⏱ 1m0s (session 1m2s)");
+			assert.equal(statuses.at(-1), undefined);
 			assert.equal(stops, 2);
 		}),
 	));

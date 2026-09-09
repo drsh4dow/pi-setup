@@ -73,7 +73,8 @@ function fakeContext(options?: FakeContextOptions): ResolveContext {
 			find: (provider: string, id: string) =>
 				provider === "opencode" && id === "fable" ? configuredModel : undefined,
 			hasConfiguredAuth: () => options?.auth ?? true,
-		} as ResolveContext["modelRegistry"],
+			getAvailable: () => (options?.auth === false ? [] : [configuredModel]),
+		},
 	};
 }
 

@@ -52,6 +52,7 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | --- | --- |
 | `aoauth` | Anthropic OAuth login support |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
+| `codex-accounts` | Labeled Codex logins, weekly-allowance selection, session account pins, and `/codex-usage` |
 | `delegate` | Blocking and background child-agent runs plus session inspection and control |
 | `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
@@ -63,6 +64,8 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | `skill-visibility` | `/skill-visibility` controls which loaded skills the model can discover |
 | `tps-tracker` | Live and final output-token throughput |
 | `ui-moto` | Compact model and project status header |
+
+[Codex account setup](agent/extensions/codex-accounts/README.md) enables multiple ChatGPT logins behind `openai-codex`. Each new session and delegate selects the account with the most weekly allowance and keeps it across model changes and resume. Without account configuration, the existing Codex login continues working.
 
 `agent/extensions/herdr-agent-state.ts` is locally patched. Herdr integration updates overwrite it; restore the repository version and run `/reload` in affected Pi sessions after updating Herdr's integration.
 

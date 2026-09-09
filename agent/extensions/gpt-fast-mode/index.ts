@@ -56,8 +56,11 @@ export function fastServiceTier(
 ): string | undefined {
 	if (!model) return undefined;
 	const { provider } = model;
-	if (!SUPPORTED_MODELS.has(`${provider}/${model.id}`)) return undefined;
-	return provider === "openai-codex"
+	const logicalProvider = provider.startsWith("openai-codex@")
+		? "openai-codex"
+		: provider;
+	if (!SUPPORTED_MODELS.has(`${logicalProvider}/${model.id}`)) return undefined;
+	return logicalProvider === "openai-codex"
 		? CODEX_FAST_SERVICE_TIER
 		: OPENAI_FAST_SERVICE_TIER;
 }

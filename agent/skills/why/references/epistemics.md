@@ -136,7 +136,7 @@ When you hit a gap, name it concretely:
 
 ## Calibration Check Before Finalizing
 
-Before delivering the output, the synthesizer should review every claim in "What We Found" and "What We Can Reasonably Infer" and ask:
+Before delivering the output, review every claim in "What we found" and "What we can reasonably infer" and ask:
 
 1. Does this claim have a citation? If not, either add one or move it to "Inferred" / "Hypotheses".
 2. Is the phrasing calibrated to the tier? (A Direct claim can use "because". An Inferred claim cannot.)

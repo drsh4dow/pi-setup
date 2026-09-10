@@ -42,6 +42,7 @@ const ResetSeconds = Schema.Finite.check(
 const FailureFields = {
 	error: Schema.optional(Schema.String),
 	retryAt: Schema.optional(Schema.Finite),
+	serverRetryAt: Schema.optional(Schema.Finite),
 	failures: Schema.optional(Schema.Int),
 };
 const WindowSchema = Schema.Struct({
@@ -62,6 +63,7 @@ const UsageReadingSchema = Schema.Union([
 		accountId: Schema.optional(Schema.String),
 		error: Schema.String,
 		retryAt: Schema.optional(Schema.Finite),
+		serverRetryAt: Schema.optional(Schema.Finite),
 		failures: Schema.optional(Schema.Int),
 	}),
 ]);
@@ -305,9 +307,14 @@ function failedReading(
 		serverRetryAt ?? 0,
 		now + Math.min(CACHE_TTL_MS, BACKOFF_BASE_MS * 2 ** (failures - 1)),
 	);
-	if (current?.kind === "known")
-		return { ...current, error, retryAt, failures };
-	return { kind: "error", fetchedAt: now, error, retryAt, failures };
+	const failure = {
+		error,
+		retryAt,
+		failures,
+		...(serverRetryAt === undefined ? {} : { serverRetryAt }),
+	};
+	if (current?.kind === "known") return { ...current, ...failure };
+	return { kind: "error", fetchedAt: now, ...failure };
 }
 
 const refreshAccountUsageEffect = Effect.fn("refreshAccountUsage")(
@@ -317,17 +324,15 @@ const refreshAccountUsageEffect = Effect.fn("refreshAccountUsage")(
 		auth: () => Promise<{ apiKey: string; accountId: string }>;
 		fetch?: Fetch;
 		now?: () => number;
+		force?: boolean;
 	}) {
 		const release = yield* acquireLock(options.cachePath);
 		return yield* Effect.gen(function* () {
 			const cache = yield* readCacheEffect(options.cachePath);
 			const now = options.now?.() ?? (yield* Clock.currentTimeMillis);
 			const current = cache[options.account.label];
-			if (
-				current?.error &&
-				current.retryAt !== undefined &&
-				current.retryAt > now
-			)
+			const retryAt = options.force ? current?.serverRetryAt : current?.retryAt;
+			if (current?.error && retryAt !== undefined && retryAt > now)
 				return cache;
 			const authResult = yield* Effect.tryPromise({
 				try: options.auth,
@@ -353,6 +358,7 @@ const refreshAccountUsageEffect = Effect.fn("refreshAccountUsage")(
 			}
 			const auth = authResult.auth;
 			if (
+				!options.force &&
 				current?.kind === "known" &&
 				current.accountId === auth.accountId &&
 				!current.error &&

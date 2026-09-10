@@ -325,6 +325,59 @@ test("keeps a stale successful reading visible after failure and backs off retri
 			});
 	}));
 
+test("forced refresh bypasses fresh readings and local backoff but honors server Retry-After", () =>
+	withCache((cachePath) => {
+		let fetches = 0;
+		const refresh = (response: Response) =>
+			refreshAccountUsage({
+				account,
+				cachePath,
+				auth,
+				now: () => now,
+				force: true,
+				fetch: () => {
+					fetches++;
+					return Promise.resolve(response);
+				},
+			});
+		return updatePassiveUsage(cachePath, account.label, "test-account", {
+			kind: "known",
+			fetchedAt: now,
+			weekly: { usedPercent: 30, resetAt },
+		})
+			.then(() => refresh(usageResponse(10)))
+			.then((cache) => {
+				assert.equal(
+					cache.alpha?.kind === "known"
+						? cache.alpha.weekly.usedPercent
+						: undefined,
+					10,
+				);
+				return refresh(new Response("", { status: 503 }));
+			})
+			.then((cache) => {
+				assert.equal(cache.alpha?.error, "Usage request failed (503).");
+				return refresh(usageResponse(5));
+			})
+			.then((cache) => {
+				assert.equal(
+					cache.alpha?.kind === "known"
+						? cache.alpha.weekly.usedPercent
+						: undefined,
+					5,
+				);
+				return refresh(
+					new Response("", { status: 429, headers: { "retry-after": "120" } }),
+				);
+			})
+			.then(() => refresh(usageResponse(1)))
+			.then((cache) => {
+				assert.equal(fetches, 4);
+				assert.equal(cache.alpha?.error, "Usage request failed (429).");
+				assert.equal(cache.alpha?.retryAt, now + 120_000);
+			});
+	}));
+
 test("honors Retry-After before retrying", () =>
 	withCache((cachePath) => {
 		let fetches = 0;

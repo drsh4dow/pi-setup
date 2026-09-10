@@ -156,6 +156,7 @@ export default function codexAccounts(pi: ExtensionAPI): Promise<void> {
 			const refreshAll = Effect.fn("codex.refreshAll")(function* (
 				ctx: ExtensionContext,
 				requested: readonly CodexAccount[],
+				force = false,
 			) {
 				for (const account of requested) {
 					yield* Effect.tryPromise({
@@ -163,6 +164,7 @@ export default function codexAccounts(pi: ExtensionAPI): Promise<void> {
 							refreshAccountUsage({
 								account,
 								cachePath,
+								force,
 								auth: () =>
 									runtime.runPromise(providerAuth(ctx, account.provider)),
 							}),
@@ -358,7 +360,12 @@ export default function codexAccounts(pi: ExtensionAPI): Promise<void> {
 								);
 								return;
 							}
-							const cache = yield* refreshAll(ctx, requested);
+							ctx.ui.setStatus("codex-usage", "Fetching Codex usage...");
+							const cache = yield* refreshAll(ctx, requested, true).pipe(
+								Effect.ensuring(
+									Effect.sync(() => ctx.ui.setStatus("codex-usage", undefined)),
+								),
+							);
 							const label =
 								pin &&
 								(labelFromProvider(pin.provider) ?? originalAccount.label);

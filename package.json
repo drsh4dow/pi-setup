@@ -26,17 +26,17 @@
     "@earendil-works/pi-ai": "^0.85.1",
     "@earendil-works/pi-coding-agent": "^0.85.1",
     "@earendil-works/pi-tui": "^0.85.1",
-    "@effect/platform-bun": "4.0.0-rc.112",
+    "@effect/platform-bun": "4.0.0-rc.113",
     "aws4fetch": "^1.0.20",
-    "effect": "4.0.0-rc.112"
+    "effect": "4.0.0-rc.113"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
-    "@effect/tsgo": "0.43.0",
+    "@biomejs/biome": "2.5.13",
+    "@effect/tsgo": "0.45.0",
     "@types/node": "^26.5.0",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
-    "wrangler": "^4.129.1"
+    "wrangler": "^4.131.0"
   },
   "trustedDependencies": [
     "@google/genai",

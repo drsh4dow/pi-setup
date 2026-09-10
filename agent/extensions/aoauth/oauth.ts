@@ -175,7 +175,7 @@ const startBunCallbackServer = Effect.fn("startBunCallbackServer")(function* (
 		try: (signal) => runtime.runPromise(HttpServer.HttpServer, { signal }),
 		catch: (cause) => flowError("Callback server operation failed", cause),
 	}).pipe(Effect.onError(() => Effect.ignore(dispose)));
-	if (server.address._tag !== "TcpAddress") {
+	if (server.address._tag !== "InetAddressV4") {
 		yield* dispose;
 		return yield* flowError(CALLBACK_BIND_ERROR);
 	}

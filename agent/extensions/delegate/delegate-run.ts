@@ -46,7 +46,6 @@ export interface DelegateRunRequest {
 	model?: string;
 	effort?: string;
 	outputFormat?: string;
-	background?: boolean;
 	cwd?: string;
 	ctx: ExtensionContext;
 }
@@ -70,7 +69,6 @@ export interface DelegateRunOptions {
 	readonly onStarted?: (snapshot: DelegateSnapshot) => void;
 	readonly onSettlement?: (order: number, snapshot: DelegateSnapshot) => void;
 	readonly onSettled?: (snapshot: DelegateSnapshot) => void;
-	readonly notify: (snapshot: DelegateSnapshot) => void;
 	readonly onDisposalStarted: (fiber: Fiber.Fiber<void, never>) => void;
 }
 
@@ -115,7 +113,6 @@ export class DelegateRun {
 		| "onStarted"
 		| "onSettlement"
 		| "onSettled"
-		| "notify"
 		| "onDisposalStarted"
 	>;
 	private readonly createdAt = Effect.runSync(Clock.currentTimeMillis);
@@ -150,7 +147,7 @@ export class DelegateRun {
 			MAX_EXECUTION_MS,
 		);
 		timer.unref?.();
-		this.state = RunState.creating(timer, options.request.background === true);
+		this.state = RunState.creating(timer);
 	}
 
 	status() {
@@ -291,9 +288,7 @@ export class DelegateRun {
 				),
 			)
 			.pipe(Effect.ensuring(Effect.sync(() => this.pendingSends--)));
-		const snapshot = this.snapshot();
-		this.callbacks.notify(snapshot);
-		return snapshot;
+		return this.snapshot();
 	});
 
 	stopForCancellation(): Effect.Effect<void> {
@@ -371,7 +366,6 @@ export class DelegateRun {
 				`${MAX_EXECUTION_TOKENS.toLocaleString("en-US")} reported tokens`,
 			);
 		}
-		this.callbacks.notify(this.snapshot());
 	}
 
 	private stopAtHardLimit(limit: string) {
@@ -474,7 +468,6 @@ export class DelegateRun {
 		const snapshot = this.snapshot();
 		this.callbacks.onSettlement?.(order, snapshot);
 		Effect.runSync(Deferred.succeed(this.completion, snapshot));
-		this.callbacks.notify(snapshot);
 		if (this.state.shouldDeliverSettlement())
 			this.callbacks.onSettled?.(snapshot);
 		if (transition.child) Effect.runFork(this.dispose(transition.child));

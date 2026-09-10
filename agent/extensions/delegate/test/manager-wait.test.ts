@@ -13,11 +13,7 @@ test("background completion is delivered without a parent wait", () =>
 				delivered.push(snapshot),
 			);
 			try {
-				const job = manager.spawn({
-					task: "background",
-					background: true,
-					ctx: context,
-				});
+				const job = manager.spawn({ task: "background", ctx: context });
 				yield* eventually(() => sessions.length === 1);
 				sessions[0].finish("automatic result");
 				yield* eventually(() => delivered.length === 1);
@@ -29,16 +25,16 @@ test("background completion is delivered without a parent wait", () =>
 		}),
 	));
 
-test("blocking completion can be cancelled while the child is running", () =>
+test("lifecycle observation resolves when a running child is cancelled", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const { manager, sessions } = harness();
-			const job = manager.spawn({ task: "blocking", ctx: context });
+			const job = manager.spawn({ task: "observed", ctx: context });
 			yield* eventually(() => sessions.length === 1);
-			const blocking = yield* manager.wait([job.id]).pipe(Effect.forkChild);
+			const observed = yield* manager.wait([job.id]).pipe(Effect.forkChild);
 			const [cancelled] = yield* manager.cancel([job.id]);
 			assert.equal(cancelled.status, "cancelled");
-			assert.equal((yield* Fiber.join(blocking))[0].status, "cancelled");
+			assert.equal((yield* Fiber.join(observed))[0].status, "cancelled");
 			yield* manager.shutdown();
 		}),
 	));

@@ -53,7 +53,7 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | `aoauth` | Anthropic OAuth login support |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
 | `codex-accounts` | Labeled Codex logins, weekly-allowance selection, session account pins, and `/codex-usage` |
-| `delegate` | Blocking and background child-agent runs plus session inspection and control |
+| `delegate` | Background child-agent runs with completion delivery, session inspection, and control |
 | `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
 | `herdr-agent-state` | Herdr pane state and Pi session reporting, with idle reconciliation independent of background processes |
@@ -74,6 +74,8 @@ Delegation selects a model and reasoning profile from `delegate.fast` or `delega
 Children use normal Pi prompt discovery and the applicable `APPEND_SYSTEM.md`, plus a short [child role](agent/extensions/delegate/SYSTEM.md). A project's `.pi/DELEGATE_SYSTEM.md` still replaces the child's base prompt; the shared append policy and child role remain appended.
 
 The `prompt-context` extension supplements custom system prompts with active-tool snippets and guidelines from Pi's resolved prompt inputs. It preserves Pi's project context, skills, appended instructions, and earlier extension changes. Stock system prompts remain unchanged. The same extension loads in parents and children; excluded tools contribute no injected guidance. Context refreshes at `before_agent_start`; tool changes during an active run appear in the next run's injected context. Reload existing sessions with `/reload` after installing it.
+
+Every `delegate_run` returns its child ID immediately and runs in the background. Independent calls execute concurrently. Completions reach an active parent through steering after its current tool-call batch, or wake an idle parent immediately. Ready results may arrive together without waiting for unfinished children. Inspection leaves automatic delivery intact; explicit cancellation returns outcomes directly and suppresses their automatic delivery. Reopened sessions retain children for inspection only, without replaying notifications or restarting interrupted work.
 
 A delegate stays running through Pi's built-in automatic compaction and retries until its session settles.
 

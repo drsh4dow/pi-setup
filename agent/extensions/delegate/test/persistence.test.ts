@@ -161,7 +161,7 @@ test("native child uses parent-scoped custom directory and parent link", () => {
 	);
 });
 
-test("blocking completion persists settlement independently of background delivery", () =>
+test("completion persists before automatic delivery", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const child = new FakeChild();
@@ -177,7 +177,7 @@ test("blocking completion persists settlement independently of background delive
 				onSettled: (value) => delivered.push(value),
 			});
 			const run = manager.spawn({
-				task: "durable blocking completion",
+				task: "durable completion",
 				ctx: context,
 			});
 			const waiting = yield* Effect.forkChild(manager.wait([run.id]));
@@ -187,7 +187,7 @@ test("blocking completion persists settlement independently of background delive
 			assert.equal(records.length, 1);
 			assert.equal(records[0].status, "done");
 			assert.equal(records[0].output, "saved result");
-			assert.equal(delivered.length, 0);
+			assert.equal(delivered.length, 1);
 			yield* manager.shutdown();
 		}),
 	));

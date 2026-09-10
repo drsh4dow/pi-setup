@@ -5,7 +5,8 @@
   "scripts": {
     "prepare": "effect-tsgo patch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p cli/dumpfile/tsconfig.json",
-    "check": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test --error-on-warnings",
+    "check": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test --error-on-warnings && bun run check:oxlint",
+    "check:oxlint": "oxlint --deny-warnings agent/extensions agent/lib agent/scripts cli/dumpfile/src cli/dumpfile/test",
     "lint": "bun run check",
     "verify:strict-diagnostics": "node agent/scripts/verify-strict-diagnostics.mjs",
     "check:fix": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test --write",
@@ -33,7 +34,9 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.13",
     "@effect/tsgo": "0.45.0",
+    "@oxlint/plugins": "1.82.0",
     "@types/node": "^26.5.0",
+    "oxlint": "1.82.0",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2",
     "wrangler": "^4.131.0"

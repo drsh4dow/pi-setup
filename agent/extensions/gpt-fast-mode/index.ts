@@ -89,11 +89,11 @@ export const resolvePiFilePath = Effect.fn("resolvePiFilePath")(function* (
 	const fs = yield* FileSystem.FileSystem;
 	const path = yield* Path.Path;
 	const env = yield* Config.all({
-		HOME: Config.string("HOME").pipe(Config.withDefault("")),
-		PI_CODING_AGENT_DIR: Config.string("PI_CODING_AGENT_DIR").pipe(
+		HOME: Config.String("HOME").pipe(Config.withDefault("")),
+		PI_CODING_AGENT_DIR: Config.String("PI_CODING_AGENT_DIR").pipe(
 			Config.withDefault(""),
 		),
-		XDG_CONFIG_HOME: Config.string("XDG_CONFIG_HOME").pipe(
+		XDG_CONFIG_HOME: Config.String("XDG_CONFIG_HOME").pipe(
 			Config.withDefault(""),
 		),
 	});

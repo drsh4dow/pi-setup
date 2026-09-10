@@ -378,16 +378,15 @@ effectTest(
 			callbacks({
 				onAuth(info) {
 					const { redirectUri, state } = callbackParams(info);
-					callbackRequests = Promise.all([
-						httpStatus(
-							`${redirectUri}?code=wrong-code&state=wrong-state`,
-							nativeFetch,
-						),
+					callbackRequests = httpStatus(
+						`${redirectUri}?code=wrong-code&state=wrong-state`,
+						nativeFetch,
+					).then((rejected) =>
 						httpStatus(
 							`${redirectUri}?code=browser-code&state=${state}`,
 							nativeFetch,
-						),
-					]);
+						).then((accepted) => [rejected, accepted] as const),
+					);
 				},
 				onManualCodeInput: never,
 			}),

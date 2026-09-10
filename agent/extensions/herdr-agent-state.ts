@@ -30,11 +30,11 @@ const acknowledgement = Schema.decodeUnknownOption(
 export default function (pi: ExtensionAPI) {
 	const config = Effect.runSync(
 		Effect.all({
-			enabled: Config.string("HERDR_ENV").pipe(Config.withDefault("")),
-			socketPath: Config.string("HERDR_SOCKET_PATH").pipe(
+			enabled: Config.String("HERDR_ENV").pipe(Config.withDefault("")),
+			socketPath: Config.String("HERDR_SOCKET_PATH").pipe(
 				Config.withDefault(""),
 			),
-			paneId: Config.string("HERDR_PANE_ID").pipe(Config.withDefault("")),
+			paneId: Config.String("HERDR_PANE_ID").pipe(Config.withDefault("")),
 		}),
 	);
 	if (config.enabled !== "1" || !config.socketPath || !config.paneId) return;

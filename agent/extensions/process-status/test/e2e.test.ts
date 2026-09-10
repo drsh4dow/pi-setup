@@ -59,10 +59,12 @@ describe("process-status (real pi in tmux)", { skip }, () => {
 			"ps-e2e-ok",
 		);
 
-		const pane = yield* waitFor(session, /\$\d+\.\d{3}/, {
+		const pane = yield* waitFor(session, /USD \d+\.\d{3}/, {
 			description: "footer cost readout",
 		});
-		assert.match(pane, /↑\d/, `footer input tokens missing:\n${pane}`);
+		const cost = /USD (\d+\.\d{3})/.exec(pane);
+		assert.ok(cost && Number(cost[1]) > 0, `footer cost missing:\n${pane}`);
+		assert.match(pane, /%\/\d/, `footer context gauge missing:\n${pane}`);
 		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
 	});
 });

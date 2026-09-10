@@ -44,7 +44,7 @@ const REPOSITORY_AGENT_DIR = Effect.runSync(
 	pathService.fromFileUrl(new URL("../..", import.meta.url)),
 );
 const e2eEnabled = Effect.runSync(
-	Config.option(Config.nonEmptyString("PI_E2E")),
+	Config.option(Config.NonEmptyString("PI_E2E")),
 ).pipe(Option.exists((value) => value === "1"));
 
 export interface WaitOptions {

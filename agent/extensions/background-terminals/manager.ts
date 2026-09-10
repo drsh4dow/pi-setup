@@ -405,7 +405,7 @@ export class BackgroundTerminalManager {
 			process.platform === "win32"
 				? {
 						file: Effect.runSync(
-							Config.string("ComSpec").pipe(Config.withDefault("cmd.exe")),
+							Config.String("ComSpec").pipe(Config.withDefault("cmd.exe")),
 						),
 						args: ["/d", "/s", "/c", options.command],
 					}

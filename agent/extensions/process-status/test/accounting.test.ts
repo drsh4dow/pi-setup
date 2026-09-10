@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stripVTControlCharacters } from "node:util";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { sessionReportedUsage } from "../accounting.ts";
-import { usageView } from "./usage-fixture.ts";
+import { querySessionUsage } from "./session-usage-fixture.ts";
 
 function sessionWithUsage(cost: number) {
 	const session = SessionManager.inMemory(process.cwd());
@@ -28,12 +27,12 @@ function sessionWithUsage(cost: number) {
 	return session;
 }
 
-test("footer and session_usage report only session usage", () =>
+test("session_usage reports only session usage", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
-			const session = sessionWithUsage(0.1236);
-			const view = usageView(session);
-			const result = yield* Effect.promise(view.query);
+			const result = yield* Effect.promise(() =>
+				querySessionUsage(sessionWithUsage(0.1236)),
+			);
 			assert.deepEqual(result.details, {
 				inputTokens: 10,
 				outputTokens: 5,
@@ -46,21 +45,15 @@ test("footer and session_usage report only session usage", () =>
 				result.content.find((part) => part.type === "text")?.text,
 				'{"inputTokens":10,"outputTokens":5,"cacheReadTokens":30,"cacheWriteTokens":0,"totalTokens":45,"usd":0.124}',
 			);
-			assert.equal(
-				stripVTControlCharacters(view.render()).split("\n")[1]?.split(" · ")[0],
-				"USD 0.124",
-			);
-			assert.match(view.render(), /10\.0%\/1\.0k/);
-			view.dispose();
 		}),
 	));
 
 test("missing session usage remains unavailable", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
-			const session = SessionManager.inMemory(process.cwd());
-			const view = usageView(session, "kimi-coding");
-			const result = yield* Effect.promise(view.query);
+			const result = yield* Effect.promise(() =>
+				querySessionUsage(SessionManager.inMemory(process.cwd())),
+			);
 			assert.deepEqual(result.details, {
 				inputTokens: null,
 				outputTokens: null,
@@ -69,9 +62,6 @@ test("missing session usage remains unavailable", () =>
 				totalTokens: null,
 				usd: null,
 			});
-			assert.match(view.render(), /USD \? \(sub\)/);
-			assert.doesNotMatch(view.render(), /\$0/);
-			view.dispose();
 		}),
 	));
 

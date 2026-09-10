@@ -7,12 +7,10 @@ import {
 	type PiSession,
 	prompt,
 	readStderr,
-	runTask,
 	sendKeys,
 	setupPiSession,
 	testEffect,
 	waitFor,
-	waitForFile,
 } from "../../test/tmux.ts";
 
 const skip = e2eUnavailable();
@@ -24,7 +22,7 @@ describe("process-status (real pi in tmux)", { skip }, () => {
 		session = value;
 	});
 
-	testEffect("boots the replacement footer without crashing", function* () {
+	testEffect("boots with the built-in footer", function* () {
 		assert.equal(yield* isDead(session), false);
 		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
 		const pane = yield* capture(session);
@@ -46,25 +44,6 @@ describe("process-status (real pi in tmux)", { skip }, () => {
 		});
 		assert.equal(yield* isDead(session), false);
 		assert.match(pane, /\[ps\]/);
-		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
-	});
-
-	testEffect("footer accrues real usage after a real task", function* () {
-		yield* runTask(
-			session,
-			"Create a file named ps-e2e.txt whose entire contents are exactly: ps-e2e-ok",
-		);
-		assert.equal(
-			(yield* waitForFile(session, "ps-e2e.txt")).trim(),
-			"ps-e2e-ok",
-		);
-
-		const pane = yield* waitFor(session, /USD \d+\.\d{3}/, {
-			description: "footer cost readout",
-		});
-		const cost = /USD (\d+\.\d{3})/.exec(pane);
-		assert.ok(cost && Number(cost[1]) > 0, `footer cost missing:\n${pane}`);
-		assert.match(pane, /%\/\d/, `footer context gauge missing:\n${pane}`);
 		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
 	});
 });

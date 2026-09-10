@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-	type EntryRenderer,
-	type ExtensionAPI,
-	type ExtensionCommandContext,
-	type ExtensionContext,
-	type ExtensionEvent,
-	initTheme,
+import type {
+	EntryRenderer,
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ExtensionContext,
+	ExtensionEvent,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import extension from "../index.ts";
@@ -169,7 +168,7 @@ test("ignores retained collection requests after synchronous delivery", () => {
 	assert.equal(loads, 1);
 });
 
-test("renders terminal lists and cleans up the footer lifecycle", () => {
+test("renders terminal lists and cleans up its status", () => {
 	const events = eventBus();
 	registerProcessStatusSource({ events }, "terminals", () => [
 		terminal("t1", true, "[running] test watcher", "output\nline"),
@@ -179,7 +178,6 @@ test("renders terminal lists and cleans up the footer lifecycle", () => {
 		| ((args: string, ctx: ExtensionCommandContext) => Promise<void>)
 		| undefined;
 	let renderer: EntryRenderer | undefined;
-	let footerFactory: Parameters<ExtensionContext["ui"]["setFooter"]>[0];
 	const lifecycle = new Map<
 		string,
 		(event: ExtensionEvent, ctx: ExtensionContext) => unknown
@@ -206,7 +204,7 @@ test("renders terminal lists and cleans up the footer lifecycle", () => {
 			handler = command.handler;
 		},
 	} as unknown as ExtensionAPI;
-	extension(api, () => false);
+	extension(api);
 	const context = {
 		mode: "tui",
 		hasUI: true,
@@ -220,9 +218,6 @@ test("renders terminal lists and cleans up the footer lifecycle", () => {
 		},
 		getContextUsage: () => ({ tokens: 100, contextWindow: 1000, percent: 10 }),
 		ui: {
-			setFooter(value: typeof footerFactory) {
-				footerFactory = value;
-			},
 			setStatus(_name: string, value: unknown) {
 				statuses.push(value);
 			},
@@ -262,20 +257,6 @@ test("renders terminal lists and cleans up the footer lifecycle", () => {
 	)?.render(80);
 	assert.match(detail?.join("\n") ?? "", /output[\s\S]*line/);
 
-	assert.ok(footerFactory);
-	initTheme();
-	const footer = footerFactory(
-		{ requestRender() {} } as never,
-		{ fg: (_color: string, text: string) => text } as never,
-		{
-			getGitBranch: () => null,
-			getExtensionStatuses: () => new Map(),
-			getAvailableProviderCount: () => 1,
-			onBranchChange: () => () => {},
-		},
-	);
-	assert.match(footer.render(100).join("\n"), /USD \?/);
-	footer.dispose?.();
 	lifecycle.get("session_shutdown")?.(
 		{ type: "session_shutdown", reason: "quit" },
 		context,

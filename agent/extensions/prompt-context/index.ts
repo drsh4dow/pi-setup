@@ -1,3 +1,5 @@
+// Appends active tool descriptions and tool guidelines to custom system prompts
+// before the agent starts. Leaves the default system prompt unchanged.
 import type {
 	BuildSystemPromptOptions,
 	ExtensionAPI,

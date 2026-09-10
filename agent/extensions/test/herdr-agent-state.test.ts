@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const { spawnSync } = process.getBuiltinModule("node:child_process");
+
 const extensionUrl = new URL("../herdr-agent-state.ts", import.meta.url);
 
 function runScenario(script: string) {
 	const harnessUrl = new URL("./fixtures/herdr-harness.mjs", import.meta.url);
+
 	const result = spawnSync(
 		process.execPath,
 		[
@@ -21,6 +23,7 @@ ${script}
 		],
 		{ encoding: "utf8", timeout: 15_000 },
 	);
+
 	assert.equal(result.status, 0, result.stderr);
 }
 
@@ -87,6 +90,9 @@ await delay(1150);
 assert.equal(states().at(-1).params.state, "working", "a queued continuation is still busy");
 events.get("herdr:blocked")({ active: true, label: "Approval" });
 await eventually(() => states().at(-1)?.params.state === "blocked", "blocked");
+for (const invalid of [null, [], { active: "yes" }, { active: false, label: 3 }]) {
+  events.get("herdr:blocked")(invalid);
+}
 setIdle(true);
 await delay(1150);
 assert.equal(states().at(-1).params.state, "blocked", "blocked wins over idle");

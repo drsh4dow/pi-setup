@@ -16,24 +16,29 @@ function contextFor(content: string, oldText: string): string {
 	const needle = oldText.replace(/\r\n/g, "\n");
 	// Literal search supplies navigation hints only. Pi alone decides match validity.
 	const candidateLines: number[] = [];
+
 	if (needle) {
 		let offset = normalized.indexOf(needle);
+
 		while (offset >= 0 && candidateLines.length < 4) {
 			candidateLines.push(normalized.slice(0, offset).split("\n").length - 1);
 			offset = normalized.indexOf(needle, offset + 1);
 		}
 	}
+
 	if (candidateLines.length === 0) {
 		const anchor = needle
 			.split("\n")
 			.find((line) => line.trim())
 			?.trim();
+
 		if (anchor) {
 			for (let i = 0; i < lines.length && candidateLines.length < 4; i++) {
 				if (lines[i].includes(anchor)) candidateLines.push(i);
 			}
 		}
 	}
+
 	const locations = candidateLines.map((index) =>
 		lines
 			.slice(Math.max(0, index - 1), index + 2)
@@ -43,8 +48,10 @@ function contextFor(content: string, oldText: string): string {
 			)
 			.join("\n"),
 	);
+
 	if (locations.length === 0)
 		return "No nearby context found. Use read on the file or grep a shorter distinctive fragment, then copy oldText from the current file, preserving whitespace and newlines.";
+
 	return `Candidate context from the original file (first 4 locations, 160 characters per line):\n${locations.join("\n...\n")}\nThese are navigation hints, not accepted matches. Use read around these lines, preserve whitespace and newlines, and include enough surrounding text to make oldText unique.`;
 }
 
@@ -58,20 +65,24 @@ export function createDiagnosticEditTool(cwd: string) {
 		) {
 			let snapshot: Buffer | undefined;
 			let writeStarted = false;
+
 			const builtin = createEditTool(cwd, {
 				operations: {
 					access: (path) => access(path, constants.R_OK | constants.W_OK),
 					readFile: (path) =>
 						readFile(path).then((buffer) => {
 							snapshot = buffer;
+
 							return buffer;
 						}),
 					writeFile: (path, content) => {
 						writeStarted = true;
+
 						return writeFile(path, content, "utf8");
 					},
 				},
 			});
+
 			try {
 				return await builtin.execute(...args);
 			} catch (error) {
@@ -80,6 +91,7 @@ export function createDiagnosticEditTool(cwd: string) {
 				// A write attempt means matching succeeded. Stop before diff generation.
 				const accepted = new Error("diagnostic probe accepted");
 				const buffer = snapshot;
+
 				const probe = createEditTool(cwd, {
 					operations: {
 						access: () => Promise.resolve(),
@@ -87,8 +99,10 @@ export function createDiagnosticEditTool(cwd: string) {
 						writeFile: () => Promise.reject(accepted),
 					},
 				});
+
 				let context =
 					"No individual match rejection found in the first 32 edits. Check the original error for overlapping edits or identical replacements. Each entry targets the original file.";
+
 				for (const [index, edit] of args[1].edits.slice(0, 32).entries()) {
 					try {
 						await probe.execute(
@@ -103,19 +117,23 @@ export function createDiagnosticEditTool(cwd: string) {
 						);
 					} catch (probeError) {
 						if (args[2]?.aborted) throw error;
+
 						if (probeError === accepted) continue;
 						context = `edits[${index}] rejected when checked alone.\n${contextFor(buffer.toString("utf8"), edit.oldText)}`;
 						break;
 					}
 				}
+
 				const message = truncateHead(
 					error instanceof Error ? error.message : String(error),
 					{ maxBytes: 1024, maxLines: 6 },
 				);
+
 				const diagnostic = truncateHead(
 					`${message.content}${message.truncated ? " [error truncated]" : ""}\n\n${context}`,
 					{ maxBytes: 7800, maxLines: 40 },
 				);
+
 				throw new Error(
 					`${diagnostic.content}${diagnostic.truncated ? "\n[Diagnostics truncated. Use read for full context.]" : ""}`,
 					{ cause: error },

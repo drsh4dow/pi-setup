@@ -20,6 +20,7 @@ import {
 } from "../../test/tmux.ts";
 
 const skip = e2eUnavailable();
+
 const { fs, path } = Effect.runSync(
 	Effect.gen(function* () {
 		return { fs: yield* FileSystem.FileSystem, path: yield* Path.Path };
@@ -29,11 +30,13 @@ const { fs, path } = Effect.runSync(
 		),
 	),
 );
+
 const Settings = Schema.fromJsonString(
 	Schema.Struct({ defaultModel: Schema.String }),
 );
 
 const BAR_FILL = "─";
+
 const CURRENT_MODEL_ROW = /^(?=.*✓).*?(\S+) \[([^\]]+)\]/m;
 
 interface Header {
@@ -47,10 +50,12 @@ interface Header {
 function header(pane: string): Header | undefined {
 	const lines = pane.split("\n");
 	const index = lines.findIndex((line) => line.includes(" PI / "));
+
 	if (index === -1) return undefined;
 
 	const line = lines[index] ?? "";
 	const match = /^(─*) PI \/ (\S+) \/ (\S+) (─*)$/.exec(line);
+
 	if (!match) return undefined;
 
 	return {
@@ -129,9 +134,12 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 			const openModelPicker = Effect.fn("openModelPicker")(function* () {
 				yield* prompt(session, "/model");
 				const pane = yield* waitFor(session, /Ctrl\+S to set as default/);
+
 				if (pane.includes("Scope:")) yield* sendKeys(session, "Tab");
+
 				return yield* waitFor(session, (pane) => {
 					const current = CURRENT_MODEL_ROW.exec(pane);
+
 					return (
 						current !== null &&
 						[...pane.matchAll(/(\S+) \[([^\]]+)\]/g)].some(
@@ -140,6 +148,7 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 					);
 				});
 			});
+
 			const chooseDefault = Effect.fn("chooseDefault")(function* (
 				reference: string,
 			) {
@@ -147,18 +156,23 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 				yield* waitFor(session, (pane) => pane.includes(`> ${reference}`));
 				yield* sendKeys(session, "C-s");
 			});
+
 			const picker = yield* openModelPicker();
 			const original = CURRENT_MODEL_ROW.exec(picker);
 			assert.ok(original, `current model missing from picker:\n${picker}`);
+
 			const alternative = [...picker.matchAll(/(\S+) \[([^\]]+)\]/g)].find(
 				(match) => match[1] !== first.modelId,
 			);
+
 			assert.ok(alternative, `need a different available model:\n${picker}`);
 			yield* chooseDefault(`${alternative[2]}/${alternative[1]}`);
+
 			const selected = yield* waitFor(
 				session,
 				(pane) => {
 					const bar = header(pane);
+
 					return (
 						bar !== undefined &&
 						bar.modelId === alternative[1] &&
@@ -167,14 +181,17 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 				},
 				{ timeoutMs: 30_000, description: "header to pick up the new model" },
 			);
+
 			const second = header(selected);
 			assert.ok(second, "header missing after selecting the model");
 			assert.notEqual(second.modelId, first.modelId);
 			assert.equal(second.project, first.project);
 			assert.equal(second.line.length, first.line.length);
+
 			const settings = yield* Schema.decodeEffect(Settings)(
 				yield* fs.readFileString(path.join(session.agentDir, "settings.json")),
 			);
+
 			assert.equal(settings.defaultModel, second.modelId);
 
 			yield* openModelPicker();
@@ -212,10 +229,13 @@ describe("ui-moto (real pi in tmux)", { skip }, () => {
 		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
 
 		const scrollback = yield* capture(session, true);
+
 		const rows = scrollback
 			.split("\n")
 			.filter((line) => line.includes(" PI / "));
+
 		assert.ok(rows.length > 0, `header gone after the task:\n${scrollback}`);
+
 		for (const row of rows) {
 			const bar = header(row);
 			assert.ok(bar, `header row corrupted after the task: ${row}`);

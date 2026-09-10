@@ -20,37 +20,48 @@ import {
 import { nodeCommand } from "./node-command.ts";
 
 const cwd = mkdtempSync(join(tmpdir(), "pi-bg-test-"));
+
 test.after(() => rmSync(cwd, { recursive: true, force: true }));
+
 const wait = (ms: number) => Effect.sleep(ms);
+
 const now = () => Effect.runSync(Clock.currentTimeMillis);
+
 const killProcess = (pid: number) => Effect.sync(() => {
 	if (pid && !processIsGone(pid))
 		try {
 			process.kill(pid, "SIGKILL");
 		} catch {}
 });
+
 const settled = Effect.fn("settled")(function* (manager: BackgroundTerminalManager, id: string, timeout = 6_000): Effect.fn.Return<SettledTerminalSnapshot> {
 	const deadline = now() + timeout;
+
 	while (now() < deadline) {
 		const snapshot = manager.get(id);
+
 		if (snapshot && snapshot.state !== "running") return snapshot;
 		yield* wait(20);
 	}
+
 	throw new Error(`timeout waiting for ${id}`);
 });
 
 test("captures stdout and stderr and classifies success and nonzero", () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	const ok = manager.start({
 		command: "printf out; printf err >&2",
 		title: "ok",
 		cwd,
 	});
+
 	const bad = manager.start({
 		command: "printf nope >&2; exit 7",
 		title: "bad",
 		cwd,
 	});
+
 	assert.equal((yield* settled(manager, ok.id)).state, "done");
 	const failed = yield* settled(manager, bad.id);
 	assert.equal(failed.state, "failed");
@@ -65,11 +76,13 @@ test("captures stdout and stderr and classifies success and nonzero", () => Effe
 test("retains a UTF-8-safe newest 256 KiB tail with byte counts", () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
 	const bytes = RETAINED_BYTES + 4099;
+
 	const run = manager.start({
 		command: `node -e 'process.stdout.write("é".repeat(${Math.ceil(bytes / 2)}))'`,
 		title: "large",
 		cwd,
 	});
+
 	const snapshot = yield* settled(manager, run.id);
 	assert.ok(Buffer.byteLength(snapshot.stdout.text) <= RETAINED_BYTES);
 	assert.ok(!snapshot.stdout.text.startsWith("�"));
@@ -84,11 +97,13 @@ test("retains a UTF-8-safe newest 256 KiB tail with byte counts", () => Effect.r
 test("retains exact newest output after many small writes", () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
 	const writes = RETAINED_BYTES + 10_000;
+
 	const run = manager.start({
 		command: `node -e 'for(let i=0;i<${writes};i++)process.stdout.write(String(i%10))'`,
 		title: "chatty",
 		cwd,
 	});
+
 	const snapshot = yield* settled(manager, run.id);
 	assert.equal(snapshot.stdout.totalBytes, writes);
 	assert.equal(Buffer.byteLength(snapshot.stdout.text), RETAINED_BYTES);
@@ -99,17 +114,21 @@ test("retains exact newest output after many small writes", () => Effect.runProm
 
 test("prunes to the tracked bound without evicting running entries", () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	const running = Array.from({ length: 2 }, (_, index) =>
 		manager.start({ command: "sleep 30", title: String(index), cwd }),
 	);
+
 	for (let index = 0; index < MAX_TRACKED + 3; index++) {
 		const run = manager.start({
 			command: "true",
 			title: `quick-${index}`,
 			cwd,
 		});
+
 		yield* settled(manager, run.id);
 	}
+
 	assert.equal(manager.list().length, MAX_TRACKED);
 	const tracked = new Set(manager.list().map((entry) => entry.id));
 	assert.ok(running.every((run) => tracked.has(run.id)));
@@ -118,9 +137,11 @@ test("prunes to the tracked bound without evicting running entries", () => Effec
 
 test("kill returns every result when active terminals exceed retention", () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	const runs = Array.from({ length: MAX_TRACKED + 1 }, (_, index) =>
 		manager.start({ command: "sleep 30", title: `active-${index}`, cwd }),
 	);
+
 	try {
 		const results = yield* manager.kill(runs.map((run) => run.id));
 		assert.deepEqual(
@@ -137,10 +158,12 @@ test("repeated and overlapping kills settle once", () => Effect.runPromise(Effec
 	let notifications = 0;
 	const manager = new BackgroundTerminalManager(() => notifications++);
 	const run = manager.start({ command: "sleep 30", title: "repeat", cwd });
+
 	const [first, second] = yield* Effect.all(
 		[manager.kill([run.id]), manager.kill([run.id, run.id])],
 		{ concurrency: "unbounded" },
 	);
+
 	assert.equal(first[0].state, "killed");
 	assert.equal(second[0].state, "killed");
 	assert.equal(notifications, 1);
@@ -151,14 +174,17 @@ test("a user kill takes ownership of stalled-pipe termination already in flight"
 	skip: process.platform === "win32",
 }, () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	const run = manager.start({
 		command:
 			`sh -c 'trap "echo automatic-termination-started" TERM; while true; do sleep 30; done' & exit 0`,
 		title: "stalled pipes",
 		cwd,
 	});
+
 	try {
 		const deadline = now() + 4_000;
+
 		while (
 			now() < deadline &&
 			!manager
@@ -183,11 +209,13 @@ test("escalates SIGTERM and cleans the POSIX process group", {
 	skip: process.platform === "win32",
 }, () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	const run = manager.start({
 		command: "trap '' TERM; sleep 30 & echo child:$!; wait",
 		title: "stubborn",
 		cwd,
 	});
+
 	yield* wait(100);
 	const running = manager.get(run.id);
 	assert.ok(running);
@@ -199,6 +227,7 @@ test("escalates SIGTERM and cleans the POSIX process group", {
 	assert.equal(snapshot?.state, "killed");
 	assert.ok(now() - started >= 1_800);
 	assert.ok(now() - started < 5_000);
+
 	for (let attempt = 0; attempt < 50 && !processIsGone(childPid); attempt++)
 		yield* wait(20);
 	assert.ok(processIsGone(childPid));
@@ -209,25 +238,32 @@ test("shutdown kills a process group after its shell exits", {
 	skip: process.platform === "win32",
 }, () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	const run = manager.start({
 		command: "sleep 30 >/dev/null 2>&1 & echo child:$!",
 		title: "detached descendant",
 		cwd,
 	});
+
 	let childPid = 0;
+
 	try {
 		const deadline = now() + 2_000;
+
 		while (now() < deadline) {
 			const snapshot = manager.get(run.id);
 			assert.ok(snapshot);
 			childPid = Number(/child:(\d+)/.exec(snapshot.stdout.text)?.[1]);
+
 			if (childPid && run.pid && processIsGone(run.pid)) break;
 			yield* wait(20);
 		}
+
 		assert.ok(childPid);
 		assert.ok(run.pid && processIsGone(run.pid));
 		assert.ok(!processIsGone(childPid));
 		yield* manager.shutdown();
+
 		for (let attempt = 0; attempt < 50 && !processIsGone(childPid); attempt++)
 			yield* wait(20);
 		assert.ok(processIsGone(childPid));
@@ -251,13 +287,16 @@ test("releases inherited pipe handles after bounded termination", {
 	skip: process.platform === "win32",
 }, () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	const run = manager.start({
 		command:
 			'node -e \'const {spawn}=require("node:child_process");const child=spawn("sleep",["30"],{detached:true,stdio:["ignore",1,2]});console.log("escaped:"+child.pid);child.unref()\'',
 		title: "escaped pipes",
 		cwd,
 	});
+
 	let escapedPid = 0;
+
 	try {
 		const snapshot = yield* settled(manager, run.id, 6_000);
 		escapedPid = Number(/escaped:(\d+)/.exec(snapshot.stdout.text)?.[1]);
@@ -275,11 +314,13 @@ test("bounds settlement when descendants retain inherited pipes", {
 	skip: process.platform === "win32",
 }, () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	const run = manager.start({
 		command: "(sleep 30) & exit 0",
 		title: "pipes",
 		cwd,
 	});
+
 	const snapshot = yield* settled(manager, run.id, 5_000);
 	assert.equal(snapshot.state, "done");
 	assert.ok(snapshot.settledAt - snapshot.createdAt < 4_500);
@@ -288,15 +329,17 @@ test("bounds settlement when descendants retain inherited pipes", {
 
 test("list returns output-free metadata while detail retains output", () => Effect.runPromise(Effect.gen(function* () {
 	const manager = new BackgroundTerminalManager();
+
 	try {
 		const run = manager.start({ command: nodeCommand('process.stdout.write("é"); process.stderr.write("err"); setTimeout(() => {}, 30000)'), title: "metadata", cwd });
 		const deadline = now() + 5000;
+
 		while (manager.get(run.id)?.stderr.text !== "err" && now() < deadline)
 			yield* Effect.sleep(20);
 		const detail = manager.get(run.id);
 		assert.ok(detail);
 		assert.equal(detail.stdout.text, "é");
-		const { stdout, stderr, ...metadata } = detail;
+		const { stdout: _stdout, stderr: _stderr, ...metadata } = detail;
 		assert.deepEqual(manager.list(), [{ ...metadata, stdout: { totalBytes: 2, truncatedBytes: 0 }, stderr: { totalBytes: 3, truncatedBytes: 0 } }]);
 		yield* manager.kill([run.id]);
 		const result = manager.get(run.id);

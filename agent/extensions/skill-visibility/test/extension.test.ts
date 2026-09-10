@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, FileSystem } from "effect";
+import { unsafeFixture } from "../../test/adapter.ts";
 import extension from "../index.ts";
 
 const remove = (directory: string) =>
@@ -22,10 +23,12 @@ test("omits skills that users cannot invoke from the visibility picker", (t) =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
+
 			const directory = yield* fs.makeTempDirectory({
 				directory: tmpdir(),
 				prefix: "skill-visibility-test-",
 			});
+
 			t.after(() => remove(directory));
 
 			const skills = [
@@ -33,6 +36,7 @@ test("omits skills that users cannot invoke from the visibility picker", (t) =>
 				["explicitly-visible", "user-invokable: true\n"],
 				["visible-by-default", ""],
 			] as const;
+
 			yield* Effect.forEach(skills, ([name, visibility]) =>
 				fs.writeFileString(
 					`${directory}/${name}.md`,
@@ -41,33 +45,52 @@ test("omits skills that users cannot invoke from the visibility picker", (t) =>
 			);
 
 			let handler: RegisteredCommand["handler"] | undefined;
-			extension({
-				registerCommand(name: string, command: RegisteredCommand) {
-					assert.equal(name, "skill-visibility");
-					handler = command.handler;
-				},
-			} as unknown as ExtensionAPI);
+			extension(
+				unsafeFixture<ExtensionAPI>({
+					registerCommand(name: string, command: RegisteredCommand) {
+						assert.equal(name, "skill-visibility");
+						handler = command.handler;
+					},
+				}),
+			);
 			assert.ok(handler);
 			const registeredHandler = handler;
 
 			let choices: string[] = [];
-			const loadedSkills = skills.map(([name]) => ({
+
+			const loadedSkills: Skill[] = skills.map(([name]) => ({
 				name,
 				filePath: `${directory}/${name}.md`,
 				disableModelInvocation: false,
-			})) as Skill[];
+				description: "Test skill.",
+				baseDir: directory,
+				sourceInfo: {
+					path: `${directory}/${name}.md`,
+					source: "test",
+					scope: "temporary",
+					origin: "top-level",
+				},
+			}));
+
 			yield* Effect.promise(() =>
-				registeredHandler("", {
-					hasUI: true,
-					getSystemPromptOptions: () => ({ skills: loadedSkills }),
-					ui: {
-						notify() {},
-						select: (_title: string, options: string[]) => {
-							choices = options;
-							return Promise.resolve("Done");
-						},
-					},
-				} as unknown as ExtensionCommandContext),
+				registeredHandler(
+					"",
+					unsafeFixture<ExtensionCommandContext>({
+						hasUI: true,
+						getSystemPromptOptions: () => ({
+							cwd: directory,
+							skills: loadedSkills,
+						}),
+						ui: unsafeFixture<ExtensionCommandContext["ui"]>({
+							notify() {},
+							select: (_title: string, options: string[]) => {
+								choices = options;
+
+								return Promise.resolve("Done");
+							},
+						}),
+					}),
+				),
 			);
 
 			assert.deepEqual(choices, [

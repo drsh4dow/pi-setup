@@ -5,9 +5,11 @@ import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
-	ExtensionEvent,
 } from "@earendil-works/pi-coding-agent";
+import { createEventBus as eventBus } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { Effect } from "effect";
+import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import extension from "../index.ts";
 import {
 	MAX_ACTIVITIES_PER_SOURCE,
@@ -16,20 +18,34 @@ import {
 	registerProcessStatusSource,
 } from "../status.ts";
 
-function eventBus() {
-	const listeners = new Map<string, Set<(data: unknown) => void>>();
-	return {
-		emit(channel: string, data: unknown) {
-			for (const listener of listeners.get(channel) ?? []) listener(data);
-		},
-		on(channel: string, listener: (data: unknown) => void) {
-			const channelListeners = listeners.get(channel) ?? new Set();
-			channelListeners.add(listener);
-			listeners.set(channel, channelListeners);
-			return () => channelListeners.delete(listener);
-		},
-	};
-}
+test("collects across independently loaded extension modules", () => {
+	const { spawnSync } = process.getBuiltinModule("node:child_process");
+
+	const result = spawnSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			`
+import assert from "node:assert/strict";
+import { createJiti } from "jiti";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
+const path = ${JSON.stringify(new URL("../status.ts", import.meta.url).pathname)};
+const source = await createJiti(import.meta.url, { moduleCache: false }).import(path);
+const consumer = await createJiti(import.meta.url, { moduleCache: false }).import(path);
+const events = createEventBus();
+source.registerProcessStatusSource({ events }, "terminals", () => [
+  { id: "t1", active: true, summary: "running" },
+]);
+assert.equal(consumer.processStatusSummary({ events }), "1 bg");
+assert.equal(consumer.processStatusView({ events }).collapsed, "t1 running");
+`,
+		],
+		{ encoding: "utf8", timeout: 30_000 },
+	);
+
+	assert.equal(result.status, 0, result.stderr);
+});
 
 function terminal(
 	id: string,
@@ -150,116 +166,150 @@ test("bounds sources and retained terminals while preserving active entries", ()
 	);
 });
 
+test("ignores unrelated collection payloads", () => {
+	const events = eventBus();
+	let loads = 0;
+	registerProcessStatusSource({ events }, "terminals", () => {
+		loads++;
+
+		return [terminal("t1", true, "running")];
+	});
+	events.emit("process-status:collect", undefined);
+	events.emit("process-status:collect", { add: "invalid" });
+	assert.equal(loads, 0);
+	assert.equal(processStatusView({ events }).collapsed, "t1 running");
+	assert.equal(loads, 1);
+});
+
 test("ignores retained collection requests after synchronous delivery", () => {
 	const events = eventBus();
 	const requests: unknown[] = [];
 	let loads = 0;
+
 	const stopRetaining = events.on("process-status:collect", (request) =>
 		requests.push(request),
 	);
+
 	registerProcessStatusSource({ events }, "terminals", () => {
 		loads++;
+
 		return [terminal("t1", true, "running")];
 	});
 	processStatusView({ events });
 	stopRetaining();
+
 	for (const request of requests)
 		events.emit("process-status:collect", request);
 	assert.equal(loads, 1);
 });
 
-test("renders terminal lists and cleans up its status", () => {
-	const events = eventBus();
-	registerProcessStatusSource({ events }, "terminals", () => [
-		terminal("t1", true, "[running] test watcher", "output\nline"),
-		terminal("t2", false, `[failed] ${"x".repeat(80)}`),
-	]);
-	let handler:
-		| ((args: string, ctx: ExtensionCommandContext) => Promise<void>)
-		| undefined;
-	let renderer: EntryRenderer | undefined;
-	const lifecycle = new Map<
-		string,
-		(event: ExtensionEvent, ctx: ExtensionContext) => unknown
-	>();
-	const appended: unknown[] = [];
-	const statuses: unknown[] = [];
-	const api = {
-		events,
-		appendEntry(_type: string, data: unknown) {
-			appended.push(data);
-		},
-		getThinkingLevel: () => "high",
-		on(
-			event: string,
-			callback: (event: ExtensionEvent, ctx: ExtensionContext) => unknown,
-		) {
-			lifecycle.set(event, callback);
-		},
-		registerEntryRenderer(_type: string, value: EntryRenderer) {
-			renderer = value;
-		},
-		registerTool() {},
-		registerCommand(_name: string, command: { handler: typeof handler }) {
-			handler = command.handler;
-		},
-	} as unknown as ExtensionAPI;
-	extension(api);
-	const context = {
-		mode: "tui",
-		hasUI: true,
-		model: { id: "test-model", provider: "test", contextWindow: 1000 },
-		modelRegistry: { isUsingOAuth: () => false },
-		sessionManager: {
-			getHeader: () => null,
-			getEntries: () => [],
-			getCwd: () => "/tmp/project",
-			getSessionName: () => undefined,
-		},
-		getContextUsage: () => ({ tokens: 100, contextWindow: 1000, percent: 10 }),
-		ui: {
-			setStatus(_name: string, value: unknown) {
-				statuses.push(value);
-			},
-		},
-	} as unknown as ExtensionContext;
-	lifecycle.get("session_start")?.(
-		{ type: "session_start", reason: "startup" },
-		context,
-	);
-	assert.equal(statuses.at(-1), "1 bg");
-	assert.ok(handler);
-	void handler("", { mode: "tui", hasUI: true } as ExtensionCommandContext);
-	void handler("t1", { mode: "tui", hasUI: true } as ExtensionCommandContext);
-	assert.equal(appended.length, 2);
-	assert.ok(renderer);
-	const theme = {
-		bg: (_color: string, text: string) => text,
-		fg: (_color: string, text: string) => text,
-	} as never;
-	const collapsed = renderer(
-		{ data: appended[0] } as never,
-		{ expanded: false },
-		theme,
-	)?.render(35);
-	assert.ok(collapsed?.every((line) => visibleWidth(line) <= 35));
-	assert.doesNotMatch(collapsed?.join("\n") ?? "", /t2/);
-	const expanded = renderer(
-		{ data: appended[0] } as never,
-		{ expanded: true },
-		theme,
-	)?.render(35);
-	assert.match(expanded?.join("\n") ?? "", /t2 \[failed\].*\.\.\./);
-	const detail = renderer(
-		{ data: appended[1] } as never,
-		{ expanded: false },
-		theme,
-	)?.render(80);
-	assert.match(detail?.join("\n") ?? "", /output[\s\S]*line/);
+test("renders terminal lists and cleans up its status", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const events = eventBus();
+			registerProcessStatusSource({ events }, "terminals", () => [
+				terminal("t1", true, "[running] test watcher", "output\nline"),
+				terminal("t2", false, `[failed] ${"x".repeat(80)}`),
+			]);
 
-	lifecycle.get("session_shutdown")?.(
-		{ type: "session_shutdown", reason: "quit" },
-		context,
-	);
-	assert.equal(statuses.at(-1), undefined);
-});
+			let handler:
+				| ((args: string, ctx: ExtensionCommandContext) => Promise<void>)
+				| undefined;
+
+			let renderer: EntryRenderer | undefined;
+
+			const adapter = extensionTestAdapter();
+
+			const appended: unknown[] = [];
+			const statuses: (string | undefined)[] = [];
+
+			const api = unsafeFixture<ExtensionAPI>({
+				...adapter.api,
+				events,
+				appendEntry(_type, data) {
+					appended.push(data);
+				},
+				getThinkingLevel: () => "high",
+				registerEntryRenderer(_type, value) {
+					// SAFETY: The extension appends and renders the same custom entry type; the SDK erases that association in its generic registry.
+					renderer = value as EntryRenderer;
+				},
+				registerTool() {},
+				registerCommand(_name: string, command: { handler: typeof handler }) {
+					handler = command.handler;
+				},
+			});
+
+			extension(api);
+
+			const context = unsafeFixture<ExtensionContext>({
+				mode: "tui",
+				hasUI: true,
+				ui: unsafeFixture<ExtensionContext["ui"]>({
+					setStatus(_name, value) {
+						statuses.push(value);
+					},
+				}),
+			});
+
+			yield* Effect.promise(() =>
+				adapter.emit(
+					"session_start",
+					{ type: "session_start", reason: "startup" },
+					context,
+				),
+			);
+			assert.equal(statuses.at(-1), "1 bg");
+			assert.ok(handler);
+
+			const commandContext = unsafeFixture<ExtensionCommandContext>({
+				mode: "tui",
+				hasUI: true,
+			});
+
+			const command = handler;
+			yield* Effect.promise(() => command("", commandContext));
+			yield* Effect.promise(() => command("t1", commandContext));
+			assert.equal(appended.length, 2);
+			assert.ok(renderer);
+
+			const theme = unsafeFixture<Parameters<EntryRenderer>[2]>({
+				bg: (_color, text) => text,
+				fg: (_color, text) => text,
+			});
+
+			const collapsed = renderer(
+				unsafeFixture<Parameters<EntryRenderer>[0]>({ data: appended[0] }),
+				{ expanded: false },
+				theme,
+			)?.render(35);
+
+			assert.ok(collapsed?.every((line) => visibleWidth(line) <= 35));
+			assert.doesNotMatch(collapsed?.join("\n") ?? "", /t2/);
+
+			const expanded = renderer(
+				unsafeFixture<Parameters<EntryRenderer>[0]>({ data: appended[0] }),
+				{ expanded: true },
+				theme,
+			)?.render(35);
+
+			assert.match(expanded?.join("\n") ?? "", /t2 \[failed\].*\.\.\./);
+
+			const detail = renderer(
+				unsafeFixture<Parameters<EntryRenderer>[0]>({ data: appended[1] }),
+				{ expanded: false },
+				theme,
+			)?.render(80);
+
+			assert.match(detail?.join("\n") ?? "", /output[\s\S]*line/);
+
+			yield* Effect.promise(() =>
+				adapter.emit(
+					"session_shutdown",
+					{ type: "session_shutdown", reason: "quit" },
+					context,
+				),
+			);
+			assert.equal(statuses.at(-1), undefined);
+		}),
+	));

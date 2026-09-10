@@ -25,6 +25,7 @@ export default function processStatus(pi: ExtensionAPI) {
 			if (!entry.data) return undefined;
 			const text = expanded ? entry.data.expanded : entry.data.collapsed;
 			const box = new Box(1, 1, (line) => theme.bg("customMessageBg", line));
+
 			if (entry.data.list) {
 				box.addChild({
 					invalidate() {},
@@ -43,6 +44,7 @@ export default function processStatus(pi: ExtensionAPI) {
 			} else {
 				box.addChild(new Text(`${theme.fg("accent", "[ps]")}\n${text}`, 0, 0));
 			}
+
 			return box;
 		},
 	);
@@ -56,6 +58,7 @@ export default function processStatus(pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		refreshStatus = undefined;
+
 		if (ctx.mode === "tui") ctx.ui.setStatus("process-status", undefined);
 	});
 
@@ -70,6 +73,7 @@ export default function processStatus(pi: ExtensionAPI) {
 		executionMode: "parallel",
 		execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const reported = sessionReportedUsage(ctx.sessionManager.getEntries());
+
 			const usage = {
 				inputTokens: reported.input,
 				outputTokens: reported.output,
@@ -78,6 +82,7 @@ export default function processStatus(pi: ExtensionAPI) {
 				totalTokens: reported.totalTokens,
 				usd: reported.cost === null ? null : roundUsd(reported.cost),
 			};
+
 			return Promise.resolve({
 				content: [{ type: "text" as const, text: JSON.stringify(usage) }],
 				details: usage,
@@ -89,8 +94,10 @@ export default function processStatus(pi: ExtensionAPI) {
 		description: "/ps: active; Ctrl+O: tracked; /ps <id>: details",
 		handler: (args, ctx) => {
 			const view = processStatusView(pi, args.trim() || undefined);
+
 			if (ctx.mode === "tui") pi.appendEntry(ENTRY_TYPE, view);
 			else if (ctx.hasUI) ctx.ui.notify(view.collapsed, "info");
+
 			return Promise.resolve();
 		},
 	});

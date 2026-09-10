@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
 const fixture = mkdtempSync(join(tmpdir(), "pi-strict-diagnostics-"));
 
 function runPackageScript(script) {
@@ -29,9 +30,12 @@ function outputOf(result) {
 function requireCleanControl(label, script) {
 	console.log(`\n${label}`);
 	const result = runPackageScript(script);
+
 	if (result.error) throw result.error;
+
 	if (result.signal !== null)
 		throw new Error(`${label} terminated by signal ${result.signal}`);
+
 	if (result.status !== 0)
 		throw new Error(`${label} failed:\n${outputOf(result)}`);
 }
@@ -41,13 +45,18 @@ function requireDiagnostic(label, script, expected) {
 	const result = runPackageScript(script);
 	const output = outputOf(result);
 	process.stdout.write(output);
+
 	if (result.error) throw result.error;
+
 	if (result.signal !== null)
 		throw new Error(`${label} terminated by signal ${result.signal}`);
+
 	if (result.status === null)
 		throw new Error(`${label} did not report an exit status`);
+
 	if (result.status === 0)
 		throw new Error(`${label} unexpectedly exited successfully`);
+
 	if (!expected.test(output))
 		throw new Error(`${label} failed without the expected diagnostic`);
 }
@@ -59,9 +68,11 @@ function makeDirectory(path) {
 try {
 	symlinkSync(join(repository, "node_modules"), join(fixture, "node_modules"));
 	copyFileSync(join(repository, "package.json"), join(fixture, "package.json"));
+
 	const biome = JSON.parse(
 		readFileSync(join(repository, "biome.json"), "utf8"),
 	);
+
 	biome.vcs.enabled = false;
 	writeFileSync(join(fixture, "biome.json"), `${JSON.stringify(biome)}\n`);
 
@@ -115,6 +126,7 @@ try {
 
 	const warningLines =
 		biome.linter.rules.style.noExcessiveLinesPerFile.options.maxLines + 1;
+
 	writeFileSync(
 		join(fixture, "agent/extensions/biome-warning.ts"),
 		`${Array.from({ length: warningLines }, (_, index) => `export const line${index} = ${index};`).join("\n")}\n`,

@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { BUCKET_NAME } from "./contract.ts";
 
 const rule = {
@@ -14,15 +16,32 @@ interface Runtime {
 	readonly write: (text: string) => void;
 }
 
-function record(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const authSchema = Type.Object({
+	type: Type.Union([Type.Literal("oauth"), Type.Literal("api_token")]),
+	token: Type.String(),
+});
+
+// Values come from response.json(); check their shape without stripping extras.
+const lifecycleRuleSchema = Type.Object({
+	id: Type.String(),
+	enabled: Type.Boolean(),
+	conditions: Type.Record(Type.String(), Type.Unknown()),
+	deleteObjectsTransition: Type.Optional(Type.Unknown()),
+});
+
+const lifecycleResponseSchema = Type.Object({
+	success: Type.Literal(true),
+	result: Type.Object({
+		rules: Type.Optional(Type.Array(lifecycleRuleSchema)),
+	}),
+});
 
 export async function main(
 	args: readonly string[],
 	runtime: Runtime,
 ): Promise<number> {
 	const [mode, account, approval] = args;
+
 	if (
 		!account ||
 		!/^[a-f0-9]{32}$/.test(account) ||
@@ -36,81 +55,77 @@ export async function main(
 		runtime.write(
 			"Usage: retention.ts check <account-id> | apply <account-id> --expire-existing-uploads\nApply authorizes expiration of ALL existing and future dumpfile-prod objects after 30 days of object age.\n",
 		);
+
 		return 1;
 	}
+
 	try {
 		const auth: unknown = JSON.parse(runtime.auth);
-		if (
-			!record(auth) ||
-			(auth.type !== "oauth" && auth.type !== "api_token") ||
-			typeof auth.token !== "string" ||
-			!auth.token
-		) {
+
+		if (!Value.Check(authSchema, auth) || !auth.token) {
 			runtime.write(
 				"Supply Wrangler auth token --json on stdin; API key authentication is unsupported.\n",
 			);
+
 			return 1;
 		}
+
 		const url = `https://api.cloudflare.com/client/v4/accounts/${account}/r2/buckets/${BUCKET_NAME}/lifecycle`;
+
 		const headers = {
 			Authorization: `Bearer ${auth.token}`,
 			"Content-Type": "application/json",
 			"cf-r2-data-catalog-check": "true",
 		};
-		async function readRules(): Promise<Record<string, unknown>[]> {
+
+		async function readRules() {
 			const response = await runtime.fetch(url, { method: "GET", headers });
 			const body: unknown = await response.json();
-			if (
-				!response.ok ||
-				!record(body) ||
-				body.success !== true ||
-				!record(body.result)
-			) {
+
+			if (!response.ok || !Value.Check(lifecycleResponseSchema, body)) {
 				throw new Error("Could not read lifecycle configuration");
 			}
-			const rawRules = "rules" in body.result ? body.result.rules : [];
-			if (!Array.isArray(rawRules))
-				throw new Error("Could not read lifecycle configuration");
-			const rules: Record<string, unknown>[] = [];
-			for (const item of rawRules) {
-				if (
-					!record(item) ||
-					typeof item.id !== "string" ||
-					typeof item.enabled !== "boolean" ||
-					!record(item.conditions)
-				)
-					throw new Error("Invalid lifecycle rule");
-				rules.push(item);
-			}
-			return rules;
+
+			return body.result.rules ?? [];
 		}
+
 		let rules = await readRules();
 		const expected = [...rules.filter((item) => item.id !== rule.id), rule];
 		const configured = rules.filter((item) => item.id === rule.id);
+
 		if (mode === "apply" && !isDeepStrictEqual(configured, [rule])) {
 			const response = await runtime.fetch(url, {
 				method: "PUT",
 				headers,
 				body: JSON.stringify({ rules: expected }),
 			});
+
 			const body: unknown = await response.json();
-			if (!response.ok || !record(body) || body.success !== true)
+
+			if (
+				!response.ok ||
+				!Value.Check(Type.Object({ success: Type.Literal(true) }), body)
+			)
 				throw new Error("Could not apply lifecycle configuration");
 			rules = await readRules();
+
 			if (!isDeepStrictEqual(rules, expected))
 				throw new Error(
 					"Lifecycle read-back differs from applied configuration",
 				);
 		}
+
 		const matches = isDeepStrictEqual(
 			rules.filter((item) => item.id === rule.id),
 			[rule],
 		);
+
 		runtime.write(
 			matches
 				? "30-day lifecycle configured. Expiry is asynchronous.\n"
 				: "30-day lifecycle not configured.\n",
 		);
+
 		if (
 			rules.some(
 				(item) =>
@@ -123,18 +138,21 @@ export async function main(
 				"Other expiration rules remain; review their prefixes and ages for earlier deletion.\n",
 			);
 		}
+
 		return matches ? 0 : 1;
 	} catch {
 		// API errors can contain credentials; never echo transport messages or bodies.
 		runtime.write(
 			"Retention operation failed; check Wrangler credentials, API availability, and lifecycle configuration. No deployment is verified.\n",
 		);
+
 		return 1;
 	}
 }
 
 if (import.meta.main) {
 	let auth = "";
+
 	for await (const chunk of process.stdin) auth += chunk;
 	process.exitCode = await main(process.argv.slice(2), {
 		auth,

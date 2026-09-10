@@ -3,11 +3,14 @@ import test from "node:test";
 import { main } from "../src/retention.ts";
 
 const account = "0123456789abcdef0123456789abcdef";
+
 const auth = JSON.stringify({ type: "oauth", token: "synthetic-token" });
+
 const unrelated = {
 	id: "multipart-cleanup",
 	enabled: true,
-	conditions: { prefix: "" },
+	conditions: { prefix: "", futureCondition: { flags: [true, null, 7] } },
+	futureTransition: { nested: [{ enabled: false }], label: "preserve me" },
 	abortMultipartUploadsTransition: {
 		condition: { type: "Age", maxAge: 604800 },
 	},
@@ -15,6 +18,7 @@ const unrelated = {
 
 test("retention check is read-only and reports missing configuration", async () => {
 	const output: string[] = [];
+
 	const code = await main(["check", account], {
 		auth,
 		fetch: async (url, init) => {
@@ -23,13 +27,16 @@ test("retention check is read-only and reports missing configuration", async () 
 				`https://api.cloudflare.com/client/v4/accounts/${account}/r2/buckets/dumpfile-prod/lifecycle`,
 			);
 			assert.equal(init?.method, "GET");
+
 			return Response.json({ success: true, result: { rules: [unrelated] } });
 		},
 		write: (text) => output.push(text),
 	});
+
 	assert.equal(code, 1);
 	assert.match(output.join(""), /not configured/);
 });
+
 const desired = {
 	id: "dumpfile-expire-30-days",
 	enabled: true,
@@ -55,6 +62,7 @@ test("apply requires explicit approval for existing uploads before any API acces
 test("approved apply preserves other rules, verifies remote state, and is idempotent", async () => {
 	let rules: unknown[] = [unrelated, { ...desired, enabled: false }];
 	let writes = 0;
+
 	const runtime = {
 		auth,
 		fetch: (async (_url, init) => {
@@ -62,12 +70,15 @@ test("approved apply preserves other rules, verifies remote state, and is idempo
 				writes++;
 				rules = JSON.parse(String(init.body)).rules;
 				assert.deepEqual(rules, [unrelated, desired]);
+
 				return Response.json({ success: true });
 			}
+
 			return Response.json({ success: true, result: { rules } });
 		}) satisfies typeof fetch,
 		write: (_text: string) => {},
 	};
+
 	assert.equal(
 		await main(["apply", account, "--expire-existing-uploads"], runtime),
 		0,
@@ -86,20 +97,25 @@ test("first apply preserves unrelated deletion rules and reports their possible 
 		id: "expire-logs",
 		conditions: { prefix: "logs/" },
 	};
+
 	let rules: unknown[] = [unrelated, other];
 	const output: string[] = [];
+
 	const code = await main(["apply", account, "--expire-existing-uploads"], {
 		auth,
 		fetch: async (_url, init) => {
 			if (init?.method === "PUT") {
 				rules = JSON.parse(String(init.body)).rules;
 				assert.deepEqual(rules, [unrelated, other, desired]);
+
 				return Response.json({ success: true });
 			}
+
 			return Response.json({ success: true, result: { rules } });
 		},
 		write: (text) => output.push(text),
 	});
+
 	assert.equal(code, 0);
 	assert.match(output.join(""), /Other expiration rules remain/);
 });
@@ -108,14 +124,18 @@ for (const failure of ["read", "malformed", "write", "read-back"]) {
 	test(`retention fails closed on ${failure} failure without reporting deployment`, async () => {
 		let writes = 0;
 		const output: string[] = [];
+
 		const code = await main(["apply", account, "--expire-existing-uploads"], {
 			auth,
 			fetch: async (_url, init) => {
 				if (init?.method === "PUT") {
 					writes++;
+
 					return Response.json({ success: failure !== "write" });
 				}
+
 				if (failure === "read") throw new Error("synthetic-token");
+
 				return Response.json({
 					success: true,
 					result: { rules: failure === "malformed" ? [null] : [unrelated] },
@@ -123,6 +143,7 @@ for (const failure of ["read", "malformed", "write", "read-back"]) {
 			},
 			write: (text) => output.push(text),
 		});
+
 		assert.equal(code, 1);
 		assert.equal(writes, failure === "read" || failure === "malformed" ? 0 : 1);
 		assert.match(output.join(""), /No deployment is verified/);
@@ -133,14 +154,17 @@ for (const failure of ["read", "malformed", "write", "read-back"]) {
 test("retention check treats omitted rules as unconfigured without writing", async () => {
 	const output: string[] = [];
 	const methods: unknown[] = [];
+
 	const code = await main(["check", account], {
 		auth,
 		fetch: async (_url, init) => {
 			methods.push(init?.method);
+
 			return Response.json({ success: true, result: {} });
 		},
 		write: (text) => output.push(text),
 	});
+
 	assert.equal(code, 1);
 	assert.deepEqual(methods, ["GET"]);
 	assert.equal(output.join(""), "30-day lifecycle not configured.\n");
@@ -151,15 +175,19 @@ for (const readBack of ["configured", "omitted"]) {
 		const methods: unknown[] = [];
 		const output: string[] = [];
 		let applied = false;
+
 		const code = await main(["apply", account, "--expire-existing-uploads"], {
 			auth,
 			fetch: async (_url, init) => {
 				methods.push(init?.method);
+
 				if (init?.method === "PUT") {
 					assert.deepEqual(JSON.parse(String(init.body)), { rules: [desired] });
 					applied = true;
+
 					return Response.json({ success: true });
 				}
+
 				return Response.json({
 					success: true,
 					result:
@@ -168,6 +196,7 @@ for (const readBack of ["configured", "omitted"]) {
 			},
 			write: (text) => output.push(text),
 		});
+
 		assert.deepEqual(methods, ["GET", "PUT", "GET"]);
 		assert.equal(code, readBack === "configured" ? 0 : 1);
 		assert.match(
@@ -184,6 +213,7 @@ for (const rules of [null, {}, "invalid", 0, false, [null]]) {
 		test(`${mode} rejects present malformed rules ${JSON.stringify(rules)}`, async () => {
 			const methods: unknown[] = [];
 			const output: string[] = [];
+
 			const code = await main(
 				mode === "check"
 					? [mode, account]
@@ -192,11 +222,13 @@ for (const rules of [null, {}, "invalid", 0, false, [null]]) {
 					auth,
 					fetch: async (_url, init) => {
 						methods.push(init?.method);
+
 						return Response.json({ success: true, result: { rules } });
 					},
 					write: (text) => output.push(text),
 				},
 			);
+
 			assert.equal(code, 1);
 			assert.deepEqual(methods, ["GET"]);
 			assert.match(output.join(""), /No deployment is verified/);

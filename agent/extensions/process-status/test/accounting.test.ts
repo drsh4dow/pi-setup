@@ -24,6 +24,7 @@ function sessionWithUsage(cost: number) {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
 		},
 	});
+
 	return session;
 }
 
@@ -33,6 +34,7 @@ test("session_usage reports only session usage", () =>
 			const result = yield* Effect.promise(() =>
 				querySessionUsage(sessionWithUsage(0.1236)),
 			);
+
 			assert.deepEqual(result.details, {
 				inputTokens: 10,
 				outputTokens: 5,
@@ -54,6 +56,7 @@ test("missing session usage remains unavailable", () =>
 			const result = yield* Effect.promise(() =>
 				querySessionUsage(SessionManager.inMemory(process.cwd())),
 			);
+
 			assert.deepEqual(result.details, {
 				inputTokens: null,
 				outputTokens: null,

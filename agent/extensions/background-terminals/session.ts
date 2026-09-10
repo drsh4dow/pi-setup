@@ -45,27 +45,34 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 	join(id: symbol, client: TerminalClient) {
 		if (this.lifecycle === "stopping")
 			throw new Error("Background terminal session is shutting down.");
+
 		const manager = new BackgroundTerminalManager(
 			(snapshot, consumed) => {
 				client.delivery.terminalSettled(snapshot.id);
 				client.updateStatus();
+
 				if (consumed) {
 					client.delivery.consume([snapshot.id]);
+
 					return;
 				}
+
 				client.delivery.enqueue(snapshot);
 			},
 			() => `bt-${++terminalSequence}`,
 			(notification) => client.delivery.enqueueNotification(notification),
 		);
+
 		this.clients.set(id, { ...client, manager });
 		client.updateStatus();
 	}
 
 	private joined(client: symbol): JoinedClient {
 		const joined = this.clients.get(client);
+
 		if (!joined)
 			throw new Error("Background terminal session is shutting down.");
+
 		return joined;
 	}
 
@@ -74,16 +81,20 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 		options: { command: string; title: string; cwd: string },
 	) {
 		const joined = this.joined(client);
+
 		const running = joined.manager
 			.list()
 			.filter((snapshot) => snapshot.state === "running").length;
+
 		if (running >= MAX_RUNNING_PER_OWNER) {
 			throw new Error(
 				`Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${running}. Kill one with bg_kill.`,
 			);
 		}
+
 		const snapshot = joined.manager.start(options);
 		joined.updateStatus();
+
 		return snapshot;
 	}
 
@@ -108,18 +119,24 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 		id: symbol,
 	) {
 		const joined = this.clients.get(id);
+
 		if (!joined) return;
+
 		if (id !== this.owner) {
 			joined.delivery.clear();
 			yield* joined.manager.shutdown();
+
 			if (this.clients.get(id) === joined) this.clients.delete(id);
+
 			return;
 		}
 
 		this.lifecycle = "stopping";
+
 		if (activeTerminalSession === this) activeTerminalSession = undefined;
 		const clients = [...this.clients.values()];
 		this.clients.clear();
+
 		for (const client of clients) client.delivery.clear();
 		yield* Effect.forEach(clients, (client) => client.manager.shutdown(), {
 			concurrency: "unbounded",
@@ -128,6 +145,7 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 }
 
 let activeTerminalSession: SharedBackgroundTerminalSession | undefined;
+
 let terminalSequence = 0;
 
 export function joinBackgroundTerminalSession(
@@ -137,5 +155,6 @@ export function joinBackgroundTerminalSession(
 	if (!activeTerminalSession)
 		activeTerminalSession = new SharedBackgroundTerminalSession(id, client);
 	else activeTerminalSession.join(id, client);
+
 	return activeTerminalSession;
 }

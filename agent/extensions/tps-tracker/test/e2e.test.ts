@@ -15,17 +15,22 @@ import {
 const skip = e2eUnavailable();
 
 const TURN_TIMEOUT_MS = 180_000;
+
 const FRAME_POLL_MS = 100;
 
 const SESSION_TIMER_PREFIX = /^⏱ (?:\d+m)?\d+s /;
+
 const STREAMING_STATUS = /^\d+ tok\/s \(~?\d+ tok \/ \d+\.\d+s\)$/;
+
 const DONE_STATUS = /^done – \d+ tok\/s$/;
 
 function statusLine(pane: string): string {
 	const lines = pane.split("\n").map((line) => line.trimEnd());
+
 	for (let i = lines.length - 1; i >= 0; i--) {
 		if (lines[i].trim() !== "") return lines[i].trim();
 	}
+
 	return "";
 }
 
@@ -37,9 +42,11 @@ const runTaskSamplingStatus = Effect.fn("runTaskSamplingStatus")(function* (
 	const seen = new Set<string>();
 
 	yield* prompt(session, text);
+
 	const poll = Effect.gen(function* () {
 		const pane = yield* capture(session);
 		const line = statusLine(pane);
+
 		if (
 			(line.includes("tok/s") || line.includes("generating")) &&
 			!seen.has(line)
@@ -49,6 +56,7 @@ const runTaskSamplingStatus = Effect.fn("runTaskSamplingStatus")(function* (
 		}
 
 		if (DONE_STATUS.test(line)) return { done: true, pane };
+
 		if (yield* isDead(session)) {
 			return yield* Effect.die(
 				new Error(
@@ -56,7 +64,9 @@ const runTaskSamplingStatus = Effect.fn("runTaskSamplingStatus")(function* (
 				),
 			);
 		}
+
 		yield* Effect.sleep(FRAME_POLL_MS);
+
 		return { done: false, pane };
 	}).pipe(Effect.repeat({ until: ({ done }) => done }));
 
@@ -74,6 +84,7 @@ const runTaskSamplingStatus = Effect.fn("runTaskSamplingStatus")(function* (
 				}),
 		}),
 	);
+
 	return { frames, pane };
 });
 
@@ -142,6 +153,7 @@ describe("tps-tracker (real pi in tmux)", { skip }, () => {
 			/✓ (\d+) tok\/s\s+(\d+) tokens in (\d+\.\d+)s streaming/.exec(
 				settledPane,
 			);
+
 		assert.ok(
 			summary,
 			`no tps summary notification in the transcript:\n${settledPane}`,

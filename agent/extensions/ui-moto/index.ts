@@ -7,7 +7,9 @@ import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, Path } from "effect";
 
 const RESET = "\x1b[0m";
+
 const BOLD = "\x1b[1m";
+
 const BAR_FILL = "─";
 
 const PALETTE: Rgb[] = [
@@ -32,6 +34,7 @@ function colorAt(position: number): Rgb {
 	const t = scaled - index;
 	const a = PALETTE[index];
 	const b = PALETTE[nextIndex];
+
 	if (!a || !b) throw new Error("palette index out of bounds");
 
 	return [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)];
@@ -46,6 +49,7 @@ function gradient(text: string): string {
 		new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text),
 		({ segment }) => segment,
 	);
+
 	const span = Math.max(chars.length - 1, 1);
 
 	return chars
@@ -67,6 +71,7 @@ function headerLine(width: number, modelId: string): string {
 
 	const label = ` PI / ${modelId} / ${projectName} `;
 	const labelWidth = visibleWidth(label);
+
 	if (labelWidth >= width) return label;
 
 	const fillWidth = width - labelWidth;
@@ -105,6 +110,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		currentModelId = ctx.model?.id ?? "no model selected";
+
 		if (ctx.hasUI) installHeader(ctx);
 	});
 
@@ -115,6 +121,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		requestRender = undefined;
+
 		if (ctx.hasUI) ctx.ui.setHeader(undefined);
 	});
 }

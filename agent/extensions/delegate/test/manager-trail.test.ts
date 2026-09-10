@@ -155,19 +155,19 @@ test("trail bounds oversized tool arguments", () => Effect.runPromise(Effect.gen
 test("background runs deliver automatically unless cancelled", () => Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
 	const { manager, sessions } = harness((snapshot) => delivered.push(snapshot));
-	const first = manager.spawn({ task: "first", background: true, ctx: context });
+	const first = manager.spawn({ task: "first", ctx: context });
 	yield* eventually(() => sessions.length === 1);
 	sessions[0].finish("first result");
 	yield* eventually(() => delivered.length === 1);
 	assert.equal(delivered[0].id, first.id);
 
-	const second = manager.spawn({ task: "second", background: true, ctx: context });
+	const second = manager.spawn({ task: "second", ctx: context });
 	yield* eventually(() => sessions.length === 2);
 	sessions[1].finish("second result");
 	yield* eventually(() => delivered.length === 2);
 	assert.equal(delivered[1].id, second.id);
 
-	const cancelled = manager.spawn({ task: "cancelled", background: true, ctx: context });
+	const cancelled = manager.spawn({ task: "cancelled", ctx: context });
 	yield* eventually(() => sessions.length === 3);
 	yield* manager.cancel([cancelled.id]);
 	assert.equal(delivered.length, 2);

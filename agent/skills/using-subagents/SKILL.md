@@ -12,4 +12,4 @@ Give each child a bounded outcome, necessary context and file paths, write permi
 
 Keep concurrent write targets separate. The parent prepares and integrates worktrees when needed, inspects returned artifacts, and handles small follow-up corrections directly. A finished child cannot be resumed.
 
-Use background runs for useful independent work. Their results arrive automatically, so the parent can continue useful work or end its turn. Use blocking runs when the result is required before continuing.
+Every run returns its identity immediately and executes in the background. Launch independent assignments concurrently; compose dependent assignments after their prerequisites finish. Results arrive after the active tool-call batch or wake an idle parent. Continue useful work, then yield without a waiting announcement. Inspect progress or results when they inform a decision rather than polling for completion.

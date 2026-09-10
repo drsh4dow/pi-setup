@@ -12,13 +12,13 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	initTheme,
+	SessionManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Deferred, Effect } from "effect";
+import { Effect } from "effect";
 import { processStatusView } from "../../process-status/status.ts";
 import type { DelegateSnapshot } from "../contract.ts";
 import delegateExtension, {
-	BackgroundDelivery,
 	readDelegateModelSetting,
 	resolveDelegateModel,
 	resolveRequestedModel,
@@ -29,7 +29,6 @@ import {
 	renderDelegateSessionResult,
 } from "../render.ts";
 import { readProjectDelegateModelSetting } from "../runtime.ts";
-import { eventually } from "./eventually.ts";
 import { snapshot } from "./snapshot.ts";
 
 type ResolveContext = Parameters<typeof resolveDelegateModel>[0];
@@ -275,7 +274,6 @@ test("covers delegate configuration and rendering", () => {
 	).parameters.properties;
 	assert.deepEqual(Object.keys(runProperties), [
 		"task",
-		"background",
 		"cwd",
 		"model",
 		"effort",
@@ -390,36 +388,48 @@ test("covers delegate configuration and rendering", () => {
 	assert.match(sessionText, /child report preview[\s\S]*renderer report/);
 });
 
-test("covers background delivery behavior", (t) =>
+test("covers background delivery behavior", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			{
 				const events = eventBus();
 				const tools: ToolDefinition[] = [];
+				const messages: unknown[] = [];
+				let sessionStart:
+					| ((event: unknown, context: ExtensionContext) => void)
+					| undefined;
 				let shutdown: (() => Promise<void>) | undefined;
 				delegateExtension({
 					events,
-					on(event: string, handler: () => Promise<void>) {
-						if (event === "session_shutdown") shutdown = handler;
+					on(event: string, handler: unknown) {
+						if (event === "session_start") {
+							sessionStart = handler as typeof sessionStart;
+						}
+						if (event === "session_shutdown") {
+							shutdown = handler as typeof shutdown;
+						}
 					},
 					registerTool(tool: ToolDefinition) {
 						tools.push(tool);
 					},
+					sendMessage(message: unknown) {
+						messages.push(message);
+					},
 				} as unknown as ExtensionAPI);
 				const run = tools.find((tool) => tool.name === "delegate_run");
 				const session = tools.find((tool) => tool.name === "delegate_session");
-				assert.ok(run && session);
+				assert.ok(run && session && sessionStart);
+				const context = {
+					...fakeContext(),
+					cwd: settingsDir,
+					sessionManager: SessionManager.inMemory(settingsDir),
+				} as unknown as ExtensionContext;
+				sessionStart({}, context);
 				const task = `inspect first line\n${"x".repeat(300)}`;
 
 				try {
 					const started = yield* Effect.promise(() =>
-						run.execute(
-							"run-1",
-							{ task, background: true },
-							undefined,
-							undefined,
-							{ ...fakeContext(), cwd: settingsDir } as ExtensionContext,
-						),
+						run.execute("run-1", { task }, undefined, undefined, context),
 					);
 					assert.match(
 						started.content[0]?.type === "text" ? started.content[0].text : "",
@@ -456,321 +466,49 @@ test("covers background delivery behavior", (t) =>
 						(listed.details as { results: unknown[] }).results.length,
 						1,
 					);
+					const cancelled = yield* Effect.promise(() =>
+						session.execute(
+							"cancel-1",
+							{ action: "cancel", ids: ["delegate-1"] },
+							undefined,
+							undefined,
+							{} as ExtensionContext,
+						),
+					);
+					assert.match(
+						cancelled.content[0]?.type === "text"
+							? cancelled.content[0].text
+							: "",
+						/delegate-1 \[cancelled\]/,
+					);
+					const normal = yield* Effect.promise(() =>
+						run.execute(
+							"run-2",
+							{ task: "complete normally" },
+							undefined,
+							undefined,
+							context,
+						),
+					);
+					assert.match(
+						normal.content[0]?.type === "text" ? normal.content[0].text : "",
+						/delegate-2/,
+					);
+					for (
+						let attempt = 0;
+						attempt < 1_000 && messages.length === 0;
+						attempt++
+					) {
+						yield* Effect.sleep(1);
+					}
+					assert.equal(messages.length, 1);
+					assert.deepEqual(
+						(messages[0] as { details: { ids: string[] } }).details.ids,
+						["delegate-2"],
+					);
 				} finally {
 					if (shutdown) yield* Effect.promise(shutdown);
 				}
-			}
-
-			{
-				const messages: unknown[] = [];
-				const delivery = new BackgroundDelivery(
-					{
-						sendMessage(message: unknown) {
-							messages.push(message);
-						},
-					} as unknown as ExtensionAPI,
-					() => Effect.succeed("background result"),
-				);
-				delivery.setContext({ isIdle: () => false } as ExtensionContext);
-				delivery.enqueue(delegateSnapshot());
-				assert.equal(messages.length, 0);
-
-				yield* delivery.flush();
-				assert.equal(messages.length, 1);
-			}
-
-			{
-				t.mock.timers.enable({ apis: ["setTimeout"] });
-				const messages: Array<{ message: unknown; options: unknown }> = [];
-				let attempts = 0;
-				const delivery = new BackgroundDelivery(
-					{
-						sendMessage(message: unknown, options: unknown) {
-							attempts++;
-							if (attempts === 1) throw new Error("temporary send failure");
-							messages.push({ message, options });
-						},
-					} as unknown as ExtensionAPI,
-					(snapshots) =>
-						Effect.succeed(snapshots.map((snapshot) => snapshot.output).join()),
-				);
-				let idle = false;
-				delivery.setContext({ isIdle: () => idle } as ExtensionContext);
-				delivery.enqueue(delegateSnapshot());
-				idle = true;
-
-				yield* delivery.flush();
-				assert.equal(attempts, 1);
-				t.mock.timers.tick(25);
-				yield* Effect.yieldNow;
-				assert.equal(attempts, 2);
-				assert.equal(messages.length, 1);
-				assert.deepEqual(messages[0].options, {
-					deliverAs: "followUp",
-					triggerTurn: true,
-				});
-				assert.match(
-					(messages[0].message as { content: string }).content,
-					/background result/,
-				);
-
-				yield* delivery.flush();
-				assert.equal(attempts, 2);
-			}
-
-			{
-				const messages: unknown[] = [];
-				const delivery = new BackgroundDelivery({
-					sendMessage(message: unknown) {
-						messages.push(message);
-					},
-				} as unknown as ExtensionAPI);
-				delivery.setContext({ isIdle: () => false } as ExtensionContext);
-				const base = delegateSnapshot({ output: "first child" });
-
-				const second = {
-					...base,
-					id: "delegate-2",
-					output: "second child",
-					outputTruncated: true,
-					fullOutputFile: "/tmp/complete-second-child.txt",
-				};
-				delivery.enqueue(base);
-				delivery.enqueue(second);
-				yield* delivery.flush();
-				assert.equal(messages.length, 1);
-				const content = (messages[0] as { content: string }).content;
-				assert.match(content, /first child/);
-				assert.match(content, /second child/);
-				assert.match(
-					content,
-					/Full output \(until parent session ends\): \/tmp\/complete-second-child\.txt/,
-				);
-				yield* delivery.flush();
-				assert.equal(messages.length, 1);
-			}
-
-			{
-				// eventually() sleeps on real setTimeout; keep it out of mock scope.
-				t.mock.timers.reset();
-				const messages: unknown[] = [];
-				const renderGate = yield* Deferred.make<void>();
-				let renders = 0;
-				const delivery = new BackgroundDelivery(
-					{
-						sendMessage(message: unknown) {
-							messages.push(message);
-						},
-					} as unknown as ExtensionAPI,
-					(snapshots) =>
-						Effect.gen(function* () {
-							renders++;
-							if (renders === 1) yield* Deferred.await(renderGate);
-							return snapshots.map((snapshot) => snapshot.output).join(",");
-						}),
-				);
-				delivery.setContext({ isIdle: () => true } as ExtensionContext);
-				const first = delegateSnapshot({ output: "first" });
-				delivery.enqueue(first);
-				yield* Effect.sleep(0);
-				delivery.consume([first]);
-				delivery.enqueue({ ...first, id: "delegate-2", output: "second" });
-				yield* Deferred.succeed(renderGate, undefined);
-				yield* eventually(() => messages.length === 1);
-				assert.equal(renders, 2);
-				assert.doesNotMatch(
-					(messages[0] as { content: string }).content,
-					/first/,
-				);
-				assert.match((messages[0] as { content: string }).content, /second/);
-			}
-
-			{
-				t.mock.timers.enable({ apis: ["setTimeout"] });
-				const diagnostics: string[] = [];
-				const messages: unknown[] = [];
-				const originalLog = console.log;
-				console.log = (...values: unknown[]) =>
-					diagnostics.push(values.map(String).join(" "));
-				const thirdRender = yield* Deferred.make<never>();
-				let renders = 0;
-				const delivery = new BackgroundDelivery(
-					{ sendMessage: (message: unknown) => messages.push(message) },
-					(snapshots) =>
-						Effect.gen(function* () {
-							renders++;
-							if (renders < 3) {
-								return yield* Effect.die(new Error("render failed"));
-							}
-							if (renders === 3) return yield* Deferred.await(thirdRender);
-							return snapshots.map((snapshot) => snapshot.output).join(",");
-						}),
-				);
-				const consumed = delegateSnapshot({ output: "superseded result" });
-				let idle = false;
-				delivery.setContext({ isIdle: () => idle } as ExtensionContext);
-				delivery.enqueue(consumed);
-				idle = true;
-
-				try {
-					yield* delivery.flush();
-					t.mock.timers.tick(25);
-					yield* Effect.yieldNow;
-					t.mock.timers.tick(100);
-					yield* Effect.callback<void>((resume) => {
-						setImmediate(() => resume(Effect.void));
-					});
-					assert.equal(renders, 3);
-
-					delivery.consume([consumed]);
-					delivery.enqueue(
-						delegateSnapshot({ id: "delegate-2", output: "later result" }),
-					);
-					yield* Deferred.die(
-						thirdRender,
-						new Error("stale third render failed"),
-					);
-					yield* Effect.callback<void>((resume) => {
-						setImmediate(() => resume(Effect.void));
-					});
-
-					assert.equal(renders, 4);
-					assert.equal(messages.length, 1);
-					assert.equal(diagnostics.length, 0);
-					assert.match(
-						(messages[0] as { content: string }).content,
-						/later result/,
-					);
-					assert.doesNotMatch(
-						(messages[0] as { content: string }).content,
-						/superseded result/,
-					);
-				} finally {
-					delivery.clear();
-					console.log = originalLog;
-				}
-			}
-
-			{
-				const diagnostics: string[] = [];
-				const originalLog = console.log;
-				console.log = (...values: unknown[]) =>
-					diagnostics.push(values.map(String).join(" "));
-				const delivery = new BackgroundDelivery(
-					{
-						sendMessage() {
-							throw new Error("transport unavailable");
-						},
-					} as unknown as ExtensionAPI,
-					() => Effect.succeed("settled"),
-				);
-				let idle = false;
-				delivery.setContext({ isIdle: () => idle } as ExtensionContext);
-				const snapshot = delegateSnapshot({ output: "settled" });
-				delivery.enqueue(snapshot);
-				idle = true;
-
-				try {
-					yield* delivery.flush();
-					t.mock.timers.tick(25);
-					yield* Effect.yieldNow;
-					t.mock.timers.tick(100);
-					yield* Effect.yieldNow;
-					assert.equal(diagnostics.length, 1);
-					assert.match(diagnostics[0], /delegate-1/);
-					assert.match(diagnostics[0], /transport unavailable/);
-					assert.match(
-						diagnostics[0],
-						/retained status or native child session/,
-					);
-
-					delivery.consume([snapshot]);
-					yield* delivery.flush();
-					assert.equal(diagnostics.length, 1);
-				} finally {
-					delivery.clear();
-					console.log = originalLog;
-				}
-			}
-
-			{
-				const attempts = new Map<string, number>();
-				const delivery = new BackgroundDelivery(
-					{
-						sendMessage(message: unknown) {
-							const ids = (message as { details: { ids: string[] } }).details
-								.ids;
-							for (const id of ids)
-								attempts.set(id, (attempts.get(id) ?? 0) + 1);
-							throw new Error("offline");
-						},
-					} as unknown as ExtensionAPI,
-					(snapshots) =>
-						Effect.succeed(snapshots.map((snapshot) => snapshot.id).join()),
-				);
-				delivery.setContext({ isIdle: () => true } as ExtensionContext);
-				delivery.enqueue(delegateSnapshot());
-				yield* Effect.yieldNow;
-				t.mock.timers.tick(25);
-				yield* Effect.yieldNow;
-				delivery.enqueue(delegateSnapshot({ id: "delegate-2" }));
-				t.mock.timers.tick(100);
-				yield* Effect.yieldNow;
-				t.mock.timers.tick(100);
-				yield* Effect.yieldNow;
-				t.mock.timers.tick(100);
-				yield* Effect.yieldNow;
-				yield* delivery.flush();
-				assert.equal(attempts.get("delegate-1"), 3);
-				assert.equal(attempts.get("delegate-2"), 3);
-				delivery.clear();
-			}
-
-			{
-				t.mock.timers.reset();
-				const sent: unknown[] = [];
-				const gate = yield* Deferred.make<void>();
-				let renders = 0;
-				const delivery = new BackgroundDelivery(
-					{ sendMessage: (message: unknown) => sent.push(message) },
-					() =>
-						Effect.gen(function* () {
-							if (++renders === 1) yield* Deferred.await(gate);
-							return "result";
-						}),
-				);
-				const first = { isIdle: () => true } as ExtensionContext;
-				const second = { isIdle: () => true } as ExtensionContext;
-				delivery.setContext(first);
-				delivery.enqueue(delegateSnapshot());
-				yield* Effect.yieldNow;
-				delivery.setContext(second);
-				yield* Deferred.succeed(gate, undefined);
-				yield* eventually(() => sent.length === 1);
-				assert.equal(renders, 2);
-			}
-
-			{
-				t.mock.timers.enable({ apis: ["setTimeout"] });
-				let attempts = 0;
-				const delivery = new BackgroundDelivery(
-					{
-						sendMessage() {
-							attempts++;
-							throw new Error("temporary failure");
-						},
-					} as unknown as ExtensionAPI,
-					() => Effect.succeed("settled"),
-				);
-				delivery.setContext({ isIdle: () => false } as ExtensionContext);
-				delivery.enqueue(delegateSnapshot({ output: "settled" }));
-
-				yield* delivery.flush();
-				assert.equal(attempts, 1);
-				delivery.clear();
-				t.mock.timers.tick(1_000);
-				yield* Effect.yieldNow;
-				assert.equal(attempts, 1);
 			}
 		}),
 	));

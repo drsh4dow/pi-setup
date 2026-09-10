@@ -8,7 +8,7 @@ import {
 	type DelegateRunOptions,
 	type DelegateRunRequest,
 } from "./delegate-run.ts";
-import { delegateError, errorMessage } from "./errors.ts";
+import { errorMessage } from "./errors.ts";
 import {
 	type ChildSession,
 	readProjectDelegateModelSetting,
@@ -40,22 +40,6 @@ function isDirectory(path: string) {
 	}
 }
 
-function abortError(signal: AbortSignal): Error {
-	return signal.reason instanceof Error
-		? signal.reason
-		: new Error("Operation aborted");
-}
-
-function abortSignal(signal: AbortSignal) {
-	if (signal.aborted) return Effect.fail(delegateError(abortError(signal)));
-	return Effect.callback<never, ReturnType<typeof delegateError>>((resume) => {
-		const onAbort = () =>
-			resume(Effect.fail(delegateError(abortError(signal))));
-		signal.addEventListener("abort", onAbort, { once: true });
-		return Effect.sync(() => signal.removeEventListener("abort", onAbort));
-	});
-}
-
 function waitUntil(
 	effects: readonly Effect.Effect<unknown, unknown>[],
 	deadline: number,
@@ -73,7 +57,6 @@ export class DelegateManager {
 	private readonly jobs = new Map<string, DelegateRun>();
 	private readonly recovered = new Map<string, DelegateSnapshot>();
 	private readonly options: DelegateManagerOptions;
-	private readonly listeners = new Set<(snapshot: DelegateSnapshot) => void>();
 	private readonly runTasks = new Set<Fiber.Fiber<void, never>>();
 	private readonly disposals = new Set<Fiber.Fiber<void, never>>();
 	private nextId = 0;
@@ -91,11 +74,6 @@ export class DelegateManager {
 				([id]) => Number(id.replace(/^delegate-/, "")) || 0,
 			),
 		);
-	}
-
-	subscribe(listener: (snapshot: DelegateSnapshot) => void): () => void {
-		this.listeners.add(listener);
-		return () => this.listeners.delete(listener);
 	}
 
 	sessionUsage() {
@@ -142,7 +120,6 @@ export class DelegateManager {
 				this.options.onSettlement?.(snapshot);
 			},
 			onSettled: this.options.onSettled,
-			notify: (snapshot) => this.notify(snapshot),
 			onDisposalStarted: (fiber) => {
 				this.disposals.add(fiber);
 				fiber.addObserver(() => this.disposals.delete(fiber));
@@ -151,7 +128,6 @@ export class DelegateManager {
 		this.jobs.set(run.id, run);
 		const snapshot = run.snapshot();
 		this.options.onAccepted?.(snapshot);
-		this.notify(snapshot);
 		const task = Effect.runFork(
 			run.execute().pipe(
 				Effect.catchCause((cause) =>
@@ -196,23 +172,12 @@ export class DelegateManager {
 	readonly wait = Effect.fn("DelegateManager.wait")(function* (
 		this: DelegateManager,
 		ids: readonly string[],
-		signal?: AbortSignal,
 	) {
 		const runs = [...new Set(ids)].map((id) => this.requireJob(id));
 		if (runs.length === 0) throw new Error("Provide at least one delegate id.");
-		if (signal?.aborted) throw abortError(signal);
-		const completions = Effect.forEach(runs, (run) => run.awaitCompletion(), {
+		return yield* Effect.forEach(runs, (run) => run.awaitCompletion(), {
 			concurrency: "unbounded",
 		});
-		return yield* completions.pipe(
-			signal ? Effect.raceFirst(abortSignal(signal)) : (effect) => effect,
-			signal
-				? Effect.filterOrFail(
-						() => !signal.aborted,
-						() => delegateError(abortError(signal)),
-					)
-				: (effect) => effect,
-		);
 	});
 
 	readonly send = Effect.fn("DelegateManager.send")(function* (
@@ -261,16 +226,6 @@ export class DelegateManager {
 			for (const run of runs) run.cleanup();
 		},
 	);
-
-	private notify(snapshot: DelegateSnapshot) {
-		for (const listener of [...this.listeners]) {
-			try {
-				listener(snapshot);
-			} catch {
-				// Progress listeners do not own child lifecycle state.
-			}
-		}
-	}
 
 	private requireJob(id: string): DelegateRun {
 		if (this.recovered.has(id))

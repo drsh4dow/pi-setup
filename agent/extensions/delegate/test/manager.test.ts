@@ -432,7 +432,6 @@ test("rejected child prompt settles, remains inspectable, and releases capacity"
 
 test("shutdown wins once child settlement races an owned stop", () => Effect.runPromise(Effect.gen(function* () {
 	const delivered: DelegateSnapshot[] = [];
-	const terminalNotifications: DelegateSnapshot[] = [];
 	let disposals = 0;
 	const { manager, sessions } = harness(
 		(snapshot) => delivered.push(snapshot),
@@ -440,12 +439,8 @@ test("shutdown wins once child settlement races an owned stop", () => Effect.run
 			disposals++;
 		}),
 	);
-	manager.subscribe((snapshot) => {
-		if (snapshot.status !== "running") terminalNotifications.push(snapshot);
-	});
 	const job = manager.spawn({
 		task: "settle during shutdown",
-		background: true,
 		ctx: context,
 	});
 	yield* eventually(() => sessions.length === 1);
@@ -463,8 +458,6 @@ test("shutdown wins once child settlement races an owned stop", () => Effect.run
 	assert.equal(snapshot.output, "too late");
 	assert.equal(delivered.length, 1);
 	assert.equal(delivered[0].status, "cancelled");
-	assert.equal(terminalNotifications.length, 1);
-	assert.equal(terminalNotifications[0].status, "cancelled");
 	assert.equal(disposals, 1);
 })));
 

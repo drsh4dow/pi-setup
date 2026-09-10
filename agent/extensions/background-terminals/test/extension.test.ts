@@ -2,65 +2,37 @@
 /** biome-ignore-all lint/style/noExcessiveLinesPerFile: single file test */
 import assert from "node:assert/strict";
 import test from "node:test";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-	ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
 import { processIsGone } from "../../test/process.ts";
-import extension, { BackgroundTerminalDelivery } from "../index.ts";
+import { BackgroundTerminalDelivery } from "../index.ts";
 import { MAX_RUNNING_PER_OWNER, MAX_TRACKED } from "../manager.ts";
-
-const noEvents = {
-	emit() {},
-	on() {
-		return () => {};
-	},
-};
+import { type DeliveryMessage, type DeliveryOptions, decodeMessage, registeredExtension, testContext } from "./registration.ts";
 
 const fromPromise = <A>(value: A | PromiseLike<A>) => Effect.promise(() => Promise.resolve(value));
+
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
 const eventually = Effect.fn("eventually")(function* (condition: () => boolean | Promise<boolean>) {
 	for (let attempt = 0; attempt < 200; attempt += 1) {
 		if (yield* fromPromise(condition())) return;
 		yield* Effect.sleep(25);
 	}
+
 	throw new Error("condition not met within 5 seconds");
 });
-
-function registeredExtension(
-	sendMessage?: (message: unknown, options: unknown) => void,
-) {
-	const tools: ToolDefinition[] = [];
-	const handlers = new Map<string, (...args: unknown[]) => unknown>();
-	extension({
-		events: noEvents,
-		on(name: string, handler: (...args: unknown[]) => unknown) {
-			handlers.set(name, handler);
-		},
-		registerCommand() {},
-		registerTool(tool: ToolDefinition) {
-			tools.push(tool);
-		},
-		...(sendMessage ? { sendMessage } : {}),
-	} as unknown as ExtensionAPI);
-	return { tools, handlers };
-}
 
 function registeredTools() {
 	const { tools, handlers } = registeredExtension();
 	handlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
-		{
+		testContext({
 			cwd: process.cwd(),
 			hasUI: false,
 			isIdle: () => false,
-		} as ExtensionContext,
+		}),
 	);
-	return tools as unknown as Array<{
-		execute: (...args: unknown[]) => Promise<unknown>;
-	}>;
+
+	return tools;
 }
 
 test("registers four parallel tools and lifecycle hooks", () => {
@@ -80,19 +52,23 @@ test("registers four parallel tools and lifecycle hooks", () => {
 test("child terminals die with the child and stay out of the parent's list", () => Effect.runPromise(Effect.gen(function* () {
 	const { tools: parentTools, handlers: parentHandlers } =
 		registeredExtension(() => {});
+
 	const { tools: childTools, handlers: childHandlers } =
 		registeredExtension(() => {});
-	const parentContext = {
+
+	const parentContext = testContext({
 		cwd: process.cwd(),
 		hasUI: true,
 		isIdle: () => false,
 		ui: { setStatus() {} },
-	} as unknown as ExtensionContext;
-	const childContext = {
+	});
+
+	const childContext = testContext({
 		cwd: process.cwd(),
 		hasUI: false,
 		isIdle: () => false,
-	} as ExtensionContext;
+	});
+
 	yield* fromPromise(parentHandlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		parentContext,
@@ -101,19 +77,12 @@ test("child terminals die with the child and stay out of the parent's list", () 
 		{ type: "session_start", reason: "startup" },
 		childContext,
 	));
-	const start = childTools[0] as unknown as {
-		execute: (...args: unknown[]) => Promise<{
-			details: { id: string; pid: number };
-		}>;
-	};
-	const list = parentTools[2] as unknown as {
-		execute: (...args: unknown[]) => Promise<{
-			details: { terminals: Array<{ id: string; state: string }> };
-		}>;
-	};
-	const [status, kill] = [parentTools[1], parentTools[3]] as unknown as {
-		execute: (...args: unknown[]) => Promise<unknown>;
-	}[];
+
+	const start = childTools[0];
+	const list = parentTools[2];
+	const status = parentTools[1];
+	const kill = parentTools[3];
+
 	const started = yield* fromPromise(start.execute(
 		"1",
 		{ command: "sleep 30", title: "child server" },
@@ -121,6 +90,7 @@ test("child terminals die with the child and stay out of the parent's list", () 
 		undefined,
 		childContext,
 	));
+
 	try {
 		assert.deepEqual((yield* fromPromise(list.execute("2", {}))).details.terminals, []);
 		yield* fromPromise(assert.rejects(
@@ -156,13 +126,16 @@ test("parent shutdown awaits a child shutdown already escalating", {
 	skip: process.platform === "win32",
 }, () => Effect.runPromise(Effect.gen(function* () {
 	const { handlers: parentHandlers } = registeredExtension(() => {});
+
 	const { tools: childTools, handlers: childHandlers } =
 		registeredExtension(() => {});
-	const context = {
+
+	const context = testContext({
 		cwd: process.cwd(),
 		hasUI: false,
 		isIdle: () => false,
-	} as ExtensionContext;
+	});
+
 	yield* fromPromise(parentHandlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
@@ -171,20 +144,12 @@ test("parent shutdown awaits a child shutdown already escalating", {
 		{ type: "session_start", reason: "startup" },
 		context,
 	));
-	const [start, status] = childTools as unknown as [
-		{
-			execute: (...args: unknown[]) => Promise<{
-				details: { id: string; pid: number };
-			}>;
-		},
-		{
-			execute: (...args: unknown[]) => Promise<{
-				details: { stdoutBytes: number };
-			}>;
-		},
-	];
+
+	const [start, status] = childTools;
+
 	const stubbornProgram =
 		'process.on("SIGTERM", () => {}); setImmediate(() => console.log("ready", process.env.NODE_TEST_CONTEXT)); setInterval(() => {}, 1_000);';
+
 	const started = yield* fromPromise(start.execute(
 		"start-stubborn-child",
 		{
@@ -195,17 +160,20 @@ test("parent shutdown awaits a child shutdown already escalating", {
 		undefined,
 		context,
 	));
+
 	yield* eventually(() =>
 		status
 			.execute("stubborn-child-ready", { id: started.details.id })
 			.then((result) => result.details.stdoutBytes > 0),
 	);
+
 	const childShutdown = Promise.resolve(
 		childHandlers.get("session_shutdown")?.(
 			{ type: "session_shutdown", reason: "quit" },
 			context,
 		),
 	);
+
 	try {
 		yield* Effect.sleep(100);
 		assert.equal(processIsGone(started.details.pid), false);
@@ -226,13 +194,16 @@ test("parent shutdown awaits a child shutdown already escalating", {
 test("child completions cannot evict a parent's retained result", () => Effect.runPromise(Effect.gen(function* () {
 	const { tools: parentTools, handlers: parentHandlers } =
 		registeredExtension(() => {});
+
 	const { tools: childTools, handlers: childHandlers } =
 		registeredExtension(() => {});
-	const context = {
+
+	const context = testContext({
 		cwd: process.cwd(),
 		hasUI: false,
 		isIdle: () => false,
-	} as ExtensionContext;
+	});
+
 	yield* fromPromise(parentHandlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
@@ -241,14 +212,12 @@ test("child completions cannot evict a parent's retained result", () => Effect.r
 		{ type: "session_start", reason: "startup" },
 		context,
 	));
-	const parentStart = parentTools[0] as unknown as {
-		execute: (...args: unknown[]) => Promise<{ details: { id: string } }>;
-	};
-	const parentStatus = parentTools[1] as unknown as {
-		execute: (...args: unknown[]) => Promise<{ content: [{ text: string }] }>;
-	};
-	const childStart = childTools[0] as unknown as typeof parentStart;
-	const childStatus = childTools[1] as unknown as typeof parentStatus;
+
+	const parentStart = parentTools[0];
+	const parentStatus = parentTools[1];
+	const childStart = childTools[0];
+	const childStatus = childTools[1];
+
 	try {
 		const parent = yield* fromPromise(parentStart.execute(
 			"parent",
@@ -257,9 +226,11 @@ test("child completions cannot evict a parent's retained result", () => Effect.r
 			undefined,
 			context,
 		));
+
 		yield* eventually(() => parentStatus.execute("parent-ready", { id: parent.details.id }).then(
 			(result) => result.content[0].text.includes("[done]"),
 		));
+
 		for (let index = 0; index < MAX_TRACKED; index++) {
 			const child = yield* fromPromise(childStart.execute(
 				`child-${index}`,
@@ -268,13 +239,16 @@ test("child completions cannot evict a parent's retained result", () => Effect.r
 				undefined,
 				context,
 			));
+
 			yield* eventually(() => childStatus.execute(`child-ready-${index}`, { id: child.details.id }).then(
 				(result) => result.content[0].text.includes("[done]"),
 			));
 		}
+
 		const retained = yield* fromPromise(parentStatus.execute("parent-retained", {
 			id: parent.details.id,
 		}));
+
 		assert.match(retained.content[0].text, /parent-result/);
 	} finally {
 		yield* fromPromise(childHandlers.get("session_shutdown")?.(
@@ -291,13 +265,16 @@ test("child completions cannot evict a parent's retained result", () => Effect.r
 test("a saturated child cannot exhaust the parent's terminal slots", () => Effect.runPromise(Effect.gen(function* () {
 	const { tools: parentTools, handlers: parentHandlers } =
 		registeredExtension(() => {});
+
 	const { tools: childTools, handlers: childHandlers } =
 		registeredExtension(() => {});
-	const context = {
+
+	const context = testContext({
 		cwd: process.cwd(),
 		hasUI: false,
 		isIdle: () => false,
-	} as ExtensionContext;
+	});
+
 	yield* fromPromise(parentHandlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
@@ -306,12 +283,10 @@ test("a saturated child cannot exhaust the parent's terminal slots", () => Effec
 		{ type: "session_start", reason: "startup" },
 		context,
 	));
-	const childStart = childTools[0] as unknown as {
-		execute: (...args: unknown[]) => Promise<unknown>;
-	};
-	const parentStart = parentTools[0] as unknown as {
-		execute: (...args: unknown[]) => Promise<{ details: { id: string } }>;
-	};
+
+	const childStart = childTools[0];
+	const parentStart = parentTools[0];
+
 	try {
 		for (let index = 0; index < MAX_RUNNING_PER_OWNER; index++) {
 			yield* fromPromise(childStart.execute(
@@ -322,6 +297,7 @@ test("a saturated child cannot exhaust the parent's terminal slots", () => Effec
 				context,
 			));
 		}
+
 		yield* fromPromise(assert.rejects(
 			childStart.execute(
 				"child-overflow",
@@ -334,6 +310,7 @@ test("a saturated child cannot exhaust the parent's terminal slots", () => Effec
 				`Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${MAX_RUNNING_PER_OWNER}\\.`,
 			),
 		));
+
 		const parentTerminal = yield* fromPromise(parentStart.execute(
 			"parent-1",
 			{ command: "sleep 30", title: "parent work" },
@@ -341,6 +318,7 @@ test("a saturated child cannot exhaust the parent's terminal slots", () => Effec
 			undefined,
 			context,
 		));
+
 		assert.ok(parentTerminal.details.id);
 	} finally {
 		yield* fromPromise(childHandlers.get("session_shutdown")?.(
@@ -356,20 +334,20 @@ test("a saturated child cannot exhaust the parent's terminal slots", () => Effec
 
 test("headless terminals survive agent end and stop at session shutdown", () => Effect.runPromise(Effect.gen(function* () {
 	const { tools, handlers } = registeredExtension();
-	const context = {
+
+	const context = testContext({
 		cwd: process.cwd(),
 		hasUI: false,
 		isIdle: () => false,
-	} as ExtensionContext;
+	});
+
 	yield* fromPromise(handlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
 	));
-	const start = tools[0] as unknown as {
-		execute: (...args: unknown[]) => Promise<{
-			details: { id: string; pid: number };
-		}>;
-	};
+
+	const start = tools[0];
+
 	const first = yield* fromPromise(start.execute(
 		"1",
 		{ command: "sleep 30", title: "first" },
@@ -377,6 +355,7 @@ test("headless terminals survive agent end and stop at session shutdown", () => 
 		undefined,
 		context,
 	));
+
 	try {
 		assert.ok(first.details.pid);
 		yield* fromPromise(handlers.get("agent_end")?.(
@@ -384,6 +363,7 @@ test("headless terminals survive agent end and stop at session shutdown", () => 
 			context,
 		));
 		assert.equal(processIsGone(first.details.pid), false);
+
 		const second = yield* fromPromise(start.execute(
 			"2",
 			{ command: "true", title: "second" },
@@ -391,6 +371,7 @@ test("headless terminals survive agent end and stop at session shutdown", () => 
 			undefined,
 			context,
 		));
+
 		assert.ok(second.details.pid);
 		assert.notEqual(second.details.id, first.details.id);
 	} finally {
@@ -399,13 +380,15 @@ test("headless terminals survive agent end and stop at session shutdown", () => 
 			context,
 		));
 	}
+
 	assert.ok(processIsGone(first.details.pid));
 })));
 
 test("session shutdown clears status, kills processes, and permits restart", () => Effect.runPromise(Effect.gen(function* () {
 	const { tools, handlers } = registeredExtension();
 	const statuses: Array<string | undefined> = [];
-	const context = {
+
+	const context = testContext({
 		cwd: process.cwd(),
 		hasUI: true,
 		isIdle: () => false,
@@ -414,16 +397,15 @@ test("session shutdown clears status, kills processes, and permits restart", () 
 				statuses.push(status);
 			},
 		},
-	} as unknown as ExtensionContext;
-	const start = tools[0] as unknown as {
-		execute: (...args: unknown[]) => Promise<{
-			details: { pid: number };
-		}>;
-	};
+	});
+
+	const start = tools[0];
+
 	yield* fromPromise(handlers.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
 	));
+
 	const first = yield* fromPromise(start.execute(
 		"1",
 		{ command: "sleep 30", title: "session one" },
@@ -431,6 +413,7 @@ test("session shutdown clears status, kills processes, and permits restart", () 
 		undefined,
 		context,
 	));
+
 	yield* fromPromise(handlers.get("session_shutdown")?.(
 		{ type: "session_shutdown", reason: "new" },
 		context,
@@ -441,6 +424,7 @@ test("session shutdown clears status, kills processes, and permits restart", () 
 		{ type: "session_start", reason: "new" },
 		context,
 	));
+
 	const second = yield* fromPromise(start.execute(
 		"2",
 		{ command: "true", title: "session two" },
@@ -448,6 +432,7 @@ test("session shutdown clears status, kills processes, and permits restart", () 
 		undefined,
 		context,
 	));
+
 	assert.ok(second.details.pid);
 	yield* fromPromise(handlers.get("session_shutdown")?.(
 		{ type: "session_shutdown", reason: "quit" },
@@ -461,17 +446,20 @@ for (const { command, state, exitCode } of [
 	{ command: "exit 23", state: "failed", exitCode: 23 },
 ]) {
 	test(`natural completion wakes only its owner with real exit ${exitCode}: ${command}`, () => Effect.runPromise(Effect.gen(function* () {
-		const deliveries: Array<{ message: unknown; options: unknown }> = [];
+		const deliveries: Array<{ message: DeliveryMessage; options: DeliveryOptions }> = [];
 		const foreignMessages: unknown[] = [];
 		const foreign = registeredExtension((message) => foreignMessages.push(message));
 		const owner = registeredExtension((message, options) => deliveries.push({ message, options }));
-		const context = {
+
+		const context = testContext({
 			cwd: process.cwd(),
 			hasUI: false,
 			isIdle: () => true,
-		} as ExtensionContext;
+		});
+
 		foreign.handlers.get("session_start")?.({}, context);
 		owner.handlers.get("session_start")?.({}, context);
+
 		try {
 			const start = owner.tools.find((tool) => tool.name === "bg_start");
 			assert.ok(start);
@@ -479,10 +467,7 @@ for (const { command, state, exitCode } of [
 			yield* eventually(() => deliveries.length === 1);
 			assert.deepEqual(deliveries[0].options, { deliverAs: "steer", triggerTurn: true });
 			const message = deliveries[0].message;
-			assert.ok(message && typeof message === "object");
-			assert.ok("customType" in message);
 			assert.equal(message.customType, "background-terminal-results");
-			assert.ok("content" in message && typeof message.content === "string");
 			assert.ok(message.content.includes(`[${state}] natural completion · exit ${exitCode}`));
 			assert.deepEqual(foreignMessages, []);
 			yield* fromPromise(owner.handlers.get("agent_settled")?.({}, context));
@@ -496,12 +481,15 @@ for (const { command, state, exitCode } of [
 
 test("completion delivers while busy, never repeats, and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
 	const messages: unknown[] = [];
+
 	const delivery = new BackgroundTerminalDelivery({
-		sendMessage(message: unknown) {
+		sendMessage(message) {
 			messages.push(message);
 		},
-	} as ExtensionAPI);
-	delivery.setContext({ isIdle: () => false } as ExtensionContext);
+	});
+
+	delivery.setContext(testContext({ isIdle: () => false }));
+
 	const snapshot = {
 		id: "bt-1",
 		title: "x",
@@ -514,6 +502,7 @@ test("completion delivers while busy, never repeats, and closed delivery stays c
 		stdout: { text: "", totalBytes: 0, truncatedBytes: 0 },
 		stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
 	} as const;
+
 	delivery.enqueue(snapshot);
 	assert.equal(messages.length, 1, "completion steers into a busy session immediately");
 	yield* delivery.flush;
@@ -523,7 +512,7 @@ test("completion delivers while busy, never repeats, and closed delivery stays c
 	delivery.enqueue(snapshot);
 	yield* delivery.flush;
 	assert.equal(messages.length, 1, "closed delivery discarded the queued result");
-	delivery.setContext({ isIdle: () => false } as ExtensionContext);
+	delivery.setContext(testContext({ isIdle: () => false }));
 	delivery.enqueue(snapshot);
 	assert.equal(messages.length, 2, "new context reopens delivery");
 	delivery.clear();
@@ -532,14 +521,17 @@ test("completion delivers while busy, never repeats, and closed delivery stays c
 test("bounds complete delivery batches with worst-case metadata", () => Effect.runPromise(Effect.gen(function* () {
 	const messages: Array<{
 		content: string;
-		details: { ids: string[] };
+		details: { ids: readonly string[] };
 	}> = [];
+
 	const delivery = new BackgroundTerminalDelivery({
-		sendMessage(message: unknown) {
-			messages.push(message as { content: string; details: { ids: string[] } });
+		sendMessage(message) {
+			messages.push(decodeMessage(message));
 		},
-	} as ExtensionAPI);
-	delivery.setContext({ isIdle: () => false } as ExtensionContext);
+	});
+
+	delivery.setContext(testContext({ isIdle: () => false }));
+
 	for (let index = 0; index < MAX_TRACKED; index++)
 		delivery.enqueue({
 			id: `bt-${index}`,
@@ -583,17 +575,20 @@ test("retries mixed-attempt delivery items independently", () => Effect.runPromi
 	let attempts = 0;
 	let idle = false;
 	const diagnostics: string[] = [];
+
 	const delivery = new BackgroundTerminalDelivery(
 		{
 			sendMessage() {
 				attempts++;
 				throw new Error("\u001b[31m\nunavailable\u202e");
 			},
-		} as unknown as ExtensionAPI,
+		},
 		(message) => diagnostics.push(message),
 	);
+
 	try {
-		delivery.setContext({ isIdle: () => idle } as ExtensionContext);
+		delivery.setContext(testContext({ isIdle: () => idle }));
+
 		const snapshot = {
 			id: "bt-retry",
 			title: "retry",
@@ -609,6 +604,7 @@ test("retries mixed-attempt delivery items independently", () => Effect.runPromi
 			stdout: { text: "", totalBytes: 0, truncatedBytes: 0 },
 			stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
 		} as const;
+
 		delivery.enqueue(snapshot);
 		idle = true;
 		yield* delivery.flush;
@@ -629,6 +625,7 @@ test("retries mixed-attempt delivery items independently", () => Effect.runPromi
 test("sanitizes displayed data and list details omit process output", () => Effect.runPromise(Effect.gen(function* () {
 	const [start, status, list, kill] = registeredTools();
 	const ctx = { cwd: process.cwd() };
+
 	const started = (yield* fromPromise(start.execute(
 		"1",
 		{
@@ -638,23 +635,25 @@ test("sanitizes displayed data and list details omit process output", () => Effe
 		undefined,
 		undefined,
 		ctx,
-	))) as { details: { id: string }; content: [{ text: string }] };
+	)));
+
 	assert.ok(!started.content[0].text.includes("\u001b"));
 	assert.ok(!started.content[0].text.includes("\u202e"));
 	assert.ok(!started.content[0].text.includes("\u200b"));
+
 	// Poll rather than sleep: a fixed delay races the child process exit on a
 	// loaded machine and reports [running] instead of [done].
-	let result!: {
-		details: Record<string, unknown>;
-		content: [{ text: string }];
-	};
+	let result!: Awaited<ReturnType<typeof status.execute>>;
+
 	for (let attempt = 0; attempt < 200; attempt++) {
 		result = (yield* fromPromise(status.execute("2", {
 			id: started.details.id,
-		}))) as typeof result;
+		})));
+
 		if (/\[done\]/.test(result.content[0].text)) break;
 		yield* Effect.sleep(25);
 	}
+
 	assert.doesNotMatch(result.content[0].text, /[\u0080-\u009f]/u);
 	assert.match(
 		result.content[0].text,
@@ -662,11 +661,12 @@ test("sanitizes displayed data and list details omit process output", () => Effe
 	);
 	assert.ok(!("stdout" in result.details));
 	assert.ok(!("stderr" in result.details));
-	const listed = (yield* fromPromise(list.execute("3", {}))) as {
-		details: { terminals: Array<Record<string, unknown>> };
-	};
+
+	const listed = yield* fromPromise(list.execute("3", {}));
+
 	assert.ok(!("stdout" in listed.details.terminals[0]));
 	assert.ok(!("stderr" in listed.details.terminals[0]));
+
 	for (const [tool, params] of [
 		[status, { id: "bad\n\u202eid" }],
 		[kill, { ids: ["bad\n\u202eid"] }],
@@ -674,9 +674,11 @@ test("sanitizes displayed data and list details omit process output", () => Effe
 		yield* fromPromise(assert.rejects(tool.execute("4", params), (error: Error) => {
 			assert.ok(!error.message.includes("\n"));
 			assert.ok(!error.message.includes("\u202e"));
+
 			return true;
 		}));
 	}
+
 	yield* fromPromise(assert.rejects(
 		start.execute(
 			"5",
@@ -688,6 +690,7 @@ test("sanitizes displayed data and list details omit process output", () => Effe
 		(error: Error) => {
 			assert.ok(!error.message.includes("\n"));
 			assert.ok(!error.message.includes("\u202e"));
+
 			return true;
 		},
 	));
@@ -696,43 +699,49 @@ test("sanitizes displayed data and list details omit process output", () => Effe
 test("pre-aborted bg_kill still starts termination", () => {
 	const controller = new AbortController();
 	controller.abort();
+
 	return Effect.runPromise(Effect.gen(function* () {
 	const tools = registeredTools();
+
 	const started = (yield* fromPromise(tools[0].execute(
 		"1",
 		{ command: "sleep 30", title: "pre-abort" },
 		undefined,
 		undefined,
 		{ cwd: process.cwd() },
-	))) as { details: { id: string } };
+	)));
+
 	yield* fromPromise(assert.rejects(
 		tools[3].execute("2", { ids: [started.details.id] }, controller.signal),
 		/termination continues/,
 	));
 	yield* eventually(() => tools[1].execute("3", { id: started.details.id }).then(
-		(status) => (status as { content: [{ text: string }] }).content[0].text.includes("[killed]"),
+		(status) => status.content[0].text.includes("[killed]"),
 	));
 	}));
 });
 
 test("aborted bg_kill wait does not cancel termination", () => {
 	const controller = new AbortController();
+
 	return Effect.runPromise(Effect.gen(function* () {
 	const tools = registeredTools();
 	const start = tools[0];
 	const kill = tools[3];
 	const status = tools[1];
 	const ctx = { cwd: process.cwd() };
+
 	const started = (yield* fromPromise(start.execute(
 		"1",
 		{ command: "trap '' TERM; sleep 30 & echo child:$!; wait", title: "abort" },
 		undefined,
 		undefined,
 		ctx,
-	))) as { details: { id: string } };
+	)));
+
 	const id = started.details.id;
 	yield* eventually(() => status.execute("ready", { id }).then(
-		(result) => (result as { content: [{ text: string }] }).content[0].text.includes("child:"),
+		(result) => result.content[0].text.includes("child:"),
 	));
 	yield* Effect.sleep(100);
 	const waiting = kill.execute("2", { ids: [id] }, controller.signal);
@@ -740,7 +749,7 @@ test("aborted bg_kill wait does not cancel termination", () => {
 	controller.abort();
 	yield* fromPromise(assert.rejects(waiting, /termination continues/));
 	yield* eventually(() => status.execute("3", { id }).then(
-		(result) => (result as { content: [{ text: string }] }).content[0].text.includes("[killed]"),
+		(result) => result.content[0].text.includes("[killed]"),
 	));
 	}));
 });

@@ -1,7 +1,11 @@
 export const BUCKET_NAME = "dumpfile-prod";
+
 export const PUBLIC_BASE_URL = "https://files.drsh4dow.dev";
+
 export const CACHE_CONTROL = "no-store";
+
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024 * 1024;
+
 export const SIGNATURE_TTL_SECONDS = 300;
 
 const extensionContentTypes: ReadonlyMap<string, string> = new Map([

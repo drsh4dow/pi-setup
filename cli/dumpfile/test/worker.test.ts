@@ -5,10 +5,12 @@ import type { UploadHeaders } from "../src/contract.ts";
 import {
 	createDumpfileWorker,
 	presignUpload,
+	type UploadLog,
 	type WorkerEnv,
 } from "../src/worker.ts";
 
 const token = "test-token-without-spaces";
+
 const tokenDigest = createHash("sha256").update(token).digest("hex");
 
 function environment(rateLimit = true): WorkerEnv {
@@ -23,8 +25,10 @@ function environment(rateLimit = true): WorkerEnv {
 	};
 }
 
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+
 function uploadRequest(
-	body: unknown,
+	body: Json,
 	overrides: { authorization?: string; contentType?: string } = {},
 ): Request {
 	return new Request("https://upload.drsh4dow.dev/v1/uploads", {
@@ -38,9 +42,10 @@ function uploadRequest(
 }
 
 test("authorizes an immutable direct upload and logs only safe fields", async () => {
-	const signed: Array<Record<string, unknown>> = [];
-	const logs: Array<Readonly<Record<string, unknown>>> = [];
+	const signed: Array<{ headers: UploadHeaders; key: string }> = [];
+	const logs: UploadLog[] = [];
 	const now = new Date("2026-08-21T12:00:00.000Z");
+
 	const worker = createDumpfileWorker({
 		log: (event) => logs.push(event),
 		now: () => now,
@@ -49,6 +54,7 @@ test("authorizes an immutable direct upload and logs only safe fields", async ()
 				headers: input.headers,
 				key: input.key,
 			});
+
 			return "https://account.r2.cloudflarestorage.com/bucket/key?X-Amz-Signature=secret";
 		},
 		randomBytes: () => Uint8Array.from({ length: 16 }, (_, index) => index),
@@ -58,6 +64,7 @@ test("authorizes an immutable direct upload and logs only safe fields", async ()
 		uploadRequest({ contentType: "image/png", extension: "png", size: 42 }),
 		environment(),
 	);
+
 	assert.equal(response.status, 201);
 	assert.equal(response.headers.get("Cache-Control"), "no-store");
 	const body = await response.json();
@@ -91,17 +98,21 @@ test("authorizes an immutable direct upload and logs only safe fields", async ()
 
 test("forces executable and unknown content to download", async () => {
 	let signedHeaders: UploadHeaders | undefined;
+
 	const worker = createDumpfileWorker({
 		log: () => {},
 		presign: async (input) => {
 			signedHeaders = input.headers;
+
 			return "https://account.r2.cloudflarestorage.com/key?signature=safe";
 		},
 	});
+
 	const response = await worker.fetch(
 		uploadRequest({ contentType: "text/html", extension: "html", size: 3 }),
 		environment(),
 	);
+
 	assert.equal(response.status, 201);
 	const body = await response.json();
 	assert.deepEqual(signedHeaders, body.upload.headers);
@@ -115,6 +126,7 @@ test("forces executable and unknown content to download", async () => {
 
 test("rejects unauthenticated, malformed, oversized, and rate-limited requests", async () => {
 	const worker = createDumpfileWorker({ log: () => {} });
+
 	const cases: Array<[Request, WorkerEnv, number]> = [
 		[
 			uploadRequest(
@@ -156,6 +168,54 @@ test("rejects unauthenticated, malformed, oversized, and rate-limited requests",
 	}
 });
 
+test("rejects malformed JSON and invalid request fields with specific problems", async () => {
+	const worker = createDumpfileWorker({ log: () => {} });
+	const valid = { contentType: "image/png", extension: "png", size: 1 };
+
+	const cases: Array<[Json, string]> = [
+		[null, "invalid-request"],
+		[[], "invalid-request"],
+		[{}, "invalid-request"],
+		[{ ...valid, extra: true }, "invalid-request"],
+		[{ ...valid, size: "1" }, "invalid-size"],
+		[{ ...valid, size: -1 }, "invalid-size"],
+		[{ ...valid, size: 0.5 }, "invalid-size"],
+		[{ ...valid, contentType: 1 }, "invalid-content-type"],
+		[
+			{ ...valid, contentType: "image/png; charset=utf-8" },
+			"invalid-content-type",
+		],
+		[{ ...valid, extension: null }, "invalid-extension"],
+	];
+
+	for (const [body, type] of cases) {
+		const response = await worker.fetch(uploadRequest(body), environment());
+		assert.equal(response.status, 400);
+		assert.equal(
+			(await response.json()).type,
+			`https://upload.drsh4dow.dev/problems/${type}`,
+		);
+	}
+
+	const response = await worker.fetch(
+		new Request("https://upload.drsh4dow.dev/v1/uploads", {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${token}`,
+				"Content-Type": "application/json",
+			},
+			body: "{",
+		}),
+		environment(),
+	);
+
+	assert.equal(response.status, 400);
+	assert.equal(
+		(await response.json()).type,
+		"https://upload.drsh4dow.dev/problems/invalid-json",
+	);
+});
+
 test("aws4fetch presigns one PUT with all stored metadata bound", async () => {
 	const url = await presignUpload({
 		env: environment(),
@@ -167,6 +227,7 @@ test("aws4fetch presigns one PUT with all stored metadata bound", async () => {
 			"Content-Type": "video/mp4",
 		},
 	});
+
 	const parsed = new URL(url);
 	assert.equal(
 		parsed.hostname,
@@ -183,10 +244,12 @@ test("aws4fetch presigns one PUT with all stored metadata bound", async () => {
 
 test("new uploads disable cache retention beyond R2 lifecycle deletion", async () => {
 	const worker = createDumpfileWorker();
+
 	const response = await worker.fetch(
 		uploadRequest({ contentType: "image/png", extension: "png", size: 1 }),
 		environment(),
 	);
+
 	assert.equal(response.status, 201);
 	const body = await response.json();
 	assert.equal(body.upload.headers["Cache-Control"], "no-store");

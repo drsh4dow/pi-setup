@@ -43,6 +43,7 @@ export default function tpsTracker(
 		if (event.message.role !== "assistant") return;
 
 		const streamEvent = event.assistantMessageEvent;
+
 		const isOutputDelta =
 			streamEvent.type === "text_delta" ||
 			streamEvent.type === "thinking_delta" ||
@@ -57,15 +58,18 @@ export default function tpsTracker(
 
 		const elapsed = (now - streamStart) / 1000;
 		const officialTokens = event.message.usage.output;
+
 		const currentTokens =
 			officialTokens > 0 ? officialTokens : estimatedStreamedTokens;
 
 		if (elapsed > 0 && currentTokens > 0) {
 			const tps = Math.round(currentTokens / elapsed);
+
 			const tokenLabel =
 				officialTokens > 0
 					? `${officialTokens} tok`
 					: `~${Math.round(estimatedStreamedTokens)} tok`;
+
 			const theme = ctx.ui.theme;
 			ctx.ui.setStatus(
 				"tps",
@@ -79,6 +83,7 @@ export default function tpsTracker(
 
 		const messageTokens = event.message.usage.output;
 		const timingStart = streamStart ?? messageStart;
+
 		if (timingStart !== null && messageTokens > 0) {
 			totalOutputTokens += messageTokens;
 			totalStreamMs += dependencies.now() - timingStart;
@@ -89,6 +94,7 @@ export default function tpsTracker(
 
 	pi.on("agent_end", (_event, ctx) => {
 		const elapsed = totalStreamMs / 1000;
+
 		const tps =
 			totalOutputTokens > 0 && elapsed > 0
 				? Math.round(totalOutputTokens / elapsed)
@@ -96,8 +102,10 @@ export default function tpsTracker(
 
 		const theme = ctx.ui.theme;
 		const icon = theme.fg("success", "✓");
+
 		const tpsLabel =
 			tps > 0 ? theme.fg("accent", `${tps} tok/s`) : theme.fg("dim", "N/A");
+
 		const detail = theme.fg(
 			"dim",
 			`${totalOutputTokens} tokens in ${elapsed.toFixed(1)}s streaming`,

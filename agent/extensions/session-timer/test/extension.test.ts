@@ -11,21 +11,26 @@ test("reports live time and removes the timer when each run settles", () =>
 			let now = 0;
 			let tick: (() => void) | undefined;
 			let stops = 0;
-			const statuses: string[] = [];
+			const statuses: Array<string | undefined> = [];
+
 			const context = unsafeFixture<ExtensionContext>({
 				hasUI: true,
 				mode: "tui",
 				model: undefined,
 				ui: unsafeFixture<ExtensionContext["ui"]>({
-					theme: { fg: (_color: string, text: string) => text },
-					setStatus: (_key: string, value: string) => statuses.push(value),
+					theme: unsafeFixture<ExtensionContext["ui"]["theme"]>({
+						fg: (_color, text) => text,
+					}),
+					setStatus: (_key, value) => statuses.push(value),
 				}),
 			});
+
 			const adapter = extensionTestAdapter();
 			sessionTimer(adapter.api, {
 				now: () => now,
 				everySecond: (callback) => {
 					tick = callback;
+
 					return () => {
 						stops += 1;
 					};
@@ -65,19 +70,23 @@ for (const mode of ["tui", "rpc", "json", "print"] as const) {
 				const ticks = new Set<() => void>();
 				let stops = 0;
 				const statuses: Array<string | undefined> = [];
+
 				const context = unsafeFixture<ExtensionContext>({
 					mode,
 					hasUI: mode === "tui" || mode === "rpc",
-					ui: {
-						theme: { fg: (_: string, text: string) => text },
-						setStatus: (_: string, value: string | undefined) =>
-							statuses.push(value),
-					},
+					ui: unsafeFixture<ExtensionContext["ui"]>({
+						theme: unsafeFixture<ExtensionContext["ui"]["theme"]>({
+							fg: (_, text) => text,
+						}),
+						setStatus: (_, value) => statuses.push(value),
+					}),
 				});
+
 				sessionTimer(adapter.api, {
 					now: () => 1000,
 					everySecond: (tick) => {
 						ticks.add(tick);
+
 						return () => {
 							stops++;
 							ticks.delete(tick);
@@ -88,6 +97,7 @@ for (const mode of ["tui", "rpc", "json", "print"] as const) {
 					adapter.emit("agent_start", { type: "agent_start" }, context),
 				);
 				assert.equal(ticks.size, mode === "tui" ? 1 : 0);
+
 				for (let n = 0; n < 2; n++)
 					yield* Effect.promise(() =>
 						adapter.emit(
@@ -99,6 +109,7 @@ for (const mode of ["tui", "rpc", "json", "print"] as const) {
 				assert.equal(ticks.size, 0);
 				assert.equal(stops, mode === "tui" ? 1 : 0);
 				const writes = statuses.length;
+
 				for (const tick of ticks) tick();
 				assert.equal(statuses.length, writes);
 				assert.equal(statuses.at(-1), undefined);

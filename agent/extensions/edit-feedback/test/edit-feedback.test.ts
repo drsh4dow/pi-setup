@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 
 const { mkdtempSync, readFileSync, rmSync, writeFileSync } =
 	process.getBuiltinModule("node:fs");
@@ -18,6 +18,7 @@ function fixture(
 	const cwd = mkdtempSync(join(tmpdir(), "edit-feedback-"));
 	const path = join(cwd, "fixture.txt");
 	writeFileSync(path, text);
+
 	return Effect.runPromise(
 		run(cwd, path).pipe(
 			Effect.ensuring(
@@ -69,6 +70,7 @@ test("missing text provides nearby context and whitespace guidance for the faili
 						assert.match(error.message, /2: "function target/);
 						assert.match(error.message, /3:.*\\treturn 42/);
 						assert.match(error.message, /whitespace and newlines/);
+
 						return true;
 					},
 				),
@@ -108,6 +110,7 @@ test("large files and long lines keep diagnostics bounded and explicitly truncat
 						assert.ok(Buffer.byteLength(error.message) <= 8192);
 						assert.match(error.message, /line truncated/);
 						assert.match(error.message, /first 4 locations/);
+
 						return true;
 					},
 				),
@@ -128,17 +131,22 @@ test("success keeps original-file batch matching, BOM, CRLF and builtin result d
 					],
 				}),
 			);
+
 			assert.equal(readFileSync(path, "utf8"), "\uFEFFtwo\r\nthree\r\n");
 			assert.match(
 				result.content[0]?.type === "text" ? result.content[0].text : "",
 				/Successfully replaced 2 block/,
 			);
+
+			const details = result.details;
 			assert.ok(
-				result.details &&
-					typeof result.details === "object" &&
-					"diff" in result.details &&
-					"patch" in result.details,
+				Schema.is(Schema.Struct({ diff: Schema.String, patch: Schema.String }))(
+					details,
+				),
 			);
+
+			assert.match(details.diff, /three/);
+			assert.match(details.patch, /three/);
 		}),
 	));
 
@@ -174,15 +182,18 @@ test("the installed CLI loads the extension and executes its registered edit too
 		Effect.sync(() => {
 			const { spawnSync } = process.getBuiltinModule("node:child_process");
 			const { fileURLToPath } = process.getBuiltinModule("node:url");
+
 			const cli = fileURLToPath(
 				new URL(
 					"../../../../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
 					import.meta.url,
 				),
 			);
+
 			const extension = fileURLToPath(
 				new URL("./cli-probe.ts", import.meta.url),
 			);
+
 			const result = spawnSync(
 				process.execPath,
 				[
@@ -204,6 +215,7 @@ test("the installed CLI loads the extension and executes its registered edit too
 					timeout: 30000,
 				},
 			);
+
 			assert.equal(result.status, 0, result.stderr);
 			assert.match(
 				result.stdout + result.stderr,
@@ -227,6 +239,7 @@ test("escaped control characters cannot exceed the diagnostic byte budget", () =
 				(error) => {
 					assert.ok(error instanceof Error);
 					assert.ok(Buffer.byteLength(error.message) <= 8192);
+
 					return true;
 				},
 			),
@@ -254,21 +267,27 @@ test("queued cancellation waits for the builtin mutation queue and never writes"
 			const { withFileMutationQueue } = yield* Effect.promise(
 				() => import("@earendil-works/pi-coding-agent"),
 			);
+
 			const entered = Promise.withResolvers<void>();
 			const release = Promise.withResolvers<void>();
+
 			const locked = withFileMutationQueue(path, () => {
 				entered.resolve();
+
 				return release.promise;
 			});
+
 			yield* Effect.promise(() => entered.promise);
 			// Caller-owned cancellation must interrupt the queued public tool request.
 			// @effect-diagnostics-next-line abortControllerInEffect:off
 			const controller = new AbortController();
+
 			const pending = createDiagnosticEditTool(cwd).execute(
 				"test",
 				{ path, edits: [{ oldText: "original", newText: "changed" }] },
 				controller.signal,
 			);
+
 			yield* Effect.sleep(20);
 			assert.equal(readFileSync(path, "utf8"), "original\n");
 			controller.abort();
@@ -287,6 +306,7 @@ test("whitespace matching and unchanged bytes follow the builtin tool exactly", 
 			const { createEditTool } = yield* Effect.promise(
 				() => import("@earendil-works/pi-coding-agent"),
 			);
+
 			const cases = [
 				{ text: "\tvalue\n", oldText: "  value", newText: "changed" },
 				{ text: "value   \n", oldText: "value\n", newText: "changed\n" },
@@ -297,12 +317,14 @@ test("whitespace matching and unchanged bytes follow the builtin tool exactly", 
 					newText: "changed\n",
 				},
 			];
+
 			for (const sample of cases) {
 				const original = join(cwd, "builtin.txt");
 				const wrapped = join(cwd, "wrapped.txt");
 				writeFileSync(original, sample.text);
 				writeFileSync(wrapped, sample.text);
 				const edit = { oldText: sample.oldText, newText: sample.newText };
+
 				const expected = yield* Effect.promise(() =>
 					createEditTool(cwd)
 						.execute("builtin", { path: original, edits: [edit] })
@@ -311,6 +333,7 @@ test("whitespace matching and unchanged bytes follow the builtin tool exactly", 
 							() => "rejected",
 						),
 				);
+
 				const actual = yield* Effect.promise(() =>
 					createDiagnosticEditTool(cwd)
 						.execute("wrapped", { path: wrapped, edits: [edit] })
@@ -319,6 +342,7 @@ test("whitespace matching and unchanged bytes follow the builtin tool exactly", 
 							() => "rejected",
 						),
 				);
+
 				assert.equal(actual, expected);
 				assert.deepEqual(readFileSync(wrapped), readFileSync(original));
 			}

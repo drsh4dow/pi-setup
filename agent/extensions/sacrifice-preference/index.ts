@@ -20,17 +20,26 @@ export default function sacrificePreference(pi: ExtensionAPI) {
 		...template,
 		execute(toolCallId, params, signal, onUpdate, ctx) {
 			const startedAt = Effect.runSync(Clock.currentTimeMillis);
+
 			const settings = SettingsManager.create(ctx.cwd, getAgentDir(), {
 				projectTrusted: ctx.isProjectTrusted(),
 			});
+
 			const userPrefix = settings.getShellCommandPrefix();
 			const shellPath = settings.getShellPath();
-			const tool = createBashToolDefinition(ctx.cwd, {
+
+			const options: NonNullable<
+				Parameters<typeof createBashToolDefinition>[1]
+			> = {
 				commandPrefix: userPrefix
 					? `${SACRIFICE_COMMAND_PREFIX}\n${userPrefix}`
 					: SACRIFICE_COMMAND_PREFIX,
-				...(shellPath ? { shellPath } : {}),
-			});
+			};
+
+			if (shellPath) options.shellPath = shellPath;
+
+			const tool = createBashToolDefinition(ctx.cwd, options);
+
 			return tool
 				.execute(toolCallId, params, signal, onUpdate, ctx)
 				.catch((error) => {
@@ -38,12 +47,14 @@ export default function sacrificePreference(pi: ExtensionAPI) {
 						error instanceof Error
 							? error.message.match(/Command exited with code (\d+)$/)
 							: null;
+
 					const note = match
 						? sacrificeKillNote(
 								{ exitCode: Number(match[1]), signal: undefined },
 								startedAt,
 							)
 						: undefined;
+
 					if (note && error instanceof Error)
 						throw new Error(`${error.message}\n${note}`);
 					throw error;

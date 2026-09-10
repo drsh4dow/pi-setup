@@ -17,6 +17,7 @@ import extension from "../index.ts";
 
 const { mkdirSync, mkdtempSync, rmSync, writeFileSync } =
 	process.getBuiltinModule("fs");
+
 const { join } = process.getBuiltinModule("path");
 
 for (const custom of [true, false]) {
@@ -33,13 +34,17 @@ for (const custom of [true, false]) {
 					join(agentDir, "skills", "sample", "SKILL.md"),
 					"---\nname: sample\ndescription: SAMPLE SKILL DESCRIPTION\n---\nInspect the sample.\n",
 				);
+
 				if (custom) writeFileSync(join(agentDir, "SYSTEM.md"), "CUSTOM POLICY");
+
 				const settingsManager = SettingsManager.inMemory({
 					defaultProjectTrust: "always",
 					compaction: { enabled: false },
 					retry: { enabled: false },
 				});
+
 				let priorPrompt = "";
+
 				const loader = new DefaultResourceLoader({
 					cwd: directory,
 					agentDir,
@@ -73,17 +78,21 @@ for (const custom of [true, false]) {
 										}),
 								});
 							}
+
 							pi.on("before_agent_start", (event) => {
 								priorPrompt = `${event.systemPrompt}\n\nEARLIER EXTENSION POLICY`;
+
 								return { systemPrompt: priorPrompt };
 							});
 						},
 						extension,
 					],
 				});
+
 				yield* Effect.promise(() => loader.reload());
 				assert.deepEqual(loader.getExtensions().errors, []);
 				const provider = fauxProvider();
+
 				const { session } = yield* Effect.acquireRelease(
 					Effect.promise(() =>
 						createAgentSession({
@@ -98,6 +107,7 @@ for (const custom of [true, false]) {
 					),
 					({ session }) => Effect.sync(() => session.dispose()),
 				);
+
 				yield* Effect.promise(() =>
 					session.bindExtensions({
 						mode: "print",
@@ -105,10 +115,13 @@ for (const custom of [true, false]) {
 					}),
 				);
 				session.modelRuntime.registerNativeProvider(provider.provider);
+
 				const bothTools =
 					"\n\n## Active tools\n\n- probe_write: Write an artifact\n- read: Read an artifact\n\n## Tool guidelines\n\n- Keep edits focused\n- Inspect evidence";
+
 				const readOnly =
 					"\n\n## Active tools\n\n- read: Read an artifact\n\n## Tool guidelines\n\n- Keep edits focused\n- Inspect evidence";
+
 				for (const [tools, suffix] of [
 					[["probe_write", "read", "no_snippet"], bothTools],
 					[["probe_write", "read", "no_snippet"], bothTools],
@@ -120,12 +133,14 @@ for (const custom of [true, false]) {
 					provider.setResponses([
 						(context) => {
 							actual = context.systemPrompt ?? "";
+
 							return fauxAssistantMessage("Verified response");
 						},
 					]);
 					yield* Effect.promise(() => session.prompt("Inspect the artifact."));
 					assert.equal(session.getLastAssistantText(), "Verified response");
 					assert.equal(actual, priorPrompt + (custom ? suffix : ""));
+
 					for (const marker of [
 						"PROJECT CONTEXT POLICY",
 						"APPENDED POLICY",
@@ -133,6 +148,7 @@ for (const custom of [true, false]) {
 					]) {
 						assert.equal(actual.split(marker).length - 1, 1, marker);
 					}
+
 					assert.equal(
 						actual.split("SAMPLE SKILL DESCRIPTION").length - 1,
 						tools.length > 0 ? 1 : 0,

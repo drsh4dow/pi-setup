@@ -14,6 +14,7 @@ export async function run(check) {
 	const reports = [];
 	const sockets = new Set();
 	let respond = (request) => ({ id: request.id, result: {} });
+
 	const server = net.createServer((socket) => {
 		sockets.add(socket);
 		socket.on("close", () => sockets.delete(socket));
@@ -21,20 +22,24 @@ export async function run(check) {
 		let input = "";
 		socket.on("data", (chunk) => {
 			input += chunk;
+
 			if (!input.includes("\n")) return;
 			const request = JSON.parse(input.trim());
 			reports.push(request);
 			const response = respond(request);
+
 			if (response === undefined) socket.destroy();
 			else socket.end(`${JSON.stringify(response)}\n`);
 		});
 	});
+
 	await new Promise((resolve, reject) => {
 		server.once("error", reject);
 		server.listen(socketPath, resolve);
 	});
 	const hooks = new Map();
 	const events = new Map();
+
 	const pi = {
 		on(name, handler) {
 			hooks.set(name, handler);
@@ -42,11 +47,14 @@ export async function run(check) {
 		events: {
 			on(name, handler) {
 				events.set(name, handler);
+
 				return () => events.delete(name);
 			},
 		},
 	};
+
 	let idle = true;
+
 	const ctx = {
 		mode: "tui",
 		isIdle: () => idle,
@@ -55,13 +63,17 @@ export async function run(check) {
 			getSessionId: () => "herdr-test-session",
 		},
 	};
+
 	const emit = async (name, context = ctx) =>
 		hooks.get(name)?.({ type: name, reason: "startup" }, context);
+
 	async function eventually(predicate, message) {
 		const deadline = Date.now() + 3500;
+
 		while (!predicate() && Date.now() < deadline) await delay(10);
 		assert.ok(predicate(), message);
 	}
+
 	try {
 		const { default: extension } = await import("../../herdr-agent-state.ts");
 		extension(pi);
@@ -81,6 +93,7 @@ export async function run(check) {
 		});
 	} finally {
 		await emit("session_shutdown");
+
 		for (const socket of sockets) socket.destroy();
 		await new Promise((resolve) => server.close(resolve));
 		await rm(directory, { recursive: true, force: true });

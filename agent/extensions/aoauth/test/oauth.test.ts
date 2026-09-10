@@ -9,36 +9,45 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai/compat";
 import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
-import { Clock, Effect } from "effect";
+import { Clock, Effect, Schema } from "effect";
 import { anthropicOAuth } from "../oauth.ts";
 
 const nodeHttp = process.getBuiltinModule("node:http");
+
 const createServer = nodeHttp.createServer;
+
 const httpStatus = (url: string, fetch: typeof globalThis.fetch) =>
 	fetch(url).then((response) => response.status);
+
 type TestBody = (
 	context: TestContext,
 ) => Generator<Effect.Effect<unknown>, void, never>;
+
 const effectTest = (name: string, body: TestBody) =>
 	test(name, (context) => Effect.runPromise(Effect.gen(() => body(context))));
+
 const restoreFetch = (context: TestContext) => {
 	const fetch = globalThis.fetch;
 	context.after(() => {
 		globalThis.fetch = fetch;
 	});
+
 	return fetch;
 };
+
 const mockTokenResponse = (
 	context: TestContext,
-	body: unknown,
+	body: Schema.Json,
 	onRequest?: (input: RequestInfo | URL, init?: RequestInit) => void,
 ) => {
 	restoreFetch(context);
 	globalThis.fetch = (input, init) => {
 		onRequest?.(input, init);
+
 		return Promise.resolve(Response.json(body));
 	};
 };
+
 const listen = Effect.fn("listen")(
 	(server: ReturnType<typeof createServer>, port: number) =>
 		Effect.callback<void>((resume) => {
@@ -48,27 +57,35 @@ const listen = Effect.fn("listen")(
 				server.off("error", onError);
 				resume(Effect.void);
 			});
+
 			return Effect.sync(() => server.close());
 		}),
 );
+
 const close = Effect.fn("close")((server: ReturnType<typeof createServer>) =>
 	Effect.callback<void>((resume) => {
 		server.close((error) => resume(error ? Effect.die(error) : Effect.void));
 	}),
 );
+
 const closePromise = (server: ReturnType<typeof createServer>) =>
 	Effect.runPromise(close(server));
+
 const never = () => Effect.runPromise(Effect.never);
+
 const oauthLogin = Effect.fn("oauthLogin")((input: OAuthLoginCallbacks) =>
 	Effect.promise(() => anthropicOAuth.login(input)),
 );
+
 const oauthRefresh = Effect.fn("oauthRefresh")((input: OAuthCredentials) =>
 	Effect.promise(() => anthropicOAuth.refreshToken(input)),
 );
+
 const rejects = Effect.fn("rejects")(
 	(promise: Promise<unknown>, expected: Parameters<typeof assert.rejects>[1]) =>
 		Effect.promise(() => assert.rejects(promise, expected)),
 );
+
 const loginOutcome = (login: Promise<unknown>) =>
 	Effect.promise(() =>
 		login.then(
@@ -78,8 +95,10 @@ const loginOutcome = (login: Promise<unknown>) =>
 	);
 
 const TOKEN_URL = "https://api.anthropic.com/v1/oauth/token";
+
 const SCOPES =
 	"org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+
 const OLD_CREDENTIALS = {
 	access: "sk-ant-oat-old",
 	refresh: "refresh-old",
@@ -92,16 +111,24 @@ function callbackParams(info: { url: string }) {
 	const state = authorizationUrl.searchParams.get("state");
 	assert.ok(redirectUri);
 	assert.ok(state);
+
 	return { redirectUri, state };
 }
 
-function requestBodyJson<T>(body: RequestInit["body"]): T {
-	return JSON.parse(
-		typeof body === "string"
-			? body
-			: new TextDecoder().decode(body as Uint8Array),
-	) as T;
+function requestBodyText(body: RequestInit["body"]) {
+	return body instanceof Uint8Array
+		? new TextDecoder().decode(body)
+		: Schema.decodeUnknownSync(Schema.String)(body);
 }
+
+const requestBodyJson = (body: RequestInit["body"]) =>
+	Schema.decodeSync(
+		Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+	)(requestBodyText(body));
+
+const TransportBody = Schema.Struct({
+	system: Schema.Array(Schema.Struct({ text: Schema.String })),
+});
 
 function callbacks(
 	overrides: Partial<OAuthLoginCallbacks>,
@@ -134,6 +161,7 @@ effectTest(
 		);
 
 		const before = yield* Clock.currentTimeMillis;
+
 		const credentials = yield* oauthLogin(
 			callbacks({
 				onAuth(info) {
@@ -141,12 +169,14 @@ effectTest(
 				},
 				onManualCodeInput() {
 					assert.ok(authorizationUrl);
+
 					return Promise.resolve(
 						`authorization-code#${authorizationUrl.searchParams.get("state")}`,
 					);
 				},
 			}),
 		);
+
 		const after = yield* Clock.currentTimeMillis;
 
 		assert.ok(authorizationUrl);
@@ -165,7 +195,7 @@ effectTest(
 			/^http:\/\/localhost:\d+\/callback$/,
 		);
 
-		const payload = requestBodyJson<Record<string, string>>(tokenRequest?.body);
+		const payload = requestBodyJson(tokenRequest?.body);
 		assert.equal(payload.grant_type, "authorization_code");
 		assert.equal(payload.code, "authorization-code");
 		assert.equal(payload.state, authorizationUrl.searchParams.get("state"));
@@ -208,6 +238,7 @@ effectTest(
 			accountId: "account-1",
 			orgId: "org-1",
 		} satisfies OAuthCredentials;
+
 		const refreshed = yield* oauthRefresh(existing);
 
 		const headers = new Headers(tokenRequest?.headers);
@@ -224,14 +255,15 @@ effectTest(
 		});
 		assert.equal(refreshed.access, "sk-ant-oat-refreshed");
 		assert.equal(refreshed.refresh, "refresh-old");
-		assert.equal(
-			(refreshed as OAuthCredentials & { accountId: string }).accountId,
-			"account-1",
-		);
-		assert.equal(
-			(refreshed as OAuthCredentials & { orgId: string }).orgId,
-			"org-1",
-		);
+
+		const metadata = Schema.decodeUnknownSync(
+			Schema.Struct({
+				accountId: Schema.String,
+				orgId: Schema.String,
+			}),
+		)(refreshed);
+
+		assert.deepEqual(metadata, { accountId: "account-1", orgId: "org-1" });
 	},
 );
 
@@ -275,6 +307,7 @@ effectTest(
 			(error: Error) => {
 				assert.match(error.message, /HTTP 401/);
 				assert.doesNotMatch(error.message, /sensitive-provider-detail/);
+
 				return true;
 			},
 		);
@@ -300,6 +333,7 @@ effectTest(
 				assert.match(error.message, /returned invalid JSON/);
 				assert.equal(error.cause, undefined);
 				assert.doesNotMatch(JSON.stringify(error), /secret-/);
+
 				return true;
 			},
 		);
@@ -318,7 +352,7 @@ effectTest(
 				expires_in: 3600,
 			},
 			(_input, init) => {
-				exchangedCodes.push(requestBodyJson<{ code: string }>(init?.body).code);
+				exchangedCodes.push(requestBodyJson(init?.body).code);
 			},
 		);
 
@@ -329,6 +363,7 @@ effectTest(
 				const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
 				redirect.searchParams.set("code", "redirect-code");
 				redirect.searchParams.set("state", url.searchParams.get("state") ?? "");
+
 				return redirect.toString();
 			},
 		];
@@ -342,6 +377,7 @@ effectTest(
 					},
 					onManualCodeInput() {
 						assert.ok(authorizationUrl);
+
 						return Promise.resolve(input(authorizationUrl));
 					},
 				}),
@@ -362,8 +398,8 @@ effectTest(
 		const nativeFetch = restoreFetch(t);
 
 		globalThis.fetch = (input, init) => {
-			if (String(input) !== TOKEN_URL)
-				return Reflect.apply(nativeFetch, globalThis, [input, init]);
+			if (String(input) !== TOKEN_URL) return nativeFetch(input, init);
+
 			return Promise.resolve(
 				Response.json({
 					access_token: "sk-ant-oat-browser",
@@ -374,6 +410,7 @@ effectTest(
 		};
 
 		let callbackRequests: Promise<readonly [number, number]> | undefined;
+
 		const credentials = yield* oauthLogin(
 			callbacks({
 				onAuth(info) {
@@ -391,6 +428,7 @@ effectTest(
 				onManualCodeInput: never,
 			}),
 		);
+
 		const statuses = yield* Effect.promise(
 			() => callbackRequests ?? Promise.resolve([0, 0] as const),
 		);
@@ -458,6 +496,7 @@ effectTest(
 	function* () {
 		const controller = new AbortController();
 		let denialUrl: string | undefined;
+
 		const login = anthropicOAuth.login(
 			callbacks({
 				signal: controller.signal,
@@ -467,21 +506,23 @@ effectTest(
 				},
 				onManualCodeInput() {
 					controller.abort();
+
 					return never();
 				},
 			}),
 		);
+
 		let outcome = yield* loginOutcome(login).pipe(
 			Effect.timeoutOrElse({
 				duration: 100,
 				orElse: () => Effect.succeed("still waiting"),
 			}),
 		);
+
 		if (outcome === "still waiting") {
-			assert.ok(denialUrl);
-			yield* Effect.promise(() =>
-				httpStatus(denialUrl as string, globalThis.fetch),
-			);
+			const url = denialUrl;
+			assert.ok(url);
+			yield* Effect.promise(() => httpStatus(url, globalThis.fetch));
 			outcome = yield* loginOutcome(login);
 		}
 
@@ -510,6 +551,7 @@ effectTest(
 				onManualCodeInput: never,
 			}),
 		);
+
 		// Wall-clock bound: cancellation must settle login without the stalled
 		// socket being destroyed first. Slack is 8x SERVER_CLOSE_GRACE_MS.
 		const outcome = yield* loginOutcome(login).pipe(
@@ -518,6 +560,7 @@ effectTest(
 				orElse: () => Effect.succeed("still waiting"),
 			}),
 		);
+
 		assert.equal(outcome, "Login cancelled");
 		socket?.destroy();
 	},
@@ -543,6 +586,7 @@ effectTest("falls back to an available loopback port", function* (t) {
 			},
 			onManualCodeInput() {
 				assert.ok(redirectPort);
+
 				return Promise.resolve("authorization-code");
 			},
 		}),
@@ -558,10 +602,13 @@ effectTest(
 		restoreFetch(t);
 
 		let requestHeaders: Headers | undefined;
-		let requestBody: Record<string, unknown> | undefined;
+		let requestBody: typeof TransportBody.Type | undefined;
 		globalThis.fetch = (_input, init) => {
 			requestHeaders = new Headers(init?.headers);
-			requestBody = requestBodyJson<Record<string, unknown>>(init?.body);
+			requestBody = Schema.decodeSync(Schema.fromJsonString(TransportBody))(
+				requestBodyText(init?.body),
+			);
+
 			const events = [
 				"event: message_start",
 				'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-6","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}}}',
@@ -583,6 +630,7 @@ effectTest(
 				"",
 				"",
 			].join("\n");
+
 			return Promise.resolve(
 				new Response(events, {
 					status: 200,
@@ -595,7 +643,9 @@ effectTest(
 			...getModel("anthropic", "claude-sonnet-4-6"),
 			baseUrl: "https://anthropic.test",
 		};
+
 		const now = yield* Clock.currentTimeMillis;
+
 		const responseStream = streamSimple(
 			model,
 			{
@@ -617,12 +667,15 @@ effectTest(
 				maxTokens: 10,
 			},
 		);
+
 		const iterator = responseStream[Symbol.asyncIterator]();
 		let next = yield* Effect.promise(() => iterator.next());
+
 		while (!next.done) {
 			if (next.value.type === "error") {
 				return yield* Effect.die(new Error(next.value.error.errorMessage));
 			}
+
 			next = yield* Effect.promise(() => iterator.next());
 		}
 
@@ -637,7 +690,7 @@ effectTest(
 		assert.equal(requestHeaders?.get("x-app"), "cli");
 		assert.ok(requestBody);
 		assert.equal(
-			(requestBody.system as Array<{ text: string }>)[0]?.text,
+			requestBody.system[0]?.text,
 			"You are Claude Code, Anthropic's official CLI for Claude.",
 		);
 	},
@@ -654,9 +707,11 @@ effectTest(
 		);
 		const controller = new AbortController();
 		controller.abort();
+
 		const provider: NonNullable<
 			import("@earendil-works/pi-coding-agent").ProviderConfig["oauth"]
 		> = anthropicOAuth;
+
 		yield* Effect.promise(() =>
 			assert.rejects(provider.refreshToken(OLD_CREDENTIALS, controller.signal)),
 		);
@@ -681,9 +736,11 @@ effectTest(
 				}),
 			);
 		const controller = new AbortController();
+
 		const provider: NonNullable<
 			import("@earendil-works/pi-coding-agent").ProviderConfig["oauth"]
 		> = anthropicOAuth;
+
 		const refresh = provider.refreshToken(OLD_CREDENTIALS, controller.signal);
 		const rejected = assert.rejects(refresh);
 		const requestSignal = yield* Effect.promise(() => started.promise);

@@ -16,7 +16,9 @@ import { Effect } from "effect";
 import extension from "../index.ts";
 
 const { mkdtempSync, rmSync } = process.getBuiltinModule("node:fs");
+
 const { tmpdir } = process.getBuiltinModule("node:os");
+
 const { join } = process.getBuiltinModule("node:path");
 
 // Busy work that outlasts the background command so the result arrives
@@ -35,11 +37,13 @@ test("a finished background command reaches the model before its next call, not 
 	Effect.gen(function* () {
 		const directory = mkdtempSync(join(tmpdir(), "pi-bg-steering-"));
 		t.after(() => rmSync(directory, { recursive: true, force: true }));
+
 		const settingsManager = SettingsManager.inMemory({
 			defaultProjectTrust: "always",
 			compaction: { enabled: false },
 			retry: { enabled: false },
 		});
+
 		const loader = new DefaultResourceLoader({
 			cwd: directory,
 			agentDir: directory,
@@ -60,10 +64,12 @@ test("a finished background command reaches the model before its next call, not 
 					}),
 			],
 		});
+
 		yield* Effect.promise(() => loader.reload());
 		assert.deepEqual(loader.getExtensions().errors, []);
 
 		const provider = fauxProvider();
+
 		const { session } = yield* Effect.acquireRelease(
 			Effect.promise(() =>
 				createAgentSession({
@@ -94,6 +100,7 @@ test("a finished background command reaches the model before its next call, not 
 		let finalContext:
 			| { messages: Array<{ role: string; content: unknown }> }
 			| undefined;
+
 		provider.setResponses([
 			fauxAssistantMessage(
 				fauxToolCall("bg_start", {
@@ -107,6 +114,7 @@ test("a finished background command reaches the model before its next call, not 
 			}),
 			(context) => {
 				finalContext = context;
+
 				return fauxAssistantMessage("ack");
 			},
 		]);
@@ -122,11 +130,14 @@ test("a finished background command reaches the model before its next call, not 
 		assert.equal(session.getLastAssistantText(), "ack");
 
 		const messages = finalContext?.messages ?? [];
+
 		const resultIndex = messages.findIndex((message) => {
 			if (message.role !== "user") return false;
 			const text = JSON.stringify(message.content);
+
 			return text.includes("exit 23") && text.includes("background output");
 		});
+
 		assert.ok(
 			resultIndex !== -1,
 			"background result missing from the final model call",

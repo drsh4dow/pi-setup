@@ -19,20 +19,25 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const { execFileSync } = process.getBuiltinModule("child_process");
+
 const bunTestServices = BunChildProcessSpawner.layer.pipe(
 	Layer.provideMerge(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
 );
+
 const fs = Effect.runSync(
 	FileSystem.FileSystem.pipe(Effect.provide(BunFileSystem.layer)),
 );
+
 const pathService = Effect.runSync(
 	Path.Path.pipe(Effect.provide(BunPath.layer)),
 );
+
 const spawner = Effect.runSync(
 	ChildProcessSpawner.ChildProcessSpawner.pipe(Effect.provide(bunTestServices)),
 );
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
 const pollUntilSome = <A, E, R>(
 	effect: Effect.Effect<Option.Option<A>, E, R>,
 ) =>
@@ -40,9 +45,11 @@ const pollUntilSome = <A, E, R>(
 		Effect.repeat({ schedule: Schedule.spaced(250), until: Option.isSome }),
 		Effect.map(Option.getOrThrow),
 	);
+
 const REPOSITORY_AGENT_DIR = Effect.runSync(
 	pathService.fromFileUrl(new URL("../..", import.meta.url)),
 );
+
 const e2eEnabled = Effect.runSync(
 	Config.option(Config.NonEmptyString("PI_E2E")),
 ).pipe(Option.exists((value) => value === "1"));
@@ -114,6 +121,7 @@ const startPi = Effect.fn("startPi")(function* () {
 	yield* fs.makeDirectory(sessionDir, { recursive: true });
 
 	const sourceAgentDir = getAgentDir();
+
 	for (const name of [
 		"settings.json",
 		"auth.json",
@@ -122,10 +130,12 @@ const startPi = Effect.fn("startPi")(function* () {
 		"gpt-fast-mode.json",
 	]) {
 		const source = pathService.join(sourceAgentDir, name);
+
 		if (yield* fs.exists(source)) {
 			yield* fs.copyFile(source, pathService.join(agentDir, name));
 		}
 	}
+
 	yield* fs.copy(
 		pathService.join(REPOSITORY_AGENT_DIR, "themes"),
 		pathService.join(agentDir, "themes"),
@@ -134,6 +144,7 @@ const startPi = Effect.fn("startPi")(function* () {
 	const name = `pi-e2e-${process.pid}-${sessionCounter++}`;
 	const stderrPath = pathService.join(root, "pi.stderr.log");
 	const piArgs = ["pi", "--session-dir", sessionDir, "--no-extensions"];
+
 	for (const entry of yield* fs.readDirectory(
 		pathService.join(REPOSITORY_AGENT_DIR, "extensions"),
 	)) {
@@ -142,18 +153,23 @@ const startPi = Effect.fn("startPi")(function* () {
 			"extensions",
 			entry,
 		);
+
 		const info = yield* fs.stat(entryPath);
+
 		if (info.type === "File" && entry.endsWith(".ts")) {
 			piArgs.push("--extension", entryPath);
 		} else if (info.type === "Directory") {
 			const indexPath = pathService.join(entryPath, "index.ts");
+
 			if (yield* fs.exists(indexPath)) {
 				piArgs.push("--extension", indexPath);
 			}
 		}
 	}
+
 	const command = piArgs.map(shellQuote).join(" ");
-	const environment: Record<string, string> = {
+
+	const environment = {
 		PI_SKIP_VERSION_CHECK: "1",
 		// Fixture sessions must not report state to the parent's Herdr pane.
 		HERDR_ENV: "0",
@@ -186,6 +202,7 @@ const startPi = Effect.fn("startPi")(function* () {
 		timeoutMs: 60_000,
 		description: "pi footer to render (startup)",
 	}).pipe(Effect.onError(() => stop(session)));
+
 	return session;
 });
 
@@ -197,12 +214,15 @@ export const waitFor = Effect.fn("waitFor")(function* (
 ) {
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const description = options.description ?? String(match);
+
 	const poll = pollUntilSome(
 		Effect.gen(function* () {
 			const text = yield* capture(session, options.scrollback);
-			if (typeof match === "function" ? match(text) : match.test(text)) {
+
+			if (match instanceof RegExp ? match.test(text) : match(text)) {
 				return Option.some(text);
 			}
+
 			if (yield* isDead(session)) {
 				return yield* Effect.die(
 					new Error(
@@ -211,6 +231,7 @@ export const waitFor = Effect.fn("waitFor")(function* (
 					),
 				);
 			}
+
 			return Option.none<string>();
 		}),
 	);
@@ -255,6 +276,7 @@ export const runTask = Effect.fn("runTask")(function* (
 		timeoutMs,
 		description: `task to start: ${text.slice(0, 60)}`,
 	});
+
 	return yield* waitFor(session, /done – (?:\d+ tok\/s|N\/A)/, {
 		timeoutMs,
 		description: `task to settle: ${text.slice(0, 60)}`,
@@ -267,10 +289,13 @@ export const waitForFile = Effect.fn("waitForFile")(function* (
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 ) {
 	const filePath = pathService.join(session.cwd, relative);
+
 	const poll = pollUntilSome(
 		Effect.gen(function* () {
 			const content = yield* fs.readFileString(filePath).pipe(Effect.option);
+
 			if (Option.isSome(content)) return content;
+
 			if (yield* isDead(session)) {
 				return yield* Effect.die(
 					new Error(
@@ -278,6 +303,7 @@ export const waitForFile = Effect.fn("waitForFile")(function* (
 					),
 				);
 			}
+
 			return Option.none<string>();
 		}),
 	);
@@ -318,6 +344,7 @@ export function setupPiSession<E = never>(
 				const value = yield* startPi();
 				session = value;
 				setSession(value);
+
 				if (initialize) yield* initialize(value);
 			}),
 		),
@@ -327,6 +354,7 @@ export function setupPiSession<E = never>(
 
 export function e2eUnavailable(): string | undefined {
 	if (!e2eEnabled) return "set PI_E2E=1 to run live E2E tests";
+
 	for (const binary of ["tmux", "pi"]) {
 		try {
 			execFileSync("which", [binary], { stdio: "ignore" });
@@ -334,5 +362,6 @@ export function e2eUnavailable(): string | undefined {
 			return `${binary} is not installed`;
 		}
 	}
+
 	return undefined;
 }

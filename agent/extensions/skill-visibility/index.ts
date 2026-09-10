@@ -5,11 +5,14 @@ import {
 	type Skill,
 } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Result } from "effect";
 
 const DONE_LABEL = "Done";
+
 const DISABLE_MODEL_INVOCATION_LINE = /^disable-model-invocation\s*:/;
+
 const FRONTMATTER_OPEN = "---\n";
+
 const FRONTMATTER_CLOSE = "\n---";
 
 type SkillVisibility = {
@@ -29,15 +32,20 @@ export default function (pi: ExtensionAPI) {
 							"/skill-visibility requires interactive UI",
 							"warning",
 						);
+
 						return;
 					}
+
 					const skills = yield* listLoadedSkills(
 						ctx.getSystemPromptOptions().skills ?? [],
 					);
+
 					if (skills.length === 0) {
 						ctx.ui.notify("No skills are currently loaded.", "info");
+
 						return;
 					}
+
 					if (yield* chooseSkillVisibility(ctx, skills))
 						yield* reloadResources(ctx);
 				}),
@@ -50,18 +58,23 @@ const chooseSkillVisibility = Effect.fn("chooseSkillVisibility")(function* (
 	skills: SkillVisibility[],
 ) {
 	let changed = false;
+
 	for (let skill = yield* selectSkill(ctx, skills); skill; ) {
 		const hidden = !skill.hidden;
+
 		const saved = yield* writeSkillVisibility(skill.filePath, hidden).pipe(
 			Effect.result,
 		);
-		if (saved._tag === "Failure") {
+
+		if (Result.isFailure(saved)) {
 			ctx.ui.notify(
-				`Failed to save ${skill.name} visibility: ${errorMessage(saved.failure)}`,
+				`Failed to save ${skill.name} visibility: ${saved.failure.message}`,
 				"error",
 			);
+
 			return changed;
 		}
+
 		skill.hidden = hidden;
 		changed = true;
 		ctx.ui.notify(
@@ -70,6 +83,7 @@ const chooseSkillVisibility = Effect.fn("chooseSkillVisibility")(function* (
 		);
 		skill = yield* selectSkill(ctx, skills);
 	}
+
 	return changed;
 });
 
@@ -83,9 +97,11 @@ const selectSkill = Effect.fn("selectSkill")(function* (
 			skill,
 		]),
 	);
+
 	const selected = yield* Effect.promise(() =>
 		ctx.ui.select("Skill visibility", [...choices.keys(), DONE_LABEL]),
 	);
+
 	return selected && selected !== DONE_LABEL
 		? choices.get(selected)
 		: undefined;
@@ -95,8 +111,10 @@ const listLoadedSkills = Effect.fn("listLoadedSkills")(function* (
 	skills: Skill[],
 ) {
 	const visibleSkills: SkillVisibility[] = [];
+
 	for (const skill of skills) {
 		const name = skill.name.trim().replace(/^skill:/, "");
+
 		if (!name || !(yield* isUserInvokable(skill.filePath))) continue;
 		visibleSkills.push({
 			name,
@@ -104,6 +122,7 @@ const listLoadedSkills = Effect.fn("listLoadedSkills")(function* (
 			hidden: skill.disableModelInvocation,
 		});
 	}
+
 	return visibleSkills.sort((left, right) =>
 		left.name.localeCompare(right.name),
 	);
@@ -131,9 +150,11 @@ const writeSkillVisibility = Effect.fn("writeSkillVisibility")(function* (
 	const content = yield* FileSystem.FileSystem.use((fs) =>
 		fs.readFileString(filePath),
 	);
+
 	const nextContent = yield* Effect.try(() =>
 		setSkillVisibility(content, hidden),
 	);
+
 	if (nextContent !== content)
 		yield* FileSystem.FileSystem.use((fs) =>
 			fs.writeFileString(filePath, nextContent),
@@ -142,10 +163,13 @@ const writeSkillVisibility = Effect.fn("writeSkillVisibility")(function* (
 
 function setSkillVisibility(content: string, hidden: boolean): string {
 	const newline = content.includes("\r\n") ? "\r\n" : "\n";
+
 	const document = splitSkillDocument(
 		content.replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
 	);
+
 	const nextContent = `---\n${setDisableModelInvocation(document.frontmatter, hidden)}\n---${document.body}`;
+
 	return newline === "\n" ? nextContent : nextContent.replace(/\n/g, newline);
 }
 
@@ -155,12 +179,14 @@ function splitSkillDocument(content: string) {
 	}
 
 	const endIndex = content.indexOf(FRONTMATTER_CLOSE, FRONTMATTER_OPEN.length);
+
 	if (endIndex === -1) {
 		throw new Error("SKILL.md is missing a closing frontmatter delimiter");
 	}
 
 	const afterCloseIndex = endIndex + FRONTMATTER_CLOSE.length;
 	const nextCharacter = content.at(afterCloseIndex);
+
 	if (nextCharacter && nextCharacter !== "\n") {
 		throw new Error("SKILL.md frontmatter delimiter must be on its own line");
 	}
@@ -191,6 +217,7 @@ function setDisableModelInvocation(
 	}
 
 	if (!found) nextLines.push(nextLine);
+
 	return nextLines.join("\n");
 }
 
@@ -203,14 +230,10 @@ const reloadResources = Effect.fn("reloadResources")(function* (
 		Effect.catch((error) =>
 			Effect.sync(() =>
 				notify(
-					`Skill visibility saved, but reload failed: ${errorMessage(error)}`,
+					`Skill visibility saved, but reload failed: ${error.message}`,
 					"warning",
 				),
 			),
 		),
 	);
 });
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}

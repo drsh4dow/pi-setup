@@ -12,11 +12,13 @@ export default function probe(pi: ExtensionAPI) {
 			pi.registerCommand("edit-feedback-probe", {
 				description: "Exercise edit registration with a local fixture",
 				handler(_args, ctx) {
-					const input: unknown = {
+					const input = {
 						path: "fixture.txt",
 						edits: [{ oldText: "repeat", newText: "new" }],
 					};
+
 					Assert(tool.parameters, input);
+
 					return tool.execute("probe", input, undefined, undefined, ctx).then(
 						() => {
 							throw new Error("Expected rejection");

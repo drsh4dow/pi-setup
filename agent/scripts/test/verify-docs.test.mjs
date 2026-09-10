@@ -10,6 +10,7 @@ const checker = new URL("../verify-docs.mjs", import.meta.url).pathname;
 function repository(t, readme, extraFiles = {}) {
 	const root = mkdtempSync(join(tmpdir(), "verify-docs-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
+
 	const files = {
 		"README.md": readme,
 		"agent/extensions/example/index.ts": "",
@@ -19,13 +20,16 @@ function repository(t, readme, extraFiles = {}) {
 		"agent/themes/example.json": "{}\n",
 		...extraFiles,
 	};
+
 	for (const [path, contents] of Object.entries(files)) {
 		const destination = join(root, path);
 		mkdirSync(join(destination, ".."), { recursive: true });
 		writeFileSync(destination, contents);
 	}
+
 	execFileSync("git", ["init", "--quiet"], { cwd: root });
 	execFileSync("git", ["add", "."], { cwd: root });
+
 	return root;
 }
 
@@ -59,6 +63,7 @@ test("accepts matching tracked inventory and resolving links", (t) => {
 	const root = repository(t, `${validReadme}\n[Guide](docs/guide.md#start)\n`, {
 		"docs/guide.md": "# Start\n\n[Setup](../README.md)\n",
 	});
+
 	const result = run(root);
 	assert.equal(result.status, 0, result.stderr);
 });
@@ -79,6 +84,7 @@ test("ignores example links and headings inside fenced code", (t) => {
 			"[Real](#start)",
 		].join("\n"),
 	});
+
 	const result = run(root);
 	assert.equal(result.status, 0, result.stderr);
 });
@@ -87,6 +93,7 @@ test("still checks links after a fenced example", (t) => {
 	const root = repository(t, validReadme, {
 		"docs/guide.md": "```md\n[Example](ignored.md)\n```\n[Real](missing.md)\n",
 	});
+
 	const result = run(root);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /missing\.md/);
@@ -97,6 +104,7 @@ test("reports a broken link in any tracked Markdown file", (t) => {
 	const root = repository(t, validReadme, {
 		"docs/guide.md": "[Missing](nested/nope.md)\n",
 	});
+
 	const result = run(root);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /docs\/guide\.md.*nested\/nope\.md/);
@@ -106,6 +114,7 @@ test("reports broken same-file and cross-file Markdown anchors", (t) => {
 	const root = repository(t, `${validReadme}\n[Missing](#absent)\n`, {
 		"docs/guide.md": "# Present\n\n[Missing](../README.md#also-absent)\n",
 	});
+
 	const result = run(root);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /README\.md.*#absent/);
@@ -136,6 +145,7 @@ test("includes directly tracked extension files in the inventory", (t) => {
 			"agent/extensions/test/direct.test.ts": "",
 		},
 	);
+
 	const result = run(root);
 	assert.equal(result.status, 0, result.stderr);
 });
@@ -148,6 +158,7 @@ test("reports README inventory drift from tracked components", (t) => {
 			"- `missing`\n\n### Installed skills",
 		),
 	);
+
 	const result = run(root);
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /Installed extensions.*example.*missing/s);

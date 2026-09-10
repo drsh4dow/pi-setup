@@ -31,17 +31,21 @@ describe("process-status (real pi in tmux)", { skip }, () => {
 
 	testEffect("/ps reports an idle process list", function* () {
 		yield* prompt(session, "/ps");
+
 		const pane = yield* waitFor(session, /\[ps\]/, {
 			description: "/ps entry",
 		});
+
 		assert.match(pane, /\[ps\].*idle/);
 	});
 
 	testEffect("Ctrl+O keeps the expanded /ps entry renderable", function* () {
 		yield* sendKeys(session, "C-o");
+
 		const pane = yield* waitFor(session, /\[ps\]/, {
 			description: "/ps entry after expand toggle",
 		});
+
 		assert.equal(yield* isDead(session), false);
 		assert.match(pane, /\[ps\]/);
 		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);

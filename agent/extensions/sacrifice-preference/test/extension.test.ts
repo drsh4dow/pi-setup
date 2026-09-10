@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type {
 	ExtensionAPI,
+	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Clock, Effect } from "effect";
@@ -15,29 +16,35 @@ import {
 	BackgroundTerminalManager,
 	terminalResultFields,
 } from "../../background-terminals/manager.ts";
+import { unsafeFixture } from "../../test/adapter.ts";
 import sacrificePreference from "../index.ts";
 
 const { execFileSync } = process.getBuiltinModule("node:child_process");
+
 const { chmodSync, mkdtempSync, rmSync, writeFileSync } =
 	process.getBuiltinModule("node:fs");
+
 const { tmpdir } = process.getBuiltinModule("node:os");
+
 const { join } = process.getBuiltinModule("node:path");
 
 const linux = process.platform === "linux";
+
 const now = () => Effect.runSync(Clock.currentTimeMillis);
+
 const fakeContext = (cwd: string) =>
-	({
+	unsafeFixture<ExtensionContext>({
 		cwd,
 		isProjectTrusted: () => false,
-		sessionManager: {
+		sessionManager: unsafeFixture<ExtensionContext["sessionManager"]>({
 			getSessionId: () => "test-session",
 			getSessionFile: () => undefined,
-		},
-	}) as never;
+		}),
+	});
 
 // Interposing a fake journalctl requires mutating the PATH that spawned
 // children inherit; Config only reads the environment.
-function fakeJournal(line: string | undefined): { restore: () => void } {
+function fakeJournal(line: string | undefined) {
 	const dir = mkdtempSync(join(tmpdir(), "pi-sacrifice-journal-"));
 	const script = join(dir, "journalctl");
 	writeFileSync(script, `#!/bin/sh\n${line ? `echo '${line}'\n` : ""}`);
@@ -46,6 +53,7 @@ function fakeJournal(line: string | undefined): { restore: () => void } {
 	const previousPath = process.env.PATH;
 	// @effect-diagnostics-next-line processEnv:off
 	process.env.PATH = `${dir}:${previousPath ?? ""}`;
+
 	return {
 		restore: () => {
 			// @effect-diagnostics-next-line processEnv:off
@@ -54,6 +62,7 @@ function fakeJournal(line: string | undefined): { restore: () => void } {
 		},
 	};
 }
+
 const KILL_LINE = 'sending SIGTERM to process 1234 uid 1000 "hog": badness 900';
 
 test("tagCommand marks the shell and its descendants", { skip: !linux }, () => {
@@ -62,6 +71,7 @@ test("tagCommand marks the shell and its descendants", { skip: !linux }, () => {
 		["-c", tagCommand("cat /proc/self/oom_score_adj")],
 		{ encoding: "utf8" },
 	);
+
 	assert.equal(output.trim(), "500");
 });
 
@@ -71,17 +81,21 @@ test("tag statement produces no output or failure", { skip: !linux }, () => {
 		["-c", `${SACRIFICE_COMMAND_PREFIX}\necho ok`],
 		{ encoding: "utf8" },
 	);
+
 	assert.equal(output, "ok\n");
 });
 
 test("earlyoomKillSince reads journal evidence", { skip: !linux }, () => {
 	const withKill = fakeJournal(KILL_LINE);
+
 	try {
 		assert.equal(earlyoomKillSince(now()), true);
 	} finally {
 		withKill.restore();
 	}
+
 	const withoutKill = fakeJournal(undefined);
+
 	try {
 		assert.equal(earlyoomKillSince(now()), false);
 	} finally {
@@ -91,6 +105,7 @@ test("earlyoomKillSince reads journal evidence", { skip: !linux }, () => {
 
 test("sacrificeKillNote requires a signal-like death", { skip: !linux }, () => {
 	const journal = fakeJournal(KILL_LINE);
+
 	try {
 		const since = now();
 		assert.match(
@@ -111,20 +126,24 @@ test("sacrificeKillNote requires a signal-like death", { skip: !linux }, () => {
 	}
 });
 
-function registeredBash(): ToolDefinition {
-	let captured: ToolDefinition | undefined;
-	sacrificePreference({
-		registerTool: (tool: ToolDefinition) => {
-			captured = tool;
-		},
-	} as unknown as ExtensionAPI);
+function registeredBash() {
+	let captured: Pick<ToolDefinition, "name" | "execute"> | undefined;
+	sacrificePreference(
+		unsafeFixture<ExtensionAPI>({
+			registerTool: (tool) => {
+				captured = tool;
+			},
+		}),
+	);
 	assert.ok(captured, "extension registered no tool");
 	assert.equal(captured.name, "bash");
+
 	return captured;
 }
 
 test("override runs tagged commands transparently", { skip: !linux }, () => {
 	const tool = registeredBash();
+
 	return tool
 		.execute(
 			"t1",
@@ -137,6 +156,7 @@ test("override runs tagged commands transparently", { skip: !linux }, () => {
 			const text = result.content
 				.map((part) => (part.type === "text" ? part.text : ""))
 				.join("");
+
 			assert.equal(text.trim(), "500");
 		});
 });
@@ -145,6 +165,7 @@ test("override passes ordinary failures through unchanged", {
 	skip: !linux,
 }, () => {
 	const tool = registeredBash();
+
 	return assert.rejects(
 		tool.execute(
 			"t2",
@@ -162,6 +183,7 @@ test("override passes ordinary failures through unchanged", {
 test("override annotates a journal-confirmed kill", { skip: !linux }, () => {
 	const journal = fakeJournal(KILL_LINE);
 	const tool = registeredBash();
+
 	// The trailing exit keeps the tool shell alive past its killed child so the
 	// SDK sees exit 137 instead of the shell's own signal death.
 	return assert
@@ -185,16 +207,21 @@ test("manager annotates a journal-confirmed kill", { skip: !linux }, () =>
 		Effect.gen(function* () {
 			const journal = fakeJournal(KILL_LINE);
 			const cwd = mkdtempSync(join(tmpdir(), "pi-sacrifice-bg-"));
+
 			try {
 				const manager = new BackgroundTerminalManager();
+
 				const started = manager.start({
 					command: "sh -c 'kill -KILL $$'; code=$?; exit $code",
 					title: "hog",
 					cwd,
 				});
+
 				const deadline = now() + 6_000;
+
 				while (now() < deadline) {
 					const snapshot = manager.get(started.id);
+
 					if (snapshot && snapshot.state !== "running") {
 						assert.equal(snapshot.state, "failed");
 						assert.match(
@@ -202,10 +229,13 @@ test("manager annotates a journal-confirmed kill", { skip: !linux }, () =>
 							/earlyoom/,
 						);
 						assert.equal(snapshot.command, started.command);
+
 						return;
 					}
+
 					yield* Effect.sleep(20);
 				}
+
 				throw new Error("terminal did not settle");
 			} finally {
 				journal.restore();

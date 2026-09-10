@@ -50,6 +50,7 @@ Skills prefixed with `principle` strongly shape how you should reason about and 
 # Practical rules
 
 Always use dedicated tools instead of bypassing them with Bash or scripts. For example, use the edit tool to modify text, never a Python script run through Bash.
+Never spawn subagents without the user explicitly telling you so.
 
 # Verification
 

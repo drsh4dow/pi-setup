@@ -10,7 +10,7 @@
     "openai-codex/gpt-5.6-sol",
     "opencode-go/glm-5.3-flash"
   ],
-  "defaultThinkingLevel": "xhigh",
+  "defaultThinkingLevel": "low",
   "hideThinkingBlock": false,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",

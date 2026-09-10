@@ -92,7 +92,6 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 - `grilling`
 - `how`
 - `implement`
-- `implement-spec`
 - `improve-codebase-architecture`
 - `maintain-verification-skill`
 - `principle-attack-the-premise`

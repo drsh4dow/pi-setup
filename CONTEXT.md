@@ -4,6 +4,12 @@ Opinionated configuration and extensions that define how Pi behaves and exposes 
 
 ## Language
 
+### Environment
+
+**Mimir**:
+The opinionated development environment built on Pi, including its shared agent behavior, tools, and integrations. Mimir adopts Pi as its runtime rather than replacing it.
+_Avoid_: Pi fork, Pi Dotfiles
+
 ### Codex accounts
 
 **Codex Account**:

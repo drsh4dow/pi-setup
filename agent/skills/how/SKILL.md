@@ -6,51 +6,36 @@ disable-model-invocation: false
 
 # How
 
-Explore the codebase to answer "how does X work?" questions. Produce architectural explanations at the level of a senior engineer onboarding onto a subsystem, enough to build a working mental model, not so much that it reads like annotated source code.
+Trace the code yourself and explain it for an engineer unfamiliar with the subsystem. Keep the investigation read-only.
 
-## Step 1. Assess Complexity
+## 1. Scope the question
 
 If the scope is ambiguous, state your interpretation and explore. The user can redirect.
 
-- **Simple** (a single module, a small utility, a narrow question such as "how does function X work"): no explorers. One explainer explores and explains in a single pass. Go to Step 2b.
-- **Complex** (a subsystem spanning multiple files or services, a cross-cutting feature, a full architectural overview): spawn parallel explorers first, then hand off to the explainer. Go to Step 2a.
+For a narrow question, trace the relevant path directly. For a subsystem spanning multiple files or services, identify two to four distinct exploration angles and cover each before explaining. Parallelize independent searches and reads where useful.
 
-When in doubt, take the simple path.
+## 2. Trace the behavior
 
-## Step 2a. Explore (complex questions only)
+Find relevant files and symbols, then read their implementations. Names alone are not evidence.
 
-Decompose the question into 2 to 4 exploration angles, each a distinct slice of the subsystem. Spawn all explorers in a single message:
+1. Find the entry point and what triggers it.
+2. Follow the call chain and data transformations, including important branches.
+3. Read the central types and abstractions. Identify what they represent and which module owns each responsibility.
+4. Trace connections to other subsystems, including their inputs and outputs.
+5. Identify non-obvious behavior, pitfalls, and anything a newcomer could misread.
 
-- `subagent_type`: `generalPurpose`
-- `model`: your configured how-explorer model (default `grok-4.6-fast-xhigh`)
-- `readonly`: `true`
+Keep concise findings with file paths, symbols, and line references. For broad questions, combine the explored paths into one account and resolve contradictions against the source. Continue until you can trace the requested behavior from its trigger to its observable result, or identify the exact connection you could not establish. State unresolved gaps rather than guessing.
 
-Each explorer gets the prompt in `references/explorer-prompt.md` with its angle filled in. Then go to Step 3.
+## 3. Explain
 
-## Step 2b. Direct Explain (simple questions)
+Use these sections when they help answer the question. Omit sections that do not apply:
 
-Spawn one Task subagent that explores and explains in one pass:
+- **Overview.** What it does and where it fits, in one or two paragraphs.
+- **Key concepts.** The types and abstractions needed to understand the flow.
+- **How it works.** What triggers it, what runs, where data goes, and where decisions happen. Cite concrete files and functions rather than reproducing source code.
+- **Where things live.** The few files or directories a maintainer needs to start working here.
+- **Gotchas.** Surprising behavior, pitfalls, and unresolved connections.
 
-- `subagent_type`: `generalPurpose`
-- `model`: your configured how-explainer model (default `claude-fable-5-1-thinking-max`)
-- `readonly`: `true`
+Include a Mermaid or ASCII diagram when relationships or data transformations are clearer visually. Skip diagrams that merely repeat the prose. Scale the explanation to the question; a small utility does not need an architectural report.
 
-Build its prompt from `references/explainer-prompt.md` without the explorer-findings section. Go to Step 4.
-
-## Step 3. Synthesize (complex questions only)
-
-Once all explorers have returned, spawn one Task subagent to synthesize their findings into one explanation:
-
-- `subagent_type`: `generalPurpose`
-- `model`: your configured how-explainer model (default `claude-fable-5-1-thinking-max`)
-- `readonly`: `true`
-
-Build its prompt from `references/explainer-prompt.md` with every explorer's findings filled in.
-
-## Step 4. Present
-
-Present the explainer's output to the user. Light edits for clarity or context from the conversation are fine. Do not substantially rewrite it.
-
-## Output Format
-
-The explanation uses the sections defined in `references/explainer-prompt.md`, dropping any that do not apply: Overview, Key Concepts, How It Works, Where Things Live, Gotchas.
+Explain historical motivation only when supported by evidence. Use `why` when the question requires investigating intent.

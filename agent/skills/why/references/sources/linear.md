@@ -42,7 +42,7 @@ Use the Linear MCP.
 
 For each relevant ticket:
 - Ticket ID and title
-- The problem/motivation quoted from the description or comments (not paraphrased. The synthesizer needs the exact text to cite)
+- The problem or motivation quoted verbatim from the description or comments, with its location
 - Labels, parent issue, project
 - Author, created date, closed date
 - Link to the ticket if available

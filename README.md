@@ -181,6 +181,8 @@ bun run verify
 
 `verify` and GitHub Actions run credential-free type checks, diagnostics, formatting checks, and behavioral tests. They exclude the live Pi integration tests. Run those separately, with configured provider credentials, using `bun run test:e2e`.
 
+Anti-slop's generic and Effect Oxlint rules run alongside Biome in `check`, `lint`, and `verify`. Run `bun run check:oxlint` to inspect their findings separately. The rules are vendored under [`tools/oxlint/anti-slop`](tools/oxlint/anti-slop/UPSTREAM.md); edit them locally rather than adding an npm ruleset dependency. Keep `oxlint` and `@oxlint/plugins` pinned to the same exact version.
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

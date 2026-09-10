@@ -14,14 +14,13 @@ import {
 import { observeAutoCompaction } from "../../lib/settings.ts";
 import {
 	accountingText,
-	sessionAccounting,
 	sessionDuration,
+	sessionReportedUsage,
 } from "./accounting.ts";
 import {
 	observeProcessStatusRefresh,
 	type ProcessStatusView,
 	processStatusSummary,
-	processStatusUsage,
 	processStatusView,
 } from "./status.ts";
 
@@ -115,7 +114,7 @@ export default function processStatus(
 				render(width: number) {
 					footer.setAutoCompactEnabled(settings.enabled());
 					const entries = ctx.sessionManager.getEntries();
-					const totals = sessionAccounting(entries, processStatusUsage(pi));
+					const usage = sessionReportedUsage(entries);
 					const subscription =
 						currentModel !== undefined &&
 						(currentModel.provider === "kimi-coding" ||
@@ -128,7 +127,7 @@ export default function processStatus(
 						ctx.sessionManager.getHeader()?.timestamp,
 						entries,
 					);
-					const prefix = `${accountingText(totals.total.cost, subscription)} · ${duration} · `;
+					const prefix = `${accountingText(usage.cost, subscription)} · ${duration} · `;
 					const lines = footer.render(width);
 					const stats =
 						footer.render(
@@ -170,28 +169,20 @@ export default function processStatus(
 		name: "session_usage",
 		label: "Session Usage",
 		description:
-			"Returns cumulative reported token usage and USD cost for this session and its Delegate Runs. Includes settled delegates and usage through the latest completed provider response.",
+			"Returns cumulative reported token usage and USD cost for this session through the latest completed provider response.",
 		promptSnippet:
-			"Query this session's cumulative token usage and provider-reported cost, including delegates",
+			"Query this session's cumulative token usage and provider-reported cost",
 		parameters: Type.Object({}),
 		executionMode: "parallel",
 		execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-			const totals = sessionAccounting(
-				ctx.sessionManager.getEntries(),
-				processStatusUsage(pi),
-			);
-			const account = (source: typeof totals.total) => ({
-				inputTokens: source.input,
-				outputTokens: source.output,
-				cacheReadTokens: source.cacheRead,
-				cacheWriteTokens: source.cacheWrite,
-				totalTokens: source.totalTokens,
-				usd: source.cost === null ? null : roundUsd(source.cost),
-			});
+			const reported = sessionReportedUsage(ctx.sessionManager.getEntries());
 			const usage = {
-				parent: account(totals.parent),
-				delegates: account(totals.delegates),
-				total: account(totals.total),
+				inputTokens: reported.input,
+				outputTokens: reported.output,
+				cacheReadTokens: reported.cacheRead,
+				cacheWriteTokens: reported.cacheWrite,
+				totalTokens: reported.totalTokens,
+				usd: reported.cost === null ? null : roundUsd(reported.cost),
 			};
 			return Promise.resolve({
 				content: [{ type: "text" as const, text: JSON.stringify(usage) }],

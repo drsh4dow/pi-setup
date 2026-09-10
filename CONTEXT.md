@@ -4,56 +4,6 @@ Opinionated configuration and extensions that define how Pi behaves and exposes 
 
 ## Language
 
-### Delegation
-
-**Delegate Trail**:
-The bounded, ordered record of a child's recent activity: the messages it exchanged and the tool calls it made, interleaved. Message history and tool history are bounded separately, so neither can evict the other.
-_Avoid_: Transcript, full history, conversation
-
-**Delegate Task Brief**:
-A self-contained assignment stating a child's objective, scope, mutation authority, constraints, verification, and expected result. It supplies what the child cannot get from the project's own context files.
-_Avoid_: Workspace intent, inherited context
-
-**Delegate Output Format**:
-Advisory free-text guidance for presenting a Delegate Run's result. Correct and complete information takes precedence over exact conformance.
-_Avoid_: Schema, structured output contract
-
-**Delegate Run**:
-One newly created child carrying out one Delegate Task Brief in the background until its session settles. Its identity returns immediately; its outcome is delivered independently of other children.
-_Avoid_: Orchestration task, Delegate batch
-
-**Delegate Chain**:
-A sequence of Delegate Runs in which the parent uses each completed result to compose the next Delegate Task Brief.
-_Avoid_: Automatic handoff, child-to-child delegation
-
-**Parallel Delegation**:
-Delegate Runs issued together, allowed to execute concurrently, and settled independently.
-_Avoid_: Delegate batch, parallel plan
-
-**Delegate Session**:
-The parent-session-owned record of one delegated child. A persistent parent retains settled children across reopen for inspection, including each child's native Pi conversation file. Recovered children cannot continue or restart. A fork owns none of the source parent's Delegate Sessions.
-_Avoid_: Orchestration plan, resumable Delegate, fork-inherited Delegate
-
-**Delegate Effort**:
-The reasoning depth chosen for a Delegate Run. It selects the child's thinking level and nothing else.
-_Avoid_: Time budget, task size, cost tier
-
-**Execution Ceiling**:
-The single hard limit on wall time and reported tokens that terminates any Delegate Run, identical at every Delegate Effort.
-_Avoid_: Soft limit, effort budget, convergence window
-
-**Delegate Progress**:
-The latest bounded activity line for a running Delegate Run: the tool in flight, or the sentence the child is writing.
-_Avoid_: Tool counts, thrash signal
-
-**Termination Checkpoint**:
-The retained Delegate Trail tail handed to the parent when a Delegate Run settles abnormally, in place of a result.
-_Avoid_: Partial result, crash dump, flush
-
-**Delegate Worktree**:
-A caller-prepared directory that a Delegate Run executes in. The parent creates, populates, and integrates it; delegation only points the child at it.
-_Avoid_: Isolation mode, managed worktree, sandbox
-
 ### Codex accounts
 
 **Codex Account**:
@@ -61,7 +11,7 @@ A separately authenticated ChatGPT account available for Codex requests, indepen
 _Avoid_: Model, provider
 
 **Codex Account Pin**:
-The Codex Account assigned at a session's first Codex use and retained across resume and reload. New sessions, forks, and Delegate Runs select independently; an unavailable pinned account does not trigger automatic reassignment.
+The Codex Account assigned at a session's first Codex use and retained across resume and reload. New sessions and forks select independently; an unavailable pinned account does not trigger automatic reassignment.
 _Avoid_: Model pin, per-prompt rotation
 
 **Codex Weekly Allowance**:
@@ -71,7 +21,7 @@ _Avoid_: Session usage, token budget
 ### Local tools
 
 **Session Usage**:
-The cumulative provider-reported tokens and USD cost of one Pi session and every Delegate Run it owns, including failed, cancelled, settled, and recovered runs. It reports parent, delegates, and total with input, output, cache-read, cache-write, total-token, and USD fields through the latest completed provider response. A reported zero remains zero. Missing or invalid provider fields are unavailable, never estimated.
+The cumulative provider-reported tokens and USD cost of one Pi session. It reports input, output, cache-read, cache-write, total-token, and USD fields through the latest completed provider response. A reported zero remains zero. Missing or invalid provider fields are unavailable, never estimated.
 _Avoid_: Running cost, live cost, token budget, estimated cost
 
 **Session Response Archive**:

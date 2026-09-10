@@ -47,7 +47,6 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		if (!session) return [];
 		return session.list(clientId).map((snapshot) => ({
 			id: snapshot.id,
-			kind: "terminals" as const,
 			active: snapshot.state === "running",
 			summary: statusSummary(snapshot),
 			detail: () => {
@@ -84,7 +83,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			"Use bash by default. Use bg_start for services and watchers, or finite commands when there is useful independent work to do.",
 			"Use meaningful titles and avoid duplicate servers or watchers.",
 			"Run finite bg_start jobs without a notification wrapper to preserve their exit status. Success and failure automatically wake the owner with the real exit code. Use emit-to-pi only for actionable intermediate milestones, never as a completion signal or a trailing command that masks the work's exit code.",
-			"Never use for interactive commands. Background commands and delegated children share the worktree without write isolation; avoid overlapping mutations.",
+			"Never use for interactive commands. Background commands share the worktree without write isolation; avoid overlapping mutations.",
 		],
 		parameters: Type.Object({
 			command: Type.String({ maxLength: 100_000 }),

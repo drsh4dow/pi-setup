@@ -477,7 +477,7 @@ for (const { command, state, exitCode } of [
 			assert.ok(start);
 			yield* fromPromise(start.execute("start", { command, title: "natural completion" }, undefined, undefined, context));
 			yield* eventually(() => deliveries.length === 1);
-			assert.deepEqual(deliveries[0].options, { deliverAs: "followUp", triggerTurn: true });
+			assert.deepEqual(deliveries[0].options, { deliverAs: "steer", triggerTurn: true });
 			const message = deliveries[0].message;
 			assert.ok(message && typeof message === "object");
 			assert.ok("customType" in message);
@@ -494,15 +494,14 @@ for (const { command, state, exitCode } of [
 	})));
 }
 
-test("completion delivery consumes results and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
+test("completion delivers while busy, never repeats, and closed delivery stays closed", () => Effect.runPromise(Effect.gen(function* () {
 	const messages: unknown[] = [];
-	let idle = false;
 	const delivery = new BackgroundTerminalDelivery({
 		sendMessage(message: unknown) {
 			messages.push(message);
 		},
 	} as ExtensionAPI);
-	delivery.setContext({ isIdle: () => idle } as ExtensionContext);
+	delivery.setContext({ isIdle: () => false } as ExtensionContext);
 	const snapshot = {
 		id: "bt-1",
 		title: "x",
@@ -516,27 +515,16 @@ test("completion delivery consumes results and closed delivery stays closed", ()
 		stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
 	} as const;
 	delivery.enqueue(snapshot);
-	delivery.consume([snapshot.id]);
+	assert.equal(messages.length, 1, "completion steers into a busy session immediately");
 	yield* delivery.flush;
-	assert.equal(messages.length, 0);
+	assert.equal(messages.length, 1, "delivered results are not sent again");
 
-	idle = true;
-	delivery.enqueue(snapshot);
-	yield* delivery.flush;
-	assert.equal(messages.length, 1);
-
-	idle = false;
-	delivery.enqueue(snapshot);
 	delivery.clear();
 	delivery.enqueue(snapshot);
 	yield* delivery.flush;
-	assert.equal(messages.length, 1);
-
-	delivery.setContext({ isIdle: () => false } as ExtensionContext);
-	yield* delivery.flush;
 	assert.equal(messages.length, 1, "closed delivery discarded the queued result");
+	delivery.setContext({ isIdle: () => false } as ExtensionContext);
 	delivery.enqueue(snapshot);
-	yield* delivery.flush;
 	assert.equal(messages.length, 2, "new context reopens delivery");
 	delivery.clear();
 })));

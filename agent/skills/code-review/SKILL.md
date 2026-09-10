@@ -5,7 +5,7 @@ description: Review a branch, PR, or work-in-progress diff against repository st
 
 # Code review
 
-Review standards and specification in one pass yourself. Use an independent reviewer when requested or when an independent assessment is worth the handoff. A delegated reviewer performs the review directly.
+Review standards and specification in one pass yourself. If you also wrote the changes, identify this as self-review, not an independent assessment.
 
 ## Scope
 

@@ -16,13 +16,6 @@ export const DelegateRunParams = Type.Object({
 		description:
 			"Self-contained task for a fresh child that cannot see the parent conversation. Include the objective, relevant context/files, constraints, permissions, checks relevant to the assignment, and expected output.",
 	}),
-	background: Type.Optional(
-		Type.Boolean({
-			description:
-				"Return the child id immediately and automatically deliver its result later. Defaults to false, which waits for the final result.",
-			default: false,
-		}),
-	),
 	cwd: Type.Optional(
 		Type.String({
 			maxLength: 4_096,

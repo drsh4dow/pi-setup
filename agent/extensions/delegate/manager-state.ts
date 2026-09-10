@@ -59,10 +59,7 @@ type RunLifecycle =
 			readonly outcome: SettledOutcome;
 	  };
 
-type Delivery =
-	| { readonly kind: "foreground" }
-	| { readonly kind: "pending" }
-	| { readonly kind: "consumed" };
+type Delivery = { readonly kind: "pending" } | { readonly kind: "consumed" };
 
 export type RunStateView =
 	| { readonly status: "running" }
@@ -96,11 +93,8 @@ export class RunState {
 		this.delivery = delivery;
 	}
 
-	static creating(timer: ExecutionTimer, background: boolean): RunState {
-		return new RunState(
-			{ kind: "creating", timer },
-			background ? { kind: "pending" } : { kind: "foreground" },
-		);
+	static creating(timer: ExecutionTimer): RunState {
+		return new RunState({ kind: "creating", timer }, { kind: "pending" });
 	}
 
 	view(): RunStateView {

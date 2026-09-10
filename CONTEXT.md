@@ -19,7 +19,7 @@ Advisory free-text guidance for presenting a Delegate Run's result. Correct and 
 _Avoid_: Schema, structured output contract
 
 **Delegate Run**:
-One newly created child carrying out one Delegate Task Brief, either blocking or in the background, until its session settles.
+One newly created child carrying out one Delegate Task Brief in the background until its session settles. Its identity returns immediately; its outcome is delivered independently of other children.
 _Avoid_: Orchestration task, Delegate batch
 
 **Delegate Chain**:
@@ -29,14 +29,6 @@ _Avoid_: Automatic handoff, child-to-child delegation
 **Parallel Delegation**:
 Delegate Runs issued together, allowed to execute concurrently, and settled independently.
 _Avoid_: Delegate batch, parallel plan
-
-**Blocking Delegate Run**:
-A Delegate Run that returns only after its child settles. This is the default form.
-_Avoid_: Synchronous orchestration
-
-**Background Delegate Run**:
-A Delegate Run that returns its identity immediately and delivers its result after the child settles.
-_Avoid_: Non-blocking orchestration, detached Delegate
 
 **Delegate Session**:
 The parent-session-owned record of one delegated child. A persistent parent retains settled children across reopen for inspection, including each child's native Pi conversation file. Recovered children cannot continue or restart. A fork owns none of the source parent's Delegate Sessions.

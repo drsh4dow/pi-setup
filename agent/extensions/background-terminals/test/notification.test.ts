@@ -125,7 +125,7 @@ test("emit-to-pi wakes only the owner while its terminal keeps running", () =>
 				);
 				assert.match(childMessages[0].content, /PR 42 has new feedback/);
 				assert.deepEqual(childMessages[0].options, {
-					deliverAs: "followUp",
+					deliverAs: "steer",
 					triggerTurn: true,
 				});
 				const running = (yield* Effect.promise(() =>
@@ -140,7 +140,7 @@ test("emit-to-pi wakes only the owner while its terminal keeps running", () =>
 				);
 				assert.match(childMessages[1].content, /\[failed\].*exit 23/);
 				assert.deepEqual(childMessages[1].options, {
-					deliverAs: "followUp",
+					deliverAs: "steer",
 					triggerTurn: true,
 				});
 				assert.equal(parentMessages.length, 0);

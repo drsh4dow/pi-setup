@@ -182,7 +182,11 @@ export class BackgroundTerminalDelivery {
 			);
 		}
 		this.pending.set(item.id, item);
-		if (this.context.isIdle()) Effect.runFork(this.flush);
+		// Results steer into a running agent right after the current tool
+		// batch; notifications wait for idle so settled terminals can drop
+		// their pending notifications first.
+		if (item.kind === "completion" || this.context.isIdle())
+			Effect.runFork(this.flush);
 	}
 	enqueue(snapshot: SettledTerminalSnapshot) {
 		this.queue({
@@ -260,9 +264,7 @@ export class BackgroundTerminalDelivery {
 				RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)],
 			).pipe(
 				Effect.tap(() =>
-					this.retryGeneration === generation && this.context?.isIdle()
-						? this.flush
-						: Effect.void,
+					this.retryGeneration === generation ? this.flush : Effect.void,
 				),
 			),
 		);
@@ -285,7 +287,7 @@ export class BackgroundTerminalDelivery {
 							details: { ids },
 						},
 						{
-							deliverAs: "followUp",
+							deliverAs: "steer",
 							triggerTurn: true,
 						},
 					);

@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Clock, ConfigProvider, Effect, Schema } from "effect";
 import { createChild } from "../../delegate/runtime.ts";
+import { readCache } from "../usage.ts";
 
 const extensionPath = new URL("../index.ts", import.meta.url).pathname;
 const modelId = "gpt-5.4";
@@ -177,29 +178,9 @@ const prompt = Effect.fn("test.prompt")(function* (
 });
 
 function sse(): Response {
-	const events = [
-		{
-			type: "response.output_item.done",
-			output_index: 0,
-			item: {
-				type: "message",
-				id: "msg_fixture",
-				role: "assistant",
-				content: [{ type: "output_text", text: "Done." }],
-			},
-		},
-		{
-			type: "response.completed",
-			response: {
-				id: "resp_fixture",
-				status: "completed",
-				output: [],
-				usage: { input_tokens: 1, output_tokens: 1 },
-			},
-		},
-	];
 	return new Response(
-		events.map((event) => `data: ${json(event)}\n\n`).join(""),
+		'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_fixture","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}\n\n' +
+			'data: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
 		{
 			status: 200,
 			headers: { "content-type": "text/event-stream" },
@@ -424,23 +405,65 @@ test("existing Codex history keeps the original login", () =>
 		}),
 	));
 
-test("usage command reuses fresh cache without changing the pin", () =>
+test("usage command refreshes every account without changing the pin", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const fixture = makeFixture();
 			const sessions: Session[] = [];
 			const originalFetch = globalThis.fetch;
-			let calls = 0;
+			const requests: string[] = [];
+			const progress: (string | undefined)[] = [];
+			let offline = false;
 			try {
-				globalThis.fetch = () => {
-					calls++;
-					return Promise.resolve(sse());
+				globalThis.fetch = (_input, init) => {
+					assert.equal(progress.at(-1), "Fetching Codex usage...");
+					requests.push(
+						new Headers(init?.headers).get("chatgpt-account-id") ?? "missing",
+					);
+					if (offline) return Promise.reject(new Error("offline"));
+					return Promise.resolve(
+						new Response(
+							'{"rate_limit":{"secondary_window":{"used_percent":15,"limit_window_seconds":604800,"reset_at":2524608000}}}',
+						),
+					);
 				};
 				const session = yield* createSession(fixture);
 				sessions.push(session);
+				session.extensionRunner.setUIContext({
+					...session.extensionRunner.getUIContext(),
+					setStatus: (key, value) => {
+						if (key === "codex-usage") progress.push(value);
+					},
+				});
 				yield* prompt(session, "/codex-usage");
 				yield* prompt(session, "/codex-usage");
-				assert.equal(calls, 0);
+				assert.deepEqual(requests, [
+					"openai-codex@alpha-identity",
+					"openai-codex@beta-identity",
+					"openai-codex@alpha-identity",
+					"openai-codex@beta-identity",
+				]);
+				const cache = yield* Effect.promise(() =>
+					readCache(join(fixture.dir, "codex-usage.json")),
+				);
+				assert.deepEqual(
+					Object.values(cache).map((reading) =>
+						reading.kind === "known"
+							? reading.weekly.usedPercent
+							: reading.error,
+					),
+					[15, 15],
+				);
+				offline = true;
+				yield* prompt(session, "/codex-usage");
+				assert.deepEqual(progress, [
+					"Fetching Codex usage...",
+					undefined,
+					"Fetching Codex usage...",
+					undefined,
+					"Fetching Codex usage...",
+					undefined,
+				]);
 				assert.equal(pins(session).length, 1);
 				assert.equal(session.model?.provider, "openai-codex@beta");
 			} finally {

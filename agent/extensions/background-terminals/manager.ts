@@ -10,8 +10,7 @@ import {
 const { spawn } = process.getBuiltinModule("node:child_process");
 type ChildProcess = ReturnType<typeof spawn>;
 
-// Capacity is per owner, not shared: a session's terminals are its own, so no wave of
-// delegated children can exhaust the parent's slots. earlyoom bounds the machine.
+// Capacity is per session. earlyoom bounds the machine.
 export const MAX_RUNNING_PER_OWNER = 8;
 export const MAX_TRACKED = 32;
 export const RETAINED_BYTES = 256 * 1024;

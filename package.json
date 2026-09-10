@@ -9,7 +9,6 @@
     "lint": "bun run check",
     "verify:strict-diagnostics": "node agent/scripts/verify-strict-diagnostics.mjs",
     "check:fix": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test --write",
-    "test:delegate": "node --test agent/extensions/delegate/test/*.test.ts",
     "test:background-terminals": "node --test agent/extensions/background-terminals/test/*.test.ts",
     "test:babysit-pr": "node --test agent/skills/babysit-pr/test/*.test.mjs",
     "test:process-status": "node --test agent/extensions/process-status/test/*.test.ts",

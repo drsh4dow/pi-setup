@@ -13,8 +13,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Clock, ConfigProvider, Effect, Schema } from "effect";
-import { createChild } from "../../delegate/runtime.ts";
+import { Clock, Effect, Schema } from "effect";
 import { readCache } from "../usage.ts";
 
 const extensionPath = new URL("../index.ts", import.meta.url).pathname;
@@ -246,7 +245,6 @@ test("reload and resume retain the pin; fork selects independently", () =>
 			let session: Session | undefined;
 			let resumed: Session | undefined;
 			let forked: Session | undefined;
-			let child: Session | undefined;
 			let delayed: Session | undefined;
 			const originalFetch = globalThis.fetch;
 			try {
@@ -290,21 +288,6 @@ test("reload and resume retain the pin; fork selects independently", () =>
 					reason: "resume",
 				});
 				assert.equal(resumed.model?.provider, "openai-codex@beta");
-				child = yield* createChild(
-					fixture.cwd,
-					resumed.model,
-					"low",
-					fixture.dir,
-					resumed.sessionManager,
-				).pipe(
-					Effect.provideService(
-						ConfigProvider.ConfigProvider,
-						ConfigProvider.fromUnknown({
-							PI_CHILD_EXTENSION_PATHS: extensionPath,
-						}),
-					),
-				);
-				assert.equal(child.model?.provider, "openai-codex@alpha");
 				const forkManager = SessionManager.forkFrom(
 					file,
 					fixture.cwd,
@@ -346,7 +329,6 @@ test("reload and resume retain the pin; fork selects independently", () =>
 				session?.dispose();
 				resumed?.dispose();
 				forked?.dispose();
-				child?.dispose();
 				delayed?.dispose();
 				globalThis.fetch = originalFetch;
 				rmSync(fixture.dir, { recursive: true, force: true });

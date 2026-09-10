@@ -8,16 +8,8 @@ import {
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import extension from "../index.ts";
-import {
-	type ProcessStatusUsage,
-	registerProcessStatusSource,
-} from "../status.ts";
 
-export function usageView(
-	parent: SessionManager,
-	usage: () => ProcessStatusUsage,
-	provider = "test",
-) {
+export function usageView(parent: SessionManager, provider = "test") {
 	const listeners = new Map<string, Set<(data: unknown) => void>>();
 	const events = {
 		emit(name: string, data: unknown) {
@@ -53,7 +45,6 @@ export function usageView(
 		registerCommand() {},
 		getThinkingLevel: () => "off",
 	} as unknown as ExtensionAPI;
-	registerProcessStatusSource(pi, "delegate", () => [], usage);
 	extension(pi, () => false);
 	const ctx = {
 		mode: "tui",

@@ -31,24 +31,13 @@ test("cost, elapsed time, and context share one dim footer line", () => {
 	assert.ok(entries[0]);
 	entries[0].timestamp = "2026-01-01T11:02:03.000Z";
 	parent.appendCustomEntry("later-metadata", {});
-	const view = usageView(
-		parent,
-		() => ({
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: 0.882,
-		}),
-		"kimi-coding",
-	);
+	const view = usageView(parent, "kimi-coding");
 	try {
 		const lines = stripVTControlCharacters(view.render()).split("\n");
 		assert.equal(lines.length, 2);
 		assert.equal(
 			lines[1]?.trimEnd().replace(/ +test-model$/, ""),
-			"USD 0.882 (sub) · 1h 2m 3s · 10.0%/1.0k",
+			"USD 0.000 (sub) · 1h 2m 3s · 10.0%/1.0k",
 		);
 		assert.equal(view.render().split("\n")[1]?.startsWith("\x1b[90mUSD"), true);
 		assert.equal(sessionDuration(header.timestamp, []), "0s");

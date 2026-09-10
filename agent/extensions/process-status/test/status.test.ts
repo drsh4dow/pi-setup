@@ -7,16 +7,14 @@ import {
 	type ExtensionContext,
 	type ExtensionEvent,
 	initTheme,
-	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { Effect } from "effect";
 import extension from "../index.ts";
 import {
+	MAX_ACTIVITIES_PER_SOURCE,
 	processStatusSummary,
 	processStatusView,
 	registerProcessStatusSource,
-	sessionReportedUsage,
 } from "../status.ts";
 
 function eventBus() {
@@ -34,266 +32,149 @@ function eventBus() {
 	};
 }
 
-function reportedUsage(
-	input: number,
-	output: number,
-	cacheRead: number,
-	cacheWrite: number,
-	cost: number,
-) {
-	return {
-		input,
-		output,
-		cacheRead,
-		cacheWrite,
-		totalTokens: input + output + cacheRead + cacheWrite,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
-	};
-}
-
-function activity(
+function terminal(
 	id: string,
-	kind: "subagents" | "terminals",
 	active: boolean,
 	summary: string,
-	tokens = 0,
-	cost = 0,
 	detail?: string,
 ) {
 	return {
 		id,
-		kind,
 		active,
 		summary,
-		usage: { totalTokens: tokens, cost },
 		detail: detail === undefined ? undefined : () => detail,
 	};
 }
 
-test("aggregates all provider-reported session cost", () => {
-	const cost = sessionReportedUsage([
-		{
-			type: "message",
-			message: { role: "assistant", usage: reportedUsage(10, 5, 2, 3, 0.2) },
-		},
-		{
-			type: "message",
-			message: { role: "toolResult", usage: reportedUsage(4, 1, 0, 0, 0.05) },
-		},
-		{ type: "compaction", usage: reportedUsage(8, 2, 1, 1, 0.1) },
-		{ type: "message", message: { role: "user" } },
-	] as never);
-
-	assert.equal(cost.cost, 0.35);
-});
-
-test("summarizes running process counts and hides zeros", () => {
+test("summarizes active background terminals", () => {
 	const events = eventBus();
-	registerProcessStatusSource({ events }, "delegate", () => [
-		activity("d1", "subagents", true, "running"),
-		activity("d2", "subagents", true, "running"),
-		activity("d3", "subagents", false, "done"),
-	]);
 	registerProcessStatusSource({ events }, "terminals", () => [
-		activity("t1", "terminals", true, "running"),
+		terminal("t1", true, "running"),
+		terminal("t2", true, "running"),
+		terminal("t3", false, "done"),
 	]);
-
-	assert.equal(processStatusSummary({ events }), "1 bg · 2 dg");
+	assert.equal(processStatusSummary({ events }), "2 bg");
 	assert.equal(processStatusSummary({ events: eventBus() }), undefined);
 });
 
-test("lists each activity on its own line with aggregate usage", () => {
+test("lists active terminals collapsed and retained terminals expanded", () => {
 	const events = eventBus();
-	registerProcessStatusSource(
-		{ events },
-		"delegate",
-		() => [
-			activity("d1", "subagents", true, "[running] read · model", 1200, 0.1),
-			activity("d2", "subagents", false, "[done] read · model", 800, 0.2),
-			activity("d3", "subagents", false, "[done] report"),
-		],
-		() => ({ totalTokens: 2000, cost: 0.3 }),
-	);
 	registerProcessStatusSource({ events }, "terminals", () => [
-		activity("t1", "terminals", true, "[running] test watcher"),
-		activity("t2", "terminals", false, "[failed] build"),
+		terminal("t1", true, "[running] test watcher"),
+		terminal("t2", false, "[failed] build"),
 	]);
-
 	const view = processStatusView({ events });
-	assert.deepEqual(view.collapsed.split("\n"), [
-		"2,000 tokens · $0.3000",
-		"d1 [running] read · model",
-		"t1 [running] test watcher",
-	]);
-	assert.deepEqual(view.expanded.split("\n"), [
-		"2,000 tokens · $0.3000",
-		"d1 [running] read · model",
-		"d2 [done] read · model",
-		"d3 [done] report",
-		"t1 [running] test watcher",
-		"t2 [failed] build",
-	]);
+	assert.equal(view.collapsed, "t1 [running] test watcher");
+	assert.equal(view.expanded, "t1 [running] test watcher\nt2 [failed] build");
 });
 
-test("ignores retained collection requests after synchronous delivery", () => {
+test("renders bounded terminal details", () => {
 	const events = eventBus();
-	const requests: unknown[] = [];
-	let activityLoads = 0;
-	let usageLoads = 0;
-	const stopRetaining = events.on("process-status:collect", (request) => {
-		requests.push(request);
-	});
-	registerProcessStatusSource(
-		{ events },
-		"retained",
-		() => {
-			activityLoads++;
-			return [activity("d1", "subagents", true, "running")];
-		},
-		() => {
-			usageLoads++;
-			return { totalTokens: 10, cost: 0.1 };
-		},
-	);
-
-	const first = processStatusView({ events });
-	const second = processStatusView({ events });
-	assert.deepEqual(second, first);
-	assert.equal(requests.length, 2);
-	stopRetaining();
-	for (const request of requests)
-		events.emit("process-status:collect", request);
-	assert.equal(activityLoads, 2);
-	assert.equal(usageLoads, 2);
-	assert.match(first.collapsed, /10 tokens · \$0\.1000\nd1 running/);
-});
-
-test("shows one worker's usage and bounded diagnostics", () => {
-	const events = eventBus();
-	let detail = `Tool read input:\n{ path: 'a.ts' }\n\nTool read output:\nsource\n${"é".repeat(40_000)}\ntail`;
-	registerProcessStatusSource({ events }, "delegate", () => [
-		activity(
-			"d1",
-			"subagents",
-			true,
-			"[running] read · model",
-			12_345,
-			0.45678,
-			detail,
-		),
+	let detail = `output\n${"é".repeat(40_000)}\ntail`;
+	registerProcessStatusSource({ events }, "terminals", () => [
+		terminal("t1", true, "[running] watcher", detail),
 	]);
-
-	const view = processStatusView({ events }, "d1");
+	const view = processStatusView({ events }, "t1");
 	detail = "changed after collection";
 	assert.equal(view.collapsed, view.expanded);
-	assert.match(view.collapsed, /^12,345 tokens · \$0\.4568 · d1 \[running\]/);
-	assert.match(view.collapsed, /Tool read input/);
+	assert.match(view.collapsed, /^t1 \[running\] watcher/);
 	assert.match(view.collapsed, /\[truncated\][\s\S]*tail$/);
-	assert.ok(Buffer.byteLength(view.collapsed) <= 64 * 1024 + 150);
+	assert.ok(Buffer.byteLength(view.collapsed) <= 64 * 1024 + 100);
 	assert.doesNotMatch(view.collapsed, /�|changed after collection/);
 });
 
-test("reports a bounded detail loader failure", () => {
+test("isolates detail and source failures", () => {
 	const events = eventBus();
-	registerProcessStatusSource({ events }, "delegate", () => [
+	registerProcessStatusSource({ events }, "broken", () => {
+		throw new Error("registry unavailable");
+	});
+	registerProcessStatusSource({ events }, "terminals", () => [
 		{
-			id: "d1",
-			kind: "subagents",
-			active: true,
-			summary: "[failed] read",
+			id: "t1",
+			active: false,
+			summary: "failed",
 			detail: () => {
 				throw new Error("activity unavailable\nretry later");
 			},
 		},
 	]);
-
 	assert.match(
-		processStatusView({ events }, "d1").collapsed,
+		processStatusView({ events }).expanded,
+		/broken: registry unavailable/,
+	);
+	assert.match(
+		processStatusView({ events }, "t1").collapsed,
 		/detail-error: activity unavailable retry later$/,
 	);
 });
 
-test("reports unknown and duplicate ids without hiding valid entries", () => {
+test("reports duplicate and unknown terminal ids", () => {
 	const events = eventBus();
 	registerProcessStatusSource({ events }, "first", () => [
-		activity("d1", "subagents", true, "first"),
+		terminal("t1", true, "first"),
 	]);
 	registerProcessStatusSource({ events }, "second", () => [
-		activity("d1", "terminals", true, "duplicate"),
-		activity("t1", "terminals", true, "valid"),
+		terminal("t1", true, "duplicate"),
+		terminal("t2", true, "valid"),
 	]);
-
 	const list = processStatusView({ events }).expanded;
-	assert.match(list, /d1 first/);
-	assert.match(list, /t1 valid/);
-	assert.match(list, /second: error=duplicate-id id=d1/);
-	const unknown = processStatusView({ events }, "missing").collapsed;
-	assert.equal(unknown, "error: unknown-id · id: missing · action: /ps");
-	assert.equal(unknown.split("\n").length, 1);
-});
-
-test("isolates source failures and discloses collection limits", () => {
-	const events = eventBus();
-	registerProcessStatusSource({ events }, "broken", () => {
-		throw new Error("registry unavailable");
-	});
-	registerProcessStatusSource({ events }, "runaway", () =>
-		Array.from({ length: 193 }, (_, index) =>
-			activity(`d${index}`, "subagents", true, `delegate ${index}`),
-		),
+	assert.match(list, /t1 first/);
+	assert.match(list, /t2 valid/);
+	assert.match(list, /second: error=duplicate-id id=t1/);
+	assert.equal(
+		processStatusView({ events }, "missing").collapsed,
+		"error: unknown-id · id: missing · action: /ps",
 	);
-	for (let index = 0; index < 15; index++) {
-		registerProcessStatusSource({ events }, `source-${index}`, () => []);
-	}
-
-	const text = processStatusView({ events }).expanded;
-	assert.match(text, /1 omitted/);
-	assert.match(text, /broken: registry unavailable/);
-	assert.match(text, /runaway: limit=activities count=193 max=192/);
-	assert.equal(text.split("\n").length, 4);
 });
 
-test("keeps active entries when a group reaches its display bound", () => {
+test("bounds sources and retained terminals while preserving active entries", () => {
 	const events = eventBus();
 	registerProcessStatusSource({ events }, "history", () => [
 		...Array.from({ length: 64 }, (_, index) =>
-			activity(`old-${index}`, "subagents", false, "[done] old delegate"),
+			terminal(`old-${index}`, false, "done"),
 		),
-		activity("current", "subagents", true, "[running] current delegate"),
+		terminal("current", true, "running"),
 	]);
-
 	const view = processStatusView({ events });
-	assert.match(view.collapsed, /current \[running\]/);
-	assert.match(view.expanded, /current \[running\]/);
+	assert.match(view.collapsed, /current running/);
 	assert.match(view.expanded, /1 omitted/);
+
+	const runaway = eventBus();
+	registerProcessStatusSource({ events: runaway }, "runaway", () =>
+		Array.from({ length: MAX_ACTIVITIES_PER_SOURCE + 1 }, (_, index) =>
+			terminal(`t${index}`, true, "running"),
+		),
+	);
+	assert.match(
+		processStatusView({ events: runaway }).expanded,
+		/limit=activities/,
+	);
 });
 
-test("renders compact lists, multiline details, and compounded worker cost", () => {
+test("ignores retained collection requests after synchronous delivery", () => {
 	const events = eventBus();
-	registerProcessStatusSource(
-		{ events },
-		"delegate",
-		() => [
-			activity(
-				"d1",
-				"subagents",
-				true,
-				"[running] read",
-				200,
-				0.75,
-				"task: inspect\n\nactivity:\nread source",
-			),
-			activity("d2", "subagents", false, `[done] review ${"x".repeat(80)}`),
-		],
-		() => ({
-			cost: 0.75,
-			input: 100,
-			output: 50,
-			cacheRead: 25,
-			cacheWrite: 25,
-			totalTokens: 200,
-		}),
+	const requests: unknown[] = [];
+	let loads = 0;
+	const stopRetaining = events.on("process-status:collect", (request) =>
+		requests.push(request),
 	);
+	registerProcessStatusSource({ events }, "terminals", () => {
+		loads++;
+		return [terminal("t1", true, "running")];
+	});
+	processStatusView({ events });
+	stopRetaining();
+	for (const request of requests)
+		events.emit("process-status:collect", request);
+	assert.equal(loads, 1);
+});
+
+test("renders terminal lists and cleans up the footer lifecycle", () => {
+	const events = eventBus();
+	registerProcessStatusSource({ events }, "terminals", () => [
+		terminal("t1", true, "[running] test watcher", "output\nline"),
+		terminal("t2", false, `[failed] ${"x".repeat(80)}`),
+	]);
 	let handler:
 		| ((args: string, ctx: ExtensionCommandContext) => Promise<void>)
 		| undefined;
@@ -304,7 +185,7 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 		(event: ExtensionEvent, ctx: ExtensionContext) => unknown
 	>();
 	const appended: unknown[] = [];
-	let autoCompactionEnabled = false;
+	const statuses: unknown[] = [];
 	const api = {
 		events,
 		appendEntry(_type: string, data: unknown) {
@@ -321,106 +202,65 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 			renderer = value;
 		},
 		registerTool() {},
-		registerCommand(
-			name: string,
-			command: {
-				handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
-			},
-		) {
-			assert.equal(name, "ps");
+		registerCommand(_name: string, command: { handler: typeof handler }) {
 			handler = command.handler;
 		},
 	} as unknown as ExtensionAPI;
-	extension(api, () => autoCompactionEnabled);
-
-	const parentEntry = {
-		type: "message",
-		message: {
-			role: "assistant",
-			usage: {
-				input: 10,
-				output: 5,
-				cacheRead: 0,
-				cacheWrite: 0,
-				cost: { total: 0.25 },
-			},
-		},
-	};
-	const ui = {
-		setFooter(factory: typeof footerFactory) {
-			footerFactory = factory;
-		},
-		setStatus() {},
-	};
-	const model = {
-		id: "test-model",
-		provider: "test-provider",
-		contextWindow: 1000,
-		reasoning: false,
-	};
+	extension(api, () => false);
 	const context = {
 		mode: "tui",
 		hasUI: true,
-		model,
-		modelRegistry: {
-			isUsingOAuth(candidate: unknown) {
-				assert.equal(candidate, model);
-				return false;
-			},
-		},
+		model: { id: "test-model", provider: "test", contextWindow: 1000 },
+		modelRegistry: { isUsingOAuth: () => false },
 		sessionManager: {
 			getHeader: () => null,
-			getEntries: () => [parentEntry],
+			getEntries: () => [],
 			getCwd: () => "/tmp/project",
 			getSessionName: () => undefined,
 		},
-		getContextUsage: () => ({
-			tokens: 100,
-			contextWindow: 1000,
-			percent: 10,
-		}),
-		ui,
+		getContextUsage: () => ({ tokens: 100, contextWindow: 1000, percent: 10 }),
+		ui: {
+			setFooter(value: typeof footerFactory) {
+				footerFactory = value;
+			},
+			setStatus(_name: string, value: unknown) {
+				statuses.push(value);
+			},
+		},
 	} as unknown as ExtensionContext;
 	lifecycle.get("session_start")?.(
 		{ type: "session_start", reason: "startup" },
 		context,
 	);
-
-	const ctx = { mode: "tui", hasUI: true } as ExtensionCommandContext;
-	handler?.("", ctx);
-	handler?.("d1", ctx);
+	assert.equal(statuses.at(-1), "1 bg");
+	assert.ok(handler);
+	void handler("", { mode: "tui", hasUI: true } as ExtensionCommandContext);
+	void handler("t1", { mode: "tui", hasUI: true } as ExtensionCommandContext);
 	assert.equal(appended.length, 2);
 	assert.ok(renderer);
 	const theme = {
 		bg: (_color: string, text: string) => text,
 		fg: (_color: string, text: string) => text,
 	} as never;
-	const rendered = renderer(
+	const collapsed = renderer(
 		{ data: appended[0] } as never,
 		{ expanded: false },
 		theme,
-	)?.render(45);
-	assert.equal(rendered?.length, 4);
-	assert.ok(rendered?.every((line) => visibleWidth(line) <= 45));
-	assert.doesNotMatch(rendered?.join("\n") ?? "", /d2/);
-	const expandedLines = renderer(
+	)?.render(35);
+	assert.ok(collapsed?.every((line) => visibleWidth(line) <= 35));
+	assert.doesNotMatch(collapsed?.join("\n") ?? "", /t2/);
+	const expanded = renderer(
 		{ data: appended[0] } as never,
 		{ expanded: true },
 		theme,
-	)?.render(45);
-	const expanded = expandedLines?.join("\n");
-	assert.equal(expandedLines?.length, 5);
-	assert.ok(expandedLines?.every((line) => visibleWidth(line) <= 45));
-	assert.equal(expandedLines?.filter((line) => line.includes("d2")).length, 1);
-	assert.match(expanded ?? "", /d2 \[done\] review x+.*\.\.\./);
+	)?.render(35);
+	assert.match(expanded?.join("\n") ?? "", /t2 \[failed\].*\.\.\./);
 	const detail = renderer(
 		{ data: appended[1] } as never,
 		{ expanded: false },
 		theme,
-	)
-		?.render(80)
-		.join("\n");
-	assert.match(detail ?? "", /task: inspect[\s\S]*activity:[\s\S]*read source/);
+	)?.render(80);
+	assert.match(detail?.join("\n") ?? "", /output[\s\S]*line/);
 
 	assert.ok(footerFactory);
 	initTheme();
@@ -434,155 +274,11 @@ test("renders compact lists, multiline details, and compounded worker cost", () 
 			onBranchChange: () => () => {},
 		},
 	);
-	const footerText = footer.render(100).join("\n");
-	assert.match(footerText, /USD 1\.000/);
-	assert.doesNotMatch(footerText, /\(auto\)/);
-	autoCompactionEnabled = true;
-	assert.match(footer.render(100).join("\n"), /\(auto\)/);
+	assert.match(footer.render(100).join("\n"), /USD \?/);
 	footer.dispose?.();
-});
-
-test("reported usage preserves zero and marks invalid fields unavailable", () => {
-	assert.deepEqual(
-		sessionReportedUsage([
-			{
-				type: "message",
-				message: { role: "assistant", usage: reportedUsage(0, 0, 0, 0, 0) },
-			},
-		] as never),
-		{
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: 0,
-		},
+	lifecycle.get("session_shutdown")?.(
+		{ type: "session_shutdown", reason: "quit" },
+		context,
 	);
-	const invalid = reportedUsage(1, 2, 0, 0, 0);
-	invalid.input = Number.NaN;
-	assert.equal(
-		sessionReportedUsage([
-			{ type: "message", message: { role: "assistant", usage: invalid } },
-		] as never).input,
-		null,
-	);
-});
-
-test("exposes cumulative session and delegate usage to the model", () =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const events = eventBus();
-			registerProcessStatusSource(
-				{ events },
-				"delegate",
-				() => [],
-				() => ({
-					cost: 0.1236,
-					input: 100,
-					output: 50,
-					cacheRead: 25,
-					cacheWrite: 25,
-					totalTokens: 200,
-				}),
-			);
-			let usageTool: ToolDefinition | undefined;
-			extension({
-				events,
-				on() {},
-				registerEntryRenderer() {},
-				registerTool(tool: ToolDefinition) {
-					assert.equal(tool.name, "session_usage");
-					usageTool = tool;
-				},
-				registerCommand() {},
-			} as unknown as ExtensionAPI);
-
-			assert.ok(usageTool);
-			const tool = usageTool;
-			const context = {
-				sessionManager: {
-					getHeader: () => null,
-					getEntries: () => [
-						{
-							type: "message",
-							message: {
-								role: "assistant",
-								usage: reportedUsage(10, 5, 0, 0, 0.1),
-							},
-						},
-						{
-							type: "message",
-							message: {
-								role: "assistant",
-								usage: reportedUsage(10, 5, 0, 0, 0.2),
-							},
-						},
-					],
-				},
-			} as unknown as ExtensionContext;
-			const result = yield* Effect.promise(() =>
-				tool.execute("usage-call", {}, undefined, undefined, context),
-			);
-			const expected = {
-				parent: {
-					inputTokens: 20,
-					outputTokens: 10,
-					cacheReadTokens: 0,
-					cacheWriteTokens: 0,
-					totalTokens: 30,
-					usd: 0.3,
-				},
-				delegates: {
-					inputTokens: 100,
-					outputTokens: 50,
-					cacheReadTokens: 25,
-					cacheWriteTokens: 25,
-					totalTokens: 200,
-					usd: 0.124,
-				},
-				total: {
-					inputTokens: 120,
-					outputTokens: 60,
-					cacheReadTokens: 25,
-					cacheWriteTokens: 25,
-					totalTokens: 230,
-					usd: 0.424,
-				},
-			};
-			assert.deepEqual(result.details, expected);
-			const text = result.content.find((part) => part.type === "text")?.text;
-			assert.equal(
-				text,
-				'{"parent":{"inputTokens":20,"outputTokens":10,"cacheReadTokens":0,"cacheWriteTokens":0,"totalTokens":30,"usd":0.3},"delegates":{"inputTokens":100,"outputTokens":50,"cacheReadTokens":25,"cacheWriteTokens":25,"totalTokens":200,"usd":0.124},"total":{"inputTokens":120,"outputTokens":60,"cacheReadTokens":25,"cacheWriteTokens":25,"totalTokens":230,"usd":0.424}}',
-			);
-		}),
-	));
-
-test("a later assistant without provider usage invalidates totals, not routine tool results", () => {
-	const good = {
-		type: "message",
-		message: { role: "assistant", usage: reportedUsage(10, 5, 2, 0, 0) },
-	};
-	const routine = { type: "message", message: { role: "toolResult" } };
-	assert.equal(
-		sessionReportedUsage([good, routine] as unknown as Parameters<
-			typeof sessionReportedUsage
-		>[0]).totalTokens,
-		17,
-	);
-	const missing = { type: "message", message: { role: "assistant" } };
-	assert.deepEqual(
-		sessionReportedUsage([good, routine, missing] as unknown as Parameters<
-			typeof sessionReportedUsage
-		>[0]),
-		{
-			input: null,
-			output: null,
-			cacheRead: null,
-			cacheWrite: null,
-			totalTokens: null,
-			cost: null,
-		},
-	);
+	assert.equal(statuses.at(-1), undefined);
 });

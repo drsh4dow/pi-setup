@@ -53,11 +53,10 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | `aoauth` | Anthropic OAuth login support |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
 | `codex-accounts` | Labeled Codex logins, weekly-allowance selection, session account pins, and `/codex-usage` |
-| `delegate` | Background child-agent runs with completion delivery, session inspection, and control |
 | `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
 | `herdr-agent-state` | Herdr pane state and Pi session reporting, with idle reconciliation independent of background processes |
-| `process-status` | `/ps` views for active work, worker tokens, and cost |
+| `process-status` | `/ps` views for background terminals and session token/cost accounting |
 | `prompt-context` | Restores active-tool snippets and guidelines in custom system prompts |
 | `sacrifice-preference` | Marks spawned work as the preferred target under Linux memory pressure |
 | `session-timer` | Per-run and cumulative session timing in the status bar |
@@ -65,19 +64,11 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 | `tps-tracker` | Live and final output-token throughput |
 | `ui-moto` | Compact model and project status header |
 
-[Codex account setup](agent/extensions/codex-accounts/README.md) enables multiple ChatGPT logins behind `openai-codex`. Each new session and delegate selects the account with the most weekly allowance and keeps it across model changes and resume. Without account configuration, the existing Codex login continues working.
+[Codex account setup](agent/extensions/codex-accounts/README.md) enables multiple ChatGPT logins behind `openai-codex`. Each new session selects the account with the most weekly allowance and keeps it across model changes and resume. Without account configuration, the existing Codex login continues working.
 
 `agent/extensions/herdr-agent-state.ts` is locally patched. Herdr integration updates overwrite it; restore the repository version and run `/reload` in affected Pi sessions after updating Herdr's integration.
 
-Delegation selects a model and reasoning profile from `delegate.fast` or `delegate.thorough` in [`agent/settings.json`](agent/settings.json). Each accepts `model` and `thinking`, for example `{"fast":{"model":"openai-codex/gpt-5.6-luna","thinking":"high"},"thorough":{"model":"openai-codex/gpt-6-astra","thinking":"low"}}`. Thinking accepts Pi's levels from `off` through `max`. Missing fields inherit from the next configuration source. Legacy `delegate.model` and `delegate.thinking` apply to both profiles, with profile-specific fields taking precedence within a file. Without configuration, delegates use the parent model and low reasoning for fast or high for thorough. A project's `.pi/delegate.json` can override that default with `{"model":"provider/model-id"}`; lookup checks the run's effective `cwd`, then the parent session's project, so an external worktree does not discard the session's choice. Project files also accept `fast` and `thorough` profiles. An explicit `delegate_run.model` overrides every file's model, retaining the selected profile's reasoning. Invalid, unavailable, or unauthenticated configured models fall back to the parent model, while an invalid explicit override fails the run. Every run has one hard ceiling of 60 minutes or 60,000,000 reported tokens, regardless of effort; a run that settles abnormally hands back the child's last messages so it can be re-briefed. Delegate runs have no aggregate concurrency or retention limit: each starts immediately and remains inspectable until the parent session ends. Children share the same worktree without write isolation unless `cwd` points them at one the caller prepared, so parallel mutations can otherwise conflict. A child's background terminals are its own: they never appear in the parent's list and are terminated when the child settles.
-
-Children use normal Pi prompt discovery and the applicable `APPEND_SYSTEM.md`, plus a short [child role](agent/extensions/delegate/SYSTEM.md). A project's `.pi/DELEGATE_SYSTEM.md` still replaces the child's base prompt; the shared append policy and child role remain appended.
-
-The `prompt-context` extension supplements custom system prompts with active-tool snippets and guidelines from Pi's resolved prompt inputs. It preserves Pi's project context, skills, appended instructions, and earlier extension changes. Stock system prompts remain unchanged. The same extension loads in parents and children; excluded tools contribute no injected guidance. Context refreshes at `before_agent_start`; tool changes during an active run appear in the next run's injected context. Reload existing sessions with `/reload` after installing it.
-
-Every `delegate_run` returns its child ID immediately and runs in the background. Independent calls execute concurrently. Completions reach an active parent through steering after its current tool-call batch, or wake an idle parent immediately. Ready results may arrive together without waiting for unfinished children. Inspection leaves automatic delivery intact; explicit cancellation returns outcomes directly and suppresses their automatic delivery. Reopened sessions retain children for inspection only, without replaying notifications or restarting interrupted work.
-
-A delegate stays running through Pi's built-in automatic compaction and retries until its session settles.
+The `prompt-context` extension supplements custom system prompts with active-tool snippets and guidelines from Pi's resolved prompt inputs. It preserves Pi's project context, skills, appended instructions, and earlier extension changes. Stock system prompts remain unchanged. Excluded tools contribute no injected guidance. Context refreshes at `before_agent_start`; tool changes during an active run appear in the next run's injected context. Reload existing sessions with `/reload` after installing it.
 
 Use `bash` by default. Use `bg_start` for services and watchers. Use it for finite commands when there is useful independent work to do. A finite command's natural exit wakes the owner with its actual exit status, including success. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
 
@@ -136,7 +127,6 @@ The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity,
 - `to-tickets`
 - `typescript-best-practices`
 - `unslop`
-- `using-subagents`
 - `web-search`
 - `why`
 - `wizard`
@@ -172,7 +162,7 @@ Custom keybindings:
 ```text
 agent/
 ├── SYSTEM.md          # active system prompt
-├── settings.json      # models, thinking level, theme, and delegate model
+├── settings.json      # models, thinking level, and theme
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions
 ├── skills/            # reusable agent workflows and references

@@ -19,7 +19,7 @@ Labels are unique and contain letters, digits, dots, underscores, or hyphens. St
 /login openai-codex@C
 ```
 
-Use a different ChatGPT account for each label. Keep model defaults and delegate configuration on logical names such as `openai-codex/gpt-5.6-sol`. Internal aliases appear in Pi's model menus and saved model changes.
+Use a different ChatGPT account for each label. Keep model defaults on logical names such as `openai-codex/gpt-5.6-sol`. Internal aliases appear in Pi's model menus and saved model changes.
 
 Without this configuration, the existing Codex login continues working. Credentials stay in Pi's normal credential store, separately keyed and refreshed per alias. No credentials are copied between accounts.
 
@@ -27,9 +27,9 @@ Without this configuration, the existing Codex login continues working. Credenti
 
 A new session selects the account with the highest fresh weekly percentage remaining when it first uses Codex. Alphabetical labels break ties. Selection ignores shorter usage windows. It is not round-robin; several sessions can choose the same account.
 
-The account stays pinned while models can change. Resume and reload preserve the pin. Forks and newly spawned delegates select independently, even if their initial model names contain a parent's account alias. Sessions with existing Codex history keep their original login rather than selecting another account.
+The account stays pinned while models can change. Resume and reload preserve the pin. Forks select independently, even if their initial model names contain a parent's account alias. Sessions with existing Codex history keep their original login rather than selecting another account.
 
-Unknown, stale, or exhausted weekly readings are ineligible. If none qualify, interactive startup shows a warning and leaves Pi usable for login and configuration commands. Codex requests remain blocked until an account qualifies; headless and delegated runs report the selection failure. A pinned account never automatically changes because its quota, credentials, or configuration become unavailable. Reauthenticating its label to a different ChatGPT account blocks requests in that session. Restore the original account or start a new session.
+Unknown, stale, or exhausted weekly readings are ineligible. If none qualify, interactive startup shows a warning and leaves Pi usable for login and configuration commands. Codex requests remain blocked until an account qualifies; headless runs report the selection failure. A pinned account never automatically changes because its quota, credentials, or configuration become unavailable. Reauthenticating its label to a different ChatGPT account blocks requests in that session. Restore the original account or start a new session.
 
 Configuration changes take effect after `/reload`. Keep labels stable while sessions using them remain in use.
 

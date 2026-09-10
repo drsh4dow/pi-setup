@@ -10,16 +10,6 @@
     "openai-codex/gpt-5.6-sol",
     "opencode-go/glm-5.3-flash"
   ],
-  "delegate": {
-    "fast": {
-      "model": "openai-codex/gpt-5.6-sol",
-      "thinking": "low"
-    },
-    "thorough": {
-      "model": "openai-codex/gpt-6-astra",
-      "thinking": "low"
-    }
-  },
   "defaultThinkingLevel": "xhigh",
   "hideThinkingBlock": false,
   "treeFilterMode": "default",

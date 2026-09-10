@@ -1,95 +1,18 @@
-import type { Usage } from "@earendil-works/pi-ai";
-import type {
-	ExtensionAPI,
-	SessionEntry,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateUtf8Window } from "../../lib/text.ts";
 
 const COLLECT_CHANNEL = "process-status:collect";
 const REFRESH_CHANNEL = "process-status:refresh";
 const MAX_SOURCES = 16;
 export const MAX_ACTIVITIES_PER_SOURCE = 192;
-const MAX_ACTIVITIES_PER_KIND = 64;
+const MAX_ACTIVITIES = 64;
 const MAX_SUMMARY_CHARACTERS = 240;
 const MAX_DETAIL_BYTES = 64 * 1024;
 
-type ProcessStatusKind = "subagents" | "terminals";
-
-export interface ProcessStatusUsage {
-	cost: number | null;
-	input?: number | null;
-	output?: number | null;
-	cacheRead?: number | null;
-	cacheWrite?: number | null;
-	totalTokens?: number | null;
-}
-
-export function sessionReportedUsage(entries: readonly SessionEntry[]) {
-	const totals = {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		cost: 0,
-	};
-	const unavailable = new Set<keyof typeof totals>();
-	let sawUsage = false;
-	for (const entry of entries) {
-		let usage: Usage | undefined;
-		if (
-			entry.type === "message" &&
-			(entry.message.role === "assistant" ||
-				entry.message.role === "toolResult")
-		) {
-			usage = entry.message.usage;
-		} else if (entry.type === "branch_summary" || entry.type === "compaction") {
-			usage = entry.usage;
-		}
-		if (!usage) {
-			if (
-				usage !== undefined ||
-				(entry.type === "message" && entry.message.role === "assistant")
-			)
-				for (const field of Object.keys(totals) as (keyof typeof totals)[])
-					unavailable.add(field);
-			continue;
-		}
-		sawUsage = true;
-		const values = {
-			input: usage.input,
-			output: usage.output,
-			cacheRead: usage.cacheRead,
-			cacheWrite: usage.cacheWrite,
-			totalTokens: usage.totalTokens,
-			cost: usage.cost?.total,
-		};
-		for (const field of Object.keys(totals) as (keyof typeof totals)[]) {
-			const value = values[field];
-			if (typeof value === "number" && Number.isFinite(value) && value >= 0)
-				totals[field] += value;
-			else unavailable.add(field);
-		}
-	}
-	if (!sawUsage)
-		for (const field of Object.keys(totals) as (keyof typeof totals)[])
-			unavailable.add(field);
-	return {
-		input: unavailable.has("input") ? null : totals.input,
-		output: unavailable.has("output") ? null : totals.output,
-		cacheRead: unavailable.has("cacheRead") ? null : totals.cacheRead,
-		cacheWrite: unavailable.has("cacheWrite") ? null : totals.cacheWrite,
-		totalTokens: unavailable.has("totalTokens") ? null : totals.totalTokens,
-		cost: unavailable.has("cost") ? null : totals.cost,
-	};
-}
-
 interface ProcessStatusActivity {
 	id: string;
-	kind: ProcessStatusKind;
 	active: boolean;
 	summary: string;
-	usage?: ProcessStatusUsage;
 	detail?: () => string;
 }
 
@@ -100,14 +23,9 @@ export interface ProcessStatusView {
 }
 
 type ProcessStatusSource = () => readonly ProcessStatusActivity[];
-type ProcessStatusUsageSource = () => ProcessStatusUsage;
 
 interface CollectionRequest {
-	add(
-		name: string,
-		load: ProcessStatusSource,
-		loadUsage?: ProcessStatusUsageSource,
-	): void;
+	add(name: string, load: ProcessStatusSource): void;
 }
 
 function sanitize(text: string): string {
@@ -139,22 +57,6 @@ function boundedDetail(text: string): string {
 	);
 }
 
-function validUsage(usage: ProcessStatusUsage): boolean {
-	return [
-		usage.cost,
-		usage.input,
-		usage.output,
-		usage.cacheRead,
-		usage.cacheWrite,
-		usage.totalTokens,
-	].every(
-		(value) =>
-			value === undefined ||
-			value === null ||
-			(Number.isFinite(value) && value >= 0),
-	);
-}
-
 export function requestProcessStatusRefresh(
 	pi: Pick<ExtensionAPI, "events">,
 ): void {
@@ -172,75 +74,36 @@ export function registerProcessStatusSource(
 	pi: Pick<ExtensionAPI, "events">,
 	name: string,
 	load: ProcessStatusSource,
-	loadUsage?: ProcessStatusUsageSource,
 ): () => void {
 	return pi.events.on(COLLECT_CHANNEL, (data) => {
 		const request = data as Partial<CollectionRequest> | undefined;
 		if (typeof request?.add !== "function") return;
-		request.add(name, load, loadUsage);
+		request.add(name, load);
 	});
 }
 
-function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
-	const groups: Record<ProcessStatusKind, ProcessStatusActivity[]> = {
-		subagents: [],
-		terminals: [],
-	};
-	const omitted: Record<ProcessStatusKind, number> = {
-		subagents: 0,
-		terminals: 0,
-	};
-	const usage: ProcessStatusUsage = {
-		cost: 0,
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-	};
+function collect(pi: Pick<ExtensionAPI, "events">) {
+	const activities: ProcessStatusActivity[] = [];
 	const errors: string[] = [];
 	const ids = new Set<string>();
 	let sourceCount = 0;
-	let omittedSources = 0;
-	let accepting: boolean = true;
+	let omitted = 0;
+	const closedRequests = new WeakSet<CollectionRequest>();
 	const request: CollectionRequest = {
-		add(
-			name: string,
-			load: ProcessStatusSource,
-			loadUsage?: ProcessStatusUsageSource,
-		) {
-			if (!accepting) return;
+		add(name, load) {
+			if (closedRequests.has(request)) return;
 			if (++sourceCount > MAX_SOURCES) {
-				omittedSources++;
+				omitted++;
 				return;
 			}
 			try {
-				if (loadUsage) {
-					const sourceUsage = loadUsage();
-					if (!validUsage(sourceUsage)) throw new Error("invalid usage");
-
-					for (const field of [
-						"cost",
-						"input",
-						"output",
-						"cacheRead",
-						"cacheWrite",
-						"totalTokens",
-					] as const) {
-						const value = sourceUsage[field];
-						if (usage[field] === null || value === null || value === undefined)
-							usage[field] = null;
-						else usage[field] = (usage[field] ?? 0) + value;
-					}
-				}
-				if (!includeActivities) return;
-				const activities = load();
-				if (activities.length > MAX_ACTIVITIES_PER_SOURCE) {
+				const sourceActivities = load();
+				if (sourceActivities.length > MAX_ACTIVITIES_PER_SOURCE) {
 					throw new Error(
-						`limit=activities count=${activities.length} max=${MAX_ACTIVITIES_PER_SOURCE}`,
+						`limit=activities count=${sourceActivities.length} max=${MAX_ACTIVITIES_PER_SOURCE}`,
 					);
 				}
-				for (const activity of activities) {
+				for (const activity of sourceActivities) {
 					if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(activity.id)) {
 						errors.push(`${inline(name)}: error=invalid-id`);
 						continue;
@@ -251,22 +114,15 @@ function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 						);
 						continue;
 					}
-					if (activity.usage && !validUsage(activity.usage)) {
-						errors.push(
-							`${inline(name)}: error=invalid-usage id=${activity.id}`,
-						);
-						continue;
-					}
 					ids.add(activity.id);
-					const entries = groups[activity.kind];
-					if (entries.length < MAX_ACTIVITIES_PER_KIND) {
-						entries.push(activity);
+					if (activities.length < MAX_ACTIVITIES) {
+						activities.push(activity);
 						continue;
 					}
-					omitted[activity.kind] += 1;
+					omitted++;
 					if (activity.active) {
-						const inactive = entries.findIndex((entry) => !entry.active);
-						if (inactive >= 0) entries.splice(inactive, 1, activity);
+						const inactive = activities.findIndex((entry) => !entry.active);
+						if (inactive >= 0) activities.splice(inactive, 1, activity);
 					}
 				}
 			} catch (error) {
@@ -279,62 +135,32 @@ function collect(pi: Pick<ExtensionAPI, "events">, includeActivities = true) {
 		},
 	};
 	pi.events.emit(COLLECT_CHANNEL, request);
-	accepting = false;
-
-	return { groups, omitted, usage, errors, omittedSources };
-}
-
-function usageText(usage: ProcessStatusUsage): string {
-	return `${usage.totalTokens?.toLocaleString("en-US") ?? "unavailable"} tokens · ${usage.cost === null ? "USD unavailable" : `$${usage.cost.toFixed(4)}`}`;
+	closedRequests.add(request);
+	return { activities, errors, omitted };
 }
 
 function listText(
 	collection: ReturnType<typeof collect>,
 	expanded: boolean,
 ): string {
-	const entries = Object.values(collection.groups)
-		.flat()
+	const entries = collection.activities
 		.filter((activity) => expanded || activity.active)
 		.map(
 			(activity) =>
 				`${activity.id} ${inline(activity.summary) || "summary=none"}`,
 		);
-	const omitted = Object.values(collection.omitted).reduce(
-		(total, count) => total + count,
-		collection.omittedSources,
-	);
-	if (omitted > 0) entries.push(`${omitted} omitted`);
+	if (collection.omitted > 0) entries.push(`${collection.omitted} omitted`);
 	entries.push(...collection.errors.map((error) => `error: ${error}`));
-	const usage = usageText(collection.usage);
-	return entries.length > 0
-		? [usage, ...entries].join("\n")
-		: `${usage} · idle`;
+	return entries.length > 0 ? entries.join("\n") : "idle";
 }
 
 export function processStatusSummary(
 	pi: Pick<ExtensionAPI, "events">,
 ): string | undefined {
-	const groups = collect(pi).groups;
-	const counts = [
-		{
-			count: groups.terminals.filter((activity) => activity.active).length,
-			label: "bg",
-		},
-		{
-			count: groups.subagents.filter((activity) => activity.active).length,
-			label: "dg",
-		},
-	];
-	const parts = counts
-		.filter(({ count }) => count !== 0)
-		.map(({ count, label }) => `${count} ${label}`);
-	return parts.length > 0 ? parts.join(" · ") : undefined;
-}
-
-export function processStatusUsage(
-	pi: Pick<ExtensionAPI, "events">,
-): ProcessStatusUsage {
-	return collect(pi, false).usage;
+	const count = collect(pi).activities.filter(
+		(activity) => activity.active,
+	).length;
+	return count > 0 ? `${count} bg` : undefined;
 }
 
 export function processStatusView(
@@ -351,9 +177,9 @@ export function processStatusView(
 	}
 
 	const id = inline(requestedId).slice(0, 64);
-	const activity = Object.values(collection.groups)
-		.flat()
-		.find((candidate) => candidate.id === requestedId);
+	const activity = collection.activities.find(
+		(candidate) => candidate.id === requestedId,
+	);
 	if (!activity) {
 		const text = `error: unknown-id · id: ${id} · action: /ps`;
 		return { collapsed: text, expanded: text, list: false };
@@ -365,6 +191,6 @@ export function processStatusView(
 	} catch (error) {
 		detail = `detail-error: ${inline(error instanceof Error ? error.message : String(error))}`;
 	}
-	const text = `${activity.usage ? `${usageText(activity.usage)} · ` : ""}${activity.id} ${inline(activity.summary) || "summary=none"}${detail ? `\n\n${detail}` : ""}`;
+	const text = `${activity.id} ${inline(activity.summary) || "summary=none"}${detail ? `\n\n${detail}` : ""}`;
 	return { collapsed: text, expanded: text, list: false };
 }

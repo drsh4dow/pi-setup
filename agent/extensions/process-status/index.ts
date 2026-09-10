@@ -1,22 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
-import {
-	type AgentSession,
-	type ExtensionAPI,
-	type ExtensionContext,
-	FooterComponent,
-} from "@earendil-works/pi-coding-agent";
-import {
-	Box,
-	Text,
-	truncateToWidth,
-	visibleWidth,
-} from "@earendil-works/pi-tui";
-import { observeAutoCompaction } from "../../lib/settings.ts";
-import {
-	accountingText,
-	sessionDuration,
-	sessionReportedUsage,
-} from "./accounting.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { sessionReportedUsage } from "./accounting.ts";
 import {
 	observeProcessStatusRefresh,
 	type ProcessStatusView,
@@ -30,12 +15,7 @@ function roundUsd(cost: number): number {
 	return Math.round(cost * 1000) / 1000;
 }
 
-export default function processStatus(
-	pi: ExtensionAPI,
-	autoCompactionEnabled?: (ctx: ExtensionContext) => boolean,
-) {
-	let currentModel: Parameters<typeof pi.setModel>[0] | undefined;
-	let requestFooterRender: (() => void) | undefined;
+export default function processStatus(pi: ExtensionAPI) {
 	let refreshStatus: (() => void) | undefined;
 	observeProcessStatusRefresh(pi, () => refreshStatus?.());
 
@@ -68,101 +48,15 @@ export default function processStatus(
 	);
 
 	pi.on("session_start", (_event, ctx) => {
-		currentModel = ctx.model;
 		if (ctx.mode !== "tui") return;
 		refreshStatus = () =>
 			ctx.ui.setStatus("process-status", processStatusSummary(pi));
 		refreshStatus();
-		ctx.ui.setFooter((tui, theme, footerData) => {
-			const sessionManager = new Proxy(ctx.sessionManager, {
-				get(target, property) {
-					// Pi owns context/model layout; our accounting line owns cumulative usage.
-					if (property === "getEntries") return () => [];
-
-					const value = Reflect.get(target, property, target);
-					return typeof value === "function" ? value.bind(target) : value;
-				},
-			});
-			const isUsingOAuth = (providerId: string) =>
-				currentModel !== undefined &&
-				currentModel.provider === providerId &&
-				ctx.modelRegistry.isUsingOAuth(currentModel);
-			const modelRuntime = {
-				isUsingOAuth,
-				isUsingSubscription: (providerId: string) =>
-					isUsingOAuth(providerId) &&
-					ctx.modelRegistry.getProvider(providerId)?.auth.oauth
-						?.isSubscription === true,
-			};
-			const session = {
-				get state() {
-					return { model: currentModel, thinkingLevel: pi.getThinkingLevel() };
-				},
-				sessionManager,
-				modelRegistry: ctx.modelRegistry,
-				modelRuntime: { ...modelRuntime, isUsingSubscription: () => false },
-				getContextUsage: () => ctx.getContextUsage(),
-			} as unknown as AgentSession;
-			const footer = new FooterComponent(session, footerData);
-			const settings = autoCompactionEnabled
-				? { enabled: () => autoCompactionEnabled(ctx), dispose() {} }
-				: observeAutoCompaction(ctx, () => tui.requestRender());
-			const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
-			requestFooterRender = () => tui.requestRender();
-			return {
-				invalidate: () => tui.requestRender(),
-				render(width: number) {
-					footer.setAutoCompactEnabled(settings.enabled());
-					const entries = ctx.sessionManager.getEntries();
-					const usage = sessionReportedUsage(entries);
-					const subscription =
-						currentModel !== undefined &&
-						(currentModel.provider === "kimi-coding" ||
-							modelRuntime.isUsingSubscription(currentModel.provider));
-					// Pi hardcodes Kimi's subscription cost even with no entries. Remove that
-					// empty-account placeholder; only the shared totals may display money.
-					const nativeCost =
-						currentModel?.provider === "kimi-coding" ? "$0.000 (sub) " : "";
-					const duration = sessionDuration(
-						ctx.sessionManager.getHeader()?.timestamp,
-						entries,
-					);
-					const prefix = `${accountingText(usage.cost, subscription)} · ${duration} · `;
-					const lines = footer.render(width);
-					const stats =
-						footer.render(
-							Math.max(1, width - visibleWidth(prefix)) + nativeCost.length,
-						)[1] ?? "";
-					lines[1] = truncateToWidth(
-						theme.fg("dim", prefix) +
-							(nativeCost ? stats.replace(nativeCost, "") : stats),
-						width,
-						theme.fg("dim", "..."),
-					);
-					return lines;
-				},
-				dispose() {
-					settings.dispose();
-					unsubscribe();
-					footer.dispose();
-					requestFooterRender = undefined;
-				},
-			};
-		});
 	});
 
-	pi.on("model_select", (event) => {
-		currentModel = event.model;
-		requestFooterRender?.();
-	});
-	pi.on("thinking_level_select", () => requestFooterRender?.());
 	pi.on("session_shutdown", (_event, ctx) => {
-		requestFooterRender = undefined;
 		refreshStatus = undefined;
-		if (ctx.mode === "tui") {
-			ctx.ui.setStatus("process-status", undefined);
-			ctx.ui.setFooter(undefined);
-		}
+		if (ctx.mode === "tui") ctx.ui.setStatus("process-status", undefined);
 	});
 
 	pi.registerTool({

@@ -15,6 +15,7 @@ const liveTimer: TimerDependencies = {
 				Effect.forever,
 			),
 		);
+
 		return () => Effect.runSync(Fiber.interrupt(fiber));
 	},
 };
@@ -28,6 +29,7 @@ export default function sessionTimer(
 
 	function fmt(ms: number): string {
 		const s = Math.round(ms / 1000);
+
 		return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`;
 	}
 
@@ -38,11 +40,13 @@ export default function sessionTimer(
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		stop();
+
 		if (ctx.mode === "tui") ctx.ui.setStatus("session-timer", undefined);
 	});
 
 	pi.on("agent_start", (_event, ctx) => {
 		stop();
+
 		if (ctx.mode !== "tui") return;
 		runStart = dependencies.now();
 		stopTicker = dependencies.everySecond(() => {

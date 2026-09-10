@@ -8,8 +8,11 @@ import { nodeCommand } from "./node-command.ts";
 const { BackgroundTerminalManager, RETAINED_BYTES } = await import(
 	process.argv[2] ?? "../manager.ts"
 );
+
 const manager = new BackgroundTerminalManager();
+
 const original = Buffer.prototype.toString;
+
 try {
 	const run = manager.start({
 		command: nodeCommand(
@@ -18,16 +21,21 @@ try {
 		title: "listing probe",
 		cwd: process.cwd(),
 	});
+
 	const deadline = Date.now() + 5000;
+
 	while (manager.get(run.id)?.stdout.totalBytes !== RETAINED_BYTES) {
 		assert.ok(Date.now() < deadline, "terminal output readiness");
 		await setTimeout(10);
 	}
+
 	let decodedBytes = 0;
 	Buffer.prototype.toString = function (...args) {
 		decodedBytes += this.length;
-		return Reflect.apply(original, this, args);
+
+		return original.call(this, ...args);
 	};
+
 	for (let i = 0; i < 100; i++)
 		assert.equal(
 			manager.list().filter((entry) => entry.state === "running").length,

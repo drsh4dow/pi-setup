@@ -11,11 +11,29 @@ import type {
 import { Clock, Config, Effect, Option, Schema } from "effect";
 
 type AgentState = "working" | "blocked" | "idle";
+
 type Request = {
 	id: string;
 	method: "pane.report_agent" | "pane.report_agent_session";
-	params: Record<string, unknown>;
+	params: {
+		pane_id: string;
+		source: "herdr:pi";
+		agent: "pi";
+		seq: number;
+		agent_session_path?: string;
+		agent_session_id?: string;
+		state?: AgentState;
+		message?: string;
+		session_start_source?: string;
+	};
 };
+
+const BlockedEvent = Schema.Struct({
+	active: Schema.optional(Schema.Boolean),
+	label: Schema.optional(Schema.String),
+});
+
+const decodeBlockedEvent = Schema.decodeUnknownOption(BlockedEvent);
 
 const acknowledgement = Schema.decodeUnknownOption(
 	Schema.fromJsonString(
@@ -37,11 +55,14 @@ export default function (pi: ExtensionAPI) {
 			paneId: Config.String("HERDR_PANE_ID").pipe(Config.withDefault("")),
 		}),
 	);
+
 	if (config.enabled !== "1" || !config.socketPath || !config.paneId) return;
+
 	const endpoint =
 		process.platform === "win32"
 			? `\\\\.\\pipe\\${config.socketPath}`
 			: config.socketPath;
+
 	let seq = Effect.runSync(Clock.currentTimeMillis) * 1000;
 	let session: ReturnType<typeof createSession> | undefined;
 
@@ -53,12 +74,14 @@ export default function (pi: ExtensionAPI) {
 			const socket = net.createConnection(endpoint);
 			let buffer = "";
 			let done = false;
+
 			const finish = (delivered: boolean) => {
 				if (done) return;
 				done = true;
 				socket.destroy();
 				resume(Effect.succeed(delivered));
 			};
+
 			socket.setEncoding("utf8");
 			socket.on("connect", () => socket.write(`${JSON.stringify(report)}\n`));
 			socket.on("error", () => finish(false));
@@ -67,10 +90,12 @@ export default function (pi: ExtensionAPI) {
 			socket.on("data", (chunk) => {
 				buffer += chunk;
 				const end = buffer.indexOf("\n");
+
 				if (end < 0) return;
 				const reply = acknowledgement(buffer.slice(0, end));
 				finish(Option.isSome(reply) && reply.value.id === report.id);
 			});
+
 			return Effect.sync(() => {
 				done = true;
 				socket.destroy();
@@ -94,16 +119,22 @@ export default function (pi: ExtensionAPI) {
 
 		function request(
 			method: Request["method"],
-			params: Request["params"],
+			params: Pick<
+				Request["params"],
+				"state" | "message" | "session_start_source"
+			>,
 		): Request {
 			const file = context.sessionManager.getSessionFile();
 			const id = context.sessionManager.getSessionId();
+
 			const identity = file?.startsWith("/")
 				? { agent_session_path: file }
 				: id
 					? { agent_session_id: id }
 					: {};
+
 			seq += 1;
+
 			return {
 				id: `herdr:pi:${seq}`,
 				method,
@@ -121,12 +152,16 @@ export default function (pi: ExtensionAPI) {
 		const drain = Effect.fn("herdr.drain")(function* () {
 			while (!stopped && (pendingSession || pending)) {
 				const report = pendingSession ?? pending;
+
 				if (!report) break;
 				const current = () => report === pendingSession || report === pending;
 				let delivered = yield* attempt(report, 500);
+
 				if (!delivered && current()) delivered = yield* attempt(report, 1500);
+
 				// Identity reporting is best-effort; state reports also carry the identity.
 				if (pendingSession === report) pendingSession = undefined;
+
 				if (delivered) {
 					if (pending === report) pending = undefined;
 				} else if (pending === report) {
@@ -134,20 +169,26 @@ export default function (pi: ExtensionAPI) {
 					break;
 				}
 			}
+
 			cancelReporter = undefined;
 		});
 
 		function publish() {
 			if (stopped) return;
+
 			const state: AgentState =
 				blockedCount > 0 ? "blocked" : context.isIdle() ? "idle" : "working";
+
 			const message = blockedCount > 0 ? blockedMessage : undefined;
+
 			if (state !== desired?.state || message !== desired?.message) {
 				desired = { state, message };
 				pending = request("pane.report_agent", { state, message });
 			}
+
 			if (!cancelReporter && (pendingSession || pending))
 				cancelReporter = Effect.runCallback(drain());
+
 			// Background processes do not keep Pi busy. Poll until idle is acknowledged.
 			if (!cancelReconcile && (state !== "idle" || pending || pendingSession)) {
 				cancelReconcile = Effect.runCallback(reconcile());
@@ -158,32 +199,33 @@ export default function (pi: ExtensionAPI) {
 			while (!stopped) {
 				yield* Effect.sleep(1000);
 				publish();
+
 				if (desired?.state === "idle" && !pending && !pendingSession) break;
 			}
+
 			cancelReconcile = undefined;
 		});
 
 		return {
 			update(ctx: ExtensionContext, reportSession: boolean, reason?: string) {
 				context = ctx;
+
 				if (reportSession)
 					pendingSession = request("pane.report_agent_session", {
 						session_start_source: reason,
 					});
 				publish();
 			},
-			blocked(data: unknown) {
-				if (typeof data !== "object" || data === null) return;
-				if (!("active" in data) || !data.active) {
+			blocked(data: typeof BlockedEvent.Type) {
+				if (!data.active) {
 					blockedCount = Math.max(0, blockedCount - 1);
+
 					if (blockedCount === 0) blockedMessage = undefined;
 				} else {
 					blockedCount += 1;
-					blockedMessage =
-						"label" in data && typeof data.label === "string"
-							? data.label
-							: undefined;
+					blockedMessage = data.label;
 				}
+
 				publish();
 			},
 			stop() {
@@ -194,10 +236,15 @@ export default function (pi: ExtensionAPI) {
 		};
 	}
 
-	pi.events.on("herdr:blocked", (data: unknown) => session?.blocked(data));
+	pi.events.on("herdr:blocked", (data) => {
+		const event = decodeBlockedEvent(data);
+
+		if (Option.isSome(event)) session?.blocked(event.value);
+	});
 	pi.on("session_start", (event, ctx) => {
 		session?.stop();
 		session = undefined;
+
 		// RPC also has hasUI=true. Only a TUI session owns the Herdr pane.
 		if (ctx.mode !== "tui") return;
 		session = createSession(ctx);

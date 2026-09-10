@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { fastServiceTier, withFastServiceTier } from "../index.ts";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import {
+	ConfigProvider,
+	Effect,
+	FileSystem,
+	Layer,
+	Path,
+	Schema,
+} from "effect";
+import {
+	fastServiceTier,
+	loadShortcuts,
+	withFastServiceTier,
+} from "../index.ts";
 
 describe("gpt-fast-mode request mapping", () => {
 	for (const [provider, tier] of [
@@ -44,6 +58,7 @@ describe("gpt-fast-mode request mapping", () => {
 
 	test("preserves requests for other models and non-object payloads", () => {
 		const model = { provider: "openai", id: "gpt-5.6-sol" };
+
 		for (const payload of [
 			{ model: "gpt-5.5", input: "hello", service_tier: "auto" },
 			{},
@@ -55,14 +70,63 @@ describe("gpt-fast-mode request mapping", () => {
 		]) {
 			assert.equal(withFastServiceTier(model, payload), payload);
 		}
+
 		const payload = { model: model.id };
 		assert.equal(fastServiceTier(undefined), undefined);
 		assert.equal(withFastServiceTier(undefined, payload), payload);
 	});
 });
 
+test("loads shortcut settings, filtering invalid entries and preserving disable settings", () =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const path = yield* Path.Path;
+
+			const directory = yield* fs.makeTempDirectoryScoped({
+				prefix: "pi-fast-shortcuts-",
+			});
+
+			const load = loadShortcuts().pipe(
+				Effect.provideService(
+					ConfigProvider.ConfigProvider,
+					ConfigProvider.fromUnknown({ PI_CODING_AGENT_DIR: directory }),
+				),
+			);
+
+			assert.deepEqual(yield* load, ["ctrl+alt+m"]);
+
+			for (const [setting, expected] of [
+				[false, []],
+				[null, []],
+				[" ctrl+shift+f ", ["ctrl+shift+f"]],
+				[[1, null, {}, "", "enter", "CTRL+M", " ctrl+alt+f "], ["ctrl+alt+f"]],
+				[["return", " "], ["ctrl+alt+m"]],
+				[42, ["ctrl+alt+m"]],
+			]) {
+				yield* fs.writeFileString(
+					path.join(directory, "keybindings.json"),
+					yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+						"pi-gpt-fast-mode": setting,
+					}),
+				);
+				assert.deepEqual(yield* load, expected);
+			}
+
+			yield* fs.writeFileString(
+				path.join(directory, "keybindings.json"),
+				"invalid json",
+			);
+			assert.deepEqual(yield* load, ["ctrl+alt+m"]);
+		}).pipe(
+			Effect.scoped,
+			Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+		),
+	));
+
 test("/fast persists and announces toggles and only maps enabled requests", () => {
 	const { spawnSync } = process.getBuiltinModule("node:child_process");
+
 	const result = spawnSync(
 		process.execPath,
 		[
@@ -116,5 +180,6 @@ try {
 		],
 		{ encoding: "utf8", timeout: 10_000 },
 	);
+
 	assert.equal(result.status, 0, result.stderr);
 });

@@ -15,6 +15,7 @@ import {
 } from "../../test/tmux.ts";
 
 const skip = e2eUnavailable();
+
 const RUN_READOUT = /⏱️?\s*((?:\d+m)?\d+s)/;
 
 describe("session-timer (real pi in tmux)", { skip }, () => {
@@ -37,15 +38,19 @@ describe("session-timer (real pi in tmux)", { skip }, () => {
 				session,
 				"Create a file named timer-e2e-one.txt whose entire contents are exactly: timer-one",
 			);
+
 			const inFlight = yield* waitFor(session, RUN_READOUT, {
 				timeoutMs: 60_000,
 				description: "in-flight timer",
 			});
+
 			assert.match(inFlight, RUN_READOUT);
+
 			const settled = yield* waitFor(session, /done – (?:\d+ tok\/s|N\/A)/, {
 				timeoutMs: 120_000,
 				description: "retained completion status",
 			});
+
 			assert.doesNotMatch(settled, RUN_READOUT);
 			assert.equal(
 				(yield* waitForFile(session, "timer-e2e-one.txt")).trim(),
@@ -60,6 +65,7 @@ describe("session-timer (real pi in tmux)", { skip }, () => {
 			"Create a file named timer-e2e-two.txt whose entire contents are exactly: timer-two",
 			120_000,
 		);
+
 		assert.doesNotMatch(settled, RUN_READOUT);
 		assert.equal(
 			(yield* waitForFile(session, "timer-e2e-two.txt")).trim(),

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
 	ExtensionContext,
 	MessageEndEvent,
-	MessageStartEvent,
 	MessageUpdateEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
@@ -11,34 +11,42 @@ import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import tpsTracker from "../index.ts";
 
 const assistant = (output: number) =>
-	unsafeFixture<MessageStartEvent["message"]>({
+	unsafeFixture<AssistantMessage>({
 		role: "assistant",
-		usage: { output },
+		usage: unsafeFixture<AssistantMessage["usage"]>({ output }),
 	});
 
 const update = (output: number, delta: string): MessageUpdateEvent =>
 	unsafeFixture<MessageUpdateEvent>({
 		type: "message_update",
 		message: assistant(output),
-		assistantMessageEvent: { type: "text_delta", delta },
+		assistantMessageEvent: {
+			type: "text_delta",
+			delta,
+			contentIndex: 0,
+			partial: assistant(output),
+		},
 	});
 
 test("reports live and completed throughput from assistant stream timing", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			let now = 0;
-			const statuses: string[] = [];
-			const notifications: Array<[string, string]> = [];
+			const statuses: Array<string | undefined> = [];
+			const notifications: Parameters<ExtensionContext["ui"]["notify"]>[] = [];
+
 			const context = unsafeFixture<ExtensionContext>({
 				hasUI: true,
 				model: undefined,
 				ui: unsafeFixture<ExtensionContext["ui"]>({
-					theme: { fg: (_color: string, text: string) => text },
-					setStatus: (_key: string, value: string) => statuses.push(value),
-					notify: (message: string, level: string) =>
-						notifications.push([message, level]),
+					theme: unsafeFixture<ExtensionContext["ui"]["theme"]>({
+						fg: (_color, text) => text,
+					}),
+					setStatus: (_key, value) => statuses.push(value),
+					notify: (message, level) => notifications.push([message, level]),
 				}),
 			});
+
 			const adapter = extensionTestAdapter();
 			tpsTracker(adapter.api, { now: () => now });
 
@@ -89,17 +97,20 @@ test("preserves positive throughput when a short stream rounds to 0.0s", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			let now = 0;
-			const statuses: string[] = [];
-			const notifications: Array<[string, string]> = [];
+			const statuses: Array<string | undefined> = [];
+			const notifications: Parameters<ExtensionContext["ui"]["notify"]>[] = [];
+
 			const context = unsafeFixture<ExtensionContext>({
 				hasUI: true,
 				ui: unsafeFixture<ExtensionContext["ui"]>({
-					theme: { fg: (_color: string, text: string) => text },
-					setStatus: (_key: string, value: string) => statuses.push(value),
-					notify: (message: string, level: string) =>
-						notifications.push([message, level]),
+					theme: unsafeFixture<ExtensionContext["ui"]["theme"]>({
+						fg: (_color, text) => text,
+					}),
+					setStatus: (_key, value) => statuses.push(value),
+					notify: (message, level) => notifications.push([message, level]),
 				}),
 			});
+
 			const adapter = extensionTestAdapter();
 			tpsTracker(adapter.api, { now: () => now });
 

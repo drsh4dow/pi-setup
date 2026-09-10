@@ -1,45 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-	ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
-import extension, { BackgroundTerminalDelivery } from "../index.ts";
+import { BackgroundTerminalDelivery } from "../index.ts";
 import { NotificationFrames } from "../notifications.ts";
+import {
+	type DeliveryMessage,
+	type DeliveryOptions,
+	decodeMessage,
+	registeredExtension,
+	testContext,
+} from "./registration.ts";
 
 const { spawnSync } = process.getBuiltinModule("node:child_process");
-const noEvents = { emit() {}, on() {} };
-const context = {
+
+const context = testContext({
 	cwd: process.cwd(),
 	hasUI: true,
 	isIdle: () => true,
 	ui: { setStatus() {} },
-} as unknown as ExtensionContext;
-
-function registeredExtension(
-	sendMessage: (message: unknown, options: unknown) => void,
-) {
-	const tools: ToolDefinition[] = [];
-	const handlers = new Map<string, (...args: unknown[]) => unknown>();
-	extension({
-		events: noEvents,
-		on(name: string, handler: (...args: unknown[]) => unknown) {
-			handlers.set(name, handler);
-		},
-		registerCommand() {},
-		registerTool(tool: ToolDefinition) {
-			tools.push(tool);
-		},
-		sendMessage,
-	} as unknown as ExtensionAPI);
-	return { tools, handlers };
-}
+});
 
 const fromPromise = <A>(value: A | PromiseLike<A>) =>
 	Effect.promise(() => Promise.resolve(value));
+
 const eventually = Effect.fn("eventually")(function* (
 	condition: () => boolean,
 ) {
@@ -47,6 +31,7 @@ const eventually = Effect.fn("eventually")(function* (
 		if (condition()) return;
 		yield* Effect.sleep(25);
 	}
+
 	throw new Error("condition not met within 5 seconds");
 });
 
@@ -56,19 +41,17 @@ function lifecycle(
 ) {
 	return fromPromise(
 		registration.handlers.get(name)?.(
-			{
-				type: name,
-				reason: name === "session_start" ? "startup" : "quit",
-			},
+			name === "session_start"
+				? { type: "session_start", reason: "startup" }
+				: { type: "session_shutdown", reason: "quit" },
 			context,
 		),
 	);
 }
 
 function tools(registration: ReturnType<typeof registeredExtension>) {
-	const [start, status, , kill] = registration.tools as unknown as Array<{
-		execute: (...args: unknown[]) => Promise<unknown>;
-	}>;
+	const [start, status, , kill] = registration.tools;
+
 	return { start, status, kill };
 }
 
@@ -86,24 +69,27 @@ test("emit-to-pi wakes only the owner while its terminal keeps running", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const parentMessages: unknown[] = [];
-			const childMessages: Array<{
-				customType: string;
-				content: string;
-				options: { deliverAs: string; triggerTurn: boolean };
-			}> = [];
+
+			const childMessages: Array<
+				DeliveryMessage & { options: DeliveryOptions }
+			> = [];
+
 			const parent = registeredExtension((message) =>
 				parentMessages.push(message),
 			);
+
 			const child = registeredExtension((message, options) =>
 				childMessages.push({
-					...(message as { customType: string; content: string }),
-					options: options as { deliverAs: string; triggerTurn: boolean },
+					...message,
+					options,
 				}),
 			);
+
 			yield* lifecycle(parent, "session_start");
 			yield* lifecycle(child, "session_start");
 			const { start, status, kill } = tools(child);
-			const started = (yield* Effect.promise(() =>
+
+			const started = yield* Effect.promise(() =>
 				start.execute(
 					"emit",
 					{
@@ -115,7 +101,8 @@ test("emit-to-pi wakes only the owner while its terminal keeps running", () =>
 					undefined,
 					context,
 				),
-			)) as { details: { id: string; pid: number } };
+			);
+
 			try {
 				yield* eventually(() => childMessages.length === 1);
 				assert.equal(parentMessages.length, 0);
@@ -128,9 +115,11 @@ test("emit-to-pi wakes only the owner while its terminal keeps running", () =>
 					deliverAs: "steer",
 					triggerTurn: true,
 				});
-				const running = (yield* Effect.promise(() =>
+
+				const running = yield* Effect.promise(() =>
 					status.execute("status", { id: started.details.id }),
-				)) as { content: [{ text: string }] };
+				);
+
 				assert.match(running.content[0].text, /\[running\]/);
 				process.kill(started.details.pid, "SIGUSR1");
 				yield* eventually(() => childMessages.length === 2);
@@ -158,12 +147,15 @@ test("concurrent emitters preserve every frame", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const deliveries: Array<{ content: string }> = [];
+
 			const registration = registeredExtension((message) =>
-				deliveries.push(message as { content: string }),
+				deliveries.push(message),
 			);
+
 			yield* lifecycle(registration, "session_start");
 			const { start, kill } = tools(registration);
-			const started = (yield* Effect.promise(() =>
+
+			const started = yield* Effect.promise(() =>
 				start.execute(
 					"emit-many",
 					{
@@ -175,7 +167,8 @@ test("concurrent emitters preserve every frame", () =>
 					undefined,
 					context,
 				),
-			)) as { details: { id: string } };
+			);
+
 			try {
 				yield* eventually(() =>
 					Array.from({ length: 20 }, (_, index) => `frame-${index + 1}`).every(
@@ -198,11 +191,13 @@ test("queued delivery keeps live notifications and drops settled ones", () =>
 	Effect.runPromise(
 		Effect.gen(function* () {
 			const messages: Array<{ content: string }> = [];
+
 			const delivery = new BackgroundTerminalDelivery({
-				sendMessage(message: unknown) {
-					messages.push(message as { content: string });
+				sendMessage(message) {
+					messages.push(decodeMessage(message));
 				},
-			} as ExtensionAPI);
+			});
+
 			delivery.setContext({ ...context, isIdle: () => false });
 			delivery.enqueueNotification({
 				id: "bt-1:notification-1",
@@ -230,10 +225,12 @@ test("emit-to-pi fails outside an owned background terminal", () => {
 	const cli = new URL("../bin/emit-to-pi.mjs", import.meta.url);
 	const env = { ...process.env };
 	delete env.PI_BACKGROUND_TERMINAL_NOTIFY_FD;
+
 	const result = spawnSync(process.execPath, [fileURLToPath(cli), "hello"], {
 		env,
 		encoding: "utf8",
 	});
+
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /Pi-owned background terminal/);
 });

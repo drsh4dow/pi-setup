@@ -32,19 +32,22 @@ const piFileServices = (session: PiSession) =>
 			ConfigProvider.fromUnknown({ PI_CODING_AGENT_DIR: session.agentDir }),
 		),
 	);
+
 const persistedEnabled = (session: PiSession) =>
 	loadEnabled().pipe(Effect.provide(piFileServices(session)));
 
-function footerModel(pane: string): { provider: string; id: string } {
+function footerModel(pane: string) {
 	const matches = [...pane.matchAll(/\(([a-z0-9-]+)\)\s+(\S+)\s+•/g)];
 	const last = matches.at(-1);
 	assert.ok(last, `could not read the footer model from pane:\n${pane}`);
+
 	return { provider: last[1], id: last[2] };
 }
 
 function noticeFor(enabled: boolean, model: { provider: string; id: string }) {
 	if (!enabled) return /GPT Fast mode disabled\./;
 	const serviceTier = fastServiceTier(model);
+
 	return serviceTier
 		? new RegExp(`GPT Fast mode enabled \\(service_tier: ${serviceTier}\\)\\.`)
 		: /GPT Fast mode enabled, but .+ is not supported\./;

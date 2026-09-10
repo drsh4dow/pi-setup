@@ -1,47 +1,42 @@
 import type {
-	AgentEndEvent,
-	AgentStartEvent,
 	ExtensionAPI,
 	ExtensionContext,
 	ExtensionEvent,
 	ExtensionHandler,
-	MessageEndEvent,
-	MessageStartEvent,
-	MessageUpdateEvent,
-	SessionShutdownEvent,
-	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 
-type TestEvents = {
-	agent_start: AgentStartEvent;
-	agent_end: AgentEndEvent;
-	message_start: MessageStartEvent;
-	message_update: MessageUpdateEvent;
-	message_end: MessageEndEvent;
-	session_start: SessionStartEvent;
-	model_select: Extract<ExtensionEvent, { type: "model_select" }>;
-	session_shutdown: SessionShutdownEvent;
+type TestEventName =
+	| "agent_start"
+	| "agent_end"
+	| "message_start"
+	| "message_update"
+	| "message_end"
+	| "session_start"
+	| "model_select"
+	| "session_shutdown";
+
+type SDKEvents = {
+	[Event in ExtensionEvent as Event["type"]]: Event;
 };
 
-type TestEventName = keyof TestEvents;
-type Handlers = Partial<Record<TestEventName, unknown>>;
+type Handlers = {
+	[Name in keyof SDKEvents]?: ExtensionHandler<SDKEvents[Name], unknown>;
+};
 
 export interface ExtensionTestAdapter {
 	readonly api: ExtensionAPI;
 	emit<Name extends TestEventName>(
 		name: Name,
-		event: TestEvents[Name],
+		event: SDKEvents[Name],
 		context: ExtensionContext,
 	): Promise<void>;
 }
 
 export function extensionTestAdapter(): ExtensionTestAdapter {
 	const handlers: Handlers = {};
+
 	const registration = {
-		on<Name extends TestEventName>(
-			name: Name,
-			handler: ExtensionHandler<TestEvents[Name]>,
-		) {
+		on<Name extends keyof SDKEvents>(name: Name, handler: Handlers[Name]) {
 			handlers[name] = handler;
 		},
 	};
@@ -50,11 +45,11 @@ export function extensionTestAdapter(): ExtensionTestAdapter {
 		api: unsafeFixture<ExtensionAPI>(registration),
 		emit(name, event, context) {
 			const registered = handlers[name];
+
 			if (!registered)
 				return Promise.reject(new Error(`No handler registered for ${name}`));
-			const handler =
-				unsafeFixture<ExtensionHandler<TestEvents[typeof name]>>(registered);
-			return Promise.resolve(handler(event, context)).then(() => undefined);
+
+			return Promise.resolve(registered(event, context)).then(() => undefined);
 		},
 	};
 }
@@ -63,6 +58,7 @@ export function extensionTestAdapter(): ExtensionTestAdapter {
  * Marks intentionally partial SDK fixtures at the test boundary. Production code
  * never receives these values; each test supplies the fields its handler reads.
  */
-export function unsafeFixture<T>(value: unknown): T {
+export function unsafeFixture<T>(value: Partial<T>): T {
+	// SAFETY: Tests supply every field exercised by the handler; omitted SDK fields are never read.
 	return value as T;
 }

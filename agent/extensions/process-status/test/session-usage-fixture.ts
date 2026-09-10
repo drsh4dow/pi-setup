@@ -9,18 +9,21 @@ import { unsafeFixture } from "../../test/adapter.ts";
 import extension from "../index.ts";
 
 export function querySessionUsage(sessionManager: SessionManager) {
-	let tool: ToolDefinition | undefined;
-	const pi = {
+	let tool: Pick<ToolDefinition, "execute"> | undefined;
+
+	const pi = unsafeFixture<ExtensionAPI>({
 		events: { emit() {}, on: () => () => {} },
 		on() {},
-		registerTool(value: ToolDefinition) {
+		registerTool(value) {
 			tool = value;
 		},
 		registerEntryRenderer() {},
 		registerCommand() {},
-	} as unknown as ExtensionAPI;
+	});
+
 	extension(pi);
 	assert.ok(tool);
 	const context = unsafeFixture<ExtensionContext>({ sessionManager });
+
 	return tool.execute("usage", {}, undefined, undefined, context);
 }

@@ -33,39 +33,48 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 	const clientId = Symbol("background-terminal-client");
 	let session: BackgroundTerminalSession | undefined;
 	const observations = new Map<string, object>();
+
 	const currentSession = () => {
 		if (!session)
 			throw new Error(
 				"Background terminals are unavailable before session start.",
 			);
+
 		return session;
 	};
+
 	const updateStatus = () => requestProcessStatusRefresh(pi);
 	const client = { delivery, updateStatus };
 
 	registerProcessStatusSource(pi, "background-terminals", () => {
 		if (!session) return [];
+
 		return session.list(clientId).map((snapshot) => ({
 			id: snapshot.id,
 			active: snapshot.state === "running",
 			summary: statusSummary(snapshot),
 			detail: () => {
 				const current = session?.get(clientId, snapshot.id);
+
 				if (!current) throw new Error(`error=not-tracked id=${snapshot.id}`);
+
 				return formatTerminalDetails(current);
 			},
 		}));
 	});
+
 	const leaveSession = Effect.fn("leaveSession")(function* () {
 		const joined = session;
 		session = undefined;
 		observations.clear();
 		updateStatus();
+
 		if (joined) yield* joined.leave(clientId);
 	});
 
 	pi.on("session_start", (_event, ctx) => {
 		delivery.setContext(ctx);
+
 		if (!session) session = joinBackgroundTerminalSession(clientId, client);
 		updateStatus();
 	});
@@ -95,18 +104,22 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			return Effect.runPromise(
 				Effect.gen(function* () {
 					const command = params.command.trim();
+
 					if (!command) throw new Error("command must not be empty.");
 					const fs = yield* FileSystem.FileSystem;
 					const path = yield* Path.Path;
 					const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
+
 					const cwdIsDirectory = yield* fs.stat(cwd).pipe(
 						Effect.map((info) => info.type === "Directory"),
 						Effect.orElseSucceed(() => false),
 					);
+
 					if (!cwdIsDirectory)
 						throw new Error(
 							`working_dir is not a directory: ${sanitizeInline(cwd)}`,
 						);
+
 					const snapshot = yield* Effect.sync(() => {
 						try {
 							return currentSession().start(clientId, {
@@ -118,10 +131,14 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 								cwd,
 							});
 						} catch (error) {
-							throw sanitizeErrorForDisplay(error);
+							throw sanitizeErrorForDisplay(
+								error instanceof Error ? error : String(error),
+							);
 						}
 					});
+
 					updateStatus();
+
 					return {
 						content: [
 							{
@@ -147,30 +164,39 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 				Effect.sync(() => {
 					const terminalSession = currentSession();
 					const snapshot = terminalSession.get(clientId, params.id);
+
 					if (!snapshot)
 						throw new Error(
 							`Unknown terminal id "${sanitizeInline(params.id)}".`,
 						);
+
 					if (snapshot.state !== "running")
 						terminalSession.consume(clientId, [snapshot.id]);
+
 					const evidence = {
 						...terminalMetadata(snapshot),
 						process:
 							snapshot.state === "running" ? snapshot.process : snapshot.result,
 					};
+
 					const previous = observations.get(snapshot.id);
+
 					const observation =
 						previous === undefined
 							? "first"
 							: isDeepStrictEqual(previous, evidence)
 								? "unchanged"
 								: "changed";
+
 					observations.delete(snapshot.id);
 					observations.set(snapshot.id, evidence);
+
 					if (observations.size > MAX_TRACKED) {
 						const oldest = observations.keys().next();
+
 						if (!oldest.done) observations.delete(oldest.value);
 					}
+
 					return {
 						content: [
 							{
@@ -195,9 +221,11 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			return Effect.runPromise(
 				Effect.sync(() => {
 					const entries = currentSession().list(clientId);
+
 					const terminals = entries.length
 						? entries.map(summary).join("\n")
 						: "No background terminals.";
+
 					return {
 						content: [
 							{
@@ -229,16 +257,20 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			const ids = [...new Set(params.ids)];
 			const terminalSession = currentSession();
 			let killError: unknown;
+
 			const work = Effect.runPromise(
 				Effect.suspend(() => terminalSession.kill(clientId, ids)),
 			);
+
 			work.catch((error) => {
 				killError = error;
 			});
+
 			return Effect.runPromise(
 				Effect.promise(() => work).pipe(
 					Effect.map((results) => {
 						terminalSession.consume(clientId, ids);
+
 						return {
 							content: [
 								{
@@ -264,13 +296,18 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			).catch((error) => {
 				// An abort only interrupts the wait. A failure of the kill itself
 				// must surface even when the signal is also aborted.
-				if (killError !== undefined) throw sanitizeErrorForDisplay(killError);
+				if (killError !== undefined)
+					throw sanitizeErrorForDisplay(
+						killError instanceof Error ? killError : String(killError),
+					);
 				throw sanitizeErrorForDisplay(
 					signal?.aborted
 						? new Error(
 								"Kill wait aborted; termination continues in the background.",
 							)
-						: error,
+						: error instanceof Error
+							? error
+							: String(error),
 				);
 			});
 		},

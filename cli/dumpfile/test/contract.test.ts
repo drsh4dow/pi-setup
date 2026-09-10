@@ -25,10 +25,12 @@ test("supported extensions render inline and other media types download", () => 
 		["webm", "video/webm"],
 		["webp", "image/webp"],
 	];
+
 	for (const [extension, contentType] of formats) {
 		assert.equal(contentTypeForExtension(extension), contentType);
 		assert.equal(dispositionForContentType(contentType), "inline");
 	}
+
 	for (const extension of [
 		"",
 		"html",
@@ -43,6 +45,7 @@ test("supported extensions render inline and other media types download", () => 
 			contentTypeForExtension(extension),
 			"application/octet-stream",
 		);
+
 	for (const contentType of [
 		"application/octet-stream",
 		"text/html",

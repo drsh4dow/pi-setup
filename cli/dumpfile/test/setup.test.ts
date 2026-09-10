@@ -18,6 +18,7 @@ for (const approval of ["", "expire dumpfile-prod uploads"]) {
 		t.after(() => rm(root, { recursive: true, force: true }));
 		const bin = join(root, "bin");
 		await mkdir(bin);
+
 		for (const command of [
 			"bun",
 			"bunx",
@@ -44,7 +45,9 @@ fi
 			);
 			await chmod(path, 0o700);
 		}
+
 		const calls = join(root, "calls");
+
 		const result = spawnSync(
 			"bash",
 			[new URL("../setup.sh", import.meta.url).pathname],
@@ -60,6 +63,7 @@ fi
 				encoding: "utf8",
 			},
 		);
+
 		// Stop at the next human credential boundary, before deployment or uploads.
 		assert.equal(result.status, 1, result.stdout + result.stderr);
 		const commands = await readFile(calls, "utf8");
@@ -90,8 +94,10 @@ test("setup replaces a legacy cached proof URL without deleting the old upload",
 		join(root, "dumpfile/setup.env"),
 		"DUMPFILE_VERIFIED_URL=https://files.drsh4dow.dev/old.png\n",
 	);
+
 	const fixture =
 		"89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415408d763f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082";
+
 	for (const command of [
 		"bun",
 		"bunx",
@@ -127,7 +133,9 @@ esac
 		);
 		await chmod(path, 0o700);
 	}
+
 	const calls = join(root, "calls");
+
 	const result = spawnSync(
 		"bash",
 		[new URL("../setup.sh", import.meta.url).pathname],
@@ -145,6 +153,7 @@ esac
 			encoding: "utf8",
 		},
 	);
+
 	assert.equal(result.status, 0, result.stdout + result.stderr);
 	const commands = await readFile(calls, "utf8");
 	assert.match(commands, /cli.ts upload/);

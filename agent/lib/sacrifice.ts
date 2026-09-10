@@ -4,6 +4,7 @@ const { execFileSync } = process.getBuiltinModule("node:child_process");
 // system memory pressure earlyoom kills the task, never the session. Unprivileged
 // processes may only raise the value, which is all this needs.
 const OOM_SCORE_ADJ = 500;
+
 const LINUX = process.platform === "linux";
 
 // The group redirection also silences the shell's redirection-failure message on
@@ -15,10 +16,12 @@ export function tagCommand(command: string): string {
 }
 
 const JOURNAL_TIMEOUT_MS = 1_500;
+
 const JOURNAL_MAX_BYTES = 256 * 1024;
 
 export function earlyoomKillSince(sinceEpochMs: number): boolean {
 	if (!LINUX) return false;
+
 	try {
 		const log = execFileSync(
 			"journalctl",
@@ -39,6 +42,7 @@ export function earlyoomKillSince(sinceEpochMs: number): boolean {
 				stdio: ["ignore", "pipe", "ignore"],
 			},
 		);
+
 		return /sending SIG(TERM|KILL) to process/.test(log);
 	} catch {
 		return false;
@@ -56,6 +60,8 @@ export function sacrificeKillNote(
 		death.signal === "SIGKILL" ||
 		death.exitCode === 137 ||
 		death.exitCode === 143;
+
 	if (!signalish || !earlyoomKillSince(sinceEpochMs)) return undefined;
+
 	return "likely killed by earlyoom under system memory pressure; pi-spawned work dies before the session";
 }

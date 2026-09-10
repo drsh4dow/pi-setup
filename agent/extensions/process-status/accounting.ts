@@ -1,5 +1,10 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { Record, Schema } from "effect";
+
+const isReportedValue = Schema.is(
+	Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
+);
 
 export function sessionReportedUsage(entries: readonly SessionEntry[]) {
 	const totals = {
@@ -10,10 +15,13 @@ export function sessionReportedUsage(entries: readonly SessionEntry[]) {
 		totalTokens: 0,
 		cost: 0,
 	};
+
 	const unavailable = new Set<keyof typeof totals>();
 	let sawUsage = false;
+
 	for (const entry of entries) {
 		let usage: Usage | undefined;
+
 		if (
 			entry.type === "message" &&
 			(entry.message.role === "assistant" ||
@@ -23,17 +31,20 @@ export function sessionReportedUsage(entries: readonly SessionEntry[]) {
 		} else if (entry.type === "branch_summary" || entry.type === "compaction") {
 			usage = entry.usage;
 		}
+
 		if (!usage) {
 			if (
 				usage !== undefined ||
 				(entry.type === "message" && entry.message.role === "assistant")
 			) {
-				for (const field of Object.keys(totals) as (keyof typeof totals)[])
-					unavailable.add(field);
+				for (const field of Record.keys(totals)) unavailable.add(field);
 			}
+
 			continue;
 		}
+
 		sawUsage = true;
+
 		const values = {
 			input: usage.input,
 			output: usage.output,
@@ -42,16 +53,18 @@ export function sessionReportedUsage(entries: readonly SessionEntry[]) {
 			totalTokens: usage.totalTokens,
 			cost: usage.cost?.total,
 		};
-		for (const field of Object.keys(totals) as (keyof typeof totals)[]) {
+
+		for (const field of Record.keys(totals)) {
 			const value = values[field];
-			if (typeof value === "number" && Number.isFinite(value) && value >= 0)
-				totals[field] += value;
+
+			if (isReportedValue(value)) totals[field] += value;
 			else unavailable.add(field);
 		}
 	}
+
 	if (!sawUsage)
-		for (const field of Object.keys(totals) as (keyof typeof totals)[])
-			unavailable.add(field);
+		for (const field of Record.keys(totals)) unavailable.add(field);
+
 	return {
 		input: unavailable.has("input") ? null : totals.input,
 		output: unavailable.has("output") ? null : totals.output,

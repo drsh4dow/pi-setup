@@ -14,15 +14,22 @@ import {
 import type { RunningTerminalNotification } from "./notifications.ts";
 
 const MAX_LINES = 80;
+
 const MAX_TEXT = 24 * 1024;
+
 const COMPLETION_TEXT_BYTES = 3_584;
+
 const COMPLETION_BATCH_BYTES = 256 * 1024;
+
 const MAX_DELIVERY_ATTEMPTS = 3;
+
 const RETRY_DELAYS_MS = [100, 500] as const;
+
 const logError = (message: string) => Effect.runSync(Effect.logError(message));
 
 export function sanitizeMultiline(text: string): string {
 	let sanitized = "";
+
 	for (const character of text) {
 		const code = character.codePointAt(0) ?? 0;
 		sanitized +=
@@ -34,32 +41,42 @@ export function sanitizeMultiline(text: string): string {
 				? character
 				: "�";
 	}
+
 	return sanitized;
 }
+
 export function sanitizeInline(text: string): string {
 	return sanitizeMultiline(text).replace(/\s+/gu, " ");
 }
-export function sanitizeErrorForDisplay(error: unknown): Error {
+
+export function sanitizeErrorForDisplay(error: Error | string): Error {
 	const message = error instanceof Error ? error.message : String(error);
+
 	return new Error(sanitizeInline(message));
 }
+
 function tail(text: string, maxBytes = MAX_TEXT): string {
 	// Sanitization can expand each replaced character to three bytes.
 	const bounded = truncateUtf8Tail(text, maxBytes * 3);
+
 	return truncateUtf8Tail(sanitizeMultiline(bounded), maxBytes)
 		.split("\n")
 		.slice(-MAX_LINES)
 		.join("\n");
 }
+
 function elapsed(snapshot: TerminalMetadata): string {
 	const end =
 		snapshot.state === "running"
 			? Effect.runSync(Clock.currentTimeMillis)
 			: snapshot.settledAt;
+
 	return `${Math.max(0, Math.round((end - snapshot.createdAt) / 1000))}s`;
 }
+
 export function statusSummary(snapshot: TerminalMetadata): string {
 	const fields = terminalResultFields(snapshot);
+
 	const exit =
 		snapshot.state === "running"
 			? "running"
@@ -67,13 +84,17 @@ export function statusSummary(snapshot: TerminalMetadata): string {
 				(fields.exitCode === undefined
 					? snapshot.state
 					: `exit ${fields.exitCode}`));
+
 	return `[${snapshot.state}] ${sanitizeInline(snapshot.title)} · ${exit} · ${elapsed(snapshot)}`;
 }
+
 export function summary(snapshot: TerminalMetadata): string {
 	return `${sanitizeInline(snapshot.id)} ${statusSummary(snapshot)}`;
 }
+
 export function terminalMetadata(snapshot: TerminalMetadata) {
 	const fields = terminalResultFields(snapshot);
+
 	return {
 		id: sanitizeInline(snapshot.id),
 		title: sanitizeInline(snapshot.title),
@@ -86,6 +107,7 @@ export function terminalMetadata(snapshot: TerminalMetadata) {
 		stderrBytes: snapshot.stderr.totalBytes,
 	};
 }
+
 export function formatTerminalDetails(
 	snapshot: TerminalSnapshot,
 	outputBytes = MAX_TEXT,
@@ -94,23 +116,31 @@ export function formatTerminalDetails(
 		`command: ${sanitizeInline(snapshot.command)}`,
 		`cwd: ${sanitizeInline(snapshot.cwd)}`,
 	];
+
 	for (const [name, output] of [
 		["stdout", snapshot.stdout],
 		["stderr", snapshot.stderr],
 	] as const) {
 		if (output.totalBytes === 0) continue;
+
 		const omitted =
 			output.truncatedBytes > 0
 				? ` (${output.truncatedBytes} earlier bytes omitted)`
 				: "";
+
 		sections.push(`\n${name}${omitted}:\n${tail(output.text, outputBytes)}`);
 	}
+
 	const error = terminalResultFields(snapshot).error;
+
 	if (error) sections.push(`\nerror: ${sanitizeInline(error)}`);
+
 	if (snapshot.stdout.truncatedBytes || snapshot.stderr.truncatedBytes)
 		sections.push("\noutput-retention: bounded-tail");
+
 	return sections.join("\n");
 }
+
 export function formatTerminalReport(
 	snapshot: TerminalSnapshot,
 	outputBytes = MAX_TEXT,
@@ -156,6 +186,7 @@ export class BackgroundTerminalDelivery {
 	}
 	get problem(): string | undefined {
 		if (this.failed.size === 0) return undefined;
+
 		return `Automatic background-terminal delivery failed for ${[...this.failed].join(", ")}. Use bg_status to inspect terminal state.`;
 	}
 	setContext(context: ExtensionContext) {
@@ -163,15 +194,19 @@ export class BackgroundTerminalDelivery {
 	}
 	private markFailed(id: string) {
 		this.failed.add(id);
+
 		if (this.failed.size <= MAX_TRACKED) return;
 		const oldest = this.failed.values().next();
+
 		if (!oldest.done) this.failed.delete(oldest.value);
 	}
 	private queue(item: DeliveryItem) {
 		if (!this.context) return;
+
 		const sameKind = [...this.pending.values()].filter(
 			(pending) => pending.kind === item.kind,
 		);
+
 		if (!this.pending.has(item.id) && sameKind.length === MAX_TRACKED) {
 			const [oldest] = sameKind;
 			this.pending.delete(oldest.id);
@@ -181,7 +216,9 @@ export class BackgroundTerminalDelivery {
 				`[background-terminals] ${item.kind} queue evicted ${oldest.id}${item.kind === "completion" ? "; use bg_status to inspect it" : ""}.`,
 			);
 		}
+
 		this.pending.set(item.id, item);
+
 		// Results steer into a running agent right after the current tool
 		// batch; notifications wait for idle so settled terminals can drop
 		// their pending notifications first.
@@ -206,12 +243,11 @@ export class BackgroundTerminalDelivery {
 	}
 	terminalSettled(terminalId: string) {
 		this.consume(
-			[...this.pending.values()]
-				.filter(
-					(item) =>
-						item.kind === "notification" && item.terminalId === terminalId,
-				)
-				.map((item) => item.id),
+			[...this.pending.values()].flatMap((item) =>
+				item.kind === "notification" && item.terminalId === terminalId
+					? [item.id]
+					: [],
+			),
 		);
 	}
 	consume(ids: readonly string[]) {
@@ -223,26 +259,34 @@ export class BackgroundTerminalDelivery {
 	}
 	private batch(kind: DeliveryItem["kind"]) {
 		const items: DeliveryItem[] = [];
+
 		const parts = [
 			kind === "notification"
 				? "[Background terminal notifications]\n\n"
 				: "[Background terminal results]\n\n",
 		];
+
 		let bytes = Buffer.byteLength(parts[0]);
+
 		for (const item of this.pending.values()) {
 			if (
 				item.kind !== kind ||
 				(this.attempts.get(item.id) ?? 0) >= MAX_DELIVERY_ATTEMPTS
 			)
 				continue;
+
 			let rendered =
 				item.kind === "notification"
 					? formatTerminalNotification(item.notification)
 					: formatTerminalReport(item.snapshot, COMPLETION_TEXT_BYTES);
+
 			const separator = items.length ? "\n\n---\n\n" : "";
+
 			let addedBytes =
 				Buffer.byteLength(separator) + Buffer.byteLength(rendered);
+
 			if (items.length && bytes + addedBytes > COMPLETION_BATCH_BYTES) break;
+
 			if (
 				item.kind === "completion" &&
 				bytes + addedBytes > COMPLETION_BATCH_BYTES
@@ -250,10 +294,12 @@ export class BackgroundTerminalDelivery {
 				rendered = `${summary(item.snapshot)}\nCompletion detail exceeded the delivery limit; use bg_status ${item.id}.`;
 				addedBytes = Buffer.byteLength(rendered);
 			}
+
 			parts.push(separator, rendered);
 			bytes += addedBytes;
 			items.push(item);
 		}
+
 		return items.length ? { kind, items, content: parts.join("") } : undefined;
 	}
 	private scheduleRetry(attempt: number) {
@@ -273,11 +319,14 @@ export class BackgroundTerminalDelivery {
 		if (this.flushState === "flushing" || !this.context) return;
 		this.retryGeneration++;
 		this.flushState = "flushing";
+
 		try {
 			for (let sent = 0; sent < MAX_TRACKED * 2; sent++) {
 				const batch = this.batch("notification") ?? this.batch("completion");
+
 				if (!batch) return;
 				const ids = batch.items.map((item) => item.id);
+
 				try {
 					this.pi.sendMessage(
 						{
@@ -295,20 +344,25 @@ export class BackgroundTerminalDelivery {
 				} catch (error) {
 					const retryable: number[] = [];
 					const exhausted: string[] = [];
+
 					for (const id of ids) {
 						const attempt = (this.attempts.get(id) ?? 0) + 1;
 						this.attempts.set(id, attempt);
+
 						if (attempt < MAX_DELIVERY_ATTEMPTS) retryable.push(attempt);
 						else {
 							this.markFailed(id);
 							exhausted.push(id);
 						}
 					}
+
 					if (retryable.length) this.scheduleRetry(Math.max(...retryable));
+
 					if (exhausted.length)
 						this.reportError(
 							`[background-terminals] ${batch.kind} delivery failed for ${exhausted.join(", ")}${batch.kind === "completion" ? "; use bg_status to inspect retained results" : ""}: ${sanitizeInline(String(error).slice(0, 512))}`,
 						);
+
 					return;
 				}
 			}

@@ -35,9 +35,9 @@ Configuration changes take effect after `/reload`. Keep labels stable while sess
 
 ## Usage
 
-Run `/codex-usage` to show every configured account's weekly percentage remaining, reset time, reading age, and retrieval errors. The current account is marked. A session pinned to the original login also shows that login. The command does not select or change an account.
+Run `/codex-usage` to fetch fresh usage for every configured account and show its weekly percentage remaining, reset time, reading age, and retrieval errors. The current account is marked. A session pinned to the original login also shows that login. The command does not select or change an account. The footer shows `Fetching Codex usage...` while the refresh runs.
 
-Selection and the command share a persistent 15-minute cache. Concurrent refreshes are coalesced across local sessions and processes. There is no background polling and no extra usage query per prompt. Normal response headers update readings when available. Failed refreshes retain previous readings for display, honor `Retry-After`, and back off; stale readings cannot win selection.
+Automatic selection uses a persistent 15-minute cache and coalesces concurrent reads across local sessions and processes. `/codex-usage` bypasses that cache and local retry delays, but still honors server `Retry-After` limits. Each command invocation requests fresh readings and updates the shared cache without changing the session's account. There is no background polling or extra usage query per prompt. Normal response headers also update readings when available. Failed refreshes retain previous readings for display; stale readings cannot win selection.
 
 Usage requests use ChatGPT's internal `GET /backend-api/wham/usage` endpoint, as implemented by the [official Codex client](https://github.com/openai/codex/blob/7c88f037d935b4e78311027c32da4f046fd84058/codex-rs/backend-client/src/client/rate_limit_resets.rs). It is not a public HTTP API contract and may change. The weekly window is identified by duration, not by whether the server calls it primary or secondary. Passive readings use the [official Codex response headers](https://github.com/openai/codex/blob/7c88f037d935b4e78311027c32da4f046fd84058/codex-rs/codex-api/src/rate_limits.rs).
 

@@ -1,6 +1,6 @@
 ---
 name: babysit-pr
-description: Guide to babysit a PR. Use after creating a PR or when the user says babysit the PR.
+description: "Monitor a PR after it's opened: respond to review feedback, fix CI, and drive it to merge. Use after creating a PR or when the user says \"babysit the PR\"."
 ---
 
 # Babysit a PR

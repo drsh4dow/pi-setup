@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Review a branch, PR, or work-in-progress diff against repository standards and the requested behavior. Use for code review or "review since X".
+description: Review a branch, PR, or work-in-progress diff against repository standards and the requested behavior. Use for code review requests or "review since X".
 ---
 
 # Code review

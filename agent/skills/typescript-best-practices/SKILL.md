@@ -1,6 +1,6 @@
 ---
 name: typescript-best-practices
-description: TypeScript best practices. Use when reading or editing any .ts or .tsx file.
+description: Apply TypeScript conventions when reading or editing code. Use for any work touching .ts or .tsx files.
 paths: ["**/*.ts", "**/*.tsx"]
 disable-model-invocation: false
 ---

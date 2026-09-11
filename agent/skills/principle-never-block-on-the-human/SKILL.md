@@ -1,6 +1,6 @@
 ---
 name: principle-never-block-on-the-human
-description: "Apply when tempted to ask 'should I do X?' on reversible work. Proceed, present the result, let the human course-correct after the fact; reserve confirmation for irreversible actions."
+description: "Proceed on reversible work and let the human course-correct after the fact. Use when tempted to ask 'should I do X?' on something reversible."
 disable-model-invocation: false
 ---
 

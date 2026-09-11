@@ -1,6 +1,6 @@
 ---
 name: principle-laziness-protocol
-description: "Apply when refactoring, evaluating diff size, or tempted to add abstractions, layers, or signal threading. Bias toward deletion and the smallest change that solves the problem."
+description: "Bias toward deletion and the smallest change that solves the problem. Use when refactoring, judging diff size, or tempted to add abstractions."
 disable-model-invocation: false
 ---
 

@@ -50,9 +50,7 @@ The inventories below are checked against git-tracked setup files by `agent/scri
 
 | Extension | What it adds |
 | --- | --- |
-| `aoauth` | Anthropic OAuth login support |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
-| `edit-feedback` | Bounded line-numbered context and recovery hints for rejected edits |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
 | `herdr-agent-state` | Herdr pane state and Pi session reporting, with idle reconciliation independent of background processes |
 | `process-status` | `/ps` views for background terminals and the `session_usage` tool |
@@ -70,8 +68,6 @@ The `prompt-context` extension supplements custom system prompts with active-too
 Use `bash` by default. Use `bg_start` for services and watchers. Use it for finite commands when there is useful independent work to do. A finite command's natural exit wakes the owner with its actual exit status, including success. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
 
 Use `bg_status` for immediate inspection, not polling. Its bounded observations distinguish the first read, changed state/output, and unchanged evidence; elapsed time alone is not a change. Completion and `emit-to-pi` events wake the owner. When no useful independent work remains, answer the user. Use `bg_kill` to terminate a command. Full logs still require explicit redirection.
-
-The `edit-feedback` extension preserves Pi's built-in matching, batch atomicity, and cancellation. Rejected edits include bounded candidate line locations and recovery guidance from the original file. These are navigation hints, never permission to apply an ambiguous replacement.
 
 ### Installed skills
 

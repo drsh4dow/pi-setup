@@ -1,6 +1,6 @@
 ---
 name: web-search
-description: Use to Search, scrape, and interact with the web.
+description: Guide to search the web. Use to Search, scrape, and interact with the web.
 ---
 
 # Web search

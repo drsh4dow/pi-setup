@@ -1,6 +1,6 @@
 ---
 name: principle-guard-the-context-window
-description: "Apply when context is filling up: large outputs, long files, repeated reads, broad investigations. Use targeted searches, bounded reads, and file-backed logs; retain concise evidence and decisions."
+description: "Protect context with targeted searches, bounded reads, and file-backed logs. Use when context fills up from large outputs, long files, repeated reads, or broad investigations."
 disable-model-invocation: false
 ---
 

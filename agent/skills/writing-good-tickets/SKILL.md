@@ -1,6 +1,6 @@
 ---
 name: writing-good-tickets
-description: Use before writing an issue/ticket.
+description: Write a strong issue. Use before creating or updating a ticket.
 user-invokable: false
 ---
 

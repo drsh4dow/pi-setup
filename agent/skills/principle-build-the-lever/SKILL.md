@@ -1,6 +1,6 @@
 ---
 name: principle-build-the-lever
-description: "Apply to any non-trivial work, not just bulk work: edits, migrations, analyses, checks. Build a codemod, script, generator, or rerunnable check that does or proves the work instead of working by hand. The tool is the artifact a reviewer can rerun."
+description: "Do or prove non-trivial work with a rerunnable tool instead of by hand. Use for edits, migrations, analyses, or checks a reviewer should be able to rerun."
 disable-model-invocation: false
 ---
 # Build the Lever

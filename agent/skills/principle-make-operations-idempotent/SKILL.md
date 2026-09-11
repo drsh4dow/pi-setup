@@ -1,6 +1,6 @@
 ---
 name: principle-make-operations-idempotent
-description: "Apply when designing commands, lifecycle steps, or processing loops that run amid crashes, restarts, and retries. Converge to the same end state regardless of partial prior runs."
+description: "Design operations to converge to the same end state regardless of partial prior runs. Use when designing commands, lifecycle steps, or loops that face crashes, restarts, or retries."
 disable-model-invocation: false
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: docs-search
-description: Use documentation online.
+description: Search official documentation online for libraries, frameworks, CLIs, and APIs. Use when verifying a dependency's current behavior or answering a docs question.
 ---
 
 # Documentation search

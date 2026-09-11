@@ -13,7 +13,6 @@
     "test:background-terminals": "node --test agent/extensions/background-terminals/test/*.test.ts",
     "test:babysit-pr": "node --test agent/skills/babysit-pr/test/*.test.mjs",
     "test:process-status": "node --test agent/extensions/process-status/test/*.test.ts",
-    "test:aoauth": "node --test agent/extensions/aoauth/test/*.test.ts",
     "test:skill-visibility": "node --test agent/extensions/skill-visibility/test/*.test.ts",
     "test:gpt-fast-mode": "node --test agent/extensions/gpt-fast-mode/test/*.test.ts",
     "test:sacrifice-preference": "node --test agent/extensions/sacrifice-preference/test/*.test.ts",

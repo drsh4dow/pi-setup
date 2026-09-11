@@ -7,7 +7,6 @@ user-invokable: false
 # Writing Good PRs
 
 A good PR should be focused on explaining the reviewer the whole context of Why we implemented the PR, an overall view of how we did it, and supporting material that facilitates the consumption of such PR.
-To write a good PR start by loading the unslop and show-me skill if not already in context.
 
 ## The general Shape of a good PR
 

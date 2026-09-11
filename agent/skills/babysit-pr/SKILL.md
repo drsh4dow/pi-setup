@@ -1,6 +1,6 @@
 ---
 name: babysit-pr
-description: Use after creating a PR or when the user says babysit the PR.
+description: Guide to babysit a PR. Use after creating a PR or when the user says babysit the PR.
 ---
 
 # Babysit a PR

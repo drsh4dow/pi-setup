@@ -8,7 +8,8 @@
   "enabledModels": [
     "openai-codex/gpt-5.6-sol",
     "opencode-go/glm-5.3-flash",
-    "openai-codex/gpt-6-astra"
+    "openai-codex/gpt-6-astra",
+    "opencode/claude-fable-5-1"
   ],
   "defaultThinkingLevel": "low",
   "hideThinkingBlock": false,

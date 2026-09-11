@@ -1,6 +1,6 @@
 ---
 name: web-search
-description: Guide to search the web. Use to Search, scrape, and interact with the web.
+description: Search, scrape, and interact with the web via firecrawl. Use whenever live web retrieval is needed to answer a question or verify a source.
 ---
 
 # Web search

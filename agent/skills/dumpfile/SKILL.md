@@ -1,6 +1,6 @@
 ---
 name: dumpfile
-description: Use when an asset must be served online through a public URL, such as media attached to a pull request or other supporting evidence.
+description: Serve a local asset at a public URL. Use when media must be linked from a PR, issue, or other evidence.
 ---
 
 # Dumpfile

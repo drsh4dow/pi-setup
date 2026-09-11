@@ -1,6 +1,6 @@
 ---
 name: writing-good-prs
-description: Use before writing a PR.
+description: Write a strong PR description. Use before opening or updating a pull request.
 user-invokable: false
 ---
 

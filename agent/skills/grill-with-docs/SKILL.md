@@ -1,9 +1,7 @@
 ---
 name: grill-with-docs
-description: Interview a design and record resolved domain terms and consequential decisions.
+description: A relentless interview to sharpen a plan or design, which also creates docs (ADR's and glossary) as we go.
 disable-model-invocation: true
 ---
 
-Read [grilling](../grilling/SKILL.md) for the interview and [domain-modeling](../domain-modeling/SKILL.md) for documentation.
-
-This command includes updating the glossary as terms are resolved and recording consequential decisions that meet the ADR criteria. Keep unresolved proposals distinct from accepted decisions. It does not include implementation unless requested.
+Call the Skill tool twice, for "grilling" and "domain-modeling".

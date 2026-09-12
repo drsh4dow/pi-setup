@@ -71,6 +71,8 @@ Use `bg_status` for immediate inspection, not polling. Its bounded observations 
 
 ### Installed skills
 
+The installed Matt Pocock skills and their supporting files are vendored verbatim from [`mattpocock/skills` at `3cca18b`](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015/skills).
+
 - `babysit-pr`
 - `code-review`
 - `codebase-design`
@@ -79,6 +81,7 @@ Use `bg_status` for immediate inspection, not polling. Its bounded observations 
 - `docs-search`
 - `domain-modeling`
 - `dumpfile`
+- `grill-me`
 - `grill-with-docs`
 - `grilling`
 - `implement`

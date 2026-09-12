@@ -68,6 +68,34 @@ test("accepts matching tracked inventory and resolving links", (t) => {
 	assert.equal(result.status, 0, result.stderr);
 });
 
+test("checks unstaged skills and their links while excluding ignored files", (t) => {
+	const root = repository(
+		t,
+		validReadme.replace(
+			"### Installed skills",
+			"### Installed skills\n\n- `new`",
+		),
+		{ ".gitignore": "agent/skills/ignored/\n" },
+	);
+
+	for (const name of ["new", "ignored"]) {
+		const directory = join(root, "agent/skills", name);
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(join(directory, "SKILL.md"), "# Skill\n");
+	}
+
+	const result = run(root);
+	assert.equal(result.status, 0, result.stderr);
+
+	writeFileSync(
+		join(root, "agent/skills/new/SKILL.md"),
+		"[Missing](missing.md)\n",
+	);
+	const broken = run(root);
+	assert.notEqual(broken.status, 0);
+	assert.match(broken.stderr, /agent\/skills\/new\/SKILL\.md.*missing\.md/);
+});
+
 test("ignores example links and headings inside fenced code", (t) => {
 	const root = repository(t, validReadme, {
 		"docs/guide.md": [

@@ -1,28 +1,12 @@
 ---
 name: grilling
-description: Stress-test a plan, decision, or idea with relentless questioning. Use when the user asks to be grilled or uses any "grill" trigger phrase.
+description: Stress-test a plan or design through questions when the user requests a grilling or interview.
 ---
 
-Interview the user relentlessly until you reach a shared understanding. Map this as a **design tree**: every decision branches into the decisions that hang off it.
+# Grilling
 
-Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask _now_ without guessing at answers you haven't heard yet. Ask the whole frontier in one round: number each question and give your recommended answer. Then wait for the user's answers before the next round.
+Resolve material design decisions through a focused interview. Look up environmental facts yourself; ask the user about decisions that the evidence cannot settle.
 
-Format a round like so:
+Work in rounds. Ask independent questions whose prerequisites are settled, number them, and give your recommendation with the relevant tradeoff. Wait for answers before asking dependent questions. Parallelize independent lookups when useful.
 
-```
-❓ **Q1** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
-
-➡️ <your recommended answer>
-
----
-
-❓ **Q2** - **<question title>**: <question body, might be multiple paragraphs, including multiple choices>
-
-➡️ <your recommended answer>
-```
-
-Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a _later_ round, not this one.
-
-Finding _facts_ is your job, never the user's. Look up environmental facts yourself before asking questions that depend on them. Parallelize independent lookups. When a background shell investigation has useful work to run alongside, start it and ask the questions whose prerequisites are already settled. Defer dependent questions until you inspect the result. The _decisions_ are the user's: put each to them and wait.
-
-The session is done when the frontier is empty: every branch of the design tree visited, nothing left silently assumed. Do not act on it until the user confirms you have reached a shared understanding.
+Use answers to revise the remaining questions. Stop when the material decisions are resolved and remaining assumptions are explicit. Summarize the agreed outcome; implement only when implementation is requested.

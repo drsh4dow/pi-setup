@@ -1,19 +1,15 @@
 ---
 name: principle-experience-first
-description: "Choose user delight over implementation convenience. Use when weighing product, UX, or feature-scope tradeoffs."
-disable-model-invocation: false
+description: Weigh user and maintainer experience when choosing UX, product scope, or interface tradeoffs.
 ---
 
-# Experience First
+# Experience first
 
-When implementation convenience conflicts with user delight, choose delight.
+Optimize the requested experience around the user's actual priorities, including reliability, maintenance cost, and time.
 
-- Every feature, control, and option must be justified
-- Ship less, ship better (polished experience with three features beats rough one with ten)
-- Prototype before committing (design decisions are cheaper in throwaway HTML than production code)
-- Get the details right (transitions, alignment, spacing, feedback, error states)
-- Tighten the core loop (every feature should serve the central workflow or get out of the way)
+- Justify each feature, control, and option by the workflow it serves.
+- Prefer a smaller, polished experience to additional rough features.
+- Attend to feedback, error states, accessibility, and interaction details that affect the task.
+- Prototype when interaction would resolve uncertainty; otherwise implement directly.
 
-The user is whoever consumes the work. For a UI that is the end user. For a library or an internal API it is the colleague who imports it. The engineer who maintains the code next is a user too. Weigh their experience the same way, and explain impact from their perspective.
-
-Foundations should serve the experience. Foundational thinking governs the *sequence* of work. This principle governs the *target*.
+Callers and future maintainers are users too. Explain tradeoffs from their perspective without expanding the requested scope.

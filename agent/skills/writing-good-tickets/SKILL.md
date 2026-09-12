@@ -1,27 +1,17 @@
 ---
 name: writing-good-tickets
-description: Write a strong issue. Use before creating or updating a ticket.
+description: Write or update an issue with a clear outcome, consequential context, and completion criteria.
 user-invokable: false
 ---
 
-# Writing Good Tickets
+# Writing good tickets
 
-Issue === Ticket.
+An issue and a ticket are the same artifact. Follow the repository's tracker and template conventions.
 
-Before writing an issue load writing-for-agents and unslop skill if not already in context.
+Include the problem and why it matters, what to build, consequential decisions, and acceptance criteria. Preserve nuances that an implementer would otherwise lose with the conversation. Criteria describe completion; they do not each require a test.
 
-No matter the shape/template of a ticket, a good issue should be self-contained,
-it should explain clearly the problem, the why this issue exists, the decisions
-that were made during the creation of the ticket, and specific nuances that will
-be lost in context or conversation if not captured here.
+Give useful implementation pointers without prescribing obvious code. Include a diagram or prototype snippet only when it communicates a decision more clearly than prose.
 
-A good ticket should contain the contract of what does it means for this ticket to be done,
-basically a list of acceptance criteria.
+Link authoritative related context instead of duplicating it. State what the implementer must read when essential requirements live in another issue. Distinguish accepted decisions from assumptions and unresolved questions.
 
-It should contain general pointers regarding the how, and the decided architecture using the C4 model, but it is up to the implementer the line by line code specifics.
-
-Decisions made during a grilling session, or decisions that are non negotiables captured in a conversation should be part of the ticket as long as they impact directly in the outcome of such ticket.
-
-If the ticket is related to other one that already explains the details and specifics instead of duplicating the information it should be referenced and ask in the ticket itself to read such related ticket.
-
-And by last but not least, a ticket should contain "What to build".
+For complex agent-facing workflow instructions within an issue, consult [writing-for-agents](../writing-for-agents/SKILL.md). Ordinary ticket writing does not require another skill or a fixed set of sections.

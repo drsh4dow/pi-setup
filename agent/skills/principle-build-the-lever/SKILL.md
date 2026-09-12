@@ -1,22 +1,12 @@
 ---
 name: principle-build-the-lever
-description: "Do or prove non-trivial work with a rerunnable tool instead of by hand. Use for edits, migrations, analyses, or checks a reviewer should be able to rerun."
-disable-model-invocation: false
+description: Choose automation for repetitive edits or work whose correctness depends on reproducibility.
 ---
-# Build the Lever
 
-When the work isn't trivial, build the tool that does it instead of doing it by hand.
+# Build the lever
 
-**Why:** Two payoffs. Throughput: a codemod, generator, or script does the work the same way every time and reruns for free. Confidence: the tool is one artifact a reviewer can read and rerun to check the work. Hand-done changes can only be re-verified by redoing them. A deterministic script turns "trust me" into "run this".
+Prefer an existing command or tool. Write a script when it makes the work simpler or materially easier to reproduce than direct edits or inspection.
 
-**Pattern:** Default to building the lever. Skip it only when the task is trivial, a couple of obvious edits you can see at a glance.
+For a mechanical migration, establish the transformation on a representative unit, then apply it across the relevant scope. Inspect the resulting diff and make reruns safe when partial execution is possible.
 
-- Do the first unit by hand to learn the recipe, then build the tool. Prove it by rerunning it on that unit and diffing against your hand-done version. Make the lever safe to rerun.
-- Codemod or script for edits, generator for repetitive files, a dump-to-sqlite query for analysis, a rerunnable check for verification.
-- Prefer one deterministic pass over repeated manual work when a tool can process every unit.
-- Applying this principle produces a file: a codemod, script, generator, or rerunnable check. Run it against the actual work and retain the result.
-- Commit the lever when the work outlives the session.
-
-**Balance:** The bar is triviality, not repetition. A one-off still earns a lever when the lever is what makes the work checkable. Per the [Laziness Protocol](../principle-laziness-protocol/SKILL.md), build the smallest script that does or proves the job, never a framework.
-
-Distinct from [Encode Lessons in Structure](../principle-encode-lessons-in-structure/SKILL.md), which makes a recurring instruction a durable guardrail. This is throughput and reviewability on the work in front of you. For scripting the verification itself, see [Prove It Works](../principle-prove-it-works/SKILL.md).
+Keep a script only when future use or review justifies owning it. A one-off command or focused edit can be the complete solution.

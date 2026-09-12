@@ -1,11 +1,11 @@
 ---
 name: babysit-pr
-description: "Monitor a PR after it's opened: respond to review feedback, fix CI, and drive it to merge. Use after creating a PR or when the user says \"babysit the PR\"."
+description: "Monitor and handle PR feedback when the user requests babysitting or an ongoing review-and-CI workflow."
 ---
 
 # Babysit a PR
 
-Own the PR until it merges or closes. Keep code changes in commits and replies inside existing review threads, so the PR timeline stays clean.
+When babysitting is requested, monitor until the PR merges, closes, or the user ends monitoring. Opening a PR alone does not start this workflow, and monitoring does not authorize merging. Keep code changes in commits and replies inside existing review threads, so the PR timeline stays clean.
 
 The watcher runs in a session-owned background terminal. It uses `emit-to-pi` for new feedback while it keeps watching. Run the installed script directly, without a completion-notification wrapper, from the PR checkout:
 
@@ -34,7 +34,7 @@ For each event:
 - **Failed check.** Diagnose first. Fix, verify, and push only when the PR caused it. Infrastructure failures and checks that already recovered need no comment.
 - **Behind target or conflicting.** Fetch and confirm the remote head still matches the event's `pr.headRefOid`, then rebase onto the target. Resolve code-level conflicts, verify, and push with `git push --force-with-lease=refs/heads/<head>:<headRefOid> origin HEAD:<head>`. A rejected lease means someone pushed; fetch their work and repeat. Ask the user about product conflicts.
 
-End the wake-up turn only after each event is acknowledged or its concrete blocker and next action are reported to the user. A repeated reminder means unfinished work, not a reason to drain and silently finish again. Stay within raised feedback; your push does not justify a new review pass.
+End the wake-up turn only after each event is acknowledged or its concrete blocker and next action are reported to the user. A repeated reminder means unfinished work, not a reason to drain and silently finish again. Stay within raised feedback; your push does not justify a new review pass or broader testing. Verify affected behavior and required checks, reusing results unless later changes invalidate them.
 
 ## Reply and acknowledge
 
@@ -49,7 +49,7 @@ Written by Pi Agent
 
 Read the reply back from its original thread. The marker prevents replay if the process stops before local acknowledgement.
 
-After any push, re-read the PR title, description, architecture diagrams, test plan, and media. Update stale text, preserve valid human context, and regenerate user-visible evidence with `dumpfile` when behavior changed.
+After changes that affect the PR's description or evidence, update the affected title, text, diagrams, test plan, or media. Preserve valid human context. Use `dumpfile` when shared media needs replacement; a push alone does not require new evidence.
 
 Run `ack <PR-URL> <event-id>...` only after code is pushed, required thread replies are verified, and PR text and media are current. Leave unfinished events pending and tell the supervising user what blocks them.
 

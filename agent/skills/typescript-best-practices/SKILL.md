@@ -1,31 +1,20 @@
 ---
 name: typescript-best-practices
-description: Apply TypeScript conventions when reading or editing code. Use for any work touching .ts or .tsx files.
+description: Apply TypeScript-specific conventions when writing or reviewing TypeScript code.
 paths: ["**/*.ts", "**/*.tsx"]
-disable-model-invocation: false
 ---
 
 # TypeScript best practices
 
-Apply the **type-system-discipline** principle skill first.
+Follow the repository's discriminant, branding, schema, and error conventions. For decisions about domain types or validation boundaries, consult [type system discipline](../principle-type-system-discipline/SKILL.md).
 
-| Rule | Summary |
-|------|---------|
-| Discriminated unions | Model variants with a `kind` literal discriminant so impossible states can't be represented. No optional-field bags. |
-| Branded types | Brand primitives with `& { readonly __brand: "X" }` so they can't be mixed up. Validate once at the boundary. |
-| Constructive modeling | Build the shape so the illegal value can't be constructed. `[T, ...T[]]` for non-empty, `[T, T][]` for even length, `start` plus `duration` for a range. Not a runtime guard, not a wish for refinement types. |
-| Simplest total type | Keep `T[]` while every operation on it stays total. Strengthen to `NonEmpty<T>` only where the loose type forces `!`, a cast, or a "should never happen" throw. |
-| `unknown` over `any` | External data is `unknown`. |
-| Schemas before guards | Before hand-writing a property-by-property type guard, use the repository's runtime schema library and infer the type from the schema, such as `z.infer`. |
-| No `as` casts | Every `as` is a runtime crash waiting. Cast only after validation. |
-| Narrowing hierarchy | Discriminant switch > `in` operator > `typeof`/`instanceof` > user-defined type guard > `as`. |
-| Type guards | Must verify the claim. A lying guard is worse than `as` because the bug hides behind a name that says it's safe. Name them `isX` or `hasX`. |
-| Exhaustiveness | Inline `const _exhaustive: never = x;` in default arms so the compiler errors when a new variant is added. |
-| `satisfies` over `as` | Validates the value without widening literal types. |
-| Boundary validation | Parse where data crosses in, into a named domain type. `Record<string, unknown>` (however spelled) stops at that parse. Trust types inside. See the **boundary-discipline** principle skill. |
-| Schema-derived types | Reach for `Pick`/`Omit`/`Parameters`/`ReturnType`/`Awaited`/`typeof` before declaring a new interface. |
-| Object args | Pass objects, not positional, so argument order is self-documenting. Skip on hot paths (per-frame render, tokenizers, parsers). |
-| Real tests | Don't mock what you can run. Prefer the framework's real test primitives with leak/disposable checks, and verify UI in a running build. Mock only what you can't run locally. |
-| Structured telemetry | Prefer structured logger diagnostics with enough context to debug from an id. No `console.log` in shipped code. |
+- Use `unknown` for untrusted values and narrow before access. Reuse existing runtime schemas rather than maintaining parallel schemas, interfaces, and property guards. A trivial local check does not need a schema dependency.
+- Use discriminated unions when states have different required fields. Match exhaustively using the repository's idiom, such as a `never` assignment.
+- Prefer `satisfies` to check a value against a type without replacing its inferred type with an assertion. It is a compile-time check, not runtime validation.
+- Keep unavoidable assertions constrained and justified, such as a validated brand constructor or an interop contract the compiler cannot express. `as const` is useful for literal inference.
+- Derive types from authoritative definitions where that keeps ownership clear. Avoid complex utility-type expressions that are harder to read than the shape they replace.
+- Use simple positional arguments when meaning is clear. Use object arguments when names prevent confusion or several options belong together.
+- Keep type guards honest: each guard must establish the fact its return type claims.
+- Use the repository's logging facilities with enough context to diagnose the operation. Keep intended CLI output distinct from diagnostics.
 
-Examples: `references/patterns.md`.
+For concrete narrowing and modeling examples, read [patterns.md](references/patterns.md).

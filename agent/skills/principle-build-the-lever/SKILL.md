@@ -1,12 +1,12 @@
 ---
 name: principle-build-the-lever
-description: Choose automation for repetitive edits or work whose correctness depends on reproducibility.
+description: Build requested automation or supply missing capabilities for reproducible work.
 ---
 
 # Build the lever
 
-Prefer an existing command or tool. Write a script when it makes the work simpler or materially easier to reproduce than direct edits or inspection.
+Prefer existing tools for repetitive work. Automation follows [SYSTEM's tool-use rules](../../SYSTEM.md#tool-use). Build scripts to supply missing capabilities or deliver requested automation, never to recreate operations already supported by available tools.
 
-For a mechanical migration, establish the transformation on a representative unit, then apply it across the relevant scope. Inspect the resulting diff and make reruns safe when partial execution is possible.
+When automation is warranted, establish its behavior on a representative unit before applying it across the relevant scope. Inspect the result and make reruns safe when partial execution is possible.
 
 Keep a script only when future use or review justifies owning it. A one-off command or focused edit can be the complete solution.

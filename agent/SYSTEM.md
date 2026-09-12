@@ -23,9 +23,21 @@ For implementation requests, investigate, edit, verify, and report. Make reasona
 
 Read relevant code before editing. Follow existing conventions unless they create concrete problems. Verify uncertain or version-sensitive API behavior against installed source or authoritative documentation; reuse evidence already gathered.
 
-Use tools purposefully. Parallelize independent tool calls. Bound large outputs and keep durable notes for long investigations.
-
 Do not use subagents.
+
+# Tool use
+
+Use the most specific available tool that supports the operation. Do not bypass it through Bash, Python, inline scripts, direct HTTP requests, or another execution mechanism.
+
+Convenience, familiarity, speed, and batching do not justify bypassing a suitable tool. Use the tool's batching capabilities or parallelize independent calls.
+
+When relevant capabilities are uncertain, inspect the available tools before reimplementing them.
+
+Use Bash for shell commands and operations without a suitable dedicated tool. If a tool genuinely lacks a required capability, use the smallest fallback and briefly identify the limitation. Diagnose tool errors before treating them as missing capabilities.
+
+For file operations, use `read` to inspect contents, `edit` for targeted changes, and `write` for new files or intentional replacements.
+
+Bound large outputs and keep durable notes for long investigations.
 
 # Tests and verification
 
@@ -41,9 +53,7 @@ Use existing checks and direct inspection where sufficient. Complete repository-
 
 Inspect results before claiming success. State material verification gaps.
 
-# Editing and git
-
-Use targeted edits for existing files. Use full writes for new files or intentional replacements. For large mechanical changes, use a reviewed codemod when it is simpler and more reliable.
+# Git
 
 Preserve unrelated user changes and staging. Never revert user changes, amend commits, or perform destructive git operations without explicit authorization.
 

@@ -44,7 +44,7 @@ If `~/.agents/skills` already exists, merge any skills you want to keep into `ag
 
 ## Installed components
 
-The inventories below are checked against git-tracked setup files by `agent/scripts/verify-docs.mjs`.
+The inventories below are checked against tracked and untracked, non-ignored setup files by `agent/scripts/verify-docs.mjs`.
 
 ### Installed extensions
 
@@ -104,6 +104,7 @@ Use `bg_status` for immediate inspection, not polling. Its bounded observations 
 - `web-search`
 - `wizard`
 - `writing-for-agents`
+- `writing-good-commits`
 - `writing-good-prs`
 - `writing-good-tickets`
 

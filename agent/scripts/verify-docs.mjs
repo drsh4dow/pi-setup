@@ -6,10 +6,11 @@ import { dirname, extname, resolve } from "node:path";
 
 const root = process.cwd();
 
-const tracked = execFileSync("git", ["ls-files", "-z"], {
-	cwd: root,
-	encoding: "utf8",
-})
+const files = execFileSync(
+	"git",
+	["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+	{ cwd: root, encoding: "utf8" },
+)
 	.split("\0")
 	.filter(Boolean)
 	.filter((path) => existsSync(resolve(root, path)));
@@ -85,7 +86,7 @@ function headingAnchors(markdown) {
 	return anchors;
 }
 
-for (const markdown of tracked.filter(
+for (const markdown of files.filter(
 	(path) => extname(path).toLowerCase() === ".md",
 )) {
 	const text = withoutFencedCode(readFileSync(resolve(root, markdown), "utf8"));
@@ -127,11 +128,11 @@ function extensionName(path) {
 }
 
 const extensionNames = [
-	...new Set(tracked.map(extensionName).filter(Boolean)),
+	...new Set(files.map(extensionName).filter(Boolean)),
 ].sort();
 
 for (const name of extensionNames) {
-	const hasCredentialFreeTest = tracked.some(
+	const hasCredentialFreeTest = files.some(
 		(path) =>
 			(path.startsWith(`agent/extensions/${name}/test/`) &&
 				path.endsWith(".test.ts") &&
@@ -141,7 +142,7 @@ for (const name of extensionNames) {
 
 	if (!hasCredentialFreeTest) {
 		errors.push(
-			`Installed extension ${name} has no tracked credential-free behavioral test`,
+			`Installed extension ${name} has no credential-free behavioral test`,
 		);
 	}
 }
@@ -150,19 +151,19 @@ const inventory = [
 	{ heading: "Installed extensions", actual: extensionNames },
 	{
 		heading: "Installed skills",
-		actual: tracked
+		actual: files
 			.map((path) => path.match(/^agent\/skills\/([^/]+)\/SKILL\.md$/)?.[1])
 			.filter(Boolean),
 	},
 	{
 		heading: "Installed prompts",
-		actual: tracked
+		actual: files
 			.map((path) => path.match(/^agent\/prompts\/([^/]+)\.md$/)?.[1])
 			.filter(Boolean),
 	},
 	{
 		heading: "Installed themes",
-		actual: tracked
+		actual: files
 			.map((path) => path.match(/^agent\/themes\/([^/]+)\.json$/)?.[1])
 			.filter(Boolean),
 	},
@@ -184,7 +185,7 @@ for (const { heading, actual } of inventory) {
 
 	if (JSON.stringify(expected) !== JSON.stringify(found)) {
 		errors.push(
-			`${heading}: tracked [${expected.join(", ")}], documented [${found.join(", ")}]`,
+			`${heading}: found [${expected.join(", ")}], documented [${found.join(", ")}]`,
 		);
 	}
 }
@@ -194,6 +195,6 @@ if (errors.length > 0) {
 	process.exitCode = 1;
 } else {
 	console.log(
-		`Documentation verified (${tracked.filter((path) => path.endsWith(".md")).length} Markdown files).`,
+		`Documentation verified (${files.filter((path) => path.endsWith(".md")).length} Markdown files).`,
 	);
 }

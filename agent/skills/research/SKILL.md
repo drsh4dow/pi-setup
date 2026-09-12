@@ -1,10 +1,12 @@
 ---
 name: research
-description: Investigate a question against primary sources and write findings to a Markdown file in the repo. Use when the user asks for research or delegates reading legwork.
+description: Investigate a question against primary sources and deliver findings in the requested format.
 ---
 
-The job:
+# Research
 
-1. Investigate the question against **primary sources** (official docs, source code, specs, first-party APIs), not a secondary write-up of them. Follow every claim back to the source that owns it.
-2. Write the findings to a single Markdown file, citing each claim's source.
-3. Save it in /tmp/.
+Investigate the question using the sources that own the relevant claims: official documentation, source code, specifications, or first-party APIs. Reuse available evidence before retrieving more.
+
+Cite material claims and distinguish evidence from inference. Resolve uncertainty that could change the conclusion; additional sources need a reason once the question is answered.
+
+Follow the requested output format and destination. Use a Markdown file when requested or when substantial findings benefit from a durable artifact; otherwise answer in chat. For an unspecified scratch-file destination, use the OS temp directory and report the absolute path.

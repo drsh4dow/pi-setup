@@ -1,5 +1,5 @@
 interface:
   display_name: "Grill with Docs"
-  short_description: "Grill a design and write its docs"
+  short_description: "Interview a design and record resolved decisions"
 policy:
   allow_implicit_invocation: false

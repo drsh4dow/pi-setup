@@ -1,22 +1,16 @@
 ---
 name: principle-migrate-callers-then-delete-legacy-apis
-description: "Migrate callers and delete the old API in the same wave. Use when introducing a new internal API while old callers still exist."
-disable-model-invocation: false
+description: Plan API migrations and coordinated refactors, including compatibility and verification boundaries.
 ---
 
-# Migrate Callers Then Delete Legacy APIs
+# Migrate callers and delete legacy APIs
 
-When we decide a new API is the right design, migrate callers and remove the old API in the same refactor wave instead of preserving compatibility layers.
+For internal APIs whose callers can change together, inventory callers, migrate them, and delete the old API in the same refactor. Preserve compatibility only for real consumer or deployment constraints.
 
-**Rule:**
-- Do not keep legacy API paths only because internal callers still exist
-- Inventory callers, migrate them, and delete the old API immediately
-- Treat temporary adapters as exceptional and time-boxed, not default architecture
-- Update tests to assert the new contract, and delete tests that only protect pre-refactor implementation details
+Choose coherent verification boundaries before a wide migration. Coordinated edits may temporarily break within a scoped, reversible unit; check the unit before building further on it. Verification need not follow every individual edit.
 
-**When this applies:**
-- No external users depend on backward compatibility
-- The project can absorb coordinated breaking changes
-- The new API is part of a simplification or refactor initiative
+When consumers deploy independently, use expand–contract: introduce the new form, migrate consumers, then remove the old form once no dependent consumer remains. State the condition for removing compatibility code.
 
-Keeping both old and new APIs creates dual-path complexity, slows cleanup, and makes the codebase feel append-only.
+Keep commits reviewable and branch operations within the authorized workflow. Update relevant contracts and examples. Remove obsolete implementation-coupled tests without automatically replacing each one; retain protection for meaningful failures.
+
+Complete relevant and repository-required checks at the final boundary. Intermediate checks should localize failures, not repeat completed verification without a reason.

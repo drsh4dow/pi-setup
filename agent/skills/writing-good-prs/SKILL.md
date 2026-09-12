@@ -1,25 +1,15 @@
 ---
 name: writing-good-prs
-description: Write a strong PR description. Use before opening or updating a pull request.
+description: Write or update a pull request description with the context a reviewer needs.
 user-invokable: false
 ---
 
-# Writing Good PRs
+# Writing good PRs
 
-A good PR should be focused on explaining the reviewer the whole context of Why we implemented the PR, an overall view of how we did it, and supporting material that facilitates the consumption of such PR.
+Follow repository title and template conventions. Use a specific title that describes the change.
 
-## The general Shape of a good PR
+Explain the problem, the resulting behavior, and the consequential implementation choices. Keep small PR descriptions small; avoid narrating obvious code or listing unchanged behavior.
 
-### Title
+Report relevant verification performed and material gaps. Include diagrams only when they explain architecture better than prose, and media when it demonstrates a meaningful user-visible change. Use [dumpfile](../dumpfile/SKILL.md) for authorized public evidence uploads.
 
-The title should contain the action verb of the task such as feat(CI), fix(voice pipeline), etc. And the issue that this PR address, for example: "fix(mobile): publish missed updates after native builds finish"
-
-### Body
-
-The body should start explaining what the problem was and why this was created, sometimes is a new feature, but even so, this should address the why in a concise manner.
-Then the PR should contain the explanation of the new behavior the changes introduce and a short how after that.
-
-The PR should contain a clean diagram architecture of how this works using the C4 model (only displaying the levels that do change, for example if this doesn't change level 1 we don't display a level 1 diagram).
-
-Any complementary material such as videos, pictures, etc should be attached here using the dumpfile skill.
-Any referenced issue should be referenced at the end of the body with their respective magic keyword such as closes #<issue number>.
+Reference related issues. Use closing keywords only when the PR resolves the issue; otherwise use an ordinary reference. When updating a description, preserve valid human context and change only what the implementation made stale.

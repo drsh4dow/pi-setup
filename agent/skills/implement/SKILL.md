@@ -1,15 +1,13 @@
 ---
 name: implement
-description: "Implement a piece of work based on a spec or set of tickets."
+description: Implement work from a spec or tickets, verify it, and review the resulting diff.
 disable-model-invocation: true
 ---
 
-Implement the work described by the user in the spec or tickets.
+Implement the requested work using the existing design where it remains clear. Prefer deletion and simplification.
 
-Use /tdd where possible, at pre-agreed seams.
+Add tests only where the system's testing criteria justify them. Use [TDD](../tdd/SKILL.md) when the user requests test-first work.
 
-Run typechecking regularly, single test files regularly, and the full test suite once at the end.
+Run relevant and required checks, then use [code-review](../code-review/SKILL.md) for self-review. Address concrete findings without broadening the task.
 
-Once done, use /code-review to review the work.
-
-Commit your work to the current branch.
+Report the result and material verification gaps. Commit when included in the requested workflow.

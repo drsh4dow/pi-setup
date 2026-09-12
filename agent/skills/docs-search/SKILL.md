@@ -1,11 +1,11 @@
 ---
 name: docs-search
-description: Search official documentation online for libraries, frameworks, CLIs, and APIs. Use when verifying a dependency's current behavior or answering a docs question.
+description: Resolve uncertain or version-sensitive library and API behavior from authoritative documentation.
 ---
 
 # Documentation search
 
-Use Context7's text output to locate documentation. It lists candidate IDs and renders documentation as Markdown, ready to read as-is.
+Reuse authoritative evidence already gathered. Prefer installed source or local docs when they answer the version-specific question. Use Context7 for external lookup when needed; its text output lists candidate IDs and renders documentation as Markdown.
 
 ## Lookup
 
@@ -21,3 +21,5 @@ Use Context7's text output to locate documentation. It lists candidate IDs and r
    ```bash
    ctx7 docs "$library_id" "$question"
    ```
+
+If Context7 is unavailable or lacks the relevant version, consult the installed source or canonical project documentation. Use [web-search](../web-search/SKILL.md) when locating or retrieving an official source requires live retrieval. State a version gap rather than treating unrelated documentation as authoritative.

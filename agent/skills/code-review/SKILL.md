@@ -15,9 +15,9 @@ Find the requirements in the supplied task, linked issue, or authoritative repos
 
 ## Review
 
-Check the changed behavior and affected callers for defects, missing requirements, regressions, and unnecessary additions. Prefer removing redundant paths, mutable copies, and pass-through layers to adding abstractions. Apply documented repository rules; style preferences alone are not defects.
+Check the changed behavior and affected callers for defects, missing requirements, regressions, and unnecessary additions. Review naming, control flow, duplicated decisions, hidden state, shallow wrappers, and tests whose setup or maintenance outweighs the failure they catch. Prefer deletion and simplification. Apply documented repository rules; distinguish demonstrated failures from optional design suggestions.
 
-Support each finding with a file location, the violated requirement or broken behavior, and reproducible evidence when available. Distinguish confirmed defects from unverified concerns. Skip findings already enforced by tooling. A clean review is a valid result.
+Support each finding with a file location, the violated requirement or broken behavior, and reproducible evidence when available. Distinguish confirmed defects from unverified concerns. Avoid duplicating findings already reported by tooling; the existence of a rule does not establish that the current code passes it. A clean review is a valid result.
 
 ## Result
 

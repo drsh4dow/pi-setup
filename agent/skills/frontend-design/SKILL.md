@@ -5,77 +5,78 @@ description: Use when creating, restyling, or visually critiquing UI, including 
 
 # Frontend Design
 
-Make deliberate, opinionated visual choices grounded in the product, audience, and primary task. Aim for a recognizable identity and clear hierarchy. When extending an existing interface, preserve its design language unless the user asks to change it.
+Build minimal, clean, modern interfaces that make the primary task obvious. Achieve beauty through proportion, typography, alignment, spacing, and precise interaction states. Visual novelty is optional.
 
-## Ground your designs in the subject matter
+Follow explicit user direction and preserve the existing product language unless a redesign is requested. When asked for critique or proposals, deliver those without proceeding to implementation.
 
-Establish the subject, audience, and primary task from the brief, repository, and existing interface. Make reasonable assumptions; ask only when missing information would materially change the design and cannot be inferred. Briefly state consequential assumptions.
+## Design the task before the layout
 
-The subject's industry, materials, and vernacular are where distinctive visual choices come from — a design for a toy for girls aged 8–11 will be very aesthetically different from a dashboard for financial analysts. Build with the brief's real content and subject matter throughout.
+Establish what the user came to this view to do, from the brief, repository, and existing workflow. State it privately in one sentence. Identify what they need to see and the next meaningful action, if any. Make reasonable assumptions; ask only when missing information would materially change the design and cannot be inferred.
 
-## Design principles
+Build the smallest composition that makes that task clear. A feature being available does not mean it belongs on the current screen.
 
-Make the first viewport serve the page's purpose. An expressive landing page can lead with the most characteristic thing in the subject's world: a headline, image, animation, live demo, or interaction. A task-oriented interface should prioritize orientation, useful information, and the primary action. Be deliberate with your choice: a big number with a small label, supporting stats, and a gradient accent is the default treatment, so only use it if that's truly the best option.
+Choose the relationship between views deliberately. A collection can lead to a detail view; a selector can switch the current object; a split view can support frequent comparison or switching. Avoid showing a full collection above a full editor by default.
 
-Typography carries the personality of the page. You don't need a different typeface for display or headline text and body content: use one family or two, and if two, make them clearly distinct.
+Give each action one clear home in the current view. Before adding a control, check whether navigation or another visible region already provides the same action. Reuse that entry point rather than introducing another selector, button, or link. Repeat an action only when it serves a distinct interaction need, such as a contextual action on a different object—not merely because another region could accommodate it.
 
-Choose your typefaces deliberately, not the default families you would reach for on any other project, and establish hierarchy through a clear type scale, intentional weights, widths, and spacing. When type is used as a headline or visual element, use the type treatment itself as an active part of the design, not a neutral delivery vehicle for the content.
+Preserve required capabilities, but place secondary tasks where they are needed. Changes to established navigation or behavior must remain within the requested scope.
 
-Default to line lengths of less than 80 characters. Serif typefaces can have slightly longer line lengths; give serif body text slightly more line-height than a sans-serif.
+Scale planning to the change. For a new interface or substantial redesign, choose the composition before its palette and type treatment. Inspect relevant visual references when provided. Reuse existing tokens and components; for a focused change, plan only the affected decisions.
 
-Avoid these default typographic treatments; they are the commonest tells of a generated page:
+## Compose an obvious attention hierarchy
 
-- Accenting just a single word or phrase in a headline, like putting one word in italic/bold or a different color.
-- Using all caps for labels.
-- Adding unnecessary typographic labels above content.
+Give the view a clear focal area: the work itself and its relevant action. Keep global navigation, secondary actions, metadata, and help subordinate.
 
-Visual structure is information. Structural devices like outlines, borders, numbering, eyebrows, dividers, labels, etc., encode useful information about the content rather than decorate it. Many generic designs use numbered markers (01 / 02 / 03), but that's only appropriate if the content actually is a sequence — like a stepped process or a timeline. Before adding numbered markers, check the content really is a sequence.
+Make the reading order apparent through placement, grouping, scale, and contrast. Important content and its action should be visually adjacent. Use strong button emphasis for the current task, rather than automatically emphasizing creation actions.
 
-Use non-user-triggered motion sparingly and deliberately, only to draw attention. A single orchestrated moment — one page-load sequence or one reveal — lands better than scattered effects; fade-and-slide-up entrances on each section and hover transitions on every card are the generic default and read as AI-generated. Motion that answers a person's action (opening, expanding, confirming) is welcome when it shows what changed.
+Establish the current location and selected object clearly, then avoid repeating them in breadcrumbs, eyebrows, headings, cards, and status bars unless the repetition serves a distinct navigation need.
 
-Consider written content carefully. Often a design brief may not contain real content, and it's up to you to come up with copy and placeholder content. Copy can make a design feel as templated as the design itself. See the below section on writing for more guidance.
+Use space to separate meaningful groups and keep related elements close. Constrain content to a width appropriate to its task. A wider viewport does not require wider controls, extra columns, or additional content.
 
-## Process: plan, review against the brief, build, critique
+Let unused space remain unused. Create breathing room by removing competing regions before increasing padding. Keep text comfortably readable; shrinking or fading it is not a substitute for deciding what belongs. Choose familiar, legible typography when it fits, with a clear type scale and readable line lengths.
 
-For calibration, AI-generated design right now clusters around some traits:
+## Show information at the moment it matters
 
-1. a warm cream background (near #F4F1EA) with a high-contrast serif display and a terracotta or warm-clay accent (often near #D97757);
-2. a near-black background with a single bright acid-green or vermilion accent;
-3. a broadsheet-style layout with hairline rules, zero border-radius, and dense newspaper-like columns;
-4. the SaaS-card kit: content chopped into identical rounded cards, one border-radius on everything regardless of hierarchy, the same soft grey shadow (rgba(0,0,0,.1)) under each, and gradient washes as decoration;
-5. template chrome that appears whatever the subject: a tracked-out ALL-CAPS eyebrow label above every heading; meta strings joined with middle dots ('A · B · C'); labels built as 'WORD — fragment' with a spaced em dash; tinted near-black (#0B0B0B, #111) standing in for black; a monospace face for small data labels; a '→' appended to link and button text.
+Keep working-screen copy functional and diegetic: actual content, object names, actions, state, and necessary guidance in the user's vocabulary.
 
-These traits are legitimate when they fit the subject or existing design language. The brief's own words always win, including when it asks for one of these looks. Where it leaves an axis free, choose for a subject-specific reason rather than habit.
+Default to task content, necessary labels, and controls. Add a subtitle or explanation only when it resolves a specific uncertainty that the interface cannot resolve through clear naming, placement, or state. If removing a string changes no understanding, decision, action, or recovery, omit it.
 
-Scale planning to the change. For a new interface or substantial redesign, choose a compact direction before implementation:
+Give each fact one useful home. Show status beside the object it describes. Surface exceptional states prominently; keep routine success subordinate.
 
-- Color: a core palette with named values.
-- Type: typefaces and their roles.
-- Layout: composition, hierarchy, and alignment. Use wireframes or alternatives when they resolve a real layout question.
-- Character: one visual idea tied to the subject.
+Keep consequential instructions and warnings beside the affected action and visible before commitment. Put optional background help on demand. Preserve information needed for accessibility or informed decisions.
 
-Reuse existing tokens and components where appropriate. For a focused change, plan only the affected decisions.
+Leave out slogans, mood-setting subtitles, decorative illustrations, and commentary about the product on working screens. Marketing copy belongs in explicitly requested marketing contexts.
 
-Check that the direction serves the primary task, respects the brief, and gives each major visual choice a concrete rationale. Revise choices that lack one, then build. Keep planning concise. When asked for critique or proposals, deliver those without proceeding to implementation.
+Use concrete nouns, direct verbs, and sentence case. Name actions consistently through the flow: "Save changes" describes the action; "Publish" produces "Published." Errors explain what happened and how to recover. Empty states provide direction rather than mood.
 
-When writing the code, be careful of structuring your CSS selector specificities. It's easy to generate CSS classes that cancel each other out (especially with a type-based selector like .section and an element-based selector like .cta). This can happen often with padding/margin between sections.
+## Use the minimum visual structure
 
-## Restraint and self-critique
+Start with alignment, spacing, and typography. Add a divider, background, or container only when it clarifies a relationship that is otherwise unclear.
 
-Spend your boldness in one place. Let one element be the memorable thing, keep everything around it quiet and disciplined, and cut any decoration that does not serve the brief.
+Choose rows, tables, cards, and panels according to the interaction. Replacing cards with rows is not simplification if the same competing regions and duplicated information remain.
 
-For implemented visual changes, inspect the affected view in a browser when available. Use screenshots to assess composition and hierarchy; exercise changed interactions directly. Check representative narrow and wide viewports, readable contrast, keyboard focus, and reduced-motion behavior where applicable.
+Before building, remove any proposed region that does not support the current task or necessary navigation.
 
-Fix observed issues and recheck affected areas. Expand verification only for a concrete unresolved concern. Report what could not be visually verified.
+Use motion to explain a change or respond to an action. Keep non-user-triggered motion sparing and purposeful, and respect reduced-motion preferences.
 
-## More on writing in design
+## Visual review is an acceptance gate
 
-Words appear in a design for one reason: to make it easier to understand and use. They are design content, not decoration. Bring the same intentionality and minimalism to copywriting that you would bring to spacing and color. Before writing anything, ask what the design needs to say, and how it can best be said to help the person navigate the experience.
+For every implemented visual change, use the `agent-browser` skill to render the actual affected view and state. Wait for content, fonts, and layout to settle, capture screenshots, and open them with an image-capable tool. Code, DOM inspection, and saved but unviewed screenshots do not satisfy this requirement.
 
-Write from the end user's perspective. Name things by what users will understand in simple language, not by how the system is built. A user manages notifications, not webhook config. Describe what something is or does in plain terms rather than selling it. Being specific and legible to new users is always better than being clever.
+Inspect the whole viewport before checking details. Answer from the image:
 
-Use active voice as default. A CTA says exactly what happens when it is used: "Save changes," not "Submit." An action keeps the same name through the whole flow, so the button that says "Publish" produces a toast that says "Published." The vocabulary of an interface is the signposting for someone navigating the product. Cohesion and consistency are how people learn their way around.
+- Where does the eye go first? Is that the intended task or content?
+- Can the user identify the current object and next action, if any, without reading explanatory paragraphs?
+- Are the relevant content and controls together and easy to discover?
+- Do multiple visible controls perform the same action on the same scope? Consolidate them unless their separate placement serves a concrete user need.
+- Which regions compete with the task? What can be removed or subordinated?
+- Is space organizing the screen, or merely stretching its elements?
+- Is necessary text readable, with sufficient contrast and no clipping or overflow?
 
-Treat failure and emptiness as moments for direction, not mood. Explain what went wrong and how to fix it, in the interface's voice rather than a person's. Errors don't apologize, and they are never vague about what happened. An empty screen is an invitation to act.
+If the composition fails these checks, revise its structure or content before polishing colors, borders, shadows, or spacing. A screenshot that contains all requested features can still be a failed design.
 
-Keep the tone conversational: plain verbs, sentence case, no filler, with tone matched to the brand and the audience. Let each written element do exactly one job.
+Exercise changed interactions directly. Check keyboard focus and reduced-motion behavior where applicable. Fix observed problems and inspect fresh screenshots of the final result, including relevant interaction states and representative supported narrow and wide layouts. Stop when concrete issues are resolved; cosmetic churn is not iteration.
+
+If rendering or image inspection remains blocked after reasonable recovery, report the specific blocker and mark visual verification incomplete. Code review is not a substitute.
+
+In the final response, briefly identify the views and states visually reviewed, any fixes made during review, and remaining verification gaps.

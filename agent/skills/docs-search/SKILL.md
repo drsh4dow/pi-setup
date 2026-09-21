@@ -1,11 +1,13 @@
 ---
 name: docs-search
-description: Resolve uncertain or version-sensitive library and API behavior from authoritative documentation.
+description: Check framework-native capabilities before introducing custom infrastructure, or resolve uncertain or version-sensitive library and API behavior.
 ---
 
 # Documentation search
 
-Reuse authoritative evidence already gathered. Prefer installed source or local docs when they answer the version-specific question. Use Context7 for external lookup when needed; its text output lists candidate IDs and renders documentation as Markdown.
+Reuse authoritative evidence already gathered. Prefer installed source or local docs when they answer the question. Use Context7 for external lookup when needed; its text output lists candidate IDs and renders documentation as Markdown.
+
+For custom infrastructure, establish what the adopted stack already provides and whether it meets the concrete requirement. Stop when the supported mechanism and any relevant limitation are clear; an existing answer does not need another search.
 
 ## Lookup
 

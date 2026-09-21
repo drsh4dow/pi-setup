@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.86.1",
+  "lastChangelogVersion": "0.87.0",
   "packages": [
     "npm:pi-mcp-adapter"
   ],
@@ -22,5 +22,8 @@
   },
   "tuiMode": "fullscreen",
   "showCacheMissNotices": true,
-  "cacheWarming": "streaming"
+  "cacheWarming": "streaming",
+  "markdown": {
+    "mermaid": "streaming"
+  }
 }

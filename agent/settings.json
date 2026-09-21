@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.85.1",
+  "lastChangelogVersion": "0.86.1",
   "packages": [
     "npm:pi-mcp-adapter"
   ],
@@ -7,7 +7,8 @@
   "defaultModel": "gpt-6-astra",
   "enabledModels": [
     "opencode-go/glm-5.3-flash",
-    "openai-codex/gpt-6-astra"
+    "openai-codex/gpt-6-astra",
+    "opencode/claude-fable-5-1"
   ],
   "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,
@@ -19,5 +20,7 @@
   "warnings": {
     "anthropicExtraUsage": false
   },
-  "tuiMode": "fullscreen"
+  "tuiMode": "fullscreen",
+  "showCacheMissNotices": true,
+  "cacheWarming": "streaming"
 }

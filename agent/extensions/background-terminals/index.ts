@@ -85,11 +85,12 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		name: "bg_start",
 		label: "Start Background Terminal",
 		description:
-			"Start a non-interactive, session-scoped shell command in the background. Use bash by default; use bg_start for services and watchers, or finite commands when there is useful independent work to do. Completion automatically wakes the owning agent with the real exit code. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
+			"Start a non-interactive, session-scoped shell command in the background. Use bash by default; use bg_start for services and watchers, explicitly requested subagent work, or finite commands alongside independent work. Completion automatically wakes the owning agent with the real exit code. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
 		promptSnippet:
-			"Start a service or watcher, or run a finite command alongside useful independent work",
+			"Start a service, watcher, explicitly requested subagent, or finite command alongside independent work",
 		promptGuidelines: [
-			"Use bash by default. Use bg_start for services and watchers, or finite commands when there is useful independent work to do.",
+			"Use bash by default. Use bg_start for services and watchers, explicitly requested subagent work, or finite commands alongside independent work.",
+			"Continue genuinely independent work. If the requested answer depends on the job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.",
 			"Use meaningful titles and avoid duplicate servers or watchers.",
 			"Run finite bg_start jobs without a notification wrapper to preserve their exit status. Success and failure automatically wake the owner with the real exit code. Use emit-to-pi only for actionable intermediate milestones, never as a completion signal or a trailing command that masks the work's exit code.",
 			"Never use for interactive commands. Background commands share the worktree without write isolation; avoid overlapping mutations.",
@@ -143,7 +144,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 						content: [
 							{
 								type: "text" as const,
-								text: `Started ${summary(snapshot)}\nCompletion automatically wakes you with the real exit code; no emit-to-pi is needed. Continue useful independent work, or answer the user when none remains.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
+								text: `Started ${summary(snapshot)}\nCompletion automatically wakes you with the real exit code; no emit-to-pi is needed. Continue genuinely independent work. If the requested answer depends on this job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
 							},
 						],
 						details: terminalMetadata(snapshot),

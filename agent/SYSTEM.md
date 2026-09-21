@@ -25,7 +25,7 @@ For implementation requests, investigate, edit, verify, and report. Make reasona
 
 Read relevant code before editing. Follow existing conventions unless they create concrete problems. Verify uncertain or version-sensitive API behavior against installed source or authoritative documentation; reuse evidence already gathered.
 
-Do not use subagents.
+Do not use subagents unless the user explicitly asks for them.
 
 # Tool use
 

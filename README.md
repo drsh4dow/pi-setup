@@ -65,15 +65,16 @@ The inventories below are checked against tracked and untracked, non-ignored set
 
 The `prompt-context` extension supplements custom system prompts with active-tool snippets and guidelines from Pi's resolved prompt inputs. It preserves Pi's project context, skills, appended instructions, and earlier extension changes. Stock system prompts remain unchanged. Excluded tools contribute no injected guidance. Context refreshes at `before_agent_start`; tool changes during an active run appear in the next run's injected context. Reload existing sessions with `/reload` after installing it.
 
-Use `bash` by default. Use `bg_start` for services and watchers. Use it for finite commands when there is useful independent work to do. A finite command's natural exit wakes the owner with its actual exit status, including success. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
+Use `bash` by default. Use `bg_start` for services and watchers, explicitly requested subagent work, or finite commands alongside useful independent work. A finite command's natural exit wakes the owner with its actual exit status, including success. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
 
-Use `bg_status` for immediate inspection, not polling. Its bounded observations distinguish the first read, changed state/output, and unchanged evidence; elapsed time alone is not a change. Completion and `emit-to-pi` events wake the owner. When no useful independent work remains, answer the user. Use `bg_kill` to terminate a command. Full logs still require explicit redirection.
+Use `bg_status` for immediate inspection, not polling. Its bounded observations distinguish the first read, changed state/output, and unchanged evidence; elapsed time alone is not a change. Completion and `emit-to-pi` events wake the owner. If the requested answer depends on a job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion. Do not repeat the background task while waiting. Completion messages show status and output within a shared 24 KiB output budget; abbreviation is marked, and `bg_status` exposes more retained output. Full commands and working directories remain in `/ps` details. Use `bg_kill` to terminate a command. Full logs still require explicit redirection.
 
 ### Installed skills
 
 The installed Matt Pocock skills and their supporting files are vendored verbatim from [`mattpocock/skills` at `3cca18b`](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015/skills).
 
 - `babysit-pr`
+- `background-terminals`
 - `code-review`
 - `codebase-design`
 - `create-verification-skill`
@@ -100,6 +101,7 @@ The installed Matt Pocock skills and their supporting files are vendored verbati
 - `prototype`
 - `research`
 - `resolving-merge-conflicts`
+- `subagents`
 - `tdd`
 - `to-spec`
 - `to-tickets`

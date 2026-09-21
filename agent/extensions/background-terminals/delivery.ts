@@ -17,7 +17,7 @@ const MAX_LINES = 80;
 
 const MAX_TEXT = 24 * 1024;
 
-const COMPLETION_TEXT_BYTES = 3_584;
+const COMPLETION_OUTPUT_BYTES = 24 * 1024;
 
 const COMPLETION_BATCH_BYTES = 256 * 1024;
 
@@ -108,44 +108,78 @@ export function terminalMetadata(snapshot: TerminalMetadata) {
 	};
 }
 
-export function formatTerminalDetails(
-	snapshot: TerminalSnapshot,
-	outputBytes = MAX_TEXT,
-): string {
-	const sections = [
-		`command: ${sanitizeInline(snapshot.command)}`,
-		`cwd: ${sanitizeInline(snapshot.cwd)}`,
-	];
+function formatTerminalOutput(snapshot: TerminalSnapshot, outputBytes: number) {
+	const stdout = sanitizeMultiline(snapshot.stdout.text);
+	const stderr = sanitizeMultiline(snapshot.stderr.text);
 
-	for (const [name, output] of [
-		["stdout", snapshot.stdout],
-		["stderr", snapshot.stderr],
+	// Reserve up to half the budget for stderr; give unused space to stdout.
+	const stdoutBudget = Math.max(
+		Math.floor(outputBytes / 2),
+		outputBytes - Buffer.byteLength(stderr),
+	);
+
+	const displayedStdout = truncateUtf8Tail(stdout, stdoutBudget);
+
+	const displayedStderr = truncateUtf8Tail(
+		stderr,
+		outputBytes - Buffer.byteLength(displayedStdout),
+	);
+
+	const sections: string[] = [];
+	let abbreviated = false;
+
+	for (const [name, output, text, displayed] of [
+		["stdout", snapshot.stdout, stdout, displayedStdout],
+		["stderr", snapshot.stderr, stderr, displayedStderr],
 	] as const) {
 		if (output.totalBytes === 0) continue;
 
-		const omitted =
+		const discarded =
 			output.truncatedBytes > 0
-				? ` (${output.truncatedBytes} earlier bytes omitted)`
+				? ` (${output.truncatedBytes} earlier bytes discarded by retention)`
 				: "";
 
-		sections.push(`\n${name}${omitted}:\n${tail(output.text, outputBytes)}`);
+		sections.push(`\n${name}${discarded}:\n${displayed}`);
+
+		const omitted = Buffer.byteLength(text) - Buffer.byteLength(displayed);
+
+		if (omitted > 0) {
+			abbreviated = true;
+			sections.push(
+				`${name} display abbreviated: ${omitted} retained bytes not shown.`,
+			);
+		}
 	}
 
 	const error = terminalResultFields(snapshot).error;
 
 	if (error) sections.push(`\nerror: ${sanitizeInline(error)}`);
 
-	if (snapshot.stdout.truncatedBytes || snapshot.stderr.truncatedBytes)
-		sections.push("\noutput-retention: bounded-tail");
-
-	return sections.join("\n");
+	return { text: sections.join("\n"), abbreviated };
 }
 
-export function formatTerminalReport(
-	snapshot: TerminalSnapshot,
-	outputBytes = MAX_TEXT,
-): string {
-	return `${summary(snapshot)}\n${formatTerminalDetails(snapshot, outputBytes)}`;
+export function formatTerminalDetails(snapshot: TerminalSnapshot): string {
+	return [
+		`command: ${sanitizeInline(snapshot.command)}`,
+		`cwd: ${sanitizeInline(snapshot.cwd)}`,
+		formatTerminalOutput(snapshot, MAX_TEXT * 2).text,
+	].join("\n");
+}
+
+export function formatTerminalReport(snapshot: TerminalSnapshot): string {
+	return `${summary(snapshot)}\n${formatTerminalDetails(snapshot)}`;
+}
+
+function formatTerminalCompletion(snapshot: SettledTerminalSnapshot): string {
+	const output = formatTerminalOutput(snapshot, COMPLETION_OUTPUT_BYTES);
+	const sections = [summary(snapshot), output.text];
+
+	if (output.abbreviated)
+		sections.push(
+			`\nUse bg_status ${sanitizeInline(snapshot.id)} for more retained output.`,
+		);
+
+	return sections.join("\n");
 }
 
 function formatTerminalNotification(
@@ -278,7 +312,7 @@ export class BackgroundTerminalDelivery {
 			let rendered =
 				item.kind === "notification"
 					? formatTerminalNotification(item.notification)
-					: formatTerminalReport(item.snapshot, COMPLETION_TEXT_BYTES);
+					: formatTerminalCompletion(item.snapshot);
 
 			const separator = items.length ? "\n\n---\n\n" : "";
 

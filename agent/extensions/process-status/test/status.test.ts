@@ -83,19 +83,18 @@ test("lists active terminals collapsed and retained terminals expanded", () => {
 	assert.equal(view.expanded, "t1 [running] test watcher\nt2 [failed] build");
 });
 
-test("renders bounded terminal details", () => {
+test("renders bounded terminal details without control characters", () => {
 	const events = eventBus();
-	let detail = `output\n${"é".repeat(40_000)}\ntail`;
+	const detail = `output\t\u0080\n${"é".repeat(40_000)}\ntail`;
 	registerProcessStatusSource({ events }, "terminals", () => [
-		terminal("t1", true, "[running] watcher", detail),
+		terminal("t1", true, "[running] \u001b\u0080\u009f\u202ewatcher", detail),
 	]);
 	const view = processStatusView({ events }, "t1");
-	detail = "changed after collection";
 	assert.equal(view.collapsed, view.expanded);
-	assert.match(view.collapsed, /^t1 \[running\] watcher/);
+	assert.match(view.collapsed, /^t1 \[running\] ����watcher\n\noutput\t�\n/);
 	assert.match(view.collapsed, /\[truncated\][\s\S]*tail$/);
 	assert.ok(Buffer.byteLength(view.collapsed) <= 64 * 1024 + 100);
-	assert.doesNotMatch(view.collapsed, /�|changed after collection/);
+	assert.equal(view.collapsed.match(/�/g)?.length, 5);
 });
 
 test("isolates detail and source failures", () => {

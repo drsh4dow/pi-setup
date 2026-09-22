@@ -1,3 +1,25 @@
+export function sanitizeMultiline(text: string): string {
+	let sanitized = "";
+
+	for (const character of text) {
+		const code = character.codePointAt(0) ?? 0;
+		sanitized +=
+			(code === 9 ||
+				code === 10 ||
+				(code >= 32 && code < 127) ||
+				code >= 160) &&
+			!/\p{Cf}/u.test(character)
+				? character
+				: "�";
+	}
+
+	return sanitized;
+}
+
+export function sanitizeInline(text: string): string {
+	return sanitizeMultiline(text).replace(/\s+/gu, " ");
+}
+
 function utf8HeadEnd(bytes: Buffer, end: number) {
 	end = Math.min(end, bytes.length);
 

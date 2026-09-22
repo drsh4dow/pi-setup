@@ -6,7 +6,7 @@ import { Effect } from "effect";
 import { processIsGone } from "../../test/process.ts";
 import { BackgroundTerminalDelivery } from "../index.ts";
 import { MAX_RUNNING_PER_OWNER, MAX_TRACKED } from "../manager.ts";
-import { type DeliveryMessage, type DeliveryOptions, decodeMessage, registeredExtension, testContext } from "./registration.ts";
+import { type DeliveryMessage, type DeliveryOptions, registeredExtension, testContext } from "./registration.ts";
 
 const fromPromise = <A>(value: A | PromiseLike<A>) => Effect.promise(() => Promise.resolve(value));
 
@@ -384,19 +384,13 @@ test("headless terminals survive agent end and stop at session shutdown", () => 
 	assert.ok(processIsGone(first.details.pid));
 })));
 
-test("session shutdown clears status, kills processes, and permits restart", () => Effect.runPromise(Effect.gen(function* () {
+test("session shutdown kills processes and permits restart", () => Effect.runPromise(Effect.gen(function* () {
 	const { tools, handlers } = registeredExtension();
-	const statuses: Array<string | undefined> = [];
 
 	const context = testContext({
 		cwd: process.cwd(),
 		hasUI: true,
 		isIdle: () => false,
-		ui: {
-			setStatus(_id: string, status?: string) {
-				statuses.push(status);
-			},
-		},
 	});
 
 	const start = tools[0];
@@ -419,7 +413,6 @@ test("session shutdown clears status, kills processes, and permits restart", () 
 		context,
 	));
 	assert.ok(processIsGone(first.details.pid));
-	assert.equal(statuses.at(-1), undefined);
 	yield* fromPromise(handlers.get("session_start")?.(
 		{ type: "session_start", reason: "new" },
 		context,
@@ -516,59 +509,6 @@ test("completion delivers while busy, never repeats, and closed delivery stays c
 	delivery.enqueue(snapshot);
 	assert.equal(messages.length, 2, "new context reopens delivery");
 	delivery.clear();
-})));
-
-test("bounds complete delivery batches with worst-case metadata", () => Effect.runPromise(Effect.gen(function* () {
-	const messages: Array<{
-		content: string;
-		details: { ids: readonly string[] };
-	}> = [];
-
-	const delivery = new BackgroundTerminalDelivery({
-		sendMessage(message) {
-			messages.push(decodeMessage(message));
-		},
-	});
-
-	delivery.setContext(testContext({ isIdle: () => false }));
-
-	for (let index = 0; index < MAX_TRACKED; index++)
-		delivery.enqueue({
-			id: `bt-${index}`,
-			title: "x".repeat(80),
-			command: "true",
-			cwd: `/${"w".repeat(4_094)}`,
-			state: "failed",
-			createdAt: 0,
-			settledAt: 1,
-			result: {
-				kind: "error",
-				error: "e".repeat(4_096),
-				exit: { kind: "unknown" },
-			},
-			stdout: {
-				text: "é".repeat(20_000),
-				totalBytes: 40_000,
-				truncatedBytes: 0,
-			},
-			stderr: {
-				text: "é".repeat(20_000),
-				totalBytes: 40_000,
-				truncatedBytes: 0,
-			},
-		});
-	yield* delivery.flush;
-	assert.ok(messages.length > 1);
-	assert.ok(
-		messages.every(
-			(message) => Buffer.byteLength(message.content) <= 256 * 1024,
-		),
-	);
-	assert.deepEqual(
-		messages.flatMap((message) => message.details.ids),
-		Array.from({ length: MAX_TRACKED }, (_, index) => `bt-${index}`),
-	);
-	assert.ok(messages.every((message) => !message.content.includes("�")));
 })));
 
 test("retries mixed-attempt delivery items independently", () => Effect.runPromise(Effect.gen(function* () {

@@ -1,6 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Predicate, Schema } from "effect";
-import { truncateUtf8Window } from "../../lib/text.ts";
+import {
+	sanitizeInline,
+	sanitizeMultiline,
+	truncateUtf8Window,
+} from "../../lib/text.ts";
 
 const COLLECT_CHANNEL = "process-status:collect";
 
@@ -44,31 +48,15 @@ const isCollectionRequest = Schema.is(
 	}),
 );
 
-function sanitize(text: string): string {
-	let sanitized = "";
-
-	for (const character of text) {
-		const code = character.codePointAt(0) ?? 0;
-		sanitized +=
-			(code === 9 || code === 10 || code >= 32) &&
-			code !== 127 &&
-			!/\p{Cf}/u.test(character)
-				? character
-				: "�";
-	}
-
-	return sanitized;
-}
-
 function inline(text: string): string {
-	return [...sanitize(text).replace(/\s+/gu, " ").trim()]
+	return [...sanitizeInline(text).trim()]
 		.slice(0, MAX_SUMMARY_CHARACTERS)
 		.join("");
 }
 
 function boundedDetail(text: string): string {
 	return truncateUtf8Window(
-		sanitize(text).trim(),
+		sanitizeMultiline(text).trim(),
 		MAX_DETAIL_BYTES,
 		8 * 1024,
 		"\n\n[truncated]\n\n",
@@ -105,11 +93,12 @@ function collect(pi: Pick<ExtensionAPI, "events">) {
 	const ids = new Set<string>();
 	let sourceCount = 0;
 	let omitted = 0;
-	const closedRequests = new WeakSet<CollectionRequest>();
+	let closed = false;
 
 	const request: CollectionRequest = {
 		add: (name, load) => {
-			if (closedRequests.has(request)) return;
+			// biome-ignore lint/suspicious/noUnnecessaryConditions: Listeners can retain this callback after collection closes.
+			if (closed) return;
 
 			if (++sourceCount > MAX_SOURCES) {
 				omitted++;
@@ -165,7 +154,7 @@ function collect(pi: Pick<ExtensionAPI, "events">) {
 	};
 
 	pi.events.emit(COLLECT_CHANNEL, request);
-	closedRequests.add(request);
+	closed = true;
 
 	return { activities, errors, omitted };
 }

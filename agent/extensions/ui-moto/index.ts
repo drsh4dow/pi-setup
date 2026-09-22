@@ -1,10 +1,11 @@
+// Pure path operations do not need an Effect service.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import { basename } from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import * as BunPath from "@effect/platform-bun/BunPath";
-import { Effect, Path } from "effect";
 
 const RESET = "\x1b[0m";
 
@@ -59,12 +60,7 @@ function gradient(text: string): string {
 		.join("");
 }
 
-const projectName = Effect.runSync(
-	Path.Path.pipe(
-		Effect.map((path) => path.basename(process.cwd()) || "session"),
-		Effect.provide(BunPath.layer),
-	),
-);
+const projectName = basename(process.cwd()) || "session";
 
 function headerLine(width: number, modelId: string): string {
 	if (width <= 0) return "";

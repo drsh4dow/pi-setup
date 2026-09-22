@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
-import { Effect } from "effect";
 import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import uiMoto from "../index.ts";
 
@@ -21,145 +20,123 @@ function plain(text: string): string {
 	return result;
 }
 
-test("installs, updates, and removes the session header", () =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			let headerFactory: Parameters<ExtensionContext["ui"]["setHeader"]>[0];
-			let renders = 0;
-			const setHeaders: Array<"factory" | "cleared"> = [];
+test("installs, updates, and removes the session header", async () => {
+	let headerFactory: Parameters<ExtensionContext["ui"]["setHeader"]>[0];
+	let renders = 0;
+	const setHeaders: Array<"factory" | "cleared"> = [];
 
-			const context = unsafeFixture<ExtensionContext>({
-				hasUI: true,
-				model: unsafeFixture<ExtensionContext["model"]>({ id: "model-one" }),
-				ui: unsafeFixture<ExtensionContext["ui"]>({
-					setHeader: (factory: typeof headerFactory) => {
-						headerFactory = factory;
-						setHeaders.push(factory ? "factory" : "cleared");
-					},
-				}),
-			});
-
-			const adapter = extensionTestAdapter();
-			uiMoto(adapter.api);
-
-			yield* Effect.promise(() =>
-				adapter.emit(
-					"session_start",
-					{ type: "session_start", reason: "startup" },
-					context,
-				),
-			);
-			assert.equal(setHeaders.at(-1), "factory");
-			assert.ok(headerFactory);
-
-			const component = headerFactory(
-				unsafeFixture<TUI>({ requestRender: () => renders++ }),
-				unsafeFixture<ExtensionContext["ui"]["theme"]>({}),
-			);
-
-			const project = process.cwd().split("/").at(-1);
-			assert.ok(project);
-			const label = ` PI / model-one / ${project} `;
-			const fill = 60 - label.length;
-			assert.deepEqual(component.render(60).map(plain), [
-				"",
-				`${"─".repeat(Math.floor(fill / 2))}${label}${"─".repeat(Math.ceil(fill / 2))}`,
-				"",
-			]);
-
-			yield* Effect.promise(() =>
-				adapter.emit(
-					"model_select",
-					unsafeFixture({
-						type: "model_select",
-						model: unsafeFixture<NonNullable<ExtensionContext["model"]>>({
-							id: "model-two",
-						}),
-						previousModel: unsafeFixture<
-							NonNullable<ExtensionContext["model"]>
-						>({ id: "model-one" }),
-						source: "cycle",
-					}),
-					context,
-				),
-			);
-			assert.equal(renders, 1);
-			assert.match(
-				plain(component.render(60)[1] ?? ""),
-				/ PI \/ model-two \/ /,
-			);
-
-			yield* Effect.promise(() =>
-				adapter.emit(
-					"session_shutdown",
-					{ type: "session_shutdown", reason: "quit" },
-					context,
-				),
-			);
-			assert.equal(setHeaders.at(-1), "cleared");
-			yield* Effect.promise(() =>
-				adapter.emit(
-					"model_select",
-					unsafeFixture({
-						type: "model_select",
-						model: unsafeFixture<NonNullable<ExtensionContext["model"]>>({
-							id: "model-three",
-						}),
-						previousModel: unsafeFixture<
-							NonNullable<ExtensionContext["model"]>
-						>({ id: "model-two" }),
-						source: "set",
-					}),
-					context,
-				),
-			);
-			assert.equal(renders, 1);
+	const context = unsafeFixture<ExtensionContext>({
+		hasUI: true,
+		model: unsafeFixture<ExtensionContext["model"]>({ id: "model-one" }),
+		ui: unsafeFixture<ExtensionContext["ui"]>({
+			setHeader: (factory: typeof headerFactory) => {
+				headerFactory = factory;
+				setHeaders.push(factory ? "factory" : "cleared");
+			},
 		}),
-	));
+	});
 
-test("header preserves graphemes within terminal column limits", () =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			let factory: Parameters<ExtensionContext["ui"]["setHeader"]>[0];
+	const adapter = extensionTestAdapter();
+	uiMoto(adapter.api);
 
-			const context = unsafeFixture<ExtensionContext>({
-				mode: "tui",
-				hasUI: true,
-				model: unsafeFixture<NonNullable<ExtensionContext["model"]>>({
-					id: "项目👩‍💻é",
-				}),
-				ui: unsafeFixture<ExtensionContext["ui"]>({
-					setHeader: (value: typeof factory) => {
-						factory = value;
-					},
-				}),
-			});
+	await adapter.emit(
+		"session_start",
+		{ type: "session_start", reason: "startup" },
+		context,
+	);
+	assert.equal(setHeaders.at(-1), "factory");
+	assert.ok(headerFactory);
 
-			const adapter = extensionTestAdapter();
-			uiMoto(adapter.api);
-			yield* Effect.promise(() =>
-				adapter.emit(
-					"session_start",
-					{ type: "session_start", reason: "startup" },
-					context,
-				),
-			);
-			assert.ok(factory);
+	const component = headerFactory(
+		unsafeFixture<TUI>({ requestRender: () => renders++ }),
+		unsafeFixture<ExtensionContext["ui"]["theme"]>({}),
+	);
 
-			const header = factory(
-				unsafeFixture<TUI>({ requestRender() {} }),
-				unsafeFixture({}),
-			);
+	const project = process.cwd().split("/").at(-1);
+	assert.ok(project);
+	const label = ` PI / model-one / ${project} `;
+	const fill = 60 - label.length;
+	assert.deepEqual(component.render(60).map(plain), [
+		"",
+		`${"─".repeat(Math.floor(fill / 2))}${label}${"─".repeat(Math.ceil(fill / 2))}`,
+		"",
+	]);
 
-			for (let width = 0; width <= 80; width++) {
-				for (const line of header.render(width))
-					assert.ok(
-						visibleWidth(line) <= width,
-						`width ${width}: ${plain(line)}`,
-					);
-			}
-
-			assert.match(header.render(80)[1] ?? "", /👩‍💻/);
-			assert.match(header.render(80)[1] ?? "", /é/);
+	await adapter.emit(
+		"model_select",
+		unsafeFixture({
+			type: "model_select",
+			model: unsafeFixture<NonNullable<ExtensionContext["model"]>>({
+				id: "model-two",
+			}),
+			previousModel: unsafeFixture<NonNullable<ExtensionContext["model"]>>({
+				id: "model-one",
+			}),
+			source: "cycle",
 		}),
-	));
+		context,
+	);
+	assert.equal(renders, 1);
+	assert.match(plain(component.render(60)[1] ?? ""), / PI \/ model-two \/ /);
+
+	await adapter.emit(
+		"session_shutdown",
+		{ type: "session_shutdown", reason: "quit" },
+		context,
+	);
+	assert.equal(setHeaders.at(-1), "cleared");
+	await adapter.emit(
+		"model_select",
+		unsafeFixture({
+			type: "model_select",
+			model: unsafeFixture<NonNullable<ExtensionContext["model"]>>({
+				id: "model-three",
+			}),
+			previousModel: unsafeFixture<NonNullable<ExtensionContext["model"]>>({
+				id: "model-two",
+			}),
+			source: "set",
+		}),
+		context,
+	);
+	assert.equal(renders, 1);
+});
+
+test("header preserves graphemes within terminal column limits", async () => {
+	let factory: Parameters<ExtensionContext["ui"]["setHeader"]>[0];
+
+	const context = unsafeFixture<ExtensionContext>({
+		mode: "tui",
+		hasUI: true,
+		model: unsafeFixture<NonNullable<ExtensionContext["model"]>>({
+			id: "项目👩‍💻é",
+		}),
+		ui: unsafeFixture<ExtensionContext["ui"]>({
+			setHeader: (value: typeof factory) => {
+				factory = value;
+			},
+		}),
+	});
+
+	const adapter = extensionTestAdapter();
+	uiMoto(adapter.api);
+	await adapter.emit(
+		"session_start",
+		{ type: "session_start", reason: "startup" },
+		context,
+	);
+	assert.ok(factory);
+
+	const header = factory(
+		unsafeFixture<TUI>({ requestRender() {} }),
+		unsafeFixture({}),
+	);
+
+	for (let width = 0; width <= 80; width++) {
+		for (const line of header.render(width))
+			assert.ok(visibleWidth(line) <= width, `width ${width}: ${plain(line)}`);
+	}
+
+	assert.match(header.render(80)[1] ?? "", /👩‍💻/);
+	assert.match(header.render(80)[1] ?? "", /é/);
+});

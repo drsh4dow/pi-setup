@@ -3,7 +3,11 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Clock, Effect } from "effect";
-import { truncateUtf8Tail } from "../../lib/text.ts";
+import {
+	sanitizeInline,
+	sanitizeMultiline,
+	truncateUtf8Tail,
+} from "../../lib/text.ts";
 import {
 	MAX_TRACKED,
 	type SettledTerminalSnapshot,
@@ -26,28 +30,6 @@ const MAX_DELIVERY_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [100, 500] as const;
 
 const logError = (message: string) => Effect.runSync(Effect.logError(message));
-
-export function sanitizeMultiline(text: string): string {
-	let sanitized = "";
-
-	for (const character of text) {
-		const code = character.codePointAt(0) ?? 0;
-		sanitized +=
-			(code === 9 ||
-				code === 10 ||
-				(code >= 32 && code < 127) ||
-				code >= 160) &&
-			!/\p{Cf}/u.test(character)
-				? character
-				: "�";
-	}
-
-	return sanitized;
-}
-
-export function sanitizeInline(text: string): string {
-	return sanitizeMultiline(text).replace(/\s+/gu, " ");
-}
 
 export function sanitizeErrorForDisplay(error: Error | string): Error {
 	const message = error instanceof Error ? error.message : String(error);
@@ -202,10 +184,11 @@ type DeliveryItem =
 			notification: RunningTerminalNotification;
 	  };
 
+type PendingDelivery = DeliveryItem & { attempts: number };
+
 export class BackgroundTerminalDelivery {
 	private context?: ExtensionContext;
-	private readonly pending = new Map<string, DeliveryItem>();
-	private readonly attempts = new Map<string, number>();
+	private readonly pending = new Map<string, PendingDelivery>();
 	private readonly failed = new Set<string>();
 	private retryGeneration = 0;
 	private flushState: "idle" | "flushing" = "idle";
@@ -244,14 +227,16 @@ export class BackgroundTerminalDelivery {
 		if (!this.pending.has(item.id) && sameKind.length === MAX_TRACKED) {
 			const [oldest] = sameKind;
 			this.pending.delete(oldest.id);
-			this.attempts.delete(oldest.id);
 			this.markFailed(oldest.id);
 			this.reportError(
 				`[background-terminals] ${item.kind} queue evicted ${oldest.id}${item.kind === "completion" ? "; use bg_status to inspect it" : ""}.`,
 			);
 		}
 
-		this.pending.set(item.id, item);
+		this.pending.set(item.id, {
+			...item,
+			attempts: this.pending.get(item.id)?.attempts ?? 0,
+		});
 
 		// Results steer into a running agent right after the current tool
 		// batch; notifications wait for idle so settled terminals can drop
@@ -287,12 +272,11 @@ export class BackgroundTerminalDelivery {
 	consume(ids: readonly string[]) {
 		for (const id of ids) {
 			this.pending.delete(id);
-			this.attempts.delete(id);
 			this.failed.delete(id);
 		}
 	}
 	private batch(kind: DeliveryItem["kind"]) {
-		const items: DeliveryItem[] = [];
+		const items: PendingDelivery[] = [];
 
 		const parts = [
 			kind === "notification"
@@ -303,10 +287,7 @@ export class BackgroundTerminalDelivery {
 		let bytes = Buffer.byteLength(parts[0]);
 
 		for (const item of this.pending.values()) {
-			if (
-				item.kind !== kind ||
-				(this.attempts.get(item.id) ?? 0) >= MAX_DELIVERY_ATTEMPTS
-			)
+			if (item.kind !== kind || item.attempts >= MAX_DELIVERY_ATTEMPTS)
 				continue;
 
 			let rendered =
@@ -379,14 +360,14 @@ export class BackgroundTerminalDelivery {
 					const retryable: number[] = [];
 					const exhausted: string[] = [];
 
-					for (const id of ids) {
-						const attempt = (this.attempts.get(id) ?? 0) + 1;
-						this.attempts.set(id, attempt);
+					for (const item of batch.items) {
+						item.attempts++;
 
-						if (attempt < MAX_DELIVERY_ATTEMPTS) retryable.push(attempt);
+						if (item.attempts < MAX_DELIVERY_ATTEMPTS)
+							retryable.push(item.attempts);
 						else {
-							this.markFailed(id);
-							exhausted.push(id);
+							this.markFailed(item.id);
+							exhausted.push(item.id);
 						}
 					}
 
@@ -408,7 +389,6 @@ export class BackgroundTerminalDelivery {
 		this.context = undefined;
 		this.retryGeneration++;
 		this.pending.clear();
-		this.attempts.clear();
 		this.failed.clear();
 	}
 }

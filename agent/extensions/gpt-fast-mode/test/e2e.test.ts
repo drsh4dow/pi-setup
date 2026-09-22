@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+// Pure path operations do not need an Effect service.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import { join } from "node:path";
 import { describe } from "node:test";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import * as BunPath from "@effect/platform-bun/BunPath";
-import { ConfigProvider, Effect, Layer } from "effect";
+import { Effect, FileSystem, Schema } from "effect";
 import {
 	capture,
 	e2eUnavailable,
@@ -15,26 +17,28 @@ import {
 	testEffect,
 	waitFor,
 } from "../../test/tmux.ts";
-import {
-	fastServiceTier,
-	loadEnabled,
-	resolveFastModeSettingsPath,
-} from "../index.ts";
+import { fastServiceTier } from "../index.ts";
 
 const skip = e2eUnavailable();
 
-const piFileServices = (session: PiSession) =>
-	Layer.mergeAll(
-		BunFileSystem.layer,
-		BunPath.layer,
-		Layer.succeed(
-			ConfigProvider.ConfigProvider,
-			ConfigProvider.fromUnknown({ PI_CODING_AGENT_DIR: session.agentDir }),
-		),
+const settingsSchema = Schema.fromJsonString(
+	Schema.Struct({ enabled: Schema.Boolean }),
+);
+
+const persistedEnabled = Effect.fn("persistedEnabled")(function* (
+	session: PiSession,
+) {
+	const fs = yield* FileSystem.FileSystem;
+	const path = join(session.agentDir, "gpt-fast-mode.json");
+
+	if (!(yield* fs.exists(path))) return false;
+
+	const settings = yield* Schema.decodeEffect(settingsSchema)(
+		yield* fs.readFileString(path),
 	);
 
-const persistedEnabled = (session: PiSession) =>
-	loadEnabled().pipe(Effect.provide(piFileServices(session)));
+	return settings.enabled;
+}, Effect.provide(BunFileSystem.layer));
 
 function footerModel(pane: string) {
 	const matches = [...pane.matchAll(/\(([a-z0-9-]+)\)\s+(\S+)\s+•/g)];
@@ -89,9 +93,7 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
 		assert.equal(
 			yield* persistedEnabled(session),
 			next,
-			`${yield* resolveFastModeSettingsPath().pipe(
-				Effect.provide(piFileServices(session)),
-			)} does not reflect the announced state`,
+			"gpt-fast-mode.json does not reflect the announced state",
 		);
 		assert.equal(yield* isDead(session), false);
 	});

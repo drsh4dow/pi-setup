@@ -1,18 +1,13 @@
-import type {
-	ExtensionAPI,
-	ExtensionContext,
+// Pure path operations do not need an Effect service.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import { join } from "node:path";
+import {
+	type ExtensionAPI,
+	type ExtensionContext,
+	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import * as BunPath from "@effect/platform-bun/BunPath";
-import {
-	Config,
-	Effect,
-	FileSystem,
-	Layer,
-	ManagedRuntime,
-	Path,
-	Schema,
-} from "effect";
+import { Effect, FileSystem, ManagedRuntime, Schema } from "effect";
 
 export const SUPPORTED_MODELS = new Set([
 	"openai/gpt-5.4",
@@ -44,9 +39,7 @@ export const DEFAULT_SHORTCUT = "ctrl+alt+m";
 
 export const RESERVED_SHORTCUTS = new Set(["ctrl+m", "enter", "return"]);
 
-const runtime = ManagedRuntime.make(
-	Layer.mergeAll(BunFileSystem.layer, BunPath.layer),
-);
+const runtime = ManagedRuntime.make(BunFileSystem.layer);
 
 const Keybindings = Schema.fromJsonString(
 	Schema.Struct({
@@ -92,56 +85,12 @@ export function withFastServiceTier<Payload>(
 		: payload;
 }
 
-function expandHome(input: string, home: string, path: Path.Path): string {
-	if (input === "~") return home;
-
-	return input.startsWith("~/") ? path.join(home, input.slice(2)) : input;
-}
-
-export const resolvePiFilePath = Effect.fn("resolvePiFilePath")(function* (
-	fileName: string,
-) {
-	const fs = yield* FileSystem.FileSystem;
-	const path = yield* Path.Path;
-
-	const env = yield* Config.all({
-		HOME: Config.String("HOME").pipe(Config.withDefault("")),
-		PI_CODING_AGENT_DIR: Config.String("PI_CODING_AGENT_DIR").pipe(
-			Config.withDefault(""),
-		),
-		XDG_CONFIG_HOME: Config.String("XDG_CONFIG_HOME").pipe(
-			Config.withDefault(""),
-		),
-	});
-
-	const piDir = env.PI_CODING_AGENT_DIR.trim();
-
-	if (piDir)
-		return path.join(path.resolve(expandHome(piDir, env.HOME, path)), fileName);
-
-	const xdgConfigHome = env.XDG_CONFIG_HOME.trim()
-		? path.resolve(expandHome(env.XDG_CONFIG_HOME, env.HOME, path))
-		: path.join(env.HOME, ".config");
-
-	for (const candidate of [
-		path.join(xdgConfigHome, "pi", "agent", fileName),
-		path.join(xdgConfigHome, "pi", fileName),
-	]) {
-		if (yield* fs.exists(candidate)) return candidate;
-	}
-
-	return path.join(env.HOME, ".pi", "agent", fileName);
-});
-
-export const resolveFastModeSettingsPath = () =>
-	resolvePiFilePath("gpt-fast-mode.json");
-
 export const loadShortcuts = Effect.fn("loadShortcuts")(
-	function* () {
+	function* (agentDir: string) {
 		const fs = yield* FileSystem.FileSystem;
 
 		const parsed = yield* Schema.decodeEffect(Keybindings)(
-			yield* fs.readFileString(yield* resolvePiFilePath("keybindings.json")),
+			yield* fs.readFileString(join(agentDir, "keybindings.json")),
 		);
 
 		const value = parsed[KEYBINDING_FIELD];
@@ -164,12 +113,12 @@ export const loadShortcuts = Effect.fn("loadShortcuts")(
 	Effect.orElseSucceed(() => [DEFAULT_SHORTCUT]),
 );
 
-export const loadEnabled = Effect.fn("loadEnabled")(
+const loadEnabled = Effect.fn("loadEnabled")(
 	function* () {
 		const fs = yield* FileSystem.FileSystem;
 
 		const parsed = yield* Schema.decodeEffect(FastModeSettings)(
-			yield* fs.readFileString(yield* resolveFastModeSettingsPath()),
+			yield* fs.readFileString(join(getAgentDir(), "gpt-fast-mode.json")),
 		);
 
 		return parsed.enabled === true;
@@ -177,12 +126,10 @@ export const loadEnabled = Effect.fn("loadEnabled")(
 	Effect.orElseSucceed(() => false),
 );
 
-export const saveEnabled = Effect.fn("saveEnabled")(function* (
-	enabled: boolean,
-) {
+const saveEnabled = Effect.fn("saveEnabled")(function* (enabled: boolean) {
 	const fs = yield* FileSystem.FileSystem;
 	yield* fs.writeFileString(
-		yield* resolveFastModeSettingsPath(),
+		join(getAgentDir(), "gpt-fast-mode.json"),
 		`${yield* Schema.encodeEffect(FastModeSettings)({ enabled })}\n`,
 		{ mode: 0o600 },
 	);
@@ -214,7 +161,7 @@ function announceState(ctx: ExtensionContext, enabled: boolean): void {
 }
 
 const [initialEnabled, initialShortcuts] = await runtime.runPromise(
-	Effect.all([loadEnabled(), loadShortcuts()]),
+	Effect.all([loadEnabled(), loadShortcuts(getAgentDir())]),
 );
 
 export default function fastModeExtension(pi: ExtensionAPI): void {

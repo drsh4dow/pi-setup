@@ -2,14 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import {
-	ConfigProvider,
-	Effect,
-	FileSystem,
-	Layer,
-	Path,
-	Schema,
-} from "effect";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import {
 	fastServiceTier,
 	loadShortcuts,
@@ -83,12 +76,7 @@ test("loads shortcut settings, filtering invalid entries and preserving disable 
 				prefix: "pi-fast-shortcuts-",
 			});
 
-			const load = loadShortcuts().pipe(
-				Effect.provideService(
-					ConfigProvider.ConfigProvider,
-					ConfigProvider.fromUnknown({ PI_CODING_AGENT_DIR: directory }),
-				),
-			);
+			const load = loadShortcuts(directory);
 
 			assert.deepEqual(yield* load, ["ctrl+alt+m"]);
 

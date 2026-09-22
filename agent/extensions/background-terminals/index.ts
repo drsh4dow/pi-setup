@@ -4,6 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path } from "effect";
+import { sanitizeInline } from "../../lib/text.ts";
 import {
 	registerProcessStatusSource,
 	requestProcessStatusRefresh,
@@ -13,7 +14,6 @@ import {
 	formatTerminalDetails,
 	formatTerminalReport,
 	sanitizeErrorForDisplay,
-	sanitizeInline,
 	statusSummary,
 	summary,
 	terminalMetadata,

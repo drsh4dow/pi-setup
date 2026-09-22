@@ -60,7 +60,16 @@
 					"serviceNotAsClass": "error",
 					"schemaUnionOfLiterals": "error",
 					"unnecessaryArrowBlock": "error"
-				}
+				},
+				// Node's test runner already owns promise completion and failures.
+				"overrides": [
+					{
+						"include": ["agent/extensions/**/test/**/*.ts"],
+						"options": {
+							"diagnosticSeverity": { "asyncFunction": "off" }
+						}
+					}
+				]
 			}
 		]
 	},

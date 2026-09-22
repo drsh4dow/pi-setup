@@ -4,8 +4,13 @@ import {
 	BackgroundTerminalDelivery,
 	formatTerminalReport,
 } from "../delivery.ts";
+import { MAX_TRACKED } from "../manager.ts";
 import { type SettledTerminalSnapshot, Tail } from "../terminal.ts";
-import { decodeMessage, testContext } from "./registration.ts";
+import {
+	type DeliveryMessage,
+	decodeMessage,
+	testContext,
+} from "./registration.ts";
 
 function snapshot(stdout: string, stderr = ""): SettledTerminalSnapshot {
 	const out = new Tail();
@@ -46,6 +51,54 @@ function completion(terminal: SettledTerminalSnapshot): string {
 		delivery.clear();
 	}
 }
+
+test("splits queued completions into bounded batches without losing results", () => {
+	const messages: DeliveryMessage[] = [];
+
+	const terminal: SettledTerminalSnapshot = {
+		...snapshot("é".repeat(20_000), "é".repeat(20_000)),
+		id: "bt-0",
+		title: "x".repeat(80),
+		cwd: `/${"w".repeat(4_094)}`,
+		state: "failed",
+		result: {
+			kind: "error",
+			error: "e".repeat(4_096),
+			exit: { kind: "unknown" },
+		},
+	};
+
+	const delivery = new BackgroundTerminalDelivery({
+		sendMessage(message) {
+			messages.push(decodeMessage(message));
+
+			// Completions arriving during delivery must wait for the next batch.
+			if (messages.length === 1)
+				for (let index = 1; index < MAX_TRACKED; index++)
+					delivery.enqueue({ ...terminal, id: `bt-${index}` });
+		},
+	});
+
+	try {
+		delivery.setContext(testContext({ isIdle: () => false }));
+		delivery.enqueue(terminal);
+		const batches = messages.slice(1);
+		assert.ok(batches.length > 1, "queued results must span multiple batches");
+		assert.ok(batches.some((message) => message.details.ids.length > 1));
+		assert.ok(
+			messages.every(
+				(message) => Buffer.byteLength(message.content) <= 256 * 1024,
+			),
+		);
+		assert.deepEqual(
+			messages.flatMap((message) => message.details.ids),
+			Array.from({ length: MAX_TRACKED }, (_, index) => `bt-${index}`),
+		);
+		assert.ok(messages.every((message) => !message.content.includes("�")));
+	} finally {
+		delivery.clear();
+	}
+});
 
 test("completion preserves a report beyond the old byte and line limits without repeating the command", () => {
 	const report = Array.from(

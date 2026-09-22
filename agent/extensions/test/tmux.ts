@@ -265,64 +265,6 @@ export const prompt = Effect.fn("prompt")(function* (
 export const sendKeys = (session: PiSession, ...keys: string[]) =>
 	tmux("send-keys", "-t", session.name, ...keys).pipe(Effect.asVoid);
 
-/** Waits for the retained throughput status after a turn settles. */
-export const runTask = Effect.fn("runTask")(function* (
-	session: PiSession,
-	text: string,
-	timeoutMs = DEFAULT_TIMEOUT_MS,
-) {
-	yield* prompt(session, text);
-	yield* waitFor(session, /generating\.\.\./, {
-		timeoutMs,
-		description: `task to start: ${text.slice(0, 60)}`,
-	});
-
-	return yield* waitFor(session, /done – (?:\d+ tok\/s|N\/A)/, {
-		timeoutMs,
-		description: `task to settle: ${text.slice(0, 60)}`,
-	});
-});
-
-export const waitForFile = Effect.fn("waitForFile")(function* (
-	session: PiSession,
-	relative: string,
-	timeoutMs = DEFAULT_TIMEOUT_MS,
-) {
-	const filePath = pathService.join(session.cwd, relative);
-
-	const poll = pollUntilSome(
-		Effect.gen(function* () {
-			const content = yield* fs.readFileString(filePath).pipe(Effect.option);
-
-			if (Option.isSome(content)) return content;
-
-			if (yield* isDead(session)) {
-				return yield* Effect.die(
-					new Error(
-						`pi exited before writing ${relative}\n--- stderr ---\n${yield* readStderr(session)}`,
-					),
-				);
-			}
-
-			return Option.none<string>();
-		}),
-	);
-
-	return yield* poll.pipe(
-		Effect.timeoutOrElse({
-			duration: timeoutMs,
-			orElse: () =>
-				Effect.gen(function* () {
-					return yield* Effect.die(
-						new Error(
-							`timed out after ${timeoutMs}ms waiting for ${relative}\n--- pane ---\n${yield* capture(session)}`,
-						),
-					);
-				}),
-		}),
-	);
-});
-
 export const stop = Effect.fn("stop")(function* (session: PiSession) {
 	yield* tmux("kill-session", "-t", session.name).pipe(Effect.ignore);
 	yield* fs

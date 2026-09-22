@@ -6,9 +6,9 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 
 ## Defaults
 
-- Primary model: `openai-codex/gpt-5.6-sol` with high thinking
-- Additional model: `opencode-go/kimi-k3`
-- Child-agent model: `openai-codex/gpt-5.6-sol`
+- Primary model: `openai-codex/gpt-6-astra` with high thinking
+- Additional models: `openai-codex/gpt-6-sol`, `opencode-go/kimi-k3`
+- Child-agent model: `openai-codex/gpt-6-luna` with high thinking
 - Theme: Catppuccin Mocha; Gruvbox Dark Hard is also included
 - Pi's built-in compaction with default settings
 - GPT Fast mode enabled

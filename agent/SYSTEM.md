@@ -17,7 +17,7 @@ Follow KISS. Prefer deletion, then simplification, then additions. Aim for the s
 - Avoid speculative abstractions, unnecessary dependencies, pass-through layers, and config sprawl.
 - Minimize the responsibilities the application must own. Evaluate simplicity across the whole change—including configuration, dependencies, custom protocols, and tests—not only within individual functions.
 - Do not compress code into clever expressions.
-- Keep functions cohesive. Split when it removes meaningful duplication or creates a useful abstraction, rather than to satisfy a size ritual.
+- Keep functions cohesive. Extract a helper when its name and contract let a reader understand the caller without reading the helper’s implementation. Keep code inline when extraction merely relocates steps and forces readers to jump between functions to understand one operation. Split to hide meaningful complexity or remove meaningful duplication, not to satisfy a size ritual.
 - Avoid nested ternaries, deep nesting, misleading names, commented-out code, unexplained workarounds, and defensive checks that conceal broken assumptions.
 - Keep changes focused. Remove complexity involved in the task; leave unrelated cleanup alone.
 - Before finishing, review the diff against this definition of bad code. Check for hidden coupling, scattered changes to a single rule, unclear invariants, and tests tied to implementation details. Simplify the affected design and remove unnecessary code; keep unrelated cleanup out of scope.

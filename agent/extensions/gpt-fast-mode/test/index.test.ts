@@ -20,25 +20,21 @@ describe("gpt-fast-mode request mapping", () => {
 	for (const [provider, tier] of [
 		["openai", "fast"],
 		["openai-codex", "priority"],
+		["openai-codex@work", "priority"],
 	]) {
-		test(`uses ${tier} for ${provider} without mutating the payload`, () => {
-			const model = { provider, id: "gpt-5.6-sol" };
-			const payload = { model: model.id, input: "hello" };
-			assert.equal(fastServiceTier(model), tier);
-			assert.deepEqual(withFastServiceTier(model, payload), {
-				...payload,
-				service_tier: tier,
+		for (const id of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna"]) {
+			test(`uses ${tier} for ${provider}/${id} without mutating the payload`, () => {
+				const model = { provider, id };
+				const payload = { model: model.id, input: "hello" };
+				assert.equal(fastServiceTier(model), tier);
+				assert.deepEqual(withFastServiceTier(model, payload), {
+					...payload,
+					service_tier: tier,
+				});
+				assert.deepEqual(payload, { model: model.id, input: "hello" });
 			});
-			assert.deepEqual(payload, { model: model.id, input: "hello" });
-		});
+		}
 	}
-
-	test("uses priority for a labeled Codex account", () => {
-		assert.equal(
-			fastServiceTier({ provider: "openai-codex@work", id: "gpt-5.6-sol" }),
-			"priority",
-		);
-	});
 
 	test("uses priority for Codex gpt-6-astra", () => {
 		const model = { provider: "openai-codex", id: "gpt-6-astra" };

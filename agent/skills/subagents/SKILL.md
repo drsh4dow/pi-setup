@@ -37,7 +37,7 @@ Use `bg_start` with a descriptive title and the intended project directory. Set 
 
 ```bash
 pi --print \
-  --model openai-codex/gpt-5.6-luna \
+  --model openai-codex/gpt-6-luna \
   --thinking high \
   --no-session \
   --no-extensions \
@@ -48,7 +48,7 @@ SUBAGENT_PROMPT
 
 Replace the assignment placeholder. Choose a heredoc delimiter that does not occur as a standalone line in the prompt.
 
-The only permitted model is `openai-codex/gpt-5.6-luna` with `high` reasoning. Report failure rather than substituting another configuration.
+The only permitted model is `openai-codex/gpt-6-luna` with `high` reasoning. Report failure rather than substituting another configuration.
 
 For external research requiring shell-based retrieval, add `bash` to the tool allowlist and limit its use in the assignment to retrieval. Bash does not enforce read-only access.
 

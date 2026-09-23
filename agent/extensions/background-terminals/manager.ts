@@ -212,6 +212,19 @@ export class BackgroundTerminalManager {
 	}): RunningTerminalSnapshot {
 		if (this.lifecycle.kind !== "running")
 			throw new Error("Background terminal manager is shutting down.");
+
+		let running = 0;
+
+		for (const entry of this.entries.values()) {
+			if (entry.kind !== "settled") running++;
+		}
+
+		if (running >= MAX_RUNNING_PER_OWNER) {
+			throw new Error(
+				`Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${running}. Kill one with bg_kill.`,
+			);
+		}
+
 		this.prune(MAX_TRACKED - 1);
 
 		const invocation =
@@ -277,18 +290,6 @@ export class BackgroundTerminalManager {
 			? entry
 			: undefined;
 	}
-	private replaceTerminal(entry: ActiveEntry, terminal: ActiveTerminal) {
-		this.entries.set(
-			terminal.id,
-			entry.kind === "running"
-				? { kind: "running", terminal }
-				: {
-						kind: "terminating",
-						terminal,
-						intent: entry.intent,
-					},
-		);
-	}
 	private appendOutput(id: string, stream: "stdout" | "stderr", chunk: Buffer) {
 		const entry = this.active(id);
 
@@ -316,19 +317,13 @@ export class BackgroundTerminalManager {
 		const entry = this.active(id);
 
 		if (!entry) return;
-		this.replaceTerminal(entry, {
-			...entry.terminal,
-			processError: String(error.message).slice(0, 4096),
-		});
+		entry.terminal.processError = error.message.slice(0, 4096);
 	}
 	private observeExit(id: string, exit: ProcessExit) {
 		const entry = this.active(id);
 
 		if (entry?.terminal.observation.kind !== "executing") return;
-		this.replaceTerminal(entry, {
-			...entry.terminal,
-			observation: { kind: "draining-after-exit", exit },
-		});
+		entry.terminal.observation = { kind: "draining-after-exit", exit };
 		schedule(PIPE_GRACE_MS, () => this.onPipeTimeout(id));
 	}
 	private onPipeTimeout(id: string) {
@@ -347,10 +342,7 @@ export class BackgroundTerminalManager {
 				? closeExit
 				: entry.terminal.observation.exit;
 
-		this.replaceTerminal(entry, {
-			...entry.terminal,
-			observation: { kind: "reaping-after-pipe-close", exit },
-		});
+		entry.terminal.observation = { kind: "reaping-after-pipe-close", exit };
 		this.settleWhenProcessGroupExits(id);
 	}
 	private processGroupExists(entry: ActiveEntry): boolean {
@@ -456,10 +448,7 @@ export class BackgroundTerminalManager {
 		const entry = this.active(id);
 
 		if (!entry) return;
-		this.replaceTerminal(entry, {
-			...entry.terminal,
-			processError: message,
-		});
+		entry.terminal.processError = message;
 	}
 	private signalTree = Effect.fn("BackgroundTerminalManager.signalTree")(
 		function* (this: BackgroundTerminalManager, id: string, force: boolean) {

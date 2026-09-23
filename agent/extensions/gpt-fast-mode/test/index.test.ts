@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
-import {
+import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
+import extension, {
 	fastServiceTier,
 	loadShortcuts,
 	withFastServiceTier,
@@ -108,62 +113,84 @@ test("loads shortcut settings, filtering invalid entries and preserving disable 
 		),
 	));
 
-test("/fast persists and announces toggles and only maps enabled requests", () => {
-	const { spawnSync } = process.getBuiltinModule("node:child_process");
+test("/fast persists and announces toggles and only maps enabled requests", async (t) => {
+	const { mkdtempSync, readFileSync, rmSync } =
+		process.getBuiltinModule("node:fs");
 
-	const result = spawnSync(
-		process.execPath,
-		[
-			"--input-type=module",
-			"--eval",
-			`
-import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-const root = mkdtempSync(join(tmpdir(), "pi-fast-mode-"));
-process.env.PI_CODING_AGENT_DIR = root;
-try {
-  const { default: extension } = await import(${JSON.stringify(new URL("../index.ts", import.meta.url).href)});
-  let toggle;
-  const handlers = new Map();
-  extension({
-    registerCommand(name, command) { assert.equal(name, "fast"); toggle = command.handler; },
-    registerShortcut() {},
-    on(name, handler) { handlers.set(name, handler); },
-  });
-  const notices = [];
-  const ctx = {
-    model: { provider: "openai", id: "gpt-5.6-sol" },
-    ui: { notify(message, level) { notices.push([message, level]); } },
-  };
-  await handlers.get("session_start")({}, ctx);
-  const payload = { model: ctx.model.id, input: "hello" };
-  const request = () => handlers.get("before_provider_request")({ payload }, ctx);
-  assert.equal(request(), undefined);
-  await toggle("", ctx);
-  assert.deepEqual(request(), { ...payload, service_tier: "fast" });
-  assert.deepEqual(JSON.parse(readFileSync(join(root, "gpt-fast-mode.json"), "utf8")), { enabled: true });
-  await toggle("", ctx);
-  assert.equal(request(), undefined);
-  ctx.model = undefined;
-  await toggle("", ctx);
-  assert.equal(request(), payload);
-  rmSync(root, { recursive: true });
-  await toggle("", ctx);
-  assert.deepEqual(notices, [
-    ["GPT Fast mode enabled (service_tier: fast).", "info"],
-    ["GPT Fast mode disabled.", "info"],
-    ["GPT Fast mode enabled, but unknown model is not supported.", "warning"],
-    ["Could not save GPT Fast mode setting.", "error"],
-  ]);
-} finally {
-  rmSync(root, { recursive: true, force: true });
-}
-`,
-		],
-		{ encoding: "utf8", timeout: 10_000 },
+	const { tmpdir } = process.getBuiltinModule("node:os");
+	const { join } = process.getBuiltinModule("node:path");
+	const root = mkdtempSync(join(tmpdir(), "pi-fast-mode-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	const adapter = extensionTestAdapter();
+
+	let toggle:
+		| Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]
+		| undefined;
+
+	await extension(
+		unsafeFixture<ExtensionAPI>({
+			...adapter.api,
+			registerCommand(name, command) {
+				assert.equal(name, "fast");
+				toggle = command.handler;
+			},
+			registerShortcut() {},
+		}),
+		root,
 	);
+	assert.ok(toggle);
 
-	assert.equal(result.status, 0, result.stderr);
+	const notices: Array<[string, string | undefined]> = [];
+
+	const model = unsafeFixture<NonNullable<ExtensionCommandContext["model"]>>({
+		provider: "openai",
+		id: "gpt-5.6-sol",
+	});
+
+	const ctx = unsafeFixture<ExtensionCommandContext>({
+		model,
+		ui: unsafeFixture<ExtensionCommandContext["ui"]>({
+			notify(message, level) {
+				notices.push([message, level]);
+			},
+		}),
+	});
+
+	await adapter.emit(
+		"session_start",
+		{ type: "session_start", reason: "startup" },
+		ctx,
+	);
+	const payload = { model: model.id, input: "hello" };
+
+	const request = () =>
+		adapter.emit(
+			"before_provider_request",
+			{ type: "before_provider_request", payload },
+			ctx,
+		);
+
+	assert.equal(await request(), undefined);
+	await toggle("", ctx);
+	assert.deepEqual(await request(), { ...payload, service_tier: "fast" });
+
+	const settings = Schema.decodeSync(
+		Schema.fromJsonString(Schema.Struct({ enabled: Schema.Boolean })),
+	)(readFileSync(join(root, "gpt-fast-mode.json"), "utf8"));
+
+	assert.deepEqual(settings, { enabled: true });
+	await toggle("", ctx);
+	assert.equal(await request(), undefined);
+	ctx.model = undefined;
+	await toggle("", ctx);
+	assert.equal(await request(), payload);
+	rmSync(root, { recursive: true });
+	await toggle("", ctx);
+	assert.deepEqual(notices, [
+		["GPT Fast mode enabled (service_tier: fast).", "info"],
+		["GPT Fast mode disabled.", "info"],
+		["GPT Fast mode enabled, but unknown model is not supported.", "warning"],
+		["Could not save GPT Fast mode setting.", "error"],
+	]);
 });

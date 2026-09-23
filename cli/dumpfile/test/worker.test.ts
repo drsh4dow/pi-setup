@@ -68,6 +68,7 @@ test("authorizes an immutable direct upload and logs only safe fields", async ()
 	assert.equal(response.status, 201);
 	assert.equal(response.headers.get("Cache-Control"), "no-store");
 	const body = await response.json();
+	assert.equal("expiresAt" in body, false);
 	assert.deepEqual(signed, [
 		{
 			headers: body.upload.headers,
@@ -240,18 +241,4 @@ test("aws4fetch presigns one PUT with all stored metadata bound", async () => {
 	assert.match(signedHeaders, /content-disposition/);
 	assert.match(signedHeaders, /content-length/);
 	assert.match(signedHeaders, /content-type/);
-});
-
-test("new uploads disable cache retention beyond R2 lifecycle deletion", async () => {
-	const worker = createDumpfileWorker();
-
-	const response = await worker.fetch(
-		uploadRequest({ contentType: "image/png", extension: "png", size: 1 }),
-		environment(),
-	);
-
-	assert.equal(response.status, 201);
-	const body = await response.json();
-	assert.equal(body.upload.headers["Cache-Control"], "no-store");
-	assert.equal("expiresAt" in body, false);
 });

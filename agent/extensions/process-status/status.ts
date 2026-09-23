@@ -1,31 +1,19 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Predicate, Schema } from "effect";
+import { sanitizeInline, truncateUtf8Window } from "../../lib/text.ts";
 import {
-	sanitizeInline,
-	sanitizeMultiline,
-	truncateUtf8Window,
-} from "../../lib/text.ts";
+	formatTerminalDetails,
+	summary,
+} from "../background-terminals/delivery.ts";
+import type { BackgroundTerminalManager } from "../background-terminals/manager.ts";
 
-const COLLECT_CHANNEL = "process-status:collect";
+const TERMINALS_CHANNEL = "process-status:terminals";
 
 const REFRESH_CHANNEL = "process-status:refresh";
 
-const MAX_SOURCES = 16;
-
-export const MAX_ACTIVITIES_PER_SOURCE = 192;
-
-const MAX_ACTIVITIES = 64;
-
-const MAX_SUMMARY_CHARACTERS = 240;
-
 const MAX_DETAIL_BYTES = 64 * 1024;
 
-interface ProcessStatusActivity {
-	id: string;
-	active: boolean;
-	summary: string;
-	detail?: () => string;
-}
+type TerminalStatus = Pick<BackgroundTerminalManager, "list" | "get">;
 
 export interface ProcessStatusView {
 	collapsed: string;
@@ -33,35 +21,19 @@ export interface ProcessStatusView {
 	list: boolean;
 }
 
-type ProcessStatusSource = () => readonly ProcessStatusActivity[];
-
-interface CollectionRequest {
-	readonly add: (name: string, load: ProcessStatusSource) => void;
+interface TerminalStatusRequest {
+	readonly provide: (terminals: TerminalStatus) => void;
 }
 
 // Each extension loads its own module copy, so requests use a structural contract.
-const isCollectionRequest = Schema.is(
+const isTerminalStatusRequest = Schema.is(
 	Schema.Struct({
-		add: Schema.declare((value): value is CollectionRequest["add"] =>
-			Predicate.isFunction(value),
+		provide: Schema.declare(
+			(value): value is TerminalStatusRequest["provide"] =>
+				Predicate.isFunction(value),
 		),
 	}),
 );
-
-function inline(text: string): string {
-	return [...sanitizeInline(text).trim()]
-		.slice(0, MAX_SUMMARY_CHARACTERS)
-		.join("");
-}
-
-function boundedDetail(text: string): string {
-	return truncateUtf8Window(
-		sanitizeMultiline(text).trim(),
-		MAX_DETAIL_BYTES,
-		8 * 1024,
-		"\n\n[truncated]\n\n",
-	);
-}
 
 export function requestProcessStatusRefresh(
 	pi: Pick<ExtensionAPI, "events">,
@@ -76,112 +48,36 @@ export function observeProcessStatusRefresh(
 	return pi.events.on(REFRESH_CHANNEL, refresh);
 }
 
-export function registerProcessStatusSource(
+export function registerBackgroundTerminalStatus(
 	pi: Pick<ExtensionAPI, "events">,
-	name: string,
-	load: ProcessStatusSource,
+	terminals: TerminalStatus,
 ): () => void {
-	return pi.events.on(COLLECT_CHANNEL, (data) => {
-		if (!isCollectionRequest(data)) return;
-		data.add(name, load);
+	return pi.events.on(TERMINALS_CHANNEL, (request) => {
+		if (isTerminalStatusRequest(request)) request.provide(terminals);
 	});
 }
 
-function collect(pi: Pick<ExtensionAPI, "events">) {
-	const activities: ProcessStatusActivity[] = [];
-	const errors: string[] = [];
-	const ids = new Set<string>();
-	let sourceCount = 0;
-	let omitted = 0;
-	let closed = false;
+function backgroundTerminals(pi: Pick<ExtensionAPI, "events">) {
+	let terminals: TerminalStatus | undefined;
 
-	const request: CollectionRequest = {
-		add: (name, load) => {
-			// biome-ignore lint/suspicious/noUnnecessaryConditions: Listeners can retain this callback after collection closes.
-			if (closed) return;
-
-			if (++sourceCount > MAX_SOURCES) {
-				omitted++;
-
-				return;
-			}
-
-			try {
-				const sourceActivities = load();
-
-				if (sourceActivities.length > MAX_ACTIVITIES_PER_SOURCE) {
-					throw new Error(
-						`limit=activities count=${sourceActivities.length} max=${MAX_ACTIVITIES_PER_SOURCE}`,
-					);
-				}
-
-				for (const activity of sourceActivities) {
-					if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(activity.id)) {
-						errors.push(`${inline(name)}: error=invalid-id`);
-						continue;
-					}
-
-					if (ids.has(activity.id)) {
-						errors.push(
-							`${inline(name)}: error=duplicate-id id=${activity.id}`,
-						);
-						continue;
-					}
-
-					ids.add(activity.id);
-
-					if (activities.length < MAX_ACTIVITIES) {
-						activities.push(activity);
-						continue;
-					}
-
-					omitted++;
-
-					if (activity.active) {
-						const inactive = activities.findIndex((entry) => !entry.active);
-
-						if (inactive >= 0) activities.splice(inactive, 1, activity);
-					}
-				}
-			} catch (error) {
-				errors.push(
-					inline(
-						`${name}: ${error instanceof Error ? error.message : String(error)}`,
-					),
-				);
-			}
+	const request: TerminalStatusRequest = {
+		provide: (value) => {
+			terminals = value;
 		},
 	};
 
-	pi.events.emit(COLLECT_CHANNEL, request);
-	closed = true;
+	pi.events.emit(TERMINALS_CHANNEL, request);
 
-	return { activities, errors, omitted };
-}
-
-function listText(
-	collection: ReturnType<typeof collect>,
-	expanded: boolean,
-): string {
-	const entries = collection.activities
-		.filter((activity) => expanded || activity.active)
-		.map(
-			(activity) =>
-				`${activity.id} ${inline(activity.summary) || "summary=none"}`,
-		);
-
-	if (collection.omitted > 0) entries.push(`${collection.omitted} omitted`);
-	entries.push(...collection.errors.map((error) => `error: ${error}`));
-
-	return entries.length > 0 ? entries.join("\n") : "idle";
+	return terminals;
 }
 
 export function processStatusSummary(
 	pi: Pick<ExtensionAPI, "events">,
 ): string | undefined {
-	const count = collect(pi).activities.filter(
-		(activity) => activity.active,
-	).length;
+	const count =
+		backgroundTerminals(pi)
+			?.list()
+			.filter((terminal) => terminal.state === "running").length ?? 0;
 
 	return count > 0 ? `${count} bg` : undefined;
 }
@@ -190,37 +86,43 @@ export function processStatusView(
 	pi: Pick<ExtensionAPI, "events">,
 	requestedId?: string,
 ): ProcessStatusView {
-	const collection = collect(pi);
+	const terminals = backgroundTerminals(pi);
 
 	if (!requestedId) {
+		const active: string[] = [];
+		const tracked: string[] = [];
+
+		for (const terminal of terminals?.list() ?? []) {
+			const text = summary(terminal);
+			tracked.push(text);
+
+			if (terminal.state === "running") active.push(text);
+		}
+
 		return {
-			collapsed: listText(collection, false),
-			expanded: listText(collection, true),
+			collapsed: active.join("\n") || "idle",
+			expanded: tracked.join("\n") || "idle",
 			list: true,
 		};
 	}
 
-	const id = inline(requestedId).slice(0, 64);
+	const id = sanitizeInline(requestedId).trim().slice(0, 64);
+	const terminal = terminals?.get(id);
 
-	const activity = collection.activities.find(
-		(candidate) => candidate.id === requestedId,
-	);
-
-	if (!activity) {
+	if (!terminal) {
 		const text = `error: unknown-id · id: ${id} · action: /ps`;
 
 		return { collapsed: text, expanded: text, list: false };
 	}
 
-	let detail = "";
+	const detail = truncateUtf8Window(
+		formatTerminalDetails(terminal).trim(),
+		MAX_DETAIL_BYTES,
+		8 * 1024,
+		"\n\n[truncated]\n\n",
+	);
 
-	try {
-		if (activity.detail) detail = boundedDetail(activity.detail());
-	} catch (error) {
-		detail = `detail-error: ${inline(error instanceof Error ? error.message : String(error))}`;
-	}
-
-	const text = `${activity.id} ${inline(activity.summary) || "summary=none"}${detail ? `\n\n${detail}` : ""}`;
+	const text = `${summary(terminal)}\n\n${detail}`;
 
 	return { collapsed: text, expanded: text, list: false };
 }

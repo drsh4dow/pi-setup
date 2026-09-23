@@ -2,7 +2,6 @@ import { Effect } from "effect";
 import type { BackgroundTerminalDelivery } from "./delivery.ts";
 import {
 	BackgroundTerminalManager,
-	MAX_RUNNING_PER_OWNER,
 	type RunningTerminalSnapshot,
 	type TerminalMetadata,
 	type TerminalSnapshot,
@@ -81,16 +80,6 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 		options: { command: string; title: string; cwd: string },
 	) {
 		const joined = this.joined(client);
-
-		const running = joined.manager
-			.list()
-			.filter((snapshot) => snapshot.state === "running").length;
-
-		if (running >= MAX_RUNNING_PER_OWNER) {
-			throw new Error(
-				`Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${running}. Kill one with bg_kill.`,
-			);
-		}
 
 		const snapshot = joined.manager.start(options);
 		joined.updateStatus();

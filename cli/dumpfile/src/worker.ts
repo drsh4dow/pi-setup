@@ -1,5 +1,4 @@
 import { AwsClient } from "aws4fetch";
-import { Type } from "typebox";
 import { Value } from "typebox/value";
 import {
 	BUCKET_NAME,
@@ -11,6 +10,7 @@ import {
 	type UploadAuthorization,
 	type UploadAuthorizationRequest,
 	type UploadHeaders,
+	uploadRequestSchema,
 } from "./contract.ts";
 
 interface RateLimiter {
@@ -53,11 +53,6 @@ interface WorkerDependencies {
 
 const problemBase = "https://upload.drsh4dow.dev/problems";
 
-const contentTypePattern =
-	/^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/;
-
-const extensionPattern = /^[a-z0-9]{1,16}$/;
-
 function problem(
 	status: number,
 	title: string,
@@ -97,53 +92,44 @@ async function parseUploadRequest(
 		);
 	}
 
-	if (
-		!Value.Check(
-			Type.Object({
-				size: Type.Optional(Type.Unknown()),
-				contentType: Type.Optional(Type.Unknown()),
-				extension: Type.Optional(Type.Unknown()),
-			}),
-			raw,
-		)
-	) {
+	if (!Value.Check(uploadRequestSchema, raw)) {
+		const errors = Value.Errors(uploadRequestSchema, raw);
+		const rootError = errors.find((error) => error.instancePath === "");
+
+		if (rootError) {
+			return problem(
+				400,
+				"Invalid request",
+				rootError.keyword === "type"
+					? "Expected a JSON object."
+					: "Expected only contentType, extension, and size.",
+				"invalid-request",
+			);
+		}
+
+		if (errors.some((error) => error.instancePath === "/size")) {
+			return problem(
+				400,
+				"Invalid size",
+				"size must be a non-negative integer.",
+				"invalid-size",
+			);
+		}
+
+		if (errors.some((error) => error.instancePath === "/contentType")) {
+			return problem(
+				400,
+				"Invalid content type",
+				"contentType must be a valid media type without parameters.",
+				"invalid-content-type",
+			);
+		}
+
 		return problem(
 			400,
-			"Invalid request",
-			"Expected a JSON object.",
-			"invalid-request",
-		);
-	}
-
-	const keys = Object.keys(raw);
-
-	if (
-		keys.length !== 3 ||
-		!keys.includes("contentType") ||
-		!keys.includes("extension") ||
-		!keys.includes("size") ||
-		!("contentType" in raw) ||
-		!("extension" in raw) ||
-		!("size" in raw)
-	) {
-		return problem(
-			400,
-			"Invalid request",
-			"Expected only contentType, extension, and size.",
-			"invalid-request",
-		);
-	}
-
-	if (
-		!Value.Check(Type.Number(), raw.size) ||
-		!Number.isSafeInteger(raw.size) ||
-		raw.size < 0
-	) {
-		return problem(
-			400,
-			"Invalid size",
-			"size must be a non-negative integer.",
-			"invalid-size",
+			"Invalid extension",
+			"extension must be empty or 1-16 lowercase letters or digits.",
+			"invalid-extension",
 		);
 	}
 
@@ -156,35 +142,7 @@ async function parseUploadRequest(
 		);
 	}
 
-	if (
-		!Value.Check(Type.String(), raw.contentType) ||
-		!contentTypePattern.test(raw.contentType)
-	) {
-		return problem(
-			400,
-			"Invalid content type",
-			"contentType must be a valid media type without parameters.",
-			"invalid-content-type",
-		);
-	}
-
-	if (
-		!Value.Check(Type.String(), raw.extension) ||
-		(raw.extension !== "" && !extensionPattern.test(raw.extension))
-	) {
-		return problem(
-			400,
-			"Invalid extension",
-			"extension must be empty or 1-16 lowercase letters or digits.",
-			"invalid-extension",
-		);
-	}
-
-	return {
-		contentType: raw.contentType,
-		extension: raw.extension,
-		size: raw.size,
-	};
+	return raw;
 }
 
 async function sha256(value: string): Promise<string> {

@@ -7,7 +7,7 @@ import {
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import { Effect, FileSystem, ManagedRuntime, Schema } from "effect";
+import { Effect, FileSystem, Schema } from "effect";
 
 export const SUPPORTED_MODELS = new Set([
 	"openai/gpt-5.4",
@@ -38,8 +38,6 @@ export const KEYBINDING_FIELD = "pi-gpt-fast-mode";
 export const DEFAULT_SHORTCUT = "ctrl+alt+m";
 
 export const RESERVED_SHORTCUTS = new Set(["ctrl+m", "enter", "return"]);
-
-const runtime = ManagedRuntime.make(BunFileSystem.layer);
 
 const Keybindings = Schema.fromJsonString(
 	Schema.Struct({
@@ -114,11 +112,11 @@ export const loadShortcuts = Effect.fn("loadShortcuts")(
 );
 
 const loadEnabled = Effect.fn("loadEnabled")(
-	function* () {
+	function* (agentDir: string) {
 		const fs = yield* FileSystem.FileSystem;
 
 		const parsed = yield* Schema.decodeEffect(FastModeSettings)(
-			yield* fs.readFileString(join(getAgentDir(), "gpt-fast-mode.json")),
+			yield* fs.readFileString(join(agentDir, "gpt-fast-mode.json")),
 		);
 
 		return parsed.enabled === true;
@@ -126,10 +124,13 @@ const loadEnabled = Effect.fn("loadEnabled")(
 	Effect.orElseSucceed(() => false),
 );
 
-const saveEnabled = Effect.fn("saveEnabled")(function* (enabled: boolean) {
+const saveEnabled = Effect.fn("saveEnabled")(function* (
+	agentDir: string,
+	enabled: boolean,
+) {
 	const fs = yield* FileSystem.FileSystem;
 	yield* fs.writeFileString(
-		join(getAgentDir(), "gpt-fast-mode.json"),
+		join(agentDir, "gpt-fast-mode.json"),
 		`${yield* Schema.encodeEffect(FastModeSettings)({ enabled })}\n`,
 		{ mode: 0o600 },
 	);
@@ -160,18 +161,17 @@ function announceState(ctx: ExtensionContext, enabled: boolean): void {
 	);
 }
 
-const [initialEnabled, initialShortcuts] = await runtime.runPromise(
-	Effect.all([loadEnabled(), loadShortcuts(getAgentDir())]),
-);
-
-export default function fastModeExtension(pi: ExtensionAPI): void {
-	let enabled = initialEnabled;
+export default function fastModeExtension(
+	pi: ExtensionAPI,
+	agentDir = getAgentDir(),
+): Promise<void> {
+	let enabled = false;
 
 	const toggle = (ctx: ExtensionContext) => {
 		const nextEnabled = !enabled;
 
-		return runtime.runPromise(
-			saveEnabled(nextEnabled).pipe(
+		return Effect.runPromise(
+			saveEnabled(agentDir, nextEnabled).pipe(
 				Effect.tap(() =>
 					Effect.sync(() => {
 						enabled = nextEnabled;
@@ -183,6 +183,7 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
 						ctx.ui.notify("Could not save GPT Fast mode setting.", "error"),
 					),
 				),
+				Effect.provide(BunFileSystem.layer),
 			),
 		);
 	};
@@ -192,21 +193,33 @@ export default function fastModeExtension(pi: ExtensionAPI): void {
 		handler: (_args, ctx) => toggle(ctx),
 	});
 
-	for (const shortcut of initialShortcuts)
-		pi.registerShortcut(
-			// SAFETY: The SDK's matchesKey parses arbitrary strings and ignores unknown keys; KeyId restricts autocomplete only.
-			shortcut as Parameters<ExtensionAPI["registerShortcut"]>[0],
-			{ description: "Toggle GPT Fast mode", handler: (ctx) => toggle(ctx) },
-		);
 	pi.on("session_start", () =>
-		runtime.runPromise(
-			loadEnabled().pipe(
+		Effect.runPromise(
+			loadEnabled(agentDir).pipe(
 				Effect.tap((value) => Effect.sync(() => (enabled = value))),
 				Effect.asVoid,
+				Effect.provide(BunFileSystem.layer),
 			),
 		),
 	);
 	pi.on("before_provider_request", (event, ctx) =>
 		enabled ? withFastServiceTier(ctx.model, event.payload) : undefined,
+	);
+
+	return Effect.runPromise(
+		Effect.gen(function* () {
+			const shortcuts = yield* loadShortcuts(agentDir);
+
+			for (const shortcut of shortcuts) {
+				pi.registerShortcut(
+					// SAFETY: The SDK's matchesKey parses arbitrary strings and ignores unknown keys; KeyId restricts autocomplete only.
+					shortcut as Parameters<ExtensionAPI["registerShortcut"]>[0],
+					{
+						description: "Toggle GPT Fast mode",
+						handler: (ctx) => toggle(ctx),
+					},
+				);
+			}
+		}).pipe(Effect.provide(BunFileSystem.layer)),
 	);
 }

@@ -7,7 +7,7 @@ import type {
 	ExtensionHandler,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Effect, Schema } from "effect";
+import { Schema } from "effect";
 import { Check } from "typebox/value";
 import { unsafeFixture } from "../../test/adapter.ts";
 import extension from "../index.ts";
@@ -137,24 +137,22 @@ export function registeredExtension(
 		return {
 			name: definition.name,
 			executionMode: definition.executionMode,
-			execute(
+			async execute(
 				id: string,
 				params: ToolParams,
 				signal?: AbortSignal,
 				update?: undefined,
 				context: Pick<ExtensionContext, "cwd"> = { cwd: process.cwd() },
 			) {
-				return Effect.runPromise(
-					Effect.promise(() =>
-						definition.execute(
-							id,
-							params,
-							signal,
-							update,
-							unsafeFixture<ExtensionContext>(context),
-						),
-					).pipe(Effect.map(Schema.decodeUnknownSync(schema))),
+				const result = await definition.execute(
+					id,
+					params,
+					signal,
+					update,
+					unsafeFixture<ExtensionContext>(context),
 				);
+
+				return Schema.decodeSync(schema)(result);
 			},
 		};
 	}
@@ -167,9 +165,6 @@ export function registeredExtension(
 			tool("bg_kill", killResult),
 		] as const,
 		handlers: {
-			has(name: keyof SDKEvents) {
-				return handlers[name] !== undefined;
-			},
 			get<Name extends keyof SDKEvents>(name: Name) {
 				const handler = handlers[name];
 

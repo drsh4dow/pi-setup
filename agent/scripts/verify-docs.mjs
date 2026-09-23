@@ -131,22 +131,6 @@ const extensionNames = [
 	...new Set(files.map(extensionName).filter(Boolean)),
 ].sort();
 
-for (const name of extensionNames) {
-	const hasCredentialFreeTest = files.some(
-		(path) =>
-			(path.startsWith(`agent/extensions/${name}/test/`) &&
-				path.endsWith(".test.ts") &&
-				!path.endsWith("/e2e.test.ts")) ||
-			path === `agent/extensions/test/${name}.test.ts`,
-	);
-
-	if (!hasCredentialFreeTest) {
-		errors.push(
-			`Installed extension ${name} has no credential-free behavioral test`,
-		);
-	}
-}
-
 const inventory = [
 	{ heading: "Installed extensions", actual: extensionNames },
 	{

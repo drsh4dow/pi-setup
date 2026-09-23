@@ -5,16 +5,6 @@ import type {
 	ExtensionHandler,
 } from "@earendil-works/pi-coding-agent";
 
-type TestEventName =
-	| "agent_start"
-	| "agent_end"
-	| "message_start"
-	| "message_update"
-	| "message_end"
-	| "session_start"
-	| "model_select"
-	| "session_shutdown";
-
 type SDKEvents = {
 	[Event in ExtensionEvent as Event["type"]]: Event;
 };
@@ -23,16 +13,7 @@ type Handlers = {
 	[Name in keyof SDKEvents]?: ExtensionHandler<SDKEvents[Name], unknown>;
 };
 
-export interface ExtensionTestAdapter {
-	readonly api: ExtensionAPI;
-	emit<Name extends TestEventName>(
-		name: Name,
-		event: SDKEvents[Name],
-		context: ExtensionContext,
-	): Promise<void>;
-}
-
-export function extensionTestAdapter(): ExtensionTestAdapter {
+export function extensionTestAdapter() {
 	const handlers: Handlers = {};
 
 	const registration = {
@@ -43,13 +24,17 @@ export function extensionTestAdapter(): ExtensionTestAdapter {
 
 	return {
 		api: unsafeFixture<ExtensionAPI>(registration),
-		emit(name, event, context) {
+		emit<Name extends keyof SDKEvents>(
+			name: Name,
+			event: SDKEvents[Name],
+			context: ExtensionContext,
+		) {
 			const registered = handlers[name];
 
 			if (!registered)
 				return Promise.reject(new Error(`No handler registered for ${name}`));
 
-			return Promise.resolve(registered(event, context)).then(() => undefined);
+			return Promise.resolve(registered(event, context));
 		},
 	};
 }

@@ -14,6 +14,7 @@ import {
 	PUBLIC_BASE_URL,
 	type UploadAuthorization,
 	type UploadAuthorizationRequest,
+	uploadAuthorizationSchema,
 } from "./contract.ts";
 
 interface BunRuntime {
@@ -54,32 +55,6 @@ class CliError extends Error {}
 const usage = `Usage: dumpfile upload <path> [--json]
 
 Publishes supporting evidence for PRs and human review.`;
-
-const authorizationSchema = Type.Object({
-	key: Type.String(),
-	publicUrl: Type.String(),
-	upload: Type.Object({
-		method: Type.Literal("PUT"),
-		url: Type.String(),
-		expiresAt: Type.String(),
-		headers: Type.Object({
-			"Cache-Control": Type.Optional(Type.Unknown()),
-			"Content-Disposition": Type.Optional(Type.Unknown()),
-			"Content-Length": Type.Optional(Type.Unknown()),
-			"Content-Type": Type.Optional(Type.Unknown()),
-		}),
-	}),
-});
-
-const uploadHeadersSchema = Type.Object({
-	"Cache-Control": Type.String(),
-	"Content-Disposition": Type.Union([
-		Type.Literal("attachment"),
-		Type.Literal("inline"),
-	]),
-	"Content-Length": Type.String(),
-	"Content-Type": Type.String(),
-});
 
 function parseEnvFile(source: string, path: string) {
 	const values: Record<string, string> = {};
@@ -193,18 +168,8 @@ async function parseAuthorization(
 		throw new CliError("The signing service returned invalid JSON");
 	}
 
-	if (
-		!Value.Check(authorizationSchema, raw) ||
-		raw.key.length === 0 ||
-		raw.key.includes("..")
-	) {
+	if (!Value.Check(uploadAuthorizationSchema, raw)) {
 		throw new CliError("The signing service returned an invalid response");
-	}
-
-	if (
-		!/^\d{4}\/\d{2}\/\d{2}\/[a-f0-9]{32}(?:\.[a-z0-9]{1,16})?$/.test(raw.key)
-	) {
-		throw new CliError("The signing service returned an invalid object key");
 	}
 
 	const publicUrl = secureUrl(raw.publicUrl, "publicUrl");
@@ -228,16 +193,6 @@ async function parseAuthorization(
 
 	if (Number.isNaN(Date.parse(raw.upload.expiresAt))) {
 		throw new CliError("The signing service returned an invalid expiry");
-	}
-
-	const headerKeys = Object.keys(raw.upload.headers);
-
-	if (
-		headerKeys.length !== 4 ||
-		!Value.Check(uploadHeadersSchema, raw.upload.headers) ||
-		!/^\d+$/.test(raw.upload.headers["Content-Length"])
-	) {
-		throw new CliError("The signing service returned invalid upload headers");
 	}
 
 	return {

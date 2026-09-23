@@ -6,15 +6,13 @@ import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { sanitizeInline } from "../../lib/text.ts";
 import {
-	registerProcessStatusSource,
+	registerBackgroundTerminalStatus,
 	requestProcessStatusRefresh,
 } from "../process-status/status.ts";
 import {
 	BackgroundTerminalDelivery,
-	formatTerminalDetails,
 	formatTerminalReport,
 	sanitizeErrorForDisplay,
-	statusSummary,
 	summary,
 	terminalMetadata,
 } from "./delivery.ts";
@@ -23,8 +21,6 @@ import {
 	type BackgroundTerminalSession,
 	joinBackgroundTerminalSession,
 } from "./session.ts";
-
-export { BackgroundTerminalDelivery } from "./delivery.ts";
 
 const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
 
@@ -46,21 +42,9 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 	const updateStatus = () => requestProcessStatusRefresh(pi);
 	const client = { delivery, updateStatus };
 
-	registerProcessStatusSource(pi, "background-terminals", () => {
-		if (!session) return [];
-
-		return session.list(clientId).map((snapshot) => ({
-			id: snapshot.id,
-			active: snapshot.state === "running",
-			summary: statusSummary(snapshot),
-			detail: () => {
-				const current = session?.get(clientId, snapshot.id);
-
-				if (!current) throw new Error(`error=not-tracked id=${snapshot.id}`);
-
-				return formatTerminalDetails(current);
-			},
-		}));
+	registerBackgroundTerminalStatus(pi, {
+		list: () => session?.list(clientId) ?? [],
+		get: (id) => session?.get(clientId, id),
 	});
 
 	const leaveSession = Effect.fn("leaveSession")(function* () {

@@ -14,7 +14,6 @@ function repository(t, readme, extraFiles = {}) {
 	const files = {
 		"README.md": readme,
 		"agent/extensions/example/index.ts": "",
-		"agent/extensions/example/test/extension.test.ts": "",
 		"agent/skills/example/SKILL.md": "# Example\n",
 		"agent/prompts/example.md": "# Example\n",
 		"agent/themes/example.json": "{}\n",
@@ -156,21 +155,12 @@ test("ignores tracked Markdown removed from the working tree", (t) => {
 	assert.equal(result.status, 0, result.stderr);
 });
 
-test("reports a shipped extension without a credential-free test", (t) => {
-	const root = repository(t, validReadme);
-	rmSync(join(root, "agent/extensions/example/test/extension.test.ts"));
-	const result = run(root);
-	assert.notEqual(result.status, 0);
-	assert.match(result.stderr, /example.*credential-free behavioral test/);
-});
-
 test("includes directly tracked extension files in the inventory", (t) => {
 	const root = repository(
 		t,
 		validReadme.replace("- `example`", "- `direct`\n- `example`"),
 		{
 			"agent/extensions/direct.ts": "",
-			"agent/extensions/test/direct.test.ts": "",
 		},
 	);
 

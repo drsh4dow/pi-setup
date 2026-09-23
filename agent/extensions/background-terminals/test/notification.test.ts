@@ -164,6 +164,35 @@ test("queued delivery keeps live notifications and drops settled ones", async ()
 	delivery.clear();
 });
 
+test("settlement clears exhausted notification diagnostics", () => {
+	const delivery = new BackgroundTerminalDelivery(
+		{
+			sendMessage() {
+				throw new Error("delivery unavailable");
+			},
+		},
+		() => {},
+	);
+
+	try {
+		delivery.setContext({ ...context, isIdle: () => false });
+		delivery.enqueueNotification({
+			id: "bt-1:notification-1",
+			terminalId: "bt-1",
+			title: "watcher",
+			message: "feedback",
+		});
+
+		for (let attempt = 0; attempt < 3; attempt++)
+			Effect.runSync(delivery.flush);
+		assert.match(delivery.problem ?? "", /bt-1:notification-1/);
+		delivery.terminalSettled("bt-1");
+		assert.equal(delivery.problem, undefined);
+	} finally {
+		delivery.clear();
+	}
+});
+
 test("emit-to-pi fails outside an owned background terminal", () => {
 	const cli = new URL("../bin/emit-to-pi.mjs", import.meta.url);
 	const env = { ...process.env };

@@ -402,30 +402,27 @@ export class BackgroundTerminalManager {
 
 		const killed = entry.kind === "terminating" && entry.intent !== "automatic";
 
-		const snapshot: SettledTerminalSnapshot = killed
-			? {
-					...base,
-					state: "killed",
-					result: {
-						kind: "killed",
-						exit,
-					},
-				}
-			: error
-				? {
-						...base,
-						state: "failed",
-						result: { kind: "error", error, exit },
-					}
-				: exit.kind === "success"
-					? { ...base, state: "done", result: { kind: "success" } }
-					: {
-							...base,
-							state: "failed",
-							result: { kind: "process-failure", exit },
-						};
+		let snapshot: SettledTerminalSnapshot;
 
-		if (snapshot.state === "killed" && error) snapshot.result.error = error;
+		if (killed) {
+			snapshot = { ...base, state: "killed", result: { kind: "killed", exit } };
+
+			if (error) snapshot.result.error = error;
+		} else if (error) {
+			snapshot = {
+				...base,
+				state: "failed",
+				result: { kind: "error", error, exit },
+			};
+		} else if (exit.kind === "success") {
+			snapshot = { ...base, state: "done", result: { kind: "success" } };
+		} else {
+			snapshot = {
+				...base,
+				state: "failed",
+				result: { kind: "process-failure", exit },
+			};
+		}
 
 		this.entries.set(id, { kind: "settled", snapshot });
 
@@ -564,18 +561,12 @@ export class BackgroundTerminalManager {
 			const active = this.active(id);
 
 			if (!active) return yield* Deferred.await(settlement);
-			this.setProcessError(
-				id,
-				active.terminal.processError ??
-					"stdio did not close after termination; output may be incomplete",
-			);
-			const latest = this.active(id);
-
-			if (!latest) return yield* Deferred.await(settlement);
-			latest.terminal.child.stdout?.destroy();
-			latest.terminal.child.stderr?.destroy();
-			latest.terminal.child.stdio[NOTIFICATION_FD]?.destroy();
-			latest.terminal.child.unref();
+			active.terminal.processError ??=
+				"stdio did not close after termination; output may be incomplete";
+			active.terminal.child.stdout?.destroy();
+			active.terminal.child.stderr?.destroy();
+			active.terminal.child.stdio[NOTIFICATION_FD]?.destroy();
+			active.terminal.child.unref();
 			const snapshot = this.settle(id);
 
 			return snapshot ?? (yield* Deferred.await(settlement));

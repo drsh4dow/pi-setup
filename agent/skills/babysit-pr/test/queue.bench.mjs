@@ -1,6 +1,7 @@
 // Run with node agent/skills/babysit-pr/test/queue.bench.mjs [module URL].
 // Filesystem counters are separate from behavioral queue tests. No GitHub calls.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -29,15 +30,26 @@ try {
 			fs.mkdirSync(paths.events);
 			fs.mkdirSync(join(root, "acks"));
 			const events = Array.from({ length: n }, (_, i) => {
-				const id = i.toString(16).padStart(64, "0");
+				const key = `issue-comment:${i + 1}:20260101`;
+				const id = createHash("sha256").update(key).digest("hex");
 				return {
 					version: 1,
 					id,
 					marker: `<!-- pi-event:${id} -->`,
 					kind: "issue-comment",
-					key: `issue-comment:${i}:20260101`,
+					key,
 					observedAt: "2026-01-01T00:00:00.000Z",
-					payload: { comment: { id: i } },
+					pr: {
+						number: 42,
+						url: "https://github.com/acme/widgets/pull/42",
+						baseRefName: "main",
+						headRefName: "feature",
+						baseRefOid: "base",
+						headRefOid: "head",
+					},
+					payload: {
+						comment: { id: i + 1, user: { login: "author" }, body: "feedback" },
+					},
 				};
 			});
 			for (const event of events)

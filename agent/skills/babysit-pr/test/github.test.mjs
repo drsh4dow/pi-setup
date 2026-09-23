@@ -5,6 +5,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -12,8 +13,31 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { candidateEvents, statePaths } from "../scripts/babysit-pr.mjs";
+import { statePaths } from "../scripts/babysit-pr.mjs";
+import { candidateEvents } from "../scripts/events.mjs";
 import { fetchSnapshot } from "../scripts/github.mjs";
+
+const script = fileURLToPath(
+	new URL("../scripts/babysit-pr.mjs", import.meta.url),
+);
+const notificationBin = fileURLToPath(
+	new URL("../../../extensions/background-terminals/bin", import.meta.url),
+);
+
+function runCli(cwd, action) {
+	return spawnSync(process.execPath, [script, action, "42"], {
+		cwd,
+		encoding: "utf8",
+		env: {
+			...process.env,
+			PATH: `${notificationBin}${delimiter}${process.env.PATH}`,
+			PI_BACKGROUND_TERMINAL_NOTIFY_FD: "3",
+		},
+		stdio: ["ignore", "pipe", "pipe", "pipe"],
+		timeout: 5_000,
+		killSignal: "SIGKILL",
+	});
+}
 
 // Replay a PR whose recorded base is an ancestor of its head, while main has advanced.
 // The fake CLI rejects unknown requests so this exercises the real snapshot boundary.
@@ -90,37 +114,101 @@ test("behind-target compares the current target ref, not the PR's recorded base"
 		assert.equal(behind.pr.headRefOid, "head");
 	}));
 
-test("status distinguishes an unpolled watcher and a dead owner from an empty inbox", () =>
-	withGithub(async (cwd) => {
+test("status reports a dead owner and watch reclaims its lock", () =>
+	withGithub(
+		async (cwd) => {
+			execFileSync("git", ["init", "--quiet", cwd]);
+			const paths = statePaths(cwd, {
+				host: "github.com",
+				owner: "acme",
+				repo: "widgets",
+				pr: 42,
+			});
+			const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+			await once(child, "exit");
+			mkdirSync(paths.lock, { recursive: true });
+			writeFileSync(
+				join(paths.lock, "owner.json"),
+				JSON.stringify({ pid: child.pid, trustedBots: [] }),
+			);
+			const status = JSON.parse(
+				execFileSync(process.execPath, [script, "status", "42"], {
+					cwd,
+					encoding: "utf8",
+				}),
+			);
+			assert.equal(
+				status.watcherPid,
+				null,
+				"a stale lock is not a live watcher",
+			);
+			assert.equal(
+				status.lastPolledAt,
+				null,
+				"pending zero before a poll is not a clean inbox",
+			);
+			const watched = runCli(cwd, "watch");
+			assert.equal(watched.status, 0, watched.stderr);
+			assert.match(JSON.parse(watched.output[3].trim()), /was closed/);
+			assert.equal(existsSync(paths.root), false);
+		},
+		{ state: "CLOSED", closedAt: "2026-09-05T23:00:00Z" },
+	));
+
+test("status and watch agree on a live owner without changing its lock", () =>
+	withGithub((cwd) => {
 		execFileSync("git", ["init", "--quiet", cwd]);
-		const script = fileURLToPath(
-			new URL("../scripts/babysit-pr.mjs", import.meta.url),
-		);
 		const paths = statePaths(cwd, {
 			host: "github.com",
 			owner: "acme",
 			repo: "widgets",
 			pr: 42,
 		});
-		const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
-		await once(child, "exit");
 		mkdirSync(paths.lock, { recursive: true });
-		writeFileSync(
-			join(paths.lock, "owner.json"),
-			JSON.stringify({ pid: child.pid, trustedBots: [] }),
+		const file = join(paths.lock, "owner.json");
+		const owner = JSON.stringify({ pid: process.pid, trustedBots: [] });
+		writeFileSync(file, owner);
+		const status = runCli(cwd, "status");
+		assert.equal(status.status, 0, status.stderr);
+		assert.equal(JSON.parse(status.stdout).watcherPid, process.pid);
+		const watch = runCli(cwd, "watch");
+		assert.equal(watch.status, 1, watch.stderr);
+		assert.match(
+			watch.stderr,
+			new RegExp(`already watching this PR with PID ${process.pid}`),
 		);
-		const status = JSON.parse(
-			execFileSync(process.execPath, [script, "status", "42"], {
-				cwd,
-				encoding: "utf8",
-			}),
-		);
-		assert.equal(status.watcherPid, null, "a stale lock is not a live watcher");
-		assert.equal(
-			status.lastPolledAt,
-			null,
-			"pending zero before a poll is not a clean inbox",
-		);
+		assert.equal(readFileSync(file, "utf8"), owner);
+	}));
+
+test("status and watch leave unverifiable owner records untouched", () =>
+	withGithub((cwd) => {
+		execFileSync("git", ["init", "--quiet", cwd]);
+		const paths = statePaths(cwd, {
+			host: "github.com",
+			owner: "acme",
+			repo: "widgets",
+			pr: 42,
+		});
+		mkdirSync(paths.lock, { recursive: true });
+		const file = join(paths.lock, "owner.json");
+		for (const owner of [
+			undefined,
+			"{",
+			JSON.stringify({ pid: "123" }),
+			JSON.stringify({ pid: 0 }),
+			JSON.stringify({ pid: process.pid, trustedBots: "bot" }),
+		]) {
+			rmSync(file, { force: true });
+			if (owner !== undefined) writeFileSync(file, owner);
+			for (const action of ["status", "watch"]) {
+				const result = runCli(cwd, action);
+				assert.equal(result.status, 1, result.stderr);
+				assert.match(result.stderr, /Cannot verify babysit-pr watcher owner/);
+			}
+			assert.ok(existsSync(paths.lock));
+			assert.equal(existsSync(file), owner !== undefined);
+			if (owner !== undefined) assert.equal(readFileSync(file, "utf8"), owner);
+		}
 	}));
 
 for (const ended of ["merged", "closed"]) {
@@ -134,27 +222,7 @@ for (const ended of ["merged", "closed"]) {
 					repo: "widgets",
 					pr: 42,
 				});
-				const script = fileURLToPath(
-					new URL("../scripts/babysit-pr.mjs", import.meta.url),
-				);
-				const bin = fileURLToPath(
-					new URL(
-						"../../../extensions/background-terminals/bin",
-						import.meta.url,
-					),
-				);
-				const result = spawnSync(process.execPath, [script, "watch", "42"], {
-					cwd,
-					encoding: "utf8",
-					env: {
-						...process.env,
-						PATH: `${bin}${delimiter}${process.env.PATH}`,
-						PI_BACKGROUND_TERMINAL_NOTIFY_FD: "3",
-					},
-					stdio: ["ignore", "pipe", "pipe", "pipe"],
-					timeout: 2_000,
-					killSignal: "SIGKILL",
-				});
+				const result = runCli(cwd, "watch");
 				assert.equal(result.status, 0, result.stderr);
 				assert.match(
 					JSON.parse(result.output[3].trim()),
@@ -175,20 +243,11 @@ test(
 	() =>
 		withGithub(async (cwd) => {
 			execFileSync("git", ["init", "--quiet", cwd]);
-			const script = fileURLToPath(
-				new URL("../scripts/babysit-pr.mjs", import.meta.url),
-			);
-			const bin = fileURLToPath(
-				new URL(
-					"../../../extensions/background-terminals/bin",
-					import.meta.url,
-				),
-			);
 			const watcher = spawn(process.execPath, [script, "watch", "42"], {
 				cwd,
 				env: {
 					...process.env,
-					PATH: `${bin}${delimiter}${process.env.PATH}`,
+					PATH: `${notificationBin}${delimiter}${process.env.PATH}`,
 					PI_BACKGROUND_TERMINAL_NOTIFY_FD: "3",
 				},
 				stdio: ["ignore", "pipe", "pipe", "pipe"],

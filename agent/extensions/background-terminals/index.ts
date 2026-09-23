@@ -26,7 +26,6 @@ const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
 
 export default function backgroundTerminals(pi: ExtensionAPI) {
 	const delivery = new BackgroundTerminalDelivery(pi);
-	const clientId = Symbol("background-terminal-client");
 	let session: BackgroundTerminalSession | undefined;
 	const observations = new Map<string, object>();
 
@@ -40,11 +39,10 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 	};
 
 	const updateStatus = () => requestProcessStatusRefresh(pi);
-	const client = { delivery, updateStatus };
 
 	registerBackgroundTerminalStatus(pi, {
-		list: () => session?.list(clientId) ?? [],
-		get: (id) => session?.get(clientId, id),
+		list: () => session?.list() ?? [],
+		get: (id) => session?.get(id),
 	});
 
 	const leaveSession = Effect.fn("leaveSession")(function* () {
@@ -53,13 +51,14 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		observations.clear();
 		updateStatus();
 
-		if (joined) yield* joined.leave(clientId);
+		if (joined) yield* joined.leave();
 	});
 
 	pi.on("session_start", (_event, ctx) => {
 		delivery.setContext(ctx);
 
-		if (!session) session = joinBackgroundTerminalSession(clientId, client);
+		if (!session)
+			session = joinBackgroundTerminalSession(delivery, updateStatus);
 		updateStatus();
 	});
 	pi.on("agent_settled", () => Effect.runPromise(delivery.flush));
@@ -107,7 +106,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 
 					const snapshot = yield* Effect.sync(() => {
 						try {
-							return currentSession().start(clientId, {
+							return currentSession().start({
 								command,
 								title:
 									[...sanitizeInline(params.title).trim()]
@@ -121,8 +120,6 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 							);
 						}
 					});
-
-					updateStatus();
 
 					return {
 						content: [
@@ -148,7 +145,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			return Effect.runPromise(
 				Effect.sync(() => {
 					const terminalSession = currentSession();
-					const snapshot = terminalSession.get(clientId, params.id);
+					const snapshot = terminalSession.get(params.id);
 
 					if (!snapshot)
 						throw new Error(
@@ -156,7 +153,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 						);
 
 					if (snapshot.state !== "running")
-						terminalSession.consume(clientId, [snapshot.id]);
+						terminalSession.consume([snapshot.id]);
 
 					const evidence = {
 						...terminalMetadata(snapshot),
@@ -205,7 +202,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 		execute() {
 			return Effect.runPromise(
 				Effect.sync(() => {
-					const entries = currentSession().list(clientId);
+					const entries = currentSession().list();
 
 					const terminals = entries.length
 						? entries.map(summary).join("\n")
@@ -244,7 +241,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			let killError: unknown;
 
 			const work = Effect.runPromise(
-				Effect.suspend(() => terminalSession.kill(clientId, ids)),
+				Effect.suspend(() => terminalSession.kill(ids)),
 			);
 
 			work.catch((error) => {
@@ -254,7 +251,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 			return Effect.runPromise(
 				Effect.promise(() => work).pipe(
 					Effect.map((results) => {
-						terminalSession.consume(clientId, ids);
+						terminalSession.consume(ids);
 
 						return {
 							content: [

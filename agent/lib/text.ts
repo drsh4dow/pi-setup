@@ -36,23 +36,6 @@ function utf8TailStart(bytes: Buffer, start: number) {
 	return start;
 }
 
-export function truncateUtf8Head(text: string, maxBytes: number, marker = "") {
-	const bytes = Buffer.from(text);
-
-	if (bytes.length <= maxBytes) return text;
-	const markerBytes = Buffer.from(marker);
-
-	if (markerBytes.length >= maxBytes) {
-		return markerBytes
-			.subarray(0, utf8HeadEnd(markerBytes, maxBytes))
-			.toString();
-	}
-
-	const end = utf8HeadEnd(bytes, maxBytes - markerBytes.length);
-
-	return Buffer.concat([bytes.subarray(0, end), markerBytes]).toString();
-}
-
 export function truncateUtf8Tail(text: string, maxBytes: number) {
 	const bytes = Buffer.from(text);
 

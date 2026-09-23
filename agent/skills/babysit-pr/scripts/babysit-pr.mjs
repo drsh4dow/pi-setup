@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
 	closeSync,
 	existsSync,
@@ -16,6 +16,9 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { candidateEvents, eventSubject, validEvent } from "./events.mjs";
 import {
 	CommandError,
 	DEFAULT_TRUSTED_BOTS,
@@ -32,108 +35,12 @@ const FAILURE_NOTICE_MS = 300_000;
 const MAX_BACKOFF_MS = 60_000;
 const VERSION = 1;
 const scriptPath = fileURLToPath(import.meta.url);
-
-function hash(value) {
-	return createHash("sha256").update(value).digest("hex");
-}
-
-function compactTimestamp(value) {
-	return String(value ?? "unknown").replace(/[^0-9A-Za-z]/g, "");
-}
-
-function eventMarker(id) {
-	return `<!-- pi-event:${id} -->`;
-}
-
-function makeEvent(pr, kind, key, observedAt, payload) {
-	const id = hash(key);
-	return {
-		version: VERSION,
-		id,
-		marker: eventMarker(id),
-		kind,
-		key,
-		observedAt,
-		pr: {
-			number: pr.number,
-			url: pr.url,
-			baseRefName: pr.baseRefName,
-			headRefName: pr.headRefName,
-			baseRefOid: pr.baseRefOid,
-			headRefOid: pr.headRefOid,
-		},
-		payload,
-	};
-}
-
-function trustedComment(comment, input) {
-	const login = comment?.user?.login;
-	return (
-		typeof login === "string" &&
-		input.trustedLogins.has(login) &&
-		!(
-			login === input.selfLogin &&
-			typeof comment.body === "string" &&
-			/(?:^|\r?\n)Written by Pi Agent\s*$/u.test(comment.body)
-		)
-	);
-}
-
-export function candidateEvents(input, observedAt) {
-	const { pr } = input;
-	const events = [];
-	for (const comment of input.issueComments) {
-		if (!trustedComment(comment, input)) continue;
-		const key = `issue-comment:${comment.id}:${compactTimestamp(comment.updated_at)}`;
-		events.push(makeEvent(pr, "issue-comment", key, observedAt, { comment }));
-	}
-	for (const comment of input.reviewComments) {
-		if (!trustedComment(comment, input)) continue;
-		if (
-			input.unresolvedReviewCommentIds instanceof Set &&
-			!input.unresolvedReviewCommentIds.has(comment.id)
-		)
-			continue;
-		const key = `review-comment:${comment.id}:${compactTimestamp(comment.updated_at)}`;
-		events.push(makeEvent(pr, "review-comment", key, observedAt, { comment }));
-	}
-	for (const review of input.reviews) {
-		if (!trustedComment(review, input)) continue;
-		const state = String(review.state ?? "").toUpperCase();
-		const body = typeof review.body === "string" ? review.body.trim() : "";
-		if (!body && state !== "CHANGES_REQUESTED") continue;
-		const key = `review:${review.id}:${compactTimestamp(review.submitted_at)}:${state}:${hash(body)}`;
-		events.push(makeEvent(pr, "review", key, observedAt, { review }));
-	}
-	for (const check of input.checks) {
-		if (check.bucket !== "fail" && check.bucket !== "cancel") continue;
-		const key = `check:${pr.headRefOid}:${check.name}:${compactTimestamp(check.completedAt)}:${check.state}:${check.link}`;
-		events.push(makeEvent(pr, "check-failed", key, observedAt, { check }));
-	}
-	if (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY") {
-		const key = `merge-conflict:${pr.baseRefOid}:${pr.headRefOid}`;
-		events.push(makeEvent(pr, "merge-conflict", key, observedAt, {}));
-	}
-	if (Number(input.comparison?.behind_by ?? 0) > 0) {
-		const key = `behind-target:${pr.baseRefOid}:${pr.headRefOid}`;
-		events.push(
-			makeEvent(pr, "behind-target", key, observedAt, {
-				behindBy: Number(input.comparison.behind_by),
-			}),
-		);
-	}
-	for (const [threadId, resolved] of input.threadStates) {
-		if (input.previousThreadStates?.[threadId] === true && resolved === false) {
-			const key = `review-thread-reopened:${threadId}:${pr.headRefOid}:${compactTimestamp(observedAt)}`;
-			events.push(
-				makeEvent(pr, "review-thread-reopened", key, observedAt, {
-					threadId,
-				}),
-			);
-		}
-	}
-	return events;
-}
+const trustedBotSchema = Type.String({ pattern: "^[A-Za-z0-9-]+\\[bot\\]$" });
+const trustedBotsSchema = Type.Array(trustedBotSchema);
+const watcherOwnerSchema = Type.Object({
+	pid: Type.Integer({ minimum: 1, maximum: 2_147_483_647 }),
+	trustedBots: Type.Optional(trustedBotsSchema),
+});
 
 function safeComponent(value) {
 	return encodeURIComponent(String(value)).replaceAll("%", "_");
@@ -193,19 +100,6 @@ function atomicJson(path, value) {
 	syncDirectory(dirname(path));
 }
 
-function validEvent(value) {
-	return (
-		value &&
-		value.version === VERSION &&
-		typeof value.id === "string" &&
-		/^[a-f0-9]{64}$/.test(value.id) &&
-		typeof value.kind === "string" &&
-		typeof value.observedAt === "string" &&
-		Number.isFinite(Date.parse(value.observedAt)) &&
-		value.marker === eventMarker(value.id)
-	);
-}
-
 function readJson(path, validator) {
 	try {
 		const value = JSON.parse(readFileSync(path, "utf8"));
@@ -230,17 +124,11 @@ function acknowledge(paths, id, source) {
 	});
 }
 
-function eventSubject(event) {
-	switch (event.kind) {
-		case "issue-comment":
-			return `issue-comment:${event.payload.comment.id}`;
-		case "review-comment":
-			return `review-comment:${event.payload.comment.id}`;
-		case "review":
-			return `review:${event.payload.review.id}`;
-		default:
-			return event.key;
-	}
+function readEvent(paths, id) {
+	return readJson(
+		paths.eventFile(id),
+		(value) => validEvent(value) && value.id === id,
+	);
 }
 
 export function queueEvents(paths, events) {
@@ -252,7 +140,7 @@ export function queueEvents(paths, events) {
 		const id = basename(name, ".json");
 		stored.add(id);
 		if (existsSync(paths.ackFile(id))) continue;
-		const existing = readJson(paths.eventFile(id), validEvent);
+		const existing = readEvent(paths, id);
 		const subject = eventSubject(existing);
 		const pending = pendingBySubject.get(subject) ?? new Set();
 		pending.add(id);
@@ -288,7 +176,7 @@ function pendingRecords(paths) {
 	for (const name of eventFiles(paths)) {
 		const id = basename(name, ".json");
 		if (existsSync(paths.ackFile(id))) continue;
-		const event = readJson(paths.eventFile(id), validEvent);
+		const event = readEvent(paths, id);
 		let emittedAt = null;
 		if (existsSync(paths.notificationFile(id))) {
 			const notification = readJson(
@@ -389,11 +277,7 @@ function readMeta(paths) {
 			value.threadStates &&
 			typeof value.threadStates === "object" &&
 			(value.trustedBots === undefined ||
-				(Array.isArray(value.trustedBots) &&
-					value.trustedBots.every(
-						(login) =>
-							typeof login === "string" && /^[A-Za-z0-9-]+\[bot\]$/.test(login),
-					))),
+				Value.Check(trustedBotsSchema, value.trustedBots)),
 	);
 }
 
@@ -412,39 +296,60 @@ function reconcileResponseMarkers(paths, comments, selfLogin) {
 			acknowledge(paths, id, "github-marker");
 }
 
+function readWatcherOwner(paths) {
+	let owner;
+	try {
+		owner = JSON.parse(readFileSync(join(paths.lock, "owner.json"), "utf8"));
+		if (!Value.Check(watcherOwnerSchema, owner))
+			throw new Error("Invalid watcher owner record");
+	} catch (error) {
+		if (error.code === "ENOENT" && !existsSync(paths.lock))
+			return { kind: "absent" };
+		// A missing or incomplete owner file may belong to a starting watcher.
+		throw new Error(
+			`Cannot verify babysit-pr watcher owner at ${paths.lock}. Retry if it is starting; otherwise inspect the lock before removing it.`,
+			{ cause: error },
+		);
+	}
+
+	try {
+		process.kill(owner.pid, 0);
+	} catch (error) {
+		if (error.code === "ESRCH") return { kind: "stale" };
+		if (error.code !== "EPERM") throw error;
+	}
+	return { kind: "live", owner };
+}
+
 function acquireLock(paths, trustedBots) {
 	mkdirSync(paths.root, { recursive: true });
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
 			mkdirSync(paths.lock);
+		} catch (error) {
+			if (error.code !== "EEXIST") throw error;
+			const watcher = readWatcherOwner(paths);
+			if (watcher.kind === "live")
+				throw new Error(
+					`babysit-pr is already watching this PR with PID ${watcher.owner.pid}`,
+				);
+			if (watcher.kind === "stale")
+				rmSync(paths.lock, { recursive: true, force: true });
+			continue;
+		}
+
+		try {
 			atomicJson(join(paths.lock, "owner.json"), {
 				version: VERSION,
 				pid: process.pid,
 				trustedBots: [...trustedBots].sort(),
 				startedAt: new Date().toISOString(),
 			});
-			return;
 		} catch (error) {
-			if (error.code !== "EEXIST") throw error;
-			let pid;
-			try {
-				pid = JSON.parse(
-					readFileSync(join(paths.lock, "owner.json"), "utf8"),
-				).pid;
-				if (Number.isInteger(pid)) process.kill(pid, 0);
-				throw new Error(
-					`babysit-pr is already watching this PR with PID ${pid}`,
-				);
-			} catch (lockError) {
-				if (lockError.code === "EPERM") throw lockError;
-				if (
-					lockError instanceof Error &&
-					lockError.message.startsWith("babysit-pr is already")
-				)
-					throw lockError;
-				rmSync(paths.lock, { recursive: true, force: true });
-			}
+			rmSync(paths.lock, { recursive: true, force: true });
+			throw error;
 		}
+		return;
 	}
 	throw new Error("Could not acquire the babysit-pr watcher lock");
 }
@@ -649,7 +554,7 @@ function parseTrustedBots(args) {
 		if (args[index] !== "--trusted-bot" || !args[index + 1])
 			throw new Error("watch accepts repeated --trusted-bot <login> pairs");
 		const login = args[index + 1];
-		if (!/^[A-Za-z0-9-]+\[bot\]$/.test(login))
+		if (!Value.Check(trustedBotSchema, login))
 			throw new Error(`Invalid trusted bot login: ${login}`);
 		bots.add(login);
 	}
@@ -683,22 +588,8 @@ async function main() {
 		case "status": {
 			const { paths, pr } = contextFor(cwd, reference);
 			const meta = readMeta(paths);
-			let owner = null;
-			if (existsSync(join(paths.lock, "owner.json")))
-				try {
-					owner = JSON.parse(
-						readFileSync(join(paths.lock, "owner.json"), "utf8"),
-					);
-					if (!Number.isInteger(owner?.pid) || owner.pid <= 0)
-						throw new Error("Invalid watcher PID");
-					try {
-						process.kill(owner.pid, 0);
-					} catch (error) {
-						if (error.code !== "EPERM") throw error;
-					}
-				} catch {
-					owner = null;
-				}
+			const watcher = readWatcherOwner(paths);
+			const owner = watcher.kind === "live" ? watcher.owner : undefined;
 			print({
 				pr: pr.url,
 				state: terminalState(pr) ?? "open",

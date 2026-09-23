@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
 	ackEvents,
-	candidateEvents,
 	drainEvents,
 	pendingEvents,
 	queueEvents,
@@ -17,6 +23,7 @@ import {
 	statePaths,
 	tryEmit,
 } from "../scripts/babysit-pr.mjs";
+import { candidateEvents } from "../scripts/events.mjs";
 import { trustedLogins } from "../scripts/github.mjs";
 
 const identity = {
@@ -329,13 +336,132 @@ test("recovered checks drop before delivery and remain after delivery", () =>
 		);
 	}));
 
-test("rejects corrupt persisted event timestamps", () =>
-	withState("corrupt", (paths) => {
-		queueEvents(paths, [
-			eventOf("issue-comment", snapshot(), "not-a-timestamp"),
-		]);
-		assert.throws(() => pendingEvents(paths), /Invalid babysit-pr state/);
+test("persisted events preserve every kind and original feedback fields", () =>
+	withState("roundtrip", (paths) => {
+		const input = snapshot();
+		input.reviewComments[0].path = "src/example.ts";
+		input.reviewComments[0].diff_hunk = "@@ -1 +1 @@";
+		const events = candidateEvents(input, "2026-01-01T00:01:00Z");
+		queueEvents(paths, events);
+		assert.deepEqual(
+			pendingEvents(paths),
+			events.sort((left, right) => left.key.localeCompare(right.key)),
+		);
 	}));
+
+for (const [name, kind, corrupt] of [
+	[
+		"timestamp",
+		"issue-comment",
+		(event) => {
+			event.observedAt = "invalid";
+		},
+	],
+	[
+		"key",
+		"issue-comment",
+		(event) => {
+			delete event.key;
+		},
+	],
+	[
+		"PR head",
+		"issue-comment",
+		(event) => {
+			delete event.pr.headRefOid;
+		},
+	],
+	[
+		"kind",
+		"issue-comment",
+		(event) => {
+			event.kind = "unknown";
+		},
+	],
+	[
+		"comment ID",
+		"issue-comment",
+		(event) => {
+			event.payload.comment.id = "1";
+		},
+	],
+	[
+		"comment body",
+		"review-comment",
+		(event) => {
+			delete event.payload.comment.body;
+		},
+	],
+	[
+		"review state",
+		"review",
+		(event) => {
+			delete event.payload.review.state;
+		},
+	],
+	[
+		"check link",
+		"check-failed",
+		(event) => {
+			delete event.payload.check.link;
+		},
+	],
+	[
+		"conflict payload",
+		"merge-conflict",
+		(event) => {
+			event.payload = null;
+		},
+	],
+	[
+		"behind count",
+		"behind-target",
+		(event) => {
+			event.payload.behindBy = 0;
+		},
+	],
+	[
+		"thread ID",
+		"review-thread-reopened",
+		(event) => {
+			event.payload.threadId = null;
+		},
+	],
+	[
+		"marker",
+		"issue-comment",
+		(event) => {
+			event.marker = "wrong";
+		},
+	],
+	[
+		"key identity",
+		"issue-comment",
+		(event) => {
+			event.key = "different";
+		},
+	],
+	[
+		"file identity",
+		"issue-comment",
+		(event) => {
+			Object.assign(event, eventOf("review"));
+		},
+	],
+]) {
+	test(`quarantines a persisted event with an invalid ${name}`, () =>
+		withState("corrupt", (paths) => {
+			const event = eventOf(kind);
+			queueEvents(paths, [event]);
+			const file = paths.eventFile(event.id);
+			corrupt(event);
+			writeFileSync(file, JSON.stringify(event));
+			assert.throws(() => pendingEvents(paths), /Invalid babysit-pr state/);
+			assert.equal(existsSync(file), false);
+			assert.equal(readdirSync(paths.events).length, 1);
+			assert.match(readdirSync(paths.events)[0], /\.corrupt-/);
+		}));
+}
 
 test("watcher notifications reach the inherited owner channel through emit-to-pi", () => {
 	const watcher = new URL("../scripts/babysit-pr.mjs", import.meta.url).href;

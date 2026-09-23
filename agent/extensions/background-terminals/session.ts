@@ -7,41 +7,37 @@ import {
 	type TerminalSnapshot,
 } from "./manager.ts";
 
-export interface TerminalClient {
+interface TerminalClient {
 	delivery: BackgroundTerminalDelivery;
 	updateStatus: () => void;
 }
 
 export interface BackgroundTerminalSession {
-	start(
-		client: symbol,
-		options: { command: string; title: string; cwd: string },
-	): RunningTerminalSnapshot;
-	list(client: symbol): TerminalMetadata[];
-	get(client: symbol, id: string): TerminalSnapshot | undefined;
-	kill(
-		client: symbol,
-		ids: readonly string[],
-	): ReturnType<BackgroundTerminalManager["kill"]>;
-	consume(client: symbol, ids: readonly string[]): void;
-	leave(id: symbol): Effect.Effect<void>;
+	start(options: {
+		command: string;
+		title: string;
+		cwd: string;
+	}): RunningTerminalSnapshot;
+	list(): TerminalMetadata[];
+	get(id: string): TerminalSnapshot | undefined;
+	kill(ids: readonly string[]): ReturnType<BackgroundTerminalManager["kill"]>;
+	consume(ids: readonly string[]): void;
+	leave(): Effect.Effect<void>;
 }
 
-interface JoinedClient extends TerminalClient {
-	manager: BackgroundTerminalManager;
-}
-
-class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
-	private readonly clients = new Map<symbol, JoinedClient>();
-	private readonly owner: symbol;
+class SharedBackgroundTerminalSession {
+	private readonly clients = new Map<
+		TerminalClient,
+		BackgroundTerminalManager
+	>();
+	private readonly owner: TerminalClient;
 	private lifecycle: "running" | "stopping" = "running";
 
-	constructor(owner: symbol, ownerClient: TerminalClient) {
+	constructor(owner: TerminalClient) {
 		this.owner = owner;
-		this.join(owner, ownerClient);
 	}
 
-	join(id: symbol, client: TerminalClient) {
+	join(client: TerminalClient): BackgroundTerminalSession {
 		if (this.lifecycle === "stopping")
 			throw new Error("Background terminal session is shutting down.");
 
@@ -62,60 +58,46 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 			(notification) => client.delivery.enqueueNotification(notification),
 		);
 
-		this.clients.set(id, { ...client, manager });
+		this.clients.set(client, manager);
 		client.updateStatus();
+
+		const current = () => {
+			if (this.clients.get(client) !== manager)
+				throw new Error("Background terminal session is shutting down.");
+
+			return manager;
+		};
+
+		return {
+			start: (options) => {
+				const snapshot = current().start(options);
+				client.updateStatus();
+
+				return snapshot;
+			},
+			list: () => this.clients.get(client)?.list() ?? [],
+			get: (id) => this.clients.get(client)?.get(id),
+			kill: (ids) => current().kill(ids),
+			consume: (ids) => {
+				if (this.clients.has(client)) client.delivery.consume(ids);
+			},
+			leave: () => this.leave(client),
+		};
 	}
 
-	private joined(client: symbol): JoinedClient {
-		const joined = this.clients.get(client);
-
-		if (!joined)
-			throw new Error("Background terminal session is shutting down.");
-
-		return joined;
-	}
-
-	start(
-		client: symbol,
-		options: { command: string; title: string; cwd: string },
-	) {
-		const joined = this.joined(client);
-
-		const snapshot = joined.manager.start(options);
-		joined.updateStatus();
-
-		return snapshot;
-	}
-
-	list(client: symbol) {
-		return this.clients.get(client)?.manager.list() ?? [];
-	}
-
-	get(client: symbol, id: string) {
-		return this.clients.get(client)?.manager.get(id);
-	}
-
-	kill(client: symbol, ids: readonly string[]) {
-		return this.joined(client).manager.kill(ids);
-	}
-
-	consume(client: symbol, ids: readonly string[]) {
-		this.clients.get(client)?.delivery.consume(ids);
-	}
-
-	leave = Effect.fn("BackgroundTerminalSession.leave")(function* (
+	private leave = Effect.fn("BackgroundTerminalSession.leave")(function* (
 		this: SharedBackgroundTerminalSession,
-		id: symbol,
+		client: TerminalClient,
 	) {
-		const joined = this.clients.get(id);
+		const manager = this.clients.get(client);
 
-		if (!joined) return;
+		if (!manager) return;
 
-		if (id !== this.owner) {
-			joined.delivery.clear();
-			yield* joined.manager.shutdown();
+		if (client !== this.owner) {
+			client.delivery.clear();
+			yield* manager.shutdown();
 
-			if (this.clients.get(id) === joined) this.clients.delete(id);
+			if (this.clients.get(client) === manager) this.clients.delete(client);
 
 			return;
 		}
@@ -123,11 +105,11 @@ class SharedBackgroundTerminalSession implements BackgroundTerminalSession {
 		this.lifecycle = "stopping";
 
 		if (activeTerminalSession === this) activeTerminalSession = undefined;
-		const clients = [...this.clients.values()];
+		const clients = [...this.clients];
 		this.clients.clear();
 
-		for (const client of clients) client.delivery.clear();
-		yield* Effect.forEach(clients, (client) => client.manager.shutdown(), {
+		for (const [client] of clients) client.delivery.clear();
+		yield* Effect.forEach(clients, ([, manager]) => manager.shutdown(), {
 			concurrency: "unbounded",
 		});
 	});
@@ -138,12 +120,11 @@ let activeTerminalSession: SharedBackgroundTerminalSession | undefined;
 let terminalSequence = 0;
 
 export function joinBackgroundTerminalSession(
-	id: symbol,
-	client: TerminalClient,
+	delivery: BackgroundTerminalDelivery,
+	updateStatus: () => void,
 ): BackgroundTerminalSession {
-	if (!activeTerminalSession)
-		activeTerminalSession = new SharedBackgroundTerminalSession(id, client);
-	else activeTerminalSession.join(id, client);
+	const client = { delivery, updateStatus };
+	activeTerminalSession ??= new SharedBackgroundTerminalSession(client);
 
-	return activeTerminalSession;
+	return activeTerminalSession.join(client);
 }

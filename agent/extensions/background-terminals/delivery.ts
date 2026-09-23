@@ -186,10 +186,19 @@ type DeliveryItem =
 
 type PendingDelivery = DeliveryItem & { attempts: number };
 
+interface DeliveryBatch {
+	kind: DeliveryItem["kind"];
+	items: PendingDelivery[];
+	content: string;
+}
+
 export class BackgroundTerminalDelivery {
 	private context?: ExtensionContext;
 	private readonly pending = new Map<string, PendingDelivery>();
-	private readonly failed = new Set<string>();
+	private readonly failed = new Map<
+		string,
+		Pick<DeliveryItem, "kind" | "terminalId">
+	>();
 	private retryGeneration = 0;
 	private flushState: "idle" | "flushing" = "idle";
 	private readonly pi: Pick<ExtensionAPI, "sendMessage">;
@@ -204,21 +213,25 @@ export class BackgroundTerminalDelivery {
 	get problem(): string | undefined {
 		if (this.failed.size === 0) return undefined;
 
-		return `Automatic background-terminal delivery failed for ${[...this.failed].join(", ")}. Use bg_status to inspect terminal state.`;
+		return `Automatic background-terminal delivery failed for ${[...this.failed.keys()].join(", ")}. Use bg_status to inspect terminal state.`;
 	}
 	setContext(context: ExtensionContext) {
 		this.context = context;
 	}
-	private markFailed(id: string) {
-		this.failed.add(id);
+	private markFailed(item: DeliveryItem) {
+		this.pending.delete(item.id);
+		this.failed.set(item.id, {
+			kind: item.kind,
+			terminalId: item.terminalId,
+		});
 
 		if (this.failed.size <= MAX_TRACKED) return;
-		const oldest = this.failed.values().next();
+		const oldest = this.failed.keys().next();
 
 		if (!oldest.done) this.failed.delete(oldest.value);
 	}
 	private queue(item: DeliveryItem) {
-		if (!this.context) return;
+		if (!this.context || this.failed.has(item.id)) return;
 
 		const sameKind = [...this.pending.values()].filter(
 			(pending) => pending.kind === item.kind,
@@ -226,8 +239,7 @@ export class BackgroundTerminalDelivery {
 
 		if (!this.pending.has(item.id) && sameKind.length === MAX_TRACKED) {
 			const [oldest] = sameKind;
-			this.pending.delete(oldest.id);
-			this.markFailed(oldest.id);
+			this.markFailed(oldest);
 			this.reportError(
 				`[background-terminals] ${item.kind} queue evicted ${oldest.id}${item.kind === "completion" ? "; use bg_status to inspect it" : ""}.`,
 			);
@@ -261,13 +273,12 @@ export class BackgroundTerminalDelivery {
 		});
 	}
 	terminalSettled(terminalId: string) {
-		this.consume(
-			[...this.pending.values()].flatMap((item) =>
-				item.kind === "notification" && item.terminalId === terminalId
-					? [item.id]
-					: [],
-			),
-		);
+		for (const queue of [this.pending, this.failed]) {
+			for (const [id, item] of queue) {
+				if (item.kind === "notification" && item.terminalId === terminalId)
+					queue.delete(id);
+			}
+		}
 	}
 	consume(ids: readonly string[]) {
 		for (const id of ids) {
@@ -275,7 +286,7 @@ export class BackgroundTerminalDelivery {
 			this.failed.delete(id);
 		}
 	}
-	private batch(kind: DeliveryItem["kind"]) {
+	private batch(kind: DeliveryItem["kind"]): DeliveryBatch | undefined {
 		const items: PendingDelivery[] = [];
 
 		const parts = [
@@ -287,8 +298,7 @@ export class BackgroundTerminalDelivery {
 		let bytes = Buffer.byteLength(parts[0]);
 
 		for (const item of this.pending.values()) {
-			if (item.kind !== kind || item.attempts >= MAX_DELIVERY_ATTEMPTS)
-				continue;
+			if (item.kind !== kind) continue;
 
 			let rendered =
 				item.kind === "notification"
@@ -330,6 +340,47 @@ export class BackgroundTerminalDelivery {
 			),
 		);
 	}
+	// Returns the attempt needing backoff, if any items remain retryable.
+	private sendBatch(batch: DeliveryBatch): number | undefined {
+		const ids = batch.items.map((item) => item.id);
+
+		try {
+			this.pi.sendMessage(
+				{
+					customType: `background-terminal-${batch.kind === "notification" ? "notification" : "results"}`,
+					content: batch.content,
+					display: true,
+					details: { ids },
+				},
+				{
+					deliverAs: "steer",
+					triggerTurn: true,
+				},
+			);
+			this.consume(ids);
+		} catch (error) {
+			let retryAttempt: number | undefined;
+			const exhausted: string[] = [];
+
+			for (const item of batch.items) {
+				item.attempts++;
+
+				if (item.attempts < MAX_DELIVERY_ATTEMPTS)
+					retryAttempt = Math.max(retryAttempt ?? 0, item.attempts);
+				else {
+					this.markFailed(item);
+					exhausted.push(item.id);
+				}
+			}
+
+			if (exhausted.length)
+				this.reportError(
+					`[background-terminals] ${batch.kind} delivery failed for ${exhausted.join(", ")}${batch.kind === "completion" ? "; use bg_status to inspect retained results" : ""}: ${sanitizeInline(String(error).slice(0, 512))}`,
+				);
+
+			return retryAttempt;
+		}
+	}
 	flush = Effect.sync(() => {
 		if (this.flushState === "flushing" || !this.context) return;
 		this.retryGeneration++;
@@ -340,43 +391,10 @@ export class BackgroundTerminalDelivery {
 				const batch = this.batch("notification") ?? this.batch("completion");
 
 				if (!batch) return;
-				const ids = batch.items.map((item) => item.id);
+				const retryAttempt = this.sendBatch(batch);
 
-				try {
-					this.pi.sendMessage(
-						{
-							customType: `background-terminal-${batch.kind === "notification" ? "notification" : "results"}`,
-							content: batch.content,
-							display: true,
-							details: { ids },
-						},
-						{
-							deliverAs: "steer",
-							triggerTurn: true,
-						},
-					);
-					this.consume(ids);
-				} catch (error) {
-					const retryable: number[] = [];
-					const exhausted: string[] = [];
-
-					for (const item of batch.items) {
-						item.attempts++;
-
-						if (item.attempts < MAX_DELIVERY_ATTEMPTS)
-							retryable.push(item.attempts);
-						else {
-							this.markFailed(item.id);
-							exhausted.push(item.id);
-						}
-					}
-
-					if (retryable.length) this.scheduleRetry(Math.max(...retryable));
-
-					if (exhausted.length)
-						this.reportError(
-							`[background-terminals] ${batch.kind} delivery failed for ${exhausted.join(", ")}${batch.kind === "completion" ? "; use bg_status to inspect retained results" : ""}: ${sanitizeInline(String(error).slice(0, 512))}`,
-						);
+				if (retryAttempt !== undefined) {
+					this.scheduleRetry(retryAttempt);
 
 					return;
 				}

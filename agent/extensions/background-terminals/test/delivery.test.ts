@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Deferred, Effect } from "effect";
 import {
 	BackgroundTerminalDelivery,
 	formatTerminalReport,
@@ -95,6 +96,67 @@ test("splits queued completions into bounded batches without losing results", ()
 			Array.from({ length: MAX_TRACKED }, (_, index) => `bt-${index}`),
 		);
 		assert.ok(messages.every((message) => !message.content.includes("�")));
+	} finally {
+		delivery.clear();
+	}
+});
+
+test("exhausting a delivery batch does not strand later completions", async () => {
+	const completed = Deferred.makeUnsafe<void>();
+	const terminal = snapshot("x".repeat(24 * 1024));
+	const queuedIds = Array.from({ length: 25 }, (_, index) => `bt-${index}`);
+	const failed = new Set<string>();
+	const delivered = new Set<string>();
+	const diagnostics: string[] = [];
+	let attempts = 0;
+
+	const delivery = new BackgroundTerminalDelivery(
+		{
+			sendMessage(message) {
+				const { ids } = decodeMessage(message).details;
+
+				if (ids[0] === "seed") {
+					for (const id of queuedIds) delivery.enqueue({ ...terminal, id });
+
+					return;
+				}
+
+				attempts++;
+
+				if (attempts <= 3) {
+					for (const id of ids) failed.add(id);
+					throw new Error("delivery unavailable");
+				}
+
+				for (const id of ids) delivered.add(id);
+
+				if (delivered.size + failed.size === queuedIds.length)
+					Effect.runSync(Deferred.succeed(completed, undefined));
+			},
+		},
+		(message) => diagnostics.push(message),
+	);
+
+	try {
+		delivery.setContext(testContext({ isIdle: () => false }));
+		delivery.enqueue({ ...snapshot(""), id: "seed" });
+		await Effect.runPromise(
+			Deferred.await(completed).pipe(Effect.timeout("5 seconds")),
+		);
+		assert.ok(delivered.size > 0);
+		assert.deepEqual(new Set([...failed, ...delivered]), new Set(queuedIds));
+		assert.equal(diagnostics.length, 1);
+
+		const settledAttempts = attempts;
+
+		for (const id of failed) {
+			assert.ok(!delivered.has(id));
+			assert.ok(delivery.problem?.includes(id));
+			delivery.enqueue({ ...terminal, id });
+		}
+
+		await Effect.runPromise(delivery.flush);
+		assert.equal(attempts, settledAttempts);
 	} finally {
 		delivery.clear();
 	}

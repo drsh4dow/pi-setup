@@ -8,6 +8,7 @@ update-cache.json
 run-history.jsonl
 codex.md
 auth.json
+/agent/gpt-fast-mode.json
 telemetry-minimal
 telemetry-minimal.json
 trust.json

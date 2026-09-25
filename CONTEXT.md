@@ -24,6 +24,16 @@ _Avoid_: Model pin, per-prompt rotation
 The provider-reported percentage remaining in a Codex Account's weekly usage window, distinct from Session Usage.
 _Avoid_: Session usage, token budget
 
+### Session timing
+
+**Session Duration**:
+The elapsed wall-clock time from the first user message to the latest user, assistant, or tool-result message in the selected branch, including idle gaps and inherited history. Assistant messages count at completion, user messages at submission, and tool results when produced.
+_Avoid_: Active time, per-run timer
+
+**Moment**:
+The elapsed time from the selected branch's first user message to a particular assistant response's completion. A Moment is display metadata, not part of the response text or model context.
+_Avoid_: Response duration, generation time
+
 ### Local tools
 
 **Session Usage**:

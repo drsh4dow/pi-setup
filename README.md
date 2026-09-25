@@ -56,7 +56,7 @@ The inventories below are checked against tracked and untracked, non-ignored set
 | `process-status` | `/ps` views for background terminals and the `session_usage` tool |
 | `prompt-context` | Restores active-tool snippets and guidelines in custom system prompts |
 | `sacrifice-preference` | Marks spawned work as the preferred target under Linux memory pressure |
-| `session-timer` | Per-run and cumulative session timing in the status bar |
+| `session-timer` | Branch duration from the first user message, with persistent clock footers on new text responses |
 | `skill-visibility` | `/skill-visibility` controls which loaded skills the model can discover |
 | `tps-tracker` | Live and final output-token throughput |
 | `ui-moto` | Compact model and project status header |

@@ -1,8 +1,6 @@
 {
   "lastChangelogVersion": "0.87.1",
-  "packages": [
-    "npm:pi-mcp-adapter"
-  ],
+  "packages": [],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6-astra",
   "enabledModels": [

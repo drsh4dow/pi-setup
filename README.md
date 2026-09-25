@@ -33,6 +33,8 @@ Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exist
 
 Pi automatically discovers the extensions, skills, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
 
+MCP is opt-in. Run `pi -e npm:pi-mcp-adapter` for one session, or run `pi install npm:pi-mcp-adapter -l` from a repository to enable it for that project. The adapter is not installed globally.
+
 Skills live in this repository under `agent/skills`. To share them with tools that read `~/.agents/skills`, create a symlink:
 
 ```bash

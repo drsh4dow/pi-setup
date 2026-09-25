@@ -89,16 +89,7 @@ The installed Matt Pocock skills and their supporting files are vendored from [`
 - `implement`
 - `improve-codebase-architecture`
 - `maintain-verification-skill`
-- `principle-attack-the-premise`
-- `principle-build-the-lever`
-- `principle-encode-lessons-in-structure`
-- `principle-exhaust-the-design-space`
-- `principle-experience-first`
-- `principle-make-operations-idempotent`
 - `principle-migrate-callers-then-delete-legacy-apis`
-- `principle-model-the-domain`
-- `principle-separate-before-serializing-shared-state`
-- `principle-type-system-discipline`
 - `prototype`
 - `research`
 - `resolving-merge-conflicts`
@@ -107,6 +98,7 @@ The installed Matt Pocock skills and their supporting files are vendored from [`
 - `to-spec`
 - `to-tickets`
 - `typescript-best-practices`
+- `unslop`
 - `web-search`
 - `wizard`
 - `writing-for-agents`

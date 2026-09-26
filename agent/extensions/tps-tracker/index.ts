@@ -1,117 +1,104 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import { Schema } from "effect";
+
+const MEASUREMENT_ENTRY = "tps-tracker-measurement";
 
 // Short client-observed intervals are too sensitive to delivery and scheduling.
 const MIN_RATE_DURATION_MS = 1_000;
+
+const Measurement = Schema.Struct({
+	outputTokens: Schema.Finite.check(Schema.isGreaterThan(0)),
+	durationMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+
+const isMeasurement = Schema.is(Measurement);
 
 interface TpsDependencies {
 	readonly now: () => number;
 }
 
-interface RequestTiming {
-	readonly startedAt: number;
-	firstOutputMs: number | null;
-}
-
 const liveTps: TpsDependencies = { now: () => performance.now() };
-
-function formatRate(outputTokens: number, durationMs: number): string {
-	if (outputTokens <= 0 || durationMs < MIN_RATE_DURATION_MS) return "N/A";
-
-	return `${(outputTokens / (durationMs / 1000)).toFixed(1)} effective output tok/s`;
-}
 
 export default function tpsTracker(
 	pi: ExtensionAPI,
 	dependencies: TpsDependencies = liveTps,
 ): void {
-	let request: RequestTiming | undefined;
+	let requestStartedAt: number | undefined;
 	let totalOutputTokens = 0;
 	let totalRequestMs = 0;
 
-	pi.on("agent_start", (_event, ctx) => {
-		request = undefined;
-		totalOutputTokens = 0;
-		totalRequestMs = 0;
-		ctx.ui.setStatus("tps", ctx.ui.theme.fg("dim", "⏱ generating..."));
-	});
-
-	pi.on("before_provider_request", (_event, ctx) => {
-		// message_start is too late: Codex emits it after headers or its first event.
-		request = { startedAt: dependencies.now(), firstOutputMs: null };
-		ctx.ui.setStatus("tps", ctx.ui.theme.fg("dim", "⏱ waiting for output..."));
-	});
-
-	pi.on("message_update", (event, ctx) => {
-		if (event.message.role !== "assistant" || !request) return;
-
-		if (request.firstOutputMs !== null) return;
-
-		const streamEvent = event.assistantMessageEvent;
-
-		if (
-			streamEvent.type !== "text_delta" &&
-			streamEvent.type !== "thinking_delta" &&
-			streamEvent.type !== "toolcall_delta"
-		) {
-			return;
-		}
-
-		if (streamEvent.delta.length === 0) return;
-
-		request.firstOutputMs = dependencies.now() - request.startedAt;
-		ctx.ui.setStatus(
-			"tps",
-			ctx.ui.theme.fg(
-				"dim",
-				`receiving · first output ${(request.firstOutputMs / 1000).toFixed(1)}s`,
-			),
-		);
-	});
-
-	pi.on("message_end", (event, ctx) => {
-		if (event.message.role !== "assistant") return;
-
-		const timing = request;
-		request = undefined;
-		const outputTokens = event.message.usage.output;
-
-		if (!timing || outputTokens <= 0) {
+	function showRate(ctx: ExtensionContext): void {
+		if (totalOutputTokens <= 0 || totalRequestMs < MIN_RATE_DURATION_MS) {
 			ctx.ui.setStatus(
 				"tps",
-				ctx.ui.theme.fg("dim", "output rate unavailable"),
+				ctx.ui.theme.fg("dim", "⏱ waiting for output..."),
 			);
 
 			return;
 		}
 
-		const durationMs = dependencies.now() - timing.startedAt;
-		totalOutputTokens += outputTokens;
-		totalRequestMs += durationMs;
-
+		const rate = totalOutputTokens / (totalRequestMs / 1000);
 		ctx.ui.setStatus(
 			"tps",
-			ctx.ui.theme.fg(
-				"dim",
-				`response complete · ${formatRate(outputTokens, durationMs)}`,
-			),
+			ctx.ui.theme.fg("accent", `${rate.toFixed(1)} cumulative output tok/s`),
 		);
+	}
+
+	function restore(ctx: ExtensionContext): void {
+		requestStartedAt = undefined;
+		totalOutputTokens = 0;
+		totalRequestMs = 0;
+
+		// getBranch retains pre-compaction entries and excludes abandoned branches.
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type !== "custom" || entry.customType !== MEASUREMENT_ENTRY) {
+				continue;
+			}
+
+			const measurement: unknown = entry.data;
+
+			if (!isMeasurement(measurement)) continue;
+
+			totalOutputTokens += measurement.outputTokens;
+			totalRequestMs += measurement.durationMs;
+		}
+
+		showRate(ctx);
+	}
+
+	pi.on("session_start", (_event, ctx) => restore(ctx));
+	pi.on("session_tree", (_event, ctx) => restore(ctx));
+
+	pi.on("before_provider_request", () => {
+		// message_start is too late: Codex emits it after headers or its first event.
+		requestStartedAt = dependencies.now();
 	});
 
-	pi.on("agent_end", (_event, ctx) => {
-		request = undefined;
-		const rate = formatRate(totalOutputTokens, totalRequestMs);
-		const theme = ctx.ui.theme;
-		const rateLabel = theme.fg(rate === "N/A" ? "dim" : "accent", rate);
+	pi.on("message_end", (event, ctx) => {
+		if (event.message.role !== "assistant") return;
 
-		const detail = theme.fg(
-			"dim",
-			`${totalOutputTokens} reported output tokens in ${(totalRequestMs / 1000).toFixed(1)}s of requests`,
-		);
+		const startedAt = requestStartedAt;
+		requestStartedAt = undefined;
 
-		ctx.ui.notify(
-			`${theme.fg("success", "✓")} ${rateLabel}  ${detail}`,
-			"info",
-		);
-		ctx.ui.setStatus("tps", `${theme.fg("dim", "done ·")} ${rateLabel}`);
+		if (startedAt === undefined || event.message.usage.output <= 0) return;
+
+		const measurement = {
+			outputTokens: event.message.usage.output,
+			durationMs: dependencies.now() - startedAt,
+		} satisfies typeof Measurement.Type;
+
+		// message_end precedes assistant persistence. Storing here makes this
+		// measurement an ancestor of its response, including when forking at it.
+		pi.appendEntry(MEASUREMENT_ENTRY, measurement);
+		totalOutputTokens += measurement.outputTokens;
+		totalRequestMs += measurement.durationMs;
+		showRate(ctx);
+	});
+
+	pi.on("agent_end", () => {
+		requestStartedAt = undefined;
 	});
 }

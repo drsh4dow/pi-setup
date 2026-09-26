@@ -1,55 +1,57 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type {
-	ExtensionContext,
-	ExtensionEvent,
-	MessageUpdateEvent,
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import {
+	createAgentSession,
+	DefaultResourceLoader,
+	type ExtensionContext,
+	type ExtensionEvent,
+	SessionManager,
+	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 import tpsTracker from "../index.ts";
 
-const assistant = (output: number, reasoning = 0) =>
-	unsafeFixture<AssistantMessage>({
-		role: "assistant",
-		usage: unsafeFixture<AssistantMessage["usage"]>({ output, reasoning }),
-	});
+const waiting = "⏱ waiting for output...";
 
-function update(
-	delta: string,
-	type: "text_delta" | "thinking_delta" | "toolcall_delta" = "text_delta",
-): MessageUpdateEvent {
-	const message = assistant(0);
+const agentEnd = { type: "agent_end", messages: [] } satisfies ExtensionEvent;
 
-	return {
-		type: "message_update",
-		message,
-		assistantMessageEvent: { type, delta, contentIndex: 0, partial: message },
-	};
+const requestStart = { type: "before_provider_request", payload: {} } as const;
+
+function assistant(output: number) {
+	const message = fauxAssistantMessage("Answer");
+
+	return { ...message, usage: { ...message.usage, output } };
 }
 
-function harness() {
+function harness(manager = SessionManager.inMemory()) {
 	let now = 0;
 	const statuses: Array<string | undefined> = [];
-	const notifications: Parameters<ExtensionContext["ui"]["notify"]>[] = [];
 
 	const context = unsafeFixture<ExtensionContext>({
+		sessionManager: manager,
 		ui: unsafeFixture<ExtensionContext["ui"]>({
 			theme: unsafeFixture<ExtensionContext["ui"]["theme"]>({
 				fg: (_color, text) => text,
 			}),
 			setStatus: (_key, value) => statuses.push(value),
-			notify: (message, level) => notifications.push([message, level]),
 		}),
 	});
 
 	const adapter = extensionTestAdapter();
-	tpsTracker(adapter.api, { now: () => now });
+	tpsTracker(
+		{
+			...adapter.api,
+			appendEntry: (type, data) => {
+				manager.appendCustomEntry(type, data);
+			},
+		},
+		{ now: () => now },
+	);
 
 	return {
 		statuses,
-		notifications,
-		emit(event: ExtensionEvent, atMs: number) {
+		emit(event: ExtensionEvent, atMs = now) {
 			now = atMs;
 
 			return adapter.emit(event.type, event, context);
@@ -57,117 +59,237 @@ function harness() {
 	};
 }
 
-const agentStart = { type: "agent_start" } as const;
-
-const requestStart = { type: "before_provider_request", payload: {} } as const;
-
-const agentEnd = { type: "agent_end", messages: [] } satisfies ExtensionEvent;
-
-for (const firstOutputMs of [1_000, 9_998]) {
-	test(`includes hidden reasoning time with first output at ${firstOutputMs}ms`, async () => {
-		const { emit, statuses, notifications } = harness();
-		await emit(agentStart, 0);
-		await emit(requestStart, 0);
-		await emit(update("a".repeat(200)), firstOutputMs);
-		const receiving = `receiving · first output ${(firstOutputMs / 1000).toFixed(1)}s`;
-		assert.equal(statuses.at(-1), receiving);
-		await emit(update("b".repeat(200)), firstOutputMs + 1);
-		assert.equal(statuses.at(-1), receiving);
-
-		await emit({ type: "message_end", message: assistant(1_000, 900) }, 10_000);
-		assert.equal(
-			statuses.at(-1),
-			"response complete · 100.0 effective output tok/s",
-		);
-		await emit(agentEnd, 10_000);
-		assert.equal(statuses.at(-1), "done · 100.0 effective output tok/s");
-		assert.deepEqual(notifications, [
-			[
-				"✓ 100.0 effective output tok/s  1000 reported output tokens in 10.0s of requests",
-				"info",
-			],
-		]);
-	});
-}
-
-test("weights request rates by duration and excludes tool execution time", async () => {
-	const { emit, statuses, notifications } = harness();
-	await emit(agentStart, 0);
-	await emit(requestStart, 1_000);
-	await emit(update("Thinking", "thinking_delta"), 2_000);
-	await emit({ type: "message_end", message: assistant(100) }, 3_000);
-
-	// Tools execute between requests, not inside either timing window.
-	await emit(requestStart, 63_000);
-	assert.equal(statuses.at(-1), "⏱ waiting for output...");
-	await emit(update('{"command":"ls"}', "toolcall_delta"), 65_000);
-	assert.equal(statuses.at(-1), "receiving · first output 2.0s");
-	await emit({ type: "message_end", message: assistant(200) }, 71_000);
-	await emit(agentEnd, 72_000);
-	assert.equal(statuses.at(-1), "done · 30.0 effective output tok/s");
-	assert.deepEqual(notifications, [
-		[
-			"✓ 30.0 effective output tok/s  300 reported output tokens in 10.0s of requests",
-			"info",
-		],
-	]);
-
-	await emit(agentStart, 80_000);
-	await emit(requestStart, 80_000);
-	await emit({ type: "message_end", message: assistant(10) }, 82_000);
-	await emit(agentEnd, 82_000);
-	assert.equal(statuses.at(-1), "done · 5.0 effective output tok/s");
-});
-
-test("does not publish a rate for a sub-second request", async () => {
-	const { emit, statuses, notifications } = harness();
-	await emit(agentStart, 0);
-	await emit(requestStart, 0);
-	await emit(update("Answer"), 24);
-	await emit({ type: "message_end", message: assistant(40) }, 25);
-	await emit(agentEnd, 25);
-	assert.equal(statuses.at(-1), "done · N/A");
-	assert.deepEqual(notifications, [
-		["✓ N/A  40 reported output tokens in 0.0s of requests", "info"],
-	]);
-});
-
-test("does not substitute visible text estimates for unreported usage after abort", async () => {
+test("weights cumulative rates by request time across agent runs, excluding tools and idle gaps", async () => {
 	const { emit, statuses } = harness();
-	await emit(agentStart, 0);
+	await emit({ type: "session_start", reason: "startup" });
+	assert.equal(statuses.at(-1), waiting);
+	await emit(requestStart, 1_000);
+	await emit({ type: "message_end", message: assistant(100) }, 3_000);
+	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+
+	// Tool execution between requests must not affect the denominator.
+	await emit(requestStart, 63_000);
+	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+	await emit({ type: "message_end", message: assistant(200) }, 71_000);
+	assert.equal(statuses.at(-1), "30.0 cumulative output tok/s");
+	await emit(agentEnd, 72_000);
+	assert.equal(statuses.at(-1), "30.0 cumulative output tok/s");
+
+	// Another user prompt must extend the totals, not reset them.
+	await emit(requestStart, 180_000);
+	assert.equal(statuses.at(-1), "30.0 cumulative output tok/s");
+	await emit({ type: "message_end", message: assistant(10) }, 182_000);
+	await emit(agentEnd, 182_000);
+	assert.equal(statuses.at(-1), "25.8 cumulative output tok/s");
+});
+
+test("waits for one second of cumulative request time, retaining shorter measurements", async () => {
+	const { emit, statuses } = harness();
+	await emit({ type: "session_start", reason: "startup" });
 	await emit(requestStart, 0);
-	await emit(update("partial answer"), 2_000);
+	await emit({ type: "message_end", message: assistant(40) }, 250);
+	await emit(agentEnd, 250);
+	assert.equal(statuses.at(-1), waiting);
+
+	await emit(requestStart, 5_000);
+	await emit({ type: "message_end", message: assistant(60) }, 5_750);
+	assert.equal(statuses.at(-1), "100.0 cumulative output tok/s");
+});
+
+test("unmeasured and zero-usage responses leave totals and the displayed rate unchanged", async () => {
+	const { emit, statuses } = harness();
+	await emit({ type: "session_start", reason: "startup" });
+	await emit({ type: "message_end", message: assistant(100) }, 2_000);
+	assert.equal(statuses.at(-1), waiting);
+
+	await emit(requestStart, 3_000);
+	await emit({ type: "message_end", message: assistant(100) }, 5_000);
+	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+
+	await emit(requestStart, 6_000);
 	await emit(
 		{
 			type: "message_end",
 			message: { ...assistant(0), stopReason: "aborted" },
 		},
-		3_000,
+		16_000,
 	);
-	assert.equal(statuses.at(-1), "output rate unavailable");
-	await emit(agentEnd, 3_000);
-	assert.equal(statuses.at(-1), "done · N/A");
+	await emit(agentEnd, 16_000);
+	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
 
-	await emit(agentStart, 4_000);
-	await emit(requestStart, 5_000);
-	await emit({ type: "message_end", message: assistant(100) }, 7_000);
-	await emit(agentEnd, 7_000);
-	assert.equal(statuses.at(-1), "done · 50.0 effective output tok/s");
+	await emit({ type: "message_end", message: assistant(900) }, 17_000);
+	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+	await emit(requestStart, 18_000);
+	await emit({ type: "message_end", message: assistant(200) }, 26_000);
+	assert.equal(statuses.at(-1), "30.0 cumulative output tok/s");
 });
 
-test("requires a measured request and ignores empty output deltas", async () => {
-	const { emit, statuses } = harness();
-	await emit(agentStart, 0);
-	await emit(update("unmeasured output"), 1_000);
-	await emit({ type: "message_end", message: assistant(100) }, 2_000);
-	assert.equal(statuses.at(-1), "output rate unavailable");
-	await emit(agentEnd, 2_000);
-	assert.equal(statuses.at(-1), "done · N/A");
+test("restoration excludes historical responses without timing and malformed measurements", async () => {
+	const manager = SessionManager.inMemory();
+	manager.appendMessage(assistant(9_000));
 
-	await emit(agentStart, 3_000);
-	await emit(requestStart, 3_000);
-	await emit(update(""), 4_000);
-	assert.equal(statuses.at(-1), "⏱ waiting for output...");
-	await emit(update("answer"), 5_000);
-	assert.equal(statuses.at(-1), "receiving · first output 2.0s");
+	for (const data of [
+		null,
+		{ outputTokens: "100", durationMs: 2_000 },
+		{ outputTokens: 100, durationMs: -1 },
+		{ outputTokens: 100, durationMs: Number.POSITIVE_INFINITY },
+		{ outputTokens: -100, durationMs: 2_000 },
+	]) {
+		manager.appendCustomEntry("tps-tracker-measurement", data);
+	}
+
+	manager.appendCustomEntry("another-extension", {
+		outputTokens: 100,
+		durationMs: 2_000,
+	});
+
+	const { emit, statuses } = harness(manager);
+	await emit({ type: "session_start", reason: "resume" });
+	assert.equal(statuses.at(-1), waiting);
+	await emit(requestStart, 0);
+	await emit({ type: "message_end", message: assistant(100) }, 2_000);
+	await emit({ type: "session_start", reason: "reload" });
+	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+});
+
+test("real sessions retain rates while streaming and restore the selected history across reloads, forks, and compaction", async (t) => {
+	const { mkdtempSync, rmSync } = process.getBuiltinModule("node:fs");
+	const { tmpdir } = process.getBuiltinModule("node:os");
+	const { join } = process.getBuiltinModule("node:path");
+	const directory = mkdtempSync(join(tmpdir(), "pi-tps-tracker-"));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	let now = 0;
+	let status: string | undefined;
+	let expectedWhileStreaming = waiting;
+	let updates = 0;
+	const notifications: string[] = [];
+	const errors: string[] = [];
+
+	const settingsManager = SettingsManager.inMemory({
+		defaultProjectTrust: "always",
+		compaction: { enabled: false },
+		retry: { enabled: false },
+	});
+
+	const loader = new DefaultResourceLoader({
+		cwd: directory,
+		agentDir: directory,
+		settingsManager,
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+		extensionFactories: [(pi) => tpsTracker(pi, { now: () => now })],
+	});
+
+	await loader.reload();
+	assert.deepEqual(loader.getExtensions().errors, []);
+
+	const provider = fauxProvider({
+		models: [{ id: "first" }, { id: "second" }],
+	});
+
+	const manager = SessionManager.create(directory, directory);
+
+	const { session } = await createAgentSession({
+		cwd: directory,
+		agentDir: directory,
+		resourceLoader: loader,
+		settingsManager,
+		sessionManager: manager,
+		model: provider.getModel(),
+		thinkingLevel: "off",
+		noTools: "all",
+	});
+
+	t.after(() => session.dispose());
+
+	await session.bindExtensions({
+		mode: "tui",
+		uiContext: unsafeFixture<ExtensionContext["ui"]>({
+			theme: unsafeFixture<ExtensionContext["ui"]["theme"]>({
+				fg: (_color, text) => text,
+			}),
+			setStatus: (_key, value) => {
+				status = value;
+			},
+			notify: (message) => notifications.push(message),
+		}),
+		onError: (error) => errors.push(error.error),
+	});
+	session.modelRuntime.registerNativeProvider(provider.provider);
+	session.subscribe((event) => {
+		if (event.type === "agent_start" || event.type === "message_update") {
+			assert.equal(status, expectedWhileStreaming);
+
+			if (event.type === "message_update") updates++;
+		}
+	});
+
+	for (const [durationMs, text] of [
+		[2_000, "a".repeat(400)],
+		[8_000, "b".repeat(800)],
+	] as const) {
+		provider.appendResponses([
+			async (context, options, _state, model) => {
+				// Faux streams do not call onPayload themselves; emulate that provider boundary.
+				await options?.onPayload?.({}, model);
+				assert.equal(status, expectedWhileStreaming);
+				assert.doesNotMatch(
+					JSON.stringify(context.messages),
+					/tps-tracker-measurement/,
+				);
+				now += durationMs;
+
+				return fauxAssistantMessage(text);
+			},
+		]);
+	}
+
+	await session.prompt("First request");
+	assert.equal(status, "50.0 cumulative output tok/s");
+	const firstResponseId = manager.getLeafId();
+	assert.ok(firstResponseId);
+	expectedWhileStreaming = status;
+	now += 60_000;
+	const secondModel = provider.getModel("second");
+	assert.ok(secondModel);
+	await session.setModel(secondModel);
+	await session.prompt("Second request");
+	assert.equal(status, "30.0 cumulative output tok/s");
+	assert.ok(updates > 0);
+	assert.deepEqual(errors, []);
+	assert.deepEqual(notifications, []);
+
+	const file = manager.getSessionFile();
+	assert.ok(file);
+	const reopened = SessionManager.open(file, directory);
+	const restored = harness(reopened);
+	await restored.emit({ type: "session_start", reason: "reload" });
+	assert.equal(restored.statuses.at(-1), "30.0 cumulative output tok/s");
+
+	const lastResponseId = reopened.getLeafId();
+	assert.ok(lastResponseId);
+	reopened.appendCompaction("Earlier history", lastResponseId, 1_000);
+	await restored.emit({ type: "session_start", reason: "resume" });
+	assert.equal(restored.statuses.at(-1), "30.0 cumulative output tok/s");
+
+	reopened.branch(firstResponseId);
+	await restored.emit({
+		type: "session_tree",
+		oldLeafId: lastResponseId,
+		newLeafId: firstResponseId,
+	});
+	assert.equal(restored.statuses.at(-1), "50.0 cumulative output tok/s");
+	reopened.createBranchedSession(firstResponseId);
+	const forked = harness(reopened);
+	await forked.emit({ type: "session_start", reason: "fork" });
+	assert.equal(forked.statuses.at(-1), "50.0 cumulative output tok/s");
+	await forked.emit(requestStart, 100_000);
+	await forked.emit({ type: "message_end", message: assistant(20) }, 102_000);
+	assert.equal(forked.statuses.at(-1), "30.0 cumulative output tok/s");
+
+	reopened.newSession();
+	await forked.emit({ type: "session_start", reason: "new" });
+	assert.equal(forked.statuses.at(-1), waiting);
 });

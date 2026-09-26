@@ -43,7 +43,7 @@ export default function tpsTracker(
 		const rate = totalOutputTokens / (totalRequestMs / 1000);
 		ctx.ui.setStatus(
 			"tps",
-			ctx.ui.theme.fg("accent", `${rate.toFixed(1)} cumulative output tok/s`),
+			ctx.ui.theme.fg("accent", `${rate.toFixed(1)} tok/s`),
 		);
 	}
 

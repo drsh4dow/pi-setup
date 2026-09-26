@@ -65,22 +65,22 @@ test("weights cumulative rates by request time across agent runs, excluding tool
 	assert.equal(statuses.at(-1), waiting);
 	await emit(requestStart, 1_000);
 	await emit({ type: "message_end", message: assistant(100) }, 3_000);
-	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "50.0 tok/s");
 
 	// Tool execution between requests must not affect the denominator.
 	await emit(requestStart, 63_000);
-	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "50.0 tok/s");
 	await emit({ type: "message_end", message: assistant(200) }, 71_000);
-	assert.equal(statuses.at(-1), "30.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "30.0 tok/s");
 	await emit(agentEnd, 72_000);
-	assert.equal(statuses.at(-1), "30.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "30.0 tok/s");
 
 	// Another user prompt must extend the totals, not reset them.
 	await emit(requestStart, 180_000);
-	assert.equal(statuses.at(-1), "30.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "30.0 tok/s");
 	await emit({ type: "message_end", message: assistant(10) }, 182_000);
 	await emit(agentEnd, 182_000);
-	assert.equal(statuses.at(-1), "25.8 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "25.8 tok/s");
 });
 
 test("waits for one second of cumulative request time, retaining shorter measurements", async () => {
@@ -93,7 +93,7 @@ test("waits for one second of cumulative request time, retaining shorter measure
 
 	await emit(requestStart, 5_000);
 	await emit({ type: "message_end", message: assistant(60) }, 5_750);
-	assert.equal(statuses.at(-1), "100.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "100.0 tok/s");
 });
 
 test("unmeasured and zero-usage responses leave totals and the displayed rate unchanged", async () => {
@@ -104,7 +104,7 @@ test("unmeasured and zero-usage responses leave totals and the displayed rate un
 
 	await emit(requestStart, 3_000);
 	await emit({ type: "message_end", message: assistant(100) }, 5_000);
-	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "50.0 tok/s");
 
 	await emit(requestStart, 6_000);
 	await emit(
@@ -115,13 +115,13 @@ test("unmeasured and zero-usage responses leave totals and the displayed rate un
 		16_000,
 	);
 	await emit(agentEnd, 16_000);
-	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "50.0 tok/s");
 
 	await emit({ type: "message_end", message: assistant(900) }, 17_000);
-	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "50.0 tok/s");
 	await emit(requestStart, 18_000);
 	await emit({ type: "message_end", message: assistant(200) }, 26_000);
-	assert.equal(statuses.at(-1), "30.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "30.0 tok/s");
 });
 
 test("restoration excludes historical responses without timing and malformed measurements", async () => {
@@ -149,7 +149,7 @@ test("restoration excludes historical responses without timing and malformed mea
 	await emit(requestStart, 0);
 	await emit({ type: "message_end", message: assistant(100) }, 2_000);
 	await emit({ type: "session_start", reason: "reload" });
-	assert.equal(statuses.at(-1), "50.0 cumulative output tok/s");
+	assert.equal(statuses.at(-1), "50.0 tok/s");
 });
 
 test("real sessions retain rates while streaming and restore the selected history across reloads, forks, and compaction", async (t) => {
@@ -247,7 +247,7 @@ test("real sessions retain rates while streaming and restore the selected histor
 	}
 
 	await session.prompt("First request");
-	assert.equal(status, "50.0 cumulative output tok/s");
+	assert.equal(status, "50.0 tok/s");
 	const firstResponseId = manager.getLeafId();
 	assert.ok(firstResponseId);
 	expectedWhileStreaming = status;
@@ -256,7 +256,7 @@ test("real sessions retain rates while streaming and restore the selected histor
 	assert.ok(secondModel);
 	await session.setModel(secondModel);
 	await session.prompt("Second request");
-	assert.equal(status, "30.0 cumulative output tok/s");
+	assert.equal(status, "30.0 tok/s");
 	assert.ok(updates > 0);
 	assert.deepEqual(errors, []);
 	assert.deepEqual(notifications, []);
@@ -266,13 +266,13 @@ test("real sessions retain rates while streaming and restore the selected histor
 	const reopened = SessionManager.open(file, directory);
 	const restored = harness(reopened);
 	await restored.emit({ type: "session_start", reason: "reload" });
-	assert.equal(restored.statuses.at(-1), "30.0 cumulative output tok/s");
+	assert.equal(restored.statuses.at(-1), "30.0 tok/s");
 
 	const lastResponseId = reopened.getLeafId();
 	assert.ok(lastResponseId);
 	reopened.appendCompaction("Earlier history", lastResponseId, 1_000);
 	await restored.emit({ type: "session_start", reason: "resume" });
-	assert.equal(restored.statuses.at(-1), "30.0 cumulative output tok/s");
+	assert.equal(restored.statuses.at(-1), "30.0 tok/s");
 
 	reopened.branch(firstResponseId);
 	await restored.emit({
@@ -280,14 +280,14 @@ test("real sessions retain rates while streaming and restore the selected histor
 		oldLeafId: lastResponseId,
 		newLeafId: firstResponseId,
 	});
-	assert.equal(restored.statuses.at(-1), "50.0 cumulative output tok/s");
+	assert.equal(restored.statuses.at(-1), "50.0 tok/s");
 	reopened.createBranchedSession(firstResponseId);
 	const forked = harness(reopened);
 	await forked.emit({ type: "session_start", reason: "fork" });
-	assert.equal(forked.statuses.at(-1), "50.0 cumulative output tok/s");
+	assert.equal(forked.statuses.at(-1), "50.0 tok/s");
 	await forked.emit(requestStart, 100_000);
 	await forked.emit({ type: "message_end", message: assistant(20) }, 102_000);
-	assert.equal(forked.statuses.at(-1), "30.0 cumulative output tok/s");
+	assert.equal(forked.statuses.at(-1), "30.0 tok/s");
 
 	reopened.newSession();
 	await forked.emit({ type: "session_start", reason: "new" });

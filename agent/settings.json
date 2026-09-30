@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.87.1",
+  "lastChangelogVersion": "0.99.2",
   "packages": [],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6-astra",
@@ -7,7 +7,7 @@
     "opencode-go/glm-5.3-flash",
     "openai-codex/gpt-6-astra",
     "opencode-go/kimi-k3",
-    "openai-codex/gpt-6-sol"
+    "openai-codex/gpt-6.1-sol"
   ],
   "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,

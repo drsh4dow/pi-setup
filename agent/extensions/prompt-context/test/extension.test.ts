@@ -160,7 +160,7 @@ for (const custom of [true, false]) {
 						["Keep edits focused", tools.includes("read")],
 						["Inspect evidence", tools.includes("read")],
 						["Unlisted tool guidance", tools.includes("no_snippet")],
-						["Use codemode to batch or chain", tools.includes("codemode")],
+						["Use codemode to batch", tools.includes("codemode")],
 						["SAMPLE SKILL DESCRIPTION", tools.includes("read")],
 					] as const) {
 						assert.equal(

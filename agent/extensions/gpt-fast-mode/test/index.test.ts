@@ -20,7 +20,12 @@ describe("gpt-fast-mode request mapping", () => {
 		["openai-codex", "priority"],
 		["openai-codex@work", "priority"],
 	]) {
-		for (const id of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna"]) {
+		for (const id of [
+			"gpt-5.6-sol",
+			"gpt-6-sol",
+			"gpt-6-luna",
+			"gpt-6.1-sol",
+		]) {
 			test(`uses ${tier} for ${provider}/${id} without mutating the payload`, () => {
 				const model = { provider, id };
 				const payload = { model: model.id, input: "hello" };

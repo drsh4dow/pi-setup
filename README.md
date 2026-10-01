@@ -18,7 +18,7 @@ Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as this setup's active system prom
 
 ## Install
 
-Requires Pi 0.99.2 or newer, Node.js 22.19 or newer, and [Bun](https://bun.sh).
+Requires Pi 1.0 or newer, Node.js 22.19 or newer, and [Bun](https://bun.sh).
 Install Pi and clone this repository into its global configuration directory:
 
 ```bash
@@ -32,6 +32,10 @@ pi
 Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exists, move or merge it before cloning.
 
 `bun install` installs extension dependencies and enables Effect's TypeScript diagnostics. It does not patch the Pi runtime.
+
+Keep the direct `typebox` dependency aligned with Pi's exact version. Tool-schema
+validation shares types with Pi; independently upgrading TypeBox can make those
+types incompatible.
 
 Pi automatically discovers the extensions, skills, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
 
@@ -63,6 +67,7 @@ The inventories below are checked against tracked and untracked, non-ignored set
 
 | Extension | What it adds |
 | --- | --- |
+| `aoauth` | Claude Pro/Max subscription login and token refresh |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
 | `herdr-agent-state` | Herdr pane state and Pi session reporting, with idle reconciliation independent of background processes |

@@ -20,7 +20,6 @@
 				"name": "@effect/language-service",
 				"ignoreEffectSuggestionsInTscExitCode": false,
 				"diagnosticSeverity": {
-					"importFromBarrel": "error",
 					"anyUnknownInErrorContext": "error",
 					"unsafeEffectTypeAssertion": "error",
 					"instanceOfSchema": "error",
@@ -61,8 +60,18 @@
 					"schemaUnionOfLiterals": "error",
 					"unnecessaryArrowBlock": "error"
 				},
-				// Node's test runner already owns promise completion and failures.
 				"overrides": [
+					// HTTP and process APIs remain unstable; Effect is pinned exactly.
+					{
+						"include": [
+							"agent/extensions/aoauth/oauth.ts",
+							"agent/extensions/test/tmux.ts"
+						],
+						"options": {
+							"diagnosticSeverity": { "unstableApiUsage": "off" }
+						}
+					},
+					// Node's test runner already owns promise completion and failures.
 					{
 						"include": ["agent/extensions/**/test/**/*.ts"],
 						"options": {

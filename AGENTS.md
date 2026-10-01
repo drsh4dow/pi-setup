@@ -4,7 +4,7 @@ Global Pi configuration: system prompt, vendored TypeScript extensions, skills,
 themes, and prompts. Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as the active
 system prompt.
 
-Use `vp` for package management and scripts; Bun is the package manager. Run
+Use `vp` for package management and scripts. Run
 `vp run verify` before reporting a code or tooling change.
 
 Every decision made in the code/output of this repository should increase the AX

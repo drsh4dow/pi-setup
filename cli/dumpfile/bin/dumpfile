@@ -8,4 +8,4 @@ while [[ -L "$SOURCE" ]]; do
   [[ "$SOURCE" != /* ]] && SOURCE="$DIRECTORY/$SOURCE"
 done
 DIRECTORY=$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
-exec bun "$DIRECTORY/../src/cli.ts" "$@"
+exec "$DIRECTORY/../../../.build/bin/dumpfile" "$@"

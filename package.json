@@ -3,24 +3,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "effect-tsgo patch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p cli/dumpfile/tsconfig.json",
-    "check": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test --error-on-warnings && bun run check:oxlint",
-    "check:oxlint": "oxlint --deny-warnings agent/extensions agent/lib agent/scripts cli/dumpfile/src cli/dumpfile/test",
-    "lint": "bun run check",
-    "verify:strict-diagnostics": "node agent/scripts/verify-strict-diagnostics.mjs",
-    "check:fix": "biome check agent/extensions agent/lib agent/scripts agent/skills/babysit-pr/scripts agent/skills/babysit-pr/test cli/dumpfile/src cli/dumpfile/test --write",
-    "test:background-terminals": "node --test agent/extensions/background-terminals/test/*.test.ts",
-    "test:babysit-pr": "node --test agent/skills/babysit-pr/test/*.test.mjs",
+    "prepare": "vp exec effect-tsgo patch --oxlint && vp run build:cli",
+    "build:cli": "vp exec bun build --compile --outfile .build/bin/emit-to-pi agent/extensions/background-terminals/bin/emit-to-pi.ts && vp exec bun build --compile --outfile .build/bin/babysit-pr agent/skills/babysit-pr/scripts/babysit-pr.ts && vp exec bun build --compile --outfile .build/bin/dumpfile cli/dumpfile/src/cli.ts",
+    "bench:terminals": "node agent/extensions/background-terminals/test/list.bench.ts",
+    "bench:queue": "node agent/skills/babysit-pr/test/queue.bench.ts",
+    "verify:strict-diagnostics": "node agent/scripts/verify-strict-diagnostics.ts",
+    "test:background-terminals": "vp run build:cli && node --test agent/extensions/background-terminals/test/*.test.ts",
+    "test:babysit-pr": "vp run build:cli && node --test agent/skills/babysit-pr/test/*.test.ts",
     "test:process-status": "node --test agent/extensions/process-status/test/*.test.ts",
     "test:skill-visibility": "node --test agent/extensions/skill-visibility/test/*.test.ts",
     "test:gpt-fast-mode": "node --test agent/extensions/gpt-fast-mode/test/*.test.ts",
     "test:sacrifice-preference": "node --test agent/extensions/sacrifice-preference/test/*.test.ts",
-    "test:extensions": "node --test $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
-    "test:docs": "node --test agent/scripts/test/*.test.mjs && node agent/scripts/verify-docs.mjs",
-    "test:dumpfile": "bash -n cli/dumpfile/setup.sh cli/dumpfile/bin/dumpfile && node --test cli/dumpfile/test/*.test.ts && wrangler deploy --dry-run --config cli/dumpfile/wrangler.jsonc",
-    "test:e2e": "PI_E2E=1 node --test --test-concurrency=1 --test-timeout=900000 $(find agent/extensions -name 'e2e.test.ts' -print | sort)",
-    "verify": "bun run typecheck && bun run check && bun run test:extensions && bun run test:babysit-pr && bun run test:dumpfile && bun run test:docs"
+    "test:extensions": "vp run build:cli && node --test $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
+    "test:docs": "node --test agent/scripts/test/*.test.ts && node agent/scripts/verify-docs.ts",
+    "test:dumpfile": "vp run build:cli && bash -n cli/dumpfile/setup.sh cli/dumpfile/bin/dumpfile && node --test cli/dumpfile/test/*.test.ts && wrangler deploy --dry-run --config cli/dumpfile/wrangler.jsonc",
+    "test:e2e": "vp run build:cli && PI_E2E=1 node --test --test-concurrency=1 --test-timeout=900000 $(find agent/extensions -name 'e2e.test.ts' -print | sort)",
+    "verify": "vp check && vp run verify:strict-diagnostics && vp run test:extensions && vp run test:babysit-pr && vp run test:dumpfile && vp run test:docs"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^1.0.0",
@@ -32,15 +30,22 @@
     "typebox": "1.3.27"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
     "@effect/tsgo": "0.47.2",
-    "@oxlint/plugins": "1.86.0",
+    "@oxlint/plugins": "1.85.0",
+    "@types/bun": "1.4.2",
     "@types/node": "^26.6.3",
-    "oxlint": "1.86.0",
-    "prettier": "^3.9.9",
     "typescript": "^7.0.2",
+    "vite-plus": "1.0.0",
     "wrangler": "^4.146.0"
   },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "26.8.2",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "bun@1.4.2",
   "trustedDependencies": [
     "@google/genai",
     "protobufjs"

@@ -11,9 +11,7 @@
     "anthropic/claude-opus-5-5"
   ],
   "defaultThinkingLevel": "high",
-  "defaultTools": [
-    "+codemode"
-  ],
+  "defaultTools": ["+codemode"],
   "codemode": {
     "mode": "on"
   },

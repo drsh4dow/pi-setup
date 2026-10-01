@@ -6,133 +6,124 @@ import { describe } from "node:test";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, FileSystem, Schema } from "effect";
 import {
-	capture,
-	e2eUnavailable,
-	isDead,
-	type PiSession,
-	prompt,
-	readStderr,
-	sendKeys,
-	setupPiSession,
-	testEffect,
-	waitFor,
+  capture,
+  e2eUnavailable,
+  isDead,
+  type PiSession,
+  prompt,
+  readStderr,
+  sendKeys,
+  setupPiSession,
+  testEffect,
+  waitFor,
 } from "../../test/tmux.ts";
 import { fastServiceTier } from "../index.ts";
 
 const skip = e2eUnavailable();
 
-const settingsSchema = Schema.fromJsonString(
-	Schema.Struct({ enabled: Schema.Boolean }),
-);
+const settingsSchema = Schema.fromJsonString(Schema.Struct({ enabled: Schema.Boolean }));
 
-const persistedEnabled = Effect.fn("persistedEnabled")(function* (
-	session: PiSession,
-) {
-	const fs = yield* FileSystem.FileSystem;
-	const path = join(session.agentDir, "gpt-fast-mode.json");
+const persistedEnabled = Effect.fn("persistedEnabled")(function* (session: PiSession) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = join(session.agentDir, "gpt-fast-mode.json");
 
-	if (!(yield* fs.exists(path))) return false;
+  if (!(yield* fs.exists(path))) return false;
 
-	const settings = yield* Schema.decodeEffect(settingsSchema)(
-		yield* fs.readFileString(path),
-	);
+  const settings = yield* Schema.decodeEffect(settingsSchema)(yield* fs.readFileString(path));
 
-	return settings.enabled;
+  return settings.enabled;
 }, Effect.provide(BunFileSystem.layer));
 
 function footerModel(pane: string) {
-	const matches = [...pane.matchAll(/\(([a-z0-9-]+)\)\s+(\S+)\s+•/g)];
-	const last = matches.at(-1);
-	assert.ok(last, `could not read the footer model from pane:\n${pane}`);
+  const matches = [...pane.matchAll(/\(([a-z0-9-]+)\)\s+(\S+)\s+•/g)];
+  const last = matches.at(-1);
+  assert.ok(last, `could not read the footer model from pane:\n${pane}`);
 
-	return { provider: last[1], id: last[2] };
+  return { provider: last[1], id: last[2] };
 }
 
 function noticeFor(enabled: boolean, model: { provider: string; id: string }) {
-	if (!enabled) return /GPT Fast mode disabled\./;
-	const serviceTier = fastServiceTier(model);
+  if (!enabled) return /GPT Fast mode disabled\./;
+  const serviceTier = fastServiceTier(model);
 
-	return serviceTier
-		? new RegExp(`GPT Fast mode enabled \\(service_tier: ${serviceTier}\\)\\.`)
-		: /GPT Fast mode enabled, but .+ is not supported\./;
+  return serviceTier
+    ? new RegExp(`GPT Fast mode enabled \\(service_tier: ${serviceTier}\\)\\.`)
+    : /GPT Fast mode enabled, but .+ is not supported\./;
 }
 
 describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
-	let session: PiSession;
-	let model: { provider: string; id: string };
-	let initialEnabled: boolean;
-	let expected: boolean;
+  let session: PiSession;
+  let model: { provider: string; id: string };
+  let initialEnabled: boolean;
+  let expected: boolean;
 
-	setupPiSession(
-		(value) => {
-			session = value;
-		},
-		(value) =>
-			Effect.gen(function* () {
-				initialEnabled = yield* persistedEnabled(value);
-				expected = initialEnabled;
-				model = footerModel(yield* capture(value));
-			}),
-	);
+  setupPiSession(
+    (value) => {
+      session = value;
+    },
+    (value) =>
+      Effect.gen(function* () {
+        initialEnabled = yield* persistedEnabled(value);
+        expected = initialEnabled;
+        model = footerModel(yield* capture(value));
+      }),
+  );
 
-	const toggle = Effect.fn("toggle")(function* <E>(
-		trigger: Effect.Effect<void, E>,
-		description: string,
-	) {
-		const next = !expected;
-		yield* trigger;
-		yield* waitFor(
-			session,
-			(pane) =>
-				noticeFor(next, model).test(
-					pane.match(/^.*GPT Fast mode .*$/gm)?.at(-1) ?? "",
-				),
-			{ timeoutMs: 30_000, description },
-		);
-		expected = next;
-		assert.equal(
-			yield* persistedEnabled(session),
-			next,
-			"gpt-fast-mode.json does not reflect the announced state",
-		);
-		assert.equal(yield* isDead(session), false);
-	});
+  const toggle = Effect.fn("toggle")(function* <E>(
+    trigger: Effect.Effect<void, E>,
+    description: string,
+  ) {
+    const next = !expected;
+    yield* trigger;
+    yield* waitFor(
+      session,
+      (pane) => noticeFor(next, model).test(pane.match(/^.*GPT Fast mode .*$/gm)?.at(-1) ?? ""),
+      { timeoutMs: 30_000, description },
+    );
+    expected = next;
+    assert.equal(
+      yield* persistedEnabled(session),
+      next,
+      "gpt-fast-mode.json does not reflect the announced state",
+    );
+    assert.equal(yield* isDead(session), false);
+  });
 
-	testEffect("registers the extension without crashing", function* () {
-		assert.equal(yield* isDead(session), false);
-		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
-		const pane = yield* capture(session);
-		assert.match(
-			pane,
-			/\[Extensions\][\s\S]*gpt-fast-mode/,
-			`gpt-fast-mode missing from the startup banner:\n${pane}`,
-		);
-	});
+  testEffect("registers the extension without crashing", function* () {
+    assert.equal(yield* isDead(session), false);
+    assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
+    const pane = yield* capture(session);
+    assert.match(
+      pane,
+      /\[Extensions\][\s\S]*gpt-fast-mode/,
+      `gpt-fast-mode missing from the startup banner:\n${pane}`,
+    );
+  });
 
-	testEffect("/fast flips the announced state and persists it", function* () {
-		yield* toggle(prompt(session, "/fast"), "first /fast notice");
-		assert.notEqual(
-			yield* persistedEnabled(session),
-			initialEnabled,
-			"/fast did not change the persisted setting",
-		);
-	});
+  testEffect("/fast flips the announced state and persists it", function* () {
+    yield* toggle(prompt(session, "/fast"), "first /fast notice");
+    assert.notEqual(
+      yield* persistedEnabled(session),
+      initialEnabled,
+      "/fast did not change the persisted setting",
+    );
+  });
 
-	testEffect("/fast again flips back to the original state", function* () {
-		yield* toggle(prompt(session, "/fast"), "second /fast notice");
-		assert.equal(yield* persistedEnabled(session), initialEnabled);
-	});
+  testEffect("/fast again flips back to the original state", function* () {
+    yield* toggle(prompt(session, "/fast"), "second /fast notice");
+    assert.equal(yield* persistedEnabled(session), initialEnabled);
+  });
 
-	testEffect("the ctrl+alt+m shortcut toggles the same state", function* () {
-		yield* toggle(sendKeys(session, "C-M-m"), "shortcut notice (off)");
-		yield* toggle(sendKeys(session, "C-M-m"), "shortcut notice (back on)");
-		assert.equal(yield* persistedEnabled(session), initialEnabled);
-	});
+  testEffect("the ctrl+alt+m shortcut toggles the same state", function* () {
+    yield* toggle(sendKeys(session, "C-M-m"), "shortcut notice (off)");
+    yield* toggle(sendKeys(session, "C-M-m"), "shortcut notice (back on)");
+    assert.equal(yield* persistedEnabled(session), initialEnabled);
+  });
 
-	testEffect("survives the toggles cleanly", function* () {
-		assert.equal(yield* isDead(session), false);
-		assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
-		const pane = yield* capture(session);
-		assert.match(pane, /%\/\d/, `footer stopped rendering:\n${pane}`);
-	});
+  testEffect("survives the toggles cleanly", function* () {
+    assert.equal(yield* isDead(session), false);
+    assert.doesNotMatch(yield* readStderr(session), /uncaughtException/);
+    const pane = yield* capture(session);
+    assert.match(pane, /%\/\d/, `footer stopped rendering:\n${pane}`);
+  });
 });

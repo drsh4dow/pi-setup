@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 
 const { delimiter } = process.getBuiltinModule("node:path");
 
@@ -10,74 +10,69 @@ export const NOTIFICATION_FD = 3;
 
 const MAX_NOTIFICATION_FRAME_BYTES = 4 * 1024;
 
-const notificationBin = fileURLToPath(new URL("./bin", import.meta.url));
+const notificationBin = fileURLToPath(new URL("../../../.build/bin", import.meta.url));
 
-const NotificationWire = Schema.fromJsonString(Schema.NonEmptyString);
+const decodeNotification = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.NonEmptyString));
 
-type FrameState =
-	| { kind: "collecting"; buffered: Buffer }
-	| { kind: "dropping-oversized" };
+type FrameState = { kind: "collecting"; buffered: Buffer } | { kind: "dropping-oversized" };
 
 export interface RunningTerminalNotification {
-	id: string;
-	terminalId: string;
-	title: string;
-	message: string;
+  id: string;
+  terminalId: string;
+  title: string;
+  message: string;
 }
 
 export function notificationEnvironment(): NodeJS.ProcessEnv {
-	return {
-		...processEnvironment,
-		PATH: [notificationBin, processEnvironment.PATH]
-			.filter((entry): entry is string => Boolean(entry))
-			.join(delimiter),
-		PI_BACKGROUND_TERMINAL_NOTIFY_FD: String(NOTIFICATION_FD),
-	};
+  return {
+    ...processEnvironment,
+    PATH: [notificationBin, processEnvironment.PATH]
+      .filter((entry): entry is string => Boolean(entry))
+      .join(delimiter),
+    PI_BACKGROUND_TERMINAL_NOTIFY_FD: String(NOTIFICATION_FD),
+  };
 }
 
 export class NotificationFrames {
-	private state: FrameState = {
-		kind: "collecting",
-		buffered: Buffer.alloc(0),
-	};
+  private state: FrameState = {
+    kind: "collecting",
+    buffered: Buffer.alloc(0),
+  };
 
-	append(chunk: Buffer): string[] {
-		let input = chunk;
+  append(chunk: Buffer): string[] {
+    let input = chunk;
 
-		if (this.state.kind === "dropping-oversized") {
-			const newline = input.indexOf(10);
+    if (this.state.kind === "dropping-oversized") {
+      const newline = input.indexOf(10);
 
-			if (newline === -1) return [];
-			this.state = { kind: "collecting", buffered: Buffer.alloc(0) };
-			input = input.subarray(newline + 1);
-		}
+      if (newline === -1) return [];
+      this.state = { kind: "collecting", buffered: Buffer.alloc(0) };
+      input = input.subarray(newline + 1);
+    }
 
-		let buffered = Buffer.concat([this.state.buffered, input]);
-		const messages: string[] = [];
+    let buffered = Buffer.concat([this.state.buffered, input]);
+    const messages: string[] = [];
 
-		for (;;) {
-			const newline = buffered.indexOf(10);
+    for (;;) {
+      const newline = buffered.indexOf(10);
 
-			if (newline === -1) break;
-			const frame = buffered.subarray(0, newline);
-			buffered = buffered.subarray(newline + 1);
+      if (newline === -1) break;
+      const frame = buffered.subarray(0, newline);
+      buffered = buffered.subarray(newline + 1);
 
-			if (frame.length > MAX_NOTIFICATION_FRAME_BYTES) continue;
+      if (frame.length > MAX_NOTIFICATION_FRAME_BYTES) continue;
 
-			try {
-				messages.push(
-					Schema.decodeSync(NotificationWire)(frame.toString("utf8")),
-				);
-			} catch {
-				// Only emit-to-pi frames are accepted on the private channel.
-			}
-		}
+      const message = decodeNotification(frame.toString("utf8"));
 
-		this.state =
-			buffered.length > MAX_NOTIFICATION_FRAME_BYTES
-				? { kind: "dropping-oversized" }
-				: { kind: "collecting", buffered };
+      // Only emit-to-pi frames are accepted on the private channel.
+      if (Option.isSome(message)) messages.push(message.value);
+    }
 
-		return messages;
-	}
+    this.state =
+      buffered.length > MAX_NOTIFICATION_FRAME_BYTES
+        ? { kind: "dropping-oversized" }
+        : { kind: "collecting", buffered };
+
+    return messages;
+  }
 }

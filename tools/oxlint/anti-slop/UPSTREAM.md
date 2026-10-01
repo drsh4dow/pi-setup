@@ -1,26 +1,38 @@
 # Anti-slop provenance
 
-- Source: https://github.com/dmmulroy/anti-slop
+- Source: <https://github.com/dmmulroy/anti-slop>
 - Commit: `c44ef22ca116d0ba62a3ff663a0bd13a3f3fa40b`
 - Copied directory: `skills/install-anti-slop/assets/anti-slop/`
 - Generic entry point: `tools/oxlint/anti-slop/index.ts`
 - Effect entry point: `tools/oxlint/anti-slop/effect/index.ts`
 
-All bundled source files match that commit byte for byte. Local additions are this record and the upstream root MIT `LICENSE`. The nested ESLint Stylistic license and provenance remain intact. No rules were customized.
+All bundled source files match that commit byte for byte. Local additions are
+this record and the upstream root MIT `LICENSE`. The nested ESLint Stylistic
+license and provenance remain intact. No rules were customized.
 
 ## Repository integration
 
-`.oxlintrc.json` enables every generic and Effect rule at error severity, plus native `oxc/no-accumulating-spread`. Effect is a direct repository dependency. `oxlint` and `@oxlint/plugins` are both pinned to `1.82.0`.
+`vite.config.ts` enables every generic and Effect anti-slop rule at error
+severity, plus native `oxc/no-accumulating-spread`. Vite+ supplies Oxlint and
+Oxfmt. `@oxlint/plugins` is the authoring API used by this vendored plugin, not
+another linter. Keep it compatible with Vite+'s bundled Oxlint, and keep
+`@effect/tsgo` compatible with both Oxlint and its type-checking binary.
 
-`bun run check:oxlint` checks owned extension, library, script, and CLI source and tests. `check`, `lint`, and `verify` include it alongside the existing Biome checks. Explicit source paths avoid loading nested configurations in reference submodules. Installed skills, runtime data, reference checkouts, and this vendored plugin are excluded from application lint.
+`vp lint` checks maintained extensions, libraries, scripts, babysit-pr code, and
+dumpfile source and tests. `vp check` adds formatting and type checks;
+`vp run verify` also builds the CLI binaries and runs behavioral tests.
 
-The service-constructor rule only checks relative project imports, not package or path-alias imports.
+Runtime state, other installed skills, reference checkouts, and this vendored
+plugin are excluded from application checks. Native host boundaries have scoped
+Effect-native exceptions, but keep type-safety and anti-slop rules enabled.
 
-## Installation verification
+The service-constructor rule checks relative project imports, not package or
+path-alias imports.
 
-- Compared every copied asset with the pinned upstream bundle. No differences.
-- Exercised the configured Oxlint CLI with accepted typed property access, rejected `Reflect.get`, and rejected manual `_tag` comparison. Both plugins produced the expected diagnostics.
-- Typechecks and existing Biome checks passed.
-- Oxlint reported 1,499 errors and 3 warnings in existing application source and tests, including 1,265 spacing errors. `bun run verify` stops at that lint gate before its test stages.
+## Verification
 
-Source cleanup was not part of installation. No autofixes, suppressions, or severity reductions were applied. Rerun `bun run check:oxlint --format json` for current diagnostics.
+`vp run verify:strict-diagnostics` exercises the real `vp check` command in a
+clean temporary repository. It checks source discovery, TypeScript errors,
+formatting failures, typed lint, Effect diagnostics, anti-slop enforcement,
+warning failure, and the file-length limit. The full verification suite includes
+this check. Use `vp lint --format json` for current findings.

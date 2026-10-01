@@ -2,6 +2,8 @@
 .dev.vars*
 .wrangler/
 node_modules/
+/.build/
+/.vite/
 sessions
 .firecrawl/
 update-cache.json

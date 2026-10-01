@@ -1,83 +1,24 @@
 {
-	"$schema": "./node_modules/@effect/tsgo/schema.json",
-	"compilerOptions": {
-		"allowImportingTsExtensions": true,
-		"module": "NodeNext",
-		"moduleResolution": "NodeNext",
-		"noEmit": true,
-		"target": "esnext",
-		"types": ["node"],
-		"verbatimModuleSyntax": true,
-		/* Linting */
-		"skipLibCheck": true,
-		"strict": true,
-		"noUnusedLocals": true,
-		"noUnusedParameters": true,
-		"noFallthroughCasesInSwitch": true,
-		"noUncheckedSideEffectImports": true,
-		"plugins": [
-			{
-				"name": "@effect/language-service",
-				"ignoreEffectSuggestionsInTscExitCode": false,
-				"diagnosticSeverity": {
-					"anyUnknownInErrorContext": "error",
-					"unsafeEffectTypeAssertion": "error",
-					"instanceOfSchema": "error",
-					"deterministicKeys": "error",
-					"strictEffectProvide": "off",
-					"missingEffectServiceDependency": "error",
-					"leakingRequirements": "error",
-					"globalErrorInEffectCatch": "error",
-					"globalErrorInEffectFailure": "error",
-					"unknownInEffectCatch": "error",
-					"strictBooleanExpressions": "off",
-					"lazyEffect": "off",
-					"preferSchemaOverJson": "error",
-					"schemaSyncInEffect": "error",
-					"cryptoRandomUUID": "error",
-					"cryptoRandomUUIDInEffect": "error",
-					"nodeBuiltinImport": "error",
-					"globalDate": "error",
-					"globalDateInEffect": "error",
-					"globalConsole": "error",
-					"globalConsoleInEffect": "error",
-					"globalRandom": "error",
-					"globalRandomInEffect": "error",
-					"globalTimers": "error",
-					"globalTimersInEffect": "error",
-					"globalFetch": "error",
-					"globalFetchInEffect": "error",
-					"catchUnfailableEffect": "warning",
-					"asyncFunction": "error",
-					"extendsNativeError": "error",
-					"newPromise": "error",
-					"processEnv": "error",
-					"processEnvInEffect": "error",
-					"effectDoNotation": "error",
-					"missedPipeableOpportunity": "error",
-					"nestedEffectGenYield": "error",
-					"serviceNotAsClass": "error",
-					"schemaUnionOfLiterals": "error",
-					"unnecessaryArrowBlock": "error"
-				},
-				"overrides": [
-					// Process APIs remain unstable; Effect is pinned exactly.
-					{
-						"include": ["agent/extensions/test/tmux.ts"],
-						"options": {
-							"diagnosticSeverity": { "unstableApiUsage": "off" }
-						}
-					},
-					// Node's test runner already owns promise completion and failures.
-					{
-						"include": ["agent/extensions/**/test/**/*.ts"],
-						"options": {
-							"diagnosticSeverity": { "asyncFunction": "off" }
-						}
-					}
-				]
-			}
-		]
-	},
-	"include": ["agent/extensions/**/*.ts"]
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "target": "esnext",
+    "types": ["node", "bun"],
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": [
+    "vite.config.ts",
+    "agent/extensions/**/*.ts",
+    "agent/lib/**/*.ts",
+    "agent/scripts/**/*.ts",
+    "agent/skills/babysit-pr/**/*.ts"
+  ]
 }

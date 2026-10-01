@@ -211,11 +211,11 @@ banner "Dumpfile setup"
 
 stage "Cloudflare account and zone"
 say "This checks the local toolchain, authenticates Wrangler, and records public account identifiers."
-for command in bun curl openssl xxd; do require_command "$command"; done
-if ! bunx wrangler whoami; then
+for command in vp curl openssl xxd; do require_command "$command"; done
+if ! vp -C "$ROOT_DIR" exec wrangler whoami; then
   step "Complete the Cloudflare login opened by Wrangler."
-  bunx wrangler login
-  bunx wrangler whoami
+  vp -C "$ROOT_DIR" exec wrangler login
+  vp -C "$ROOT_DIR" exec wrangler whoami
 fi
 step "Copy the 32-character account ID shown by 'wrangler whoami'."
 ask CLOUDFLARE_ACCOUNT_ID "Cloudflare account ID:"
@@ -231,21 +231,21 @@ chmod 600 "$SETUP_STATE"
 
 stage "R2 bucket"
 say "The bucket is adopted when it already exists and created otherwise."
-if bunx wrangler r2 bucket list | grep -Fq 'dumpfile-prod'; then
+if vp -C "$ROOT_DIR" exec wrangler r2 bucket list | grep -Fq 'dumpfile-prod'; then
   note "dumpfile-prod already exists"
 else
-  bunx wrangler r2 bucket create dumpfile-prod
+  vp -C "$ROOT_DIR" exec wrangler r2 bucket create dumpfile-prod
 fi
 say "Uploads become eligible for deletion at 30 days of object age, including existing uploads."
-bunx wrangler r2 bucket lifecycle list dumpfile-prod
-if ! bunx wrangler auth token --json | bun "$COMPONENT_DIR/src/retention.ts" check "$CLOUDFLARE_ACCOUNT_ID"; then
+vp -C "$ROOT_DIR" exec wrangler r2 bucket lifecycle list dumpfile-prod
+if ! vp -C "$ROOT_DIR" exec wrangler auth token --json | vp -C "$ROOT_DIR" exec bun "$COMPONENT_DIR/src/retention.ts" check "$CLOUDFLARE_ACCOUNT_ID"; then
   warn "Retention is not verified. Applying it can expire every existing upload older than 30 days."
   say "Deletion is asynchronous and cannot be undone. Review other lifecycle rules above."
   say "To approve ALL existing and future uploads, type exactly: expire dumpfile-prod uploads"
   RETENTION_APPROVAL=""
   read -r RETENTION_APPROVAL || true
   if [[ "$RETENTION_APPROVAL" == "expire dumpfile-prod uploads" ]]; then
-    bunx wrangler auth token --json | bun "$COMPONENT_DIR/src/retention.ts" apply "$CLOUDFLARE_ACCOUNT_ID" --expire-existing-uploads
+    vp -C "$ROOT_DIR" exec wrangler auth token --json | vp -C "$ROOT_DIR" exec bun "$COMPONENT_DIR/src/retention.ts" apply "$CLOUDFLARE_ACCOUNT_ID" --expire-existing-uploads
   else
     SKIPPED+=("30-day retention was not applied or verified; see cli/dumpfile/README.md")
     warn "Continuing without changing retention."
@@ -292,7 +292,7 @@ trap 'rm -f "$SECRETS_FILE"' EXIT
 } > "$SECRETS_FILE"
 (
   cd "$ROOT_DIR"
-  bunx wrangler deploy --config "$COMPONENT_DIR/wrangler.jsonc" --secrets-file "$SECRETS_FILE"
+  vp -C "$ROOT_DIR" exec wrangler deploy --config "$COMPONENT_DIR/wrangler.jsonc" --secrets-file "$SECRETS_FILE"
 )
 rm -f "$SECRETS_FILE"
 trap - EXIT
@@ -307,17 +307,17 @@ ENV_FILE="$OLD_ENV_FILE"
 
 stage "Public R2 domain"
 say "This attaches files.drsh4dow.dev directly to R2 and removes the throttled r2.dev path."
-if bunx wrangler r2 bucket domain list dumpfile-prod | grep -Fq 'files.drsh4dow.dev'; then
+if vp -C "$ROOT_DIR" exec wrangler r2 bucket domain list dumpfile-prod | grep -Fq 'files.drsh4dow.dev'; then
   note "files.drsh4dow.dev is already attached"
 else
-  bunx wrangler r2 bucket domain add dumpfile-prod \
+  vp -C "$ROOT_DIR" exec wrangler r2 bucket domain add dumpfile-prod \
     --domain files.drsh4dow.dev \
     --zone-id "$CLOUDFLARE_ZONE_ID" \
     --min-tls 1.2 \
     --force
 fi
-bunx wrangler r2 bucket dev-url disable dumpfile-prod --force
-bunx wrangler r2 bucket dev-url get dumpfile-prod
+vp -C "$ROOT_DIR" exec wrangler r2 bucket dev-url disable dumpfile-prod --force
+vp -C "$ROOT_DIR" exec wrangler r2 bucket dev-url get dumpfile-prod
 
 stage "Public response protection"
 say "Set one response header rule so browsers never guess an executable type."
@@ -351,10 +351,14 @@ step "Save the alert."
 confirm "Is the \$10 budget alert active?" || { warn "the budget alert is a launch requirement"; exit 1; }
 
 stage "Local dumpfile command"
-say "The command is a symlink to this checkout, so repository updates replace it in place."
+say "Compile a standalone command with the pinned Bun toolchain."
 mkdir -p "$HOME/.local/bin"
-ln -sfn "$COMPONENT_DIR/bin/dumpfile" "$HOME/.local/bin/dumpfile"
-chmod +x "$COMPONENT_DIR/bin/dumpfile"
+CLI_TEMP=$(mktemp "$HOME/.local/bin/.dumpfile.XXXXXX")
+trap 'rm -f "$CLI_TEMP"' EXIT
+vp -C "$ROOT_DIR" exec bun build --compile "$COMPONENT_DIR/src/cli.ts" --outfile "$CLI_TEMP"
+chmod 755 "$CLI_TEMP"
+mv -f "$CLI_TEMP" "$HOME/.local/bin/dumpfile"
+trap - EXIT
 note "installed $HOME/.local/bin/dumpfile"
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   warn "$HOME/.local/bin is not on PATH; add it before starting a new agent"

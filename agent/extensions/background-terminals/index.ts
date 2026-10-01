@@ -6,292 +6,266 @@ import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { sanitizeInline } from "../../lib/text.ts";
 import {
-	registerBackgroundTerminalStatus,
-	requestProcessStatusRefresh,
+  registerBackgroundTerminalStatus,
+  requestProcessStatusRefresh,
 } from "../process-status/status.ts";
 import {
-	BackgroundTerminalDelivery,
-	formatTerminalReport,
-	sanitizeErrorForDisplay,
-	summary,
-	terminalMetadata,
+  BackgroundTerminalDelivery,
+  formatTerminalReport,
+  sanitizeErrorForDisplay,
+  summary,
+  terminalMetadata,
 } from "./delivery.ts";
 import { MAX_TRACKED } from "./manager.ts";
-import {
-	type BackgroundTerminalSession,
-	joinBackgroundTerminalSession,
-} from "./session.ts";
+import { type BackgroundTerminalSession, joinBackgroundTerminalSession } from "./session.ts";
 
 const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
 
 export default function backgroundTerminals(pi: ExtensionAPI) {
-	const delivery = new BackgroundTerminalDelivery(pi);
-	let session: BackgroundTerminalSession | undefined;
-	const observations = new Map<string, object>();
+  const delivery = new BackgroundTerminalDelivery(pi);
+  let session: BackgroundTerminalSession | undefined;
+  const observations = new Map<string, object>();
 
-	const currentSession = () => {
-		if (!session)
-			throw new Error(
-				"Background terminals are unavailable before session start.",
-			);
+  const currentSession = () => {
+    if (!session) throw new Error("Background terminals are unavailable before session start.");
 
-		return session;
-	};
+    return session;
+  };
 
-	const updateStatus = () => requestProcessStatusRefresh(pi);
+  const updateStatus = () => requestProcessStatusRefresh(pi);
 
-	registerBackgroundTerminalStatus(pi, {
-		list: () => session?.list() ?? [],
-		get: (id) => session?.get(id),
-	});
+  registerBackgroundTerminalStatus(pi, {
+    list: () => session?.list() ?? [],
+    get: (id) => session?.get(id),
+  });
 
-	const leaveSession = Effect.fn("leaveSession")(function* () {
-		const joined = session;
-		session = undefined;
-		observations.clear();
-		updateStatus();
+  const leaveSession = Effect.fn("leaveSession")(function* () {
+    const joined = session;
+    session = undefined;
+    observations.clear();
+    updateStatus();
 
-		if (joined) yield* joined.leave();
-	});
+    if (joined) yield* joined.leave;
+  });
 
-	pi.on("session_start", (_event, ctx) => {
-		delivery.setContext(ctx);
+  pi.on("session_start", (_event, ctx) => {
+    delivery.setContext(ctx);
 
-		if (!session)
-			session = joinBackgroundTerminalSession(delivery, updateStatus);
-		updateStatus();
-	});
-	pi.on("agent_settled", () => Effect.runPromise(delivery.flush));
-	pi.on("session_shutdown", () => Effect.runPromise(leaveSession()));
+    if (!session) session = joinBackgroundTerminalSession(delivery, updateStatus);
+    updateStatus();
+  });
+  pi.on("agent_settled", () => Effect.runPromise(delivery.flush));
+  pi.on("session_shutdown", () => Effect.runPromise(leaveSession()));
 
-	pi.registerTool({
-		name: "bg_start",
-		label: "Start Background Terminal",
-		description:
-			"Start a non-interactive, session-scoped shell command in the background. Use bash by default; use bg_start for services and watchers, explicitly requested subagent work, or finite commands alongside independent work. Completion automatically wakes the owning agent with the real exit code. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
-		promptSnippet:
-			"Start a service, watcher, explicitly requested subagent, or finite command alongside independent work",
-		promptGuidelines: [
-			"Use bash by default. Use bg_start for services and watchers, explicitly requested subagent work, or finite commands alongside independent work.",
-			"Continue genuinely independent work. If the requested answer depends on the job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.",
-			"Use meaningful titles and avoid duplicate servers or watchers.",
-			"Run finite bg_start jobs without a notification wrapper to preserve their exit status. Success and failure automatically wake the owner with the real exit code. Use emit-to-pi only for actionable intermediate milestones, never as a completion signal or a trailing command that masks the work's exit code.",
-			"Never use for interactive commands. Background commands share the worktree without write isolation; avoid overlapping mutations.",
-		],
-		parameters: Type.Object({
-			command: Type.String({ maxLength: 100_000 }),
-			title: Type.String({ maxLength: 160 }),
-			working_dir: Type.Optional(Type.String({ maxLength: 4_096 })),
-		}),
-		executionMode: "parallel",
-		execute(_id, params, _signal, _update, ctx) {
-			return Effect.runPromise(
-				Effect.gen(function* () {
-					const command = params.command.trim();
+  pi.registerTool({
+    name: "bg_start",
+    label: "Start Background Terminal",
+    description:
+      "Start a non-interactive, session-scoped shell command in the background. Use bash by default; use bg_start for services and watchers, explicitly requested subagent work, or finite commands alongside independent work. Completion automatically wakes the owning agent with the real exit code. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
+    promptSnippet:
+      "Start a service, watcher, explicitly requested subagent, or finite command alongside independent work",
+    promptGuidelines: [
+      "Use bash by default. Use bg_start for services and watchers, explicitly requested subagent work, or finite commands alongside independent work.",
+      "Continue genuinely independent work. If the requested answer depends on the job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.",
+      "Use meaningful titles and avoid duplicate servers or watchers.",
+      "Run finite bg_start jobs without a notification wrapper to preserve their exit status. Success and failure automatically wake the owner with the real exit code. Use emit-to-pi only for actionable intermediate milestones, never as a completion signal or a trailing command that masks the work's exit code.",
+      "Never use for interactive commands. Background commands share the worktree without write isolation; avoid overlapping mutations.",
+    ],
+    parameters: Type.Object({
+      command: Type.String({ maxLength: 100_000 }),
+      title: Type.String({ maxLength: 160 }),
+      working_dir: Type.Optional(Type.String({ maxLength: 4_096 })),
+    }),
+    executionMode: "parallel",
+    execute(_id, params, _signal, _update, ctx) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const command = params.command.trim();
 
-					if (!command) throw new Error("command must not be empty.");
-					const fs = yield* FileSystem.FileSystem;
-					const path = yield* Path.Path;
-					const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
+          if (!command) throw new Error("command must not be empty.");
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = path.resolve(ctx.cwd, params.working_dir ?? ".");
 
-					const cwdIsDirectory = yield* fs.stat(cwd).pipe(
-						Effect.map((info) => info.type === "Directory"),
-						Effect.orElseSucceed(() => false),
-					);
+          const cwdIsDirectory = yield* fs.stat(cwd).pipe(
+            Effect.map((info) => info.type === "Directory"),
+            Effect.orElseSucceed(() => false),
+          );
 
-					if (!cwdIsDirectory)
-						throw new Error(
-							`working_dir is not a directory: ${sanitizeInline(cwd)}`,
-						);
+          if (!cwdIsDirectory)
+            throw new Error(`working_dir is not a directory: ${sanitizeInline(cwd)}`);
 
-					const snapshot = yield* Effect.sync(() => {
-						try {
-							return currentSession().start({
-								command,
-								title:
-									[...sanitizeInline(params.title).trim()]
-										.slice(0, 80)
-										.join("") || "terminal",
-								cwd,
-							});
-						} catch (error) {
-							throw sanitizeErrorForDisplay(
-								error instanceof Error ? error : String(error),
-							);
-						}
-					});
+          const snapshot = yield* Effect.sync(() => {
+            try {
+              return currentSession().start({
+                command,
+                title:
+                  Array.from(
+                    new Intl.Segmenter().segment(sanitizeInline(params.title).trim()),
+                    ({ segment }) => segment,
+                  )
+                    .slice(0, 80)
+                    .join("") || "terminal",
+                cwd,
+              });
+            } catch (error) {
+              throw sanitizeErrorForDisplay(error instanceof Error ? error : String(error));
+            }
+          });
 
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Started ${summary(snapshot)}\nCompletion automatically wakes you with the real exit code; no emit-to-pi is needed. Continue genuinely independent work. If the requested answer depends on this job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
-							},
-						],
-						details: terminalMetadata(snapshot),
-					};
-				}).pipe(Effect.provide(platformLayer)),
-			);
-		},
-	});
-	pi.registerTool({
-		name: "bg_status",
-		label: "Background Terminal Status",
-		description:
-			"Inspect state and bounded stdout/stderr tails, including changes since the previous bg_status read. Use for immediate inspection, not polling.",
-		parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
-		executionMode: "parallel",
-		execute(_id, params) {
-			return Effect.runPromise(
-				Effect.sync(() => {
-					const terminalSession = currentSession();
-					const snapshot = terminalSession.get(params.id);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Started ${summary(snapshot)}\nCompletion automatically wakes you with the real exit code; no emit-to-pi is needed. Continue genuinely independent work. If the requested answer depends on this job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
+              },
+            ],
+            details: terminalMetadata(snapshot),
+          };
+        }).pipe(Effect.provide(platformLayer)),
+      );
+    },
+  });
+  pi.registerTool({
+    name: "bg_status",
+    label: "Background Terminal Status",
+    description:
+      "Inspect state and bounded stdout/stderr tails, including changes since the previous bg_status read. Use for immediate inspection, not polling.",
+    parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
+    executionMode: "parallel",
+    execute(_id, params) {
+      return Effect.runPromise(
+        Effect.sync(() => {
+          const terminalSession = currentSession();
+          const snapshot = terminalSession.get(params.id);
 
-					if (!snapshot)
-						throw new Error(
-							`Unknown terminal id "${sanitizeInline(params.id)}".`,
-						);
+          if (!snapshot) throw new Error(`Unknown terminal id "${sanitizeInline(params.id)}".`);
 
-					if (snapshot.state !== "running")
-						terminalSession.consume([snapshot.id]);
+          if (snapshot.state !== "running") terminalSession.consume([snapshot.id]);
 
-					const evidence = {
-						...terminalMetadata(snapshot),
-						process:
-							snapshot.state === "running" ? snapshot.process : snapshot.result,
-					};
+          const evidence = {
+            ...terminalMetadata(snapshot),
+            process: snapshot.state === "running" ? snapshot.process : snapshot.result,
+          };
 
-					const previous = observations.get(snapshot.id);
+          const previous = observations.get(snapshot.id);
 
-					const observation =
-						previous === undefined
-							? "first"
-							: isDeepStrictEqual(previous, evidence)
-								? "unchanged"
-								: "changed";
+          let observation = "first";
 
-					observations.delete(snapshot.id);
-					observations.set(snapshot.id, evidence);
+          if (previous !== undefined) {
+            observation = isDeepStrictEqual(previous, evidence) ? "unchanged" : "changed";
+          }
 
-					if (observations.size > MAX_TRACKED) {
-						const oldest = observations.keys().next();
+          observations.delete(snapshot.id);
+          observations.set(snapshot.id, evidence);
 
-						if (!oldest.done) observations.delete(oldest.value);
-					}
+          if (observations.size > MAX_TRACKED) {
+            const oldest = observations.keys().next();
 
-					return {
-						content: [
-							{
-								type: "text",
-								text: `${formatTerminalReport(snapshot)}\nObservation: ${observation} since previous bg_status read. stdout=${snapshot.stdout.totalBytes} bytes stderr=${snapshot.stderr.totalBytes} bytes.${snapshot.state === "running" ? "\nCompletion or an emit-to-pi event will wake you; do not poll." : ""}`,
-							},
-						],
-						details: { ...terminalMetadata(snapshot), observation },
-					};
-				}),
-			);
-		},
-	});
-	pi.registerTool({
-		name: "bg_list",
-		label: "List Background Terminals",
-		description:
-			"List session-scoped tracked background terminals without their output.",
-		parameters: Type.Object({}),
-		executionMode: "parallel",
-		execute() {
-			return Effect.runPromise(
-				Effect.sync(() => {
-					const entries = currentSession().list();
+            if (!oldest.done) observations.delete(oldest.value);
+          }
 
-					const terminals = entries.length
-						? entries.map(summary).join("\n")
-						: "No background terminals.";
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${formatTerminalReport(snapshot)}\nObservation: ${observation} since previous bg_status read. stdout=${snapshot.stdout.totalBytes} bytes stderr=${snapshot.stderr.totalBytes} bytes.${snapshot.state === "running" ? "\nCompletion or an emit-to-pi event will wake you; do not poll." : ""}`,
+              },
+            ],
+            details: { ...terminalMetadata(snapshot), observation },
+          };
+        }),
+      );
+    },
+  });
+  pi.registerTool({
+    name: "bg_list",
+    label: "List Background Terminals",
+    description: "List session-scoped tracked background terminals without their output.",
+    parameters: Type.Object({}),
+    executionMode: "parallel",
+    execute() {
+      return Effect.runPromise(
+        Effect.sync(() => {
+          const entries = currentSession().list();
 
-					return {
-						content: [
-							{
-								type: "text",
-								text: delivery.problem
-									? `${terminals}\n${delivery.problem}`
-									: terminals,
-							},
-						],
-						details: { terminals: entries.map(terminalMetadata) },
-					};
-				}),
-			);
-		},
-	});
-	pi.registerTool({
-		name: "bg_kill",
-		label: "Kill Background Terminals",
-		description:
-			"Terminate background process trees with bounded SIGTERM-to-SIGKILL escalation.",
-		parameters: Type.Object({
-			ids: Type.Array(Type.String({ maxLength: 64 }), {
-				minItems: 1,
-				maxItems: 16,
-			}),
-		}),
-		executionMode: "parallel",
-		execute(_id, params, signal) {
-			const ids = [...new Set(params.ids)];
-			const terminalSession = currentSession();
-			let killError: unknown;
+          const terminals = entries.length
+            ? entries.map(summary).join("\n")
+            : "No background terminals.";
 
-			const work = Effect.runPromise(
-				Effect.suspend(() => terminalSession.kill(ids)),
-			);
+          return {
+            content: [
+              {
+                type: "text",
+                text: delivery.problem ? `${terminals}\n${delivery.problem}` : terminals,
+              },
+            ],
+            details: { terminals: entries.map(terminalMetadata) },
+          };
+        }),
+      );
+    },
+  });
+  pi.registerTool({
+    name: "bg_kill",
+    label: "Kill Background Terminals",
+    description: "Terminate background process trees with bounded SIGTERM-to-SIGKILL escalation.",
+    parameters: Type.Object({
+      ids: Type.Array(Type.String({ maxLength: 64 }), {
+        minItems: 1,
+        maxItems: 16,
+      }),
+    }),
+    executionMode: "parallel",
+    execute(_id, params, signal) {
+      const ids = [...new Set(params.ids)];
+      const terminalSession = currentSession();
+      let killError: Error | undefined;
 
-			work.catch((error) => {
-				killError = error;
-			});
+      const work = Effect.runPromise(Effect.suspend(() => terminalSession.kill(ids)));
 
-			return Effect.runPromise(
-				Effect.promise(() => work).pipe(
-					Effect.map((results) => {
-						terminalSession.consume(ids);
+      work.catch((error) => {
+        killError = sanitizeErrorForDisplay(error instanceof Error ? error : String(error));
+      });
 
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: results
-										.map(
-											(result) =>
-												`${result.id} [${result.state}] ${sanitizeInline(result.title)}${result.killed ? " · killed" : " · already settled"}`,
-										)
-										.join("\n"),
-								},
-							],
-							details: {
-								results: results.map((result) => ({
-									...result,
-									title: sanitizeInline(result.title),
-								})),
-							},
-						};
-					}),
-				),
-				{ signal },
-			).catch((error) => {
-				// An abort only interrupts the wait. A failure of the kill itself
-				// must surface even when the signal is also aborted.
-				if (killError !== undefined)
-					throw sanitizeErrorForDisplay(
-						killError instanceof Error ? killError : String(killError),
-					);
-				throw sanitizeErrorForDisplay(
-					signal?.aborted
-						? new Error(
-								"Kill wait aborted; termination continues in the background.",
-							)
-						: error instanceof Error
-							? error
-							: String(error),
-				);
-			});
-		},
-	});
+      return Effect.runPromise(
+        Effect.promise(() => work).pipe(
+          Effect.map((results) => {
+            terminalSession.consume(ids);
+
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: results
+                    .map(
+                      (result) =>
+                        `${result.id} [${result.state}] ${sanitizeInline(result.title)}${result.killed ? " · killed" : " · already settled"}`,
+                    )
+                    .join("\n"),
+                },
+              ],
+              details: {
+                results: results.map((result) => ({
+                  ...result,
+                  title: sanitizeInline(result.title),
+                })),
+              },
+            };
+          }),
+        ),
+        { signal },
+      ).catch((error) => {
+        // An abort only interrupts the wait. A failure of the kill itself
+        // must surface even when the signal is also aborted.
+        if (killError) throw killError;
+
+        if (signal?.aborted) {
+          throw new Error("Kill wait aborted; termination continues in the background.");
+        }
+
+        throw sanitizeErrorForDisplay(error instanceof Error ? error : String(error));
+      });
+    },
+  });
 }

@@ -1,220 +1,192 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Deferred, Effect } from "effect";
-import {
-	BackgroundTerminalDelivery,
-	formatTerminalReport,
-} from "../delivery.ts";
+import { BackgroundTerminalDelivery, formatTerminalReport } from "../delivery.ts";
 import { MAX_TRACKED } from "../manager.ts";
 import { type SettledTerminalSnapshot, Tail } from "../terminal.ts";
-import {
-	type DeliveryMessage,
-	decodeMessage,
-	testContext,
-} from "./registration.ts";
+import { type DeliveryMessage, decodeMessage, testContext } from "./registration.ts";
 
 function snapshot(stdout: string, stderr = ""): SettledTerminalSnapshot {
-	const out = new Tail();
-	const err = new Tail();
-	out.append(Buffer.from(stdout));
-	err.append(Buffer.from(stderr));
+  const out = new Tail();
+  const err = new Tail();
+  out.append(Buffer.from(stdout));
+  err.append(Buffer.from(stderr));
 
-	return {
-		id: "bt-1",
-		title: "repository scout",
-		command: "pi --print <<'PROMPT'\nRead the repository.\nPROMPT",
-		cwd: "/project",
-		state: "done",
-		createdAt: 0,
-		settledAt: 1_000,
-		result: { kind: "success" },
-		stdout: out.view(),
-		stderr: err.view(),
-	};
+  return {
+    id: "bt-1",
+    title: "repository scout",
+    command: "pi --print <<'PROMPT'\nRead the repository.\nPROMPT",
+    cwd: "/project",
+    state: "done",
+    createdAt: 0,
+    settledAt: 1_000,
+    result: { kind: "success" },
+    stdout: out.view(),
+    stderr: err.view(),
+  };
 }
 
 function completion(terminal: SettledTerminalSnapshot): string {
-	const messages: string[] = [];
+  const messages: string[] = [];
 
-	const delivery = new BackgroundTerminalDelivery({
-		sendMessage(message) {
-			messages.push(decodeMessage(message).content);
-		},
-	});
+  const delivery = new BackgroundTerminalDelivery({
+    sendMessage(message) {
+      messages.push(decodeMessage(message).content);
+    },
+  });
 
-	try {
-		delivery.setContext(testContext({ isIdle: () => false }));
-		delivery.enqueue(terminal);
-		assert.equal(messages.length, 1);
+  try {
+    delivery.setContext(testContext({ isIdle: () => false }));
+    delivery.enqueue(terminal);
+    assert.equal(messages.length, 1);
 
-		return messages[0];
-	} finally {
-		delivery.clear();
-	}
+    return messages[0];
+  } finally {
+    delivery.clear();
+  }
 }
 
 test("splits queued completions into bounded batches without losing results", () => {
-	const messages: DeliveryMessage[] = [];
+  const messages: DeliveryMessage[] = [];
 
-	const terminal: SettledTerminalSnapshot = {
-		...snapshot("é".repeat(20_000), "é".repeat(20_000)),
-		id: "bt-0",
-		title: "x".repeat(80),
-		cwd: `/${"w".repeat(4_094)}`,
-		state: "failed",
-		result: {
-			kind: "error",
-			error: "e".repeat(4_096),
-			exit: { kind: "unknown" },
-		},
-	};
+  const terminal: SettledTerminalSnapshot = {
+    ...snapshot("é".repeat(20_000), "é".repeat(20_000)),
+    id: "bt-0",
+    title: "x".repeat(80),
+    cwd: `/${"w".repeat(4_094)}`,
+    state: "failed",
+    result: {
+      kind: "error",
+      error: "e".repeat(4_096),
+      exit: { kind: "unknown" },
+    },
+  };
 
-	const delivery = new BackgroundTerminalDelivery({
-		sendMessage(message) {
-			messages.push(decodeMessage(message));
+  const delivery = new BackgroundTerminalDelivery({
+    sendMessage(message) {
+      messages.push(decodeMessage(message));
 
-			// Completions arriving during delivery must wait for the next batch.
-			if (messages.length === 1)
-				for (let index = 1; index < MAX_TRACKED; index++)
-					delivery.enqueue({ ...terminal, id: `bt-${index}` });
-		},
-	});
+      // Completions arriving during delivery must wait for the next batch.
+      if (messages.length === 1)
+        for (let index = 1; index < MAX_TRACKED; index++)
+          delivery.enqueue({ ...terminal, id: `bt-${index}` });
+    },
+  });
 
-	try {
-		delivery.setContext(testContext({ isIdle: () => false }));
-		delivery.enqueue(terminal);
-		const batches = messages.slice(1);
-		assert.ok(batches.length > 1, "queued results must span multiple batches");
-		assert.ok(batches.some((message) => message.details.ids.length > 1));
-		assert.ok(
-			messages.every(
-				(message) => Buffer.byteLength(message.content) <= 256 * 1024,
-			),
-		);
-		assert.deepEqual(
-			messages.flatMap((message) => message.details.ids),
-			Array.from({ length: MAX_TRACKED }, (_, index) => `bt-${index}`),
-		);
-		assert.ok(messages.every((message) => !message.content.includes("�")));
-	} finally {
-		delivery.clear();
-	}
+  try {
+    delivery.setContext(testContext({ isIdle: () => false }));
+    delivery.enqueue(terminal);
+    const batches = messages.slice(1);
+    assert.ok(batches.length > 1, "queued results must span multiple batches");
+    assert.ok(batches.some((message) => message.details.ids.length > 1));
+    assert.ok(messages.every((message) => Buffer.byteLength(message.content) <= 256 * 1024));
+    assert.deepEqual(
+      messages.flatMap((message) => message.details.ids),
+      Array.from({ length: MAX_TRACKED }, (_, index) => `bt-${index}`),
+    );
+    assert.ok(messages.every((message) => !message.content.includes("�")));
+  } finally {
+    delivery.clear();
+  }
 });
 
 test("exhausting a delivery batch does not strand later completions", async () => {
-	const completed = Deferred.makeUnsafe<void>();
-	const terminal = snapshot("x".repeat(24 * 1024));
-	const queuedIds = Array.from({ length: 25 }, (_, index) => `bt-${index}`);
-	const failed = new Set<string>();
-	const delivered = new Set<string>();
-	const diagnostics: string[] = [];
-	let attempts = 0;
+  const completed = Deferred.makeUnsafe<void>();
+  const terminal = snapshot("x".repeat(24 * 1024));
+  const queuedIds = Array.from({ length: 25 }, (_, index) => `bt-${index}`);
+  const failed = new Set<string>();
+  const delivered = new Set<string>();
+  const diagnostics: string[] = [];
+  let attempts = 0;
 
-	const delivery = new BackgroundTerminalDelivery(
-		{
-			sendMessage(message) {
-				const { ids } = decodeMessage(message).details;
+  const delivery = new BackgroundTerminalDelivery(
+    {
+      sendMessage(message) {
+        const { ids } = decodeMessage(message).details;
 
-				if (ids[0] === "seed") {
-					for (const id of queuedIds) delivery.enqueue({ ...terminal, id });
+        if (ids[0] === "seed") {
+          for (const id of queuedIds) delivery.enqueue({ ...terminal, id });
 
-					return;
-				}
+          return;
+        }
 
-				attempts++;
+        attempts++;
 
-				if (attempts <= 3) {
-					for (const id of ids) failed.add(id);
-					throw new Error("delivery unavailable");
-				}
+        if (attempts <= 3) {
+          for (const id of ids) failed.add(id);
+          throw new Error("delivery unavailable");
+        }
 
-				for (const id of ids) delivered.add(id);
+        for (const id of ids) delivered.add(id);
 
-				if (delivered.size + failed.size === queuedIds.length)
-					Effect.runSync(Deferred.succeed(completed, undefined));
-			},
-		},
-		(message) => diagnostics.push(message),
-	);
+        if (delivered.size + failed.size === queuedIds.length)
+          Effect.runSync(Deferred.succeed(completed, undefined));
+      },
+    },
+    (message) => diagnostics.push(message),
+  );
 
-	try {
-		delivery.setContext(testContext({ isIdle: () => false }));
-		delivery.enqueue({ ...snapshot(""), id: "seed" });
-		await Effect.runPromise(
-			Deferred.await(completed).pipe(Effect.timeout("5 seconds")),
-		);
-		assert.ok(delivered.size > 0);
-		assert.deepEqual(new Set([...failed, ...delivered]), new Set(queuedIds));
-		assert.equal(diagnostics.length, 1);
+  try {
+    delivery.setContext(testContext({ isIdle: () => false }));
+    delivery.enqueue({ ...snapshot(""), id: "seed" });
+    await Effect.runPromise(Deferred.await(completed).pipe(Effect.timeout("5 seconds")));
+    assert.ok(delivered.size > 0);
+    assert.deepEqual(new Set([...failed, ...delivered]), new Set(queuedIds));
+    assert.equal(diagnostics.length, 1);
 
-		const settledAttempts = attempts;
+    const settledAttempts = attempts;
 
-		for (const id of failed) {
-			assert.ok(!delivered.has(id));
-			assert.ok(delivery.problem?.includes(id));
-			delivery.enqueue({ ...terminal, id });
-		}
+    for (const id of failed) {
+      assert.ok(!delivered.has(id));
+      assert.ok(delivery.problem?.includes(id));
+      delivery.enqueue({ ...terminal, id });
+    }
 
-		await Effect.runPromise(delivery.flush);
-		assert.equal(attempts, settledAttempts);
-	} finally {
-		delivery.clear();
-	}
+    await Effect.runPromise(delivery.flush);
+    assert.equal(attempts, settledAttempts);
+  } finally {
+    delivery.clear();
+  }
 });
 
 test("completion preserves a report beyond the old byte and line limits without repeating the command", () => {
-	const report = Array.from(
-		{ length: 120 },
-		(_, index) =>
-			`Finding ${index}: representative source evidence for the scout.`,
-	).join("\n");
+  const report = Array.from(
+    { length: 120 },
+    (_, index) => `Finding ${index}: representative source evidence for the scout.`,
+  ).join("\n");
 
-	const terminal = snapshot(report);
-	const message = completion(terminal);
+  const terminal = snapshot(report);
+  const message = completion(terminal);
 
-	assert.ok(message.includes(report));
-	assert.match(message, /bt-1 \[done\] repository scout · exit 0 · 1s/);
-	assert.doesNotMatch(message, /command:|cwd:|abbreviated|discarded/);
+  assert.ok(message.includes(report));
+  assert.match(message, /bt-1 \[done\] repository scout · exit 0 · 1s/);
+  assert.doesNotMatch(message, /command:|cwd:|abbreviated|discarded/);
 
-	const details = formatTerminalReport(terminal);
-	assert.match(details, /command: pi --print/);
-	assert.match(details, /cwd: \/project/);
+  const details = formatTerminalReport(terminal);
+  assert.match(details, /command: pi --print/);
+  assert.match(details, /cwd: \/project/);
 });
 
 test("completion distinguishes display abbreviation from retention loss and shares its output budget", () => {
-	const terminal = snapshot("é".repeat(140_000), "warning\n".repeat(3_000));
-	const message = completion(terminal);
+  const terminal = snapshot("é".repeat(140_000), "warning\n".repeat(3_000));
+  const message = completion(terminal);
 
-	assert.match(
-		message,
-		/stdout \(17856 earlier bytes discarded by retention\)/,
-	);
-	assert.match(
-		message,
-		/stdout display abbreviated: \d+ retained bytes not shown/,
-	);
-	assert.match(
-		message,
-		/stderr display abbreviated: \d+ retained bytes not shown/,
-	);
-	assert.match(message, /Use bg_status bt-1 for more retained output/);
-	assert.doesNotMatch(message, /�/);
+  assert.match(message, /stdout \(17856 earlier bytes discarded by retention\)/);
+  assert.match(message, /stdout display abbreviated: \d+ retained bytes not shown/);
+  assert.match(message, /stderr display abbreviated: \d+ retained bytes not shown/);
+  assert.match(message, /Use bg_status bt-1 for more retained output/);
+  assert.doesNotMatch(message, /�/);
 
-	const stdout = message
-		.split("\nstdout (17856 earlier bytes discarded by retention):\n")[1]
-		.split("\nstdout display abbreviated:")[0];
+  const stdout = message
+    .split("\nstdout (17856 earlier bytes discarded by retention):\n")[1]
+    .split("\nstdout display abbreviated:")[0];
 
-	const stderr = message
-		.split("\nstderr:\n")[1]
-		.split("\nstderr display abbreviated:")[0];
+  const stderr = message.split("\nstderr:\n")[1].split("\nstderr display abbreviated:")[0];
 
-	assert.equal(
-		Buffer.byteLength(stdout) + Buffer.byteLength(stderr),
-		24 * 1024,
-	);
+  assert.equal(Buffer.byteLength(stdout) + Buffer.byteLength(stderr), 24 * 1024);
 
-	const details = formatTerminalReport(terminal);
-	assert.ok(details.length > message.length);
-	assert.match(details, /17856 earlier bytes discarded by retention/);
-	assert.match(details, /stdout display abbreviated:/);
+  const details = formatTerminalReport(terminal);
+  assert.ok(details.length > message.length);
+  assert.match(details, /17856 earlier bytes discarded by retention/);
+  assert.match(details, /stdout display abbreviated:/);
 });

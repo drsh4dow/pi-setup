@@ -1,201 +1,172 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
-import extension, {
-	fastServiceTier,
-	loadShortcuts,
-	withFastServiceTier,
-} from "../index.ts";
+import extension, { fastServiceTier, loadShortcuts, withFastServiceTier } from "../index.ts";
 
 describe("gpt-fast-mode request mapping", () => {
-	for (const [provider, tier] of [
-		["openai", "fast"],
-		["openai-codex", "priority"],
-		["openai-codex@work", "priority"],
-	]) {
-		for (const id of [
-			"gpt-5.6-sol",
-			"gpt-6-sol",
-			"gpt-6-luna",
-			"gpt-6.1-sol",
-		]) {
-			test(`uses ${tier} for ${provider}/${id} without mutating the payload`, () => {
-				const model = { provider, id };
-				const payload = { model: model.id, input: "hello" };
-				assert.equal(fastServiceTier(model), tier);
-				assert.deepEqual(withFastServiceTier(model, payload), {
-					...payload,
-					service_tier: tier,
-				});
-				assert.deepEqual(payload, { model: model.id, input: "hello" });
-			});
-		}
-	}
+  for (const [provider, tier] of [
+    ["openai", "fast"],
+    ["openai-codex", "priority"],
+    ["openai-codex@work", "priority"],
+  ]) {
+    for (const id of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
+      test(`uses ${tier} for ${provider}/${id} without mutating the payload`, () => {
+        const model = { provider, id };
+        const payload = { model: model.id, input: "hello" };
+        assert.equal(fastServiceTier(model), tier);
+        assert.deepEqual(withFastServiceTier(model, payload), {
+          ...payload,
+          service_tier: tier,
+        });
+        assert.deepEqual(payload, { model: model.id, input: "hello" });
+      });
+    }
+  }
 
-	test("uses priority for Codex gpt-6-astra", () => {
-		const model = { provider: "openai-codex", id: "gpt-6-astra" };
-		assert.equal(fastServiceTier(model), "priority");
-		assert.deepEqual(withFastServiceTier(model, { model: model.id }), {
-			model: model.id,
-			service_tier: "priority",
-		});
-	});
+  test("uses priority for Codex gpt-6-astra", () => {
+    const model = { provider: "openai-codex", id: "gpt-6-astra" };
+    assert.equal(fastServiceTier(model), "priority");
+    assert.deepEqual(withFastServiceTier(model, { model: model.id }), {
+      model: model.id,
+      service_tier: "priority",
+    });
+  });
 
-	test("does not tag models outside Codex's Fast catalog", () => {
-		const model = { provider: "openai-codex", id: "gpt-5.4-mini" };
-		const payload = { model: model.id, input: "hello" };
-		assert.equal(fastServiceTier(model), undefined);
-		assert.equal(withFastServiceTier(model, payload), payload);
-	});
+  test("does not tag models outside Codex's Fast catalog", () => {
+    const model = { provider: "openai-codex", id: "gpt-5.4-mini" };
+    const payload = { model: model.id, input: "hello" };
+    assert.equal(fastServiceTier(model), undefined);
+    assert.equal(withFastServiceTier(model, payload), payload);
+  });
 
-	test("preserves requests for other models and non-object payloads", () => {
-		const model = { provider: "openai", id: "gpt-5.6-sol" };
+  test("preserves requests for other models and non-object payloads", () => {
+    const model = { provider: "openai", id: "gpt-5.6-sol" };
 
-		for (const payload of [
-			{ model: "gpt-5.5", input: "hello", service_tier: "auto" },
-			{},
-			[],
-			null,
-			undefined,
-			"request",
-			1,
-		]) {
-			assert.equal(withFastServiceTier(model, payload), payload);
-		}
+    for (const payload of [
+      { model: "gpt-5.5", input: "hello", service_tier: "auto" },
+      {},
+      [],
+      null,
+      undefined,
+      "request",
+      1,
+    ]) {
+      assert.equal(withFastServiceTier(model, payload), payload);
+    }
 
-		const payload = { model: model.id };
-		assert.equal(fastServiceTier(undefined), undefined);
-		assert.equal(withFastServiceTier(undefined, payload), payload);
-	});
+    const payload = { model: model.id };
+    assert.equal(fastServiceTier(undefined), undefined);
+    assert.equal(withFastServiceTier(undefined, payload), payload);
+  });
 });
 
 test("loads shortcut settings, filtering invalid entries and preserving disable settings", () =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const fs = yield* FileSystem.FileSystem;
-			const path = yield* Path.Path;
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
 
-			const directory = yield* fs.makeTempDirectoryScoped({
-				prefix: "pi-fast-shortcuts-",
-			});
+      const directory = yield* fs.makeTempDirectoryScoped({
+        prefix: "pi-fast-shortcuts-",
+      });
 
-			const load = loadShortcuts(directory);
+      const load = loadShortcuts(directory);
 
-			assert.deepEqual(yield* load, ["ctrl+alt+m"]);
+      assert.deepEqual(yield* load, ["ctrl+alt+m"]);
 
-			for (const [setting, expected] of [
-				[false, []],
-				[null, []],
-				[" ctrl+shift+f ", ["ctrl+shift+f"]],
-				[[1, null, {}, "", "enter", "CTRL+M", " ctrl+alt+f "], ["ctrl+alt+f"]],
-				[["return", " "], ["ctrl+alt+m"]],
-				[42, ["ctrl+alt+m"]],
-			]) {
-				yield* fs.writeFileString(
-					path.join(directory, "keybindings.json"),
-					yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-						"pi-gpt-fast-mode": setting,
-					}),
-				);
-				assert.deepEqual(yield* load, expected);
-			}
+      for (const [setting, expected] of [
+        [false, []],
+        [null, []],
+        [" ctrl+shift+f ", ["ctrl+shift+f"]],
+        [[1, null, {}, "", "enter", "CTRL+M", " ctrl+alt+f "], ["ctrl+alt+f"]],
+        [["return", " "], ["ctrl+alt+m"]],
+        [42, ["ctrl+alt+m"]],
+      ]) {
+        yield* fs.writeFileString(
+          path.join(directory, "keybindings.json"),
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+            "pi-gpt-fast-mode": setting,
+          }),
+        );
+        assert.deepEqual(yield* load, expected);
+      }
 
-			yield* fs.writeFileString(
-				path.join(directory, "keybindings.json"),
-				"invalid json",
-			);
-			assert.deepEqual(yield* load, ["ctrl+alt+m"]);
-		}).pipe(
-			Effect.scoped,
-			Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
-		),
-	));
+      yield* fs.writeFileString(path.join(directory, "keybindings.json"), "invalid json");
+      assert.deepEqual(yield* load, ["ctrl+alt+m"]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer))),
+  ));
 
 test("/fast persists and announces toggles and only maps enabled requests", async (t) => {
-	const { mkdtempSync, readFileSync, rmSync } =
-		process.getBuiltinModule("node:fs");
+  const { mkdtempSync, readFileSync, rmSync } = process.getBuiltinModule("node:fs");
 
-	const { tmpdir } = process.getBuiltinModule("node:os");
-	const { join } = process.getBuiltinModule("node:path");
-	const root = mkdtempSync(join(tmpdir(), "pi-fast-mode-"));
-	t.after(() => rmSync(root, { recursive: true, force: true }));
+  const { tmpdir } = process.getBuiltinModule("node:os");
+  const { join } = process.getBuiltinModule("node:path");
+  const root = mkdtempSync(join(tmpdir(), "pi-fast-mode-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	const adapter = extensionTestAdapter();
+  const adapter = extensionTestAdapter();
 
-	let toggle:
-		| Parameters<ExtensionAPI["registerCommand"]>[1]["handler"]
-		| undefined;
+  let toggle: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
 
-	await extension(
-		unsafeFixture<ExtensionAPI>({
-			...adapter.api,
-			registerCommand(name, command) {
-				assert.equal(name, "fast");
-				toggle = command.handler;
-			},
-			registerShortcut() {},
-		}),
-		root,
-	);
-	assert.ok(toggle);
+  await extension(
+    unsafeFixture<ExtensionAPI>({
+      ...adapter.api,
+      registerCommand(name, command) {
+        assert.equal(name, "fast");
+        toggle = command.handler;
+      },
+      registerShortcut() {},
+    }),
+    root,
+  );
+  assert.ok(toggle);
 
-	const notices: Array<[string, string | undefined]> = [];
+  const notices: Array<[string, string | undefined]> = [];
 
-	const model = unsafeFixture<NonNullable<ExtensionCommandContext["model"]>>({
-		provider: "openai",
-		id: "gpt-5.6-sol",
-	});
+  const model = unsafeFixture<NonNullable<ExtensionCommandContext["model"]>>({
+    provider: "openai",
+    id: "gpt-5.6-sol",
+  });
 
-	const ctx = unsafeFixture<ExtensionCommandContext>({
-		model,
-		ui: unsafeFixture<ExtensionCommandContext["ui"]>({
-			notify(message, level) {
-				notices.push([message, level]);
-			},
-		}),
-	});
+  const ctx = unsafeFixture<ExtensionCommandContext>({
+    model,
+    ui: unsafeFixture<ExtensionCommandContext["ui"]>({
+      notify(message, level) {
+        notices.push([message, level]);
+      },
+    }),
+  });
 
-	await adapter.emit(
-		"session_start",
-		{ type: "session_start", reason: "startup" },
-		ctx,
-	);
-	const payload = { model: model.id, input: "hello" };
+  await adapter.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+  const payload = { model: model.id, input: "hello" };
 
-	const request = () =>
-		adapter.emit(
-			"before_provider_request",
-			{ type: "before_provider_request", payload },
-			ctx,
-		);
+  const request = () =>
+    adapter.emit("before_provider_request", { type: "before_provider_request", payload }, ctx);
 
-	assert.equal(await request(), undefined);
-	await toggle("", ctx);
-	assert.deepEqual(await request(), { ...payload, service_tier: "fast" });
+  assert.equal(await request(), undefined);
+  await toggle("", ctx);
+  assert.deepEqual(await request(), { ...payload, service_tier: "fast" });
 
-	const settings = Schema.decodeSync(
-		Schema.fromJsonString(Schema.Struct({ enabled: Schema.Boolean })),
-	)(readFileSync(join(root, "gpt-fast-mode.json"), "utf8"));
+  const settings = Schema.decodeSync(
+    Schema.fromJsonString(Schema.Struct({ enabled: Schema.Boolean })),
+  )(readFileSync(join(root, "gpt-fast-mode.json"), "utf8"));
 
-	assert.deepEqual(settings, { enabled: true });
-	await toggle("", ctx);
-	assert.equal(await request(), undefined);
-	ctx.model = undefined;
-	await toggle("", ctx);
-	assert.equal(await request(), payload);
-	rmSync(root, { recursive: true });
-	await toggle("", ctx);
-	assert.deepEqual(notices, [
-		["GPT Fast mode enabled (service_tier: fast).", "info"],
-		["GPT Fast mode disabled.", "info"],
-		["GPT Fast mode enabled, but unknown model is not supported.", "warning"],
-		["Could not save GPT Fast mode setting.", "error"],
-	]);
+  assert.deepEqual(settings, { enabled: true });
+  await toggle("", ctx);
+  assert.equal(await request(), undefined);
+  ctx.model = undefined;
+  await toggle("", ctx);
+  assert.equal(await request(), payload);
+  rmSync(root, { recursive: true });
+  await toggle("", ctx);
+  assert.deepEqual(notices, [
+    ["GPT Fast mode enabled (service_tier: fast).", "info"],
+    ["GPT Fast mode disabled.", "info"],
+    ["GPT Fast mode enabled, but unknown model is not supported.", "warning"],
+    ["Could not save GPT Fast mode setting.", "error"],
+  ]);
 });

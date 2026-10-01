@@ -1,104 +1,47 @@
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import { Schema } from "effect";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const MEASUREMENT_ENTRY = "tps-tracker-measurement";
-
-// Short client-observed intervals are too sensitive to delivery and scheduling.
-const MIN_RATE_DURATION_MS = 1_000;
-
-const Measurement = Schema.Struct({
-	outputTokens: Schema.Finite.check(Schema.isGreaterThan(0)),
-	durationMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
-});
-
-const isMeasurement = Schema.is(Measurement);
-
-interface TpsDependencies {
-	readonly now: () => number;
+function isAssistantMessage(message: unknown): message is AssistantMessage {
+	if (!message || typeof message !== "object") return false;
+	const role = (message as { role?: unknown }).role;
+	return role === "assistant";
 }
 
-const liveTps: TpsDependencies = { now: () => performance.now() };
+export default function (pi: ExtensionAPI) {
+	let agentStartMs: number | null = null;
 
-export default function tpsTracker(
-	pi: ExtensionAPI,
-	dependencies: TpsDependencies = liveTps,
-): void {
-	let requestStartedAt: number | undefined;
-	let totalOutputTokens = 0;
-	let totalRequestMs = 0;
-
-	function showRate(ctx: ExtensionContext): void {
-		if (totalOutputTokens <= 0 || totalRequestMs < MIN_RATE_DURATION_MS) {
-			ctx.ui.setStatus(
-				"tps",
-				ctx.ui.theme.fg("dim", "⏱ waiting for output..."),
-			);
-
-			return;
-		}
-
-		const rate = totalOutputTokens / (totalRequestMs / 1000);
-		ctx.ui.setStatus(
-			"tps",
-			ctx.ui.theme.fg("accent", `${rate.toFixed(1)} tok/s`),
-		);
-	}
-
-	function restore(ctx: ExtensionContext): void {
-		requestStartedAt = undefined;
-		totalOutputTokens = 0;
-		totalRequestMs = 0;
-
-		// getBranch retains pre-compaction entries and excludes abandoned branches.
-		for (const entry of ctx.sessionManager.getBranch()) {
-			if (entry.type !== "custom" || entry.customType !== MEASUREMENT_ENTRY) {
-				continue;
-			}
-
-			const measurement: unknown = entry.data;
-
-			if (!isMeasurement(measurement)) continue;
-
-			totalOutputTokens += measurement.outputTokens;
-			totalRequestMs += measurement.durationMs;
-		}
-
-		showRate(ctx);
-	}
-
-	pi.on("session_start", (_event, ctx) => restore(ctx));
-	pi.on("session_tree", (_event, ctx) => restore(ctx));
-
-	pi.on("before_provider_request", () => {
-		// message_start is too late: Codex emits it after headers or its first event.
-		requestStartedAt = dependencies.now();
+	pi.on("agent_start", () => {
+		agentStartMs = Date.now();
 	});
 
-	pi.on("message_end", (event, ctx) => {
-		if (event.message.role !== "assistant") return;
+	pi.on("agent_end", (event, ctx) => {
+		if (!ctx.hasUI) return;
+		if (agentStartMs === null) return;
 
-		const startedAt = requestStartedAt;
-		requestStartedAt = undefined;
+		const elapsedMs = Date.now() - agentStartMs;
+		agentStartMs = null;
+		if (elapsedMs <= 0) return;
 
-		if (startedAt === undefined || event.message.usage.output <= 0) return;
+		let input = 0;
+		let output = 0;
+		let cacheRead = 0;
+		let cacheWrite = 0;
+		let totalTokens = 0;
 
-		const measurement = {
-			outputTokens: event.message.usage.output,
-			durationMs: dependencies.now() - startedAt,
-		} satisfies typeof Measurement.Type;
+		for (const message of event.messages) {
+			if (!isAssistantMessage(message)) continue;
+			input += message.usage.input || 0;
+			output += message.usage.output || 0;
+			cacheRead += message.usage.cacheRead || 0;
+			cacheWrite += message.usage.cacheWrite || 0;
+			totalTokens += message.usage.totalTokens || 0;
+		}
 
-		// message_end precedes assistant persistence. Storing here makes this
-		// measurement an ancestor of its response, including when forking at it.
-		pi.appendEntry(MEASUREMENT_ENTRY, measurement);
-		totalOutputTokens += measurement.outputTokens;
-		totalRequestMs += measurement.durationMs;
-		showRate(ctx);
-	});
+		if (output <= 0) return;
 
-	pi.on("agent_end", () => {
-		requestStartedAt = undefined;
+		const elapsedSeconds = elapsedMs / 1000;
+		const tokensPerSecond = output / elapsedSeconds;
+		const message = `TPS ${tokensPerSecond.toFixed(1)} tok/s. out ${output.toLocaleString()}, in ${input.toLocaleString()}, cache r/w ${cacheRead.toLocaleString()}/${cacheWrite.toLocaleString()}, total ${totalTokens.toLocaleString()}, ${elapsedSeconds.toFixed(1)}s`;
+		ctx.ui.notify(message, "info");
 	});
 }

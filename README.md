@@ -67,7 +67,6 @@ The inventories below are checked against tracked and untracked, non-ignored set
 
 | Extension | What it adds |
 | --- | --- |
-| `aoauth` | Claude Pro/Max subscription login and token refresh |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for session-owned processes, plus `emit-to-pi` notifications |
 | `gpt-fast-mode` | `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex models |
 | `herdr-agent-state` | Herdr pane state and Pi session reporting, with idle reconciliation independent of background processes |

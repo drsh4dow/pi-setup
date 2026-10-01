@@ -61,12 +61,9 @@
 					"unnecessaryArrowBlock": "error"
 				},
 				"overrides": [
-					// HTTP and process APIs remain unstable; Effect is pinned exactly.
+					// Process APIs remain unstable; Effect is pinned exactly.
 					{
-						"include": [
-							"agent/extensions/aoauth/oauth.ts",
-							"agent/extensions/test/tmux.ts"
-						],
+						"include": ["agent/extensions/test/tmux.ts"],
 						"options": {
 							"diagnosticSeverity": { "unstableApiUsage": "off" }
 						}

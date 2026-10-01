@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	createBashToolDefinition,
+	createLocalBashOperations,
 	getAgentDir,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -38,27 +39,28 @@ export default function sacrificePreference(pi: ExtensionAPI) {
 
 			if (shellPath) options.shellPath = shellPath;
 
-			const tool = createBashToolDefinition(ctx.cwd, options);
+			const operations = createLocalBashOperations(options);
 
-			return tool
-				.execute(toolCallId, params, signal, onUpdate, ctx)
-				.catch((error) => {
-					const match =
-						error instanceof Error
-							? error.message.match(/Command exited with code (\d+)$/)
-							: null;
-
-					const note = match
-						? sacrificeKillNote(
-								{ exitCode: Number(match[1]), signal: undefined },
+			const tool = createBashToolDefinition(ctx.cwd, {
+				...options,
+				operations: {
+					exec: (command, cwd, execution) =>
+						operations.exec(command, cwd, execution).then((result) => {
+							const note = sacrificeKillNote(
+								{ exitCode: result.exitCode ?? undefined, signal: undefined },
 								startedAt,
-							)
-						: undefined;
+							);
 
-					if (note && error instanceof Error)
-						throw new Error(`${error.message}\n${note}`);
-					throw error;
-				});
+							// Native output handling carries the diagnosis to both direct
+							// tool results and codemode's structured output.
+							if (note) execution.onData(Buffer.from(`\n${note}\n`));
+
+							return result;
+						}),
+				},
+			});
+
+			return tool.execute(toolCallId, params, signal, onUpdate, ctx);
 		},
 	});
 }

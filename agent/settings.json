@@ -10,6 +10,10 @@
     "openai-codex/gpt-6.1-sol"
   ],
   "defaultThinkingLevel": "high",
+  "defaultTools": ["+codemode"],
+  "codemode": {
+    "mode": "on"
+  },
   "hideThinkingBlock": false,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",

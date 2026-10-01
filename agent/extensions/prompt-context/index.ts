@@ -1,42 +1,41 @@
-// Appends active tool descriptions and tool guidelines to custom system prompts
-// before the agent starts. Leaves the default system prompt unchanged.
-import type {
-	BuildSystemPromptOptions,
-	ExtensionAPI,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-function promptContext(options: BuildSystemPromptOptions): string | undefined {
-	const tools = (options.selectedTools ?? []).flatMap((name) => {
-		const snippet = options.toolSnippets?.[name];
-
-		return snippet ? [`- ${name}: ${snippet}`] : [];
-	});
-
-	const guidelines = [
-		...new Set(
-			(options.promptGuidelines ?? [])
-				.map((guideline) => guideline.trim())
-				.filter(Boolean),
-		),
-	].map((guideline) => `- ${guideline}`);
-
-	const sections: string[] = [];
-
-	if (tools.length > 0) sections.push(`## Active tools\n\n${tools.join("\n")}`);
-
-	if (guidelines.length > 0)
-		sections.push(`## Tool guidelines\n\n${guidelines.join("\n")}`);
-
-	return sections.length > 0 ? sections.join("\n\n") : undefined;
-}
-
+// Keep custom prompts structured so later extensions can add sections and Pi can
+// record prompt changes without replacing the cached conversation prefix.
 export default function promptContextExtension(pi: ExtensionAPI): void {
-	pi.on("before_agent_start", (event) => {
-		if (!event.systemPromptOptions.customPrompt) return;
-		const context = promptContext(event.systemPromptOptions);
+	pi.on("before_agent_start", ({ systemPromptOptions: options }) => {
+		if (!options.customPrompt) return;
 
-		if (!context) return;
+		const tools = options.selectedTools.flatMap((name) => {
+			const snippet = options.toolSnippets[name];
 
-		return { systemPrompt: `${event.systemPrompt}\n\n${context}` };
+			return snippet ? [`- ${name}: ${snippet}`] : [];
+		});
+
+		const guidelines = [
+			...new Set(
+				[
+					...options.selectedTools.flatMap(
+						(name) => options.toolGuidelines[name] ?? [],
+					),
+					...options.promptGuidelines,
+				]
+					.values()
+					.map((guideline) => guideline.trim())
+					.filter(Boolean),
+			),
+		].map((guideline) => `- ${guideline}`);
+
+		const sections: string[] = [];
+
+		if (tools.length > 0)
+			sections.push(`## Active tools\n\n${tools.join("\n")}`);
+
+		if (guidelines.length > 0)
+			sections.push(`## Tool guidelines\n\n${guidelines.join("\n")}`);
+
+		if (sections.length > 0)
+			options.sections.active_tool_context = sections.join("\n\n");
+		else delete options.sections.active_tool_context;
 	});
 }

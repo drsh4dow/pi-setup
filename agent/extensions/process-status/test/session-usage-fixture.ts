@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type {
 	ExtensionAPI,
-	ExtensionContext,
+	ExtensionToolContext,
 	SessionManager,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -13,7 +13,7 @@ export function querySessionUsage(sessionManager: SessionManager) {
 
 	const pi = unsafeFixture<ExtensionAPI>({
 		events: { emit() {}, on: () => () => {} },
-		on() {},
+		on: () => () => {},
 		registerTool(value) {
 			tool = value;
 		},
@@ -23,7 +23,7 @@ export function querySessionUsage(sessionManager: SessionManager) {
 
 	extension(pi);
 	assert.ok(tool);
-	const context = unsafeFixture<ExtensionContext>({ sessionManager });
+	const context = unsafeFixture<ExtensionToolContext>({ sessionManager });
 
 	return tool.execute("usage", {}, undefined, undefined, context);
 }

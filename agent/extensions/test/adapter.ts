@@ -19,6 +19,10 @@ export function extensionTestAdapter() {
 	const registration = {
 		on<Name extends keyof SDKEvents>(name: Name, handler: Handlers[Name]) {
 			handlers[name] = handler;
+
+			return () => {
+				delete handlers[name];
+			};
 		},
 	};
 

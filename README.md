@@ -12,12 +12,14 @@ This repository is meant to live at `~/.pi`. The extensions are vendored here an
 - Theme: Catppuccin Mocha; Gruvbox Dark Hard is also included
 - Pi's built-in compaction with default settings
 - GPT Fast mode enabled
+- Codemode enabled in `on` mode alongside the direct tools
 
 Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as this setup's active system prompt. It defines the agent's behavior and engineering standards.
 
 ## Install
 
-Requires Node.js 22.19 or newer and [Bun](https://bun.sh). Install Pi and clone this repository into its global configuration directory:
+Requires Pi 0.99.2 or newer, Node.js 22.19 or newer, and [Bun](https://bun.sh).
+Install Pi and clone this repository into its global configuration directory:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
@@ -33,7 +35,16 @@ Use `/login` inside Pi to authenticate model providers. If `~/.pi` already exist
 
 Pi automatically discovers the extensions, skills, prompts, and themes under `~/.pi/agent`. No `pi install` commands are needed for this setup.
 
-MCP is opt-in. Run `pi -e npm:pi-mcp-adapter` for one session, or run `pi install npm:pi-mcp-adapter -l` from a repository to enable it for that project. The adapter is not installed globally.
+Native MCP is opt-in; this setup configures no servers. Use `pi mcp add -l`
+from a repository to add a project server to `.pi/mcp.json`, then inspect it
+with `/mcp`. Keep existing CLIs unless a server adds useful capabilities.
+Do not install `pi-mcp-adapter` alongside native MCP: it replaces Pi's session
+implementation, while shell-level `pi mcp` commands still use native MCP.
+
+Codemode can batch, chain, and filter tool results without MCP. Direct tools
+remain available for simple calls. Scripts call the registered tools, including
+the local `bash` override; they do not replace `bg_start` or its completion
+notifications. Earlier tool side effects are not undone if a script fails.
 
 Skills live in this repository under `agent/skills`. To share them with tools that read `~/.agents/skills`, create a symlink:
 
@@ -65,7 +76,14 @@ The inventories below are checked against tracked and untracked, non-ignored set
 
 `agent/extensions/herdr-agent-state.ts` is locally patched. Herdr integration updates overwrite it; restore the repository version and run `/reload` in affected Pi sessions after updating Herdr's integration.
 
-The `prompt-context` extension supplements custom system prompts with active-tool snippets and guidelines from Pi's resolved prompt inputs. It preserves Pi's project context, skills, appended instructions, and earlier extension changes. Stock system prompts remain unchanged. Excluded tools contribute no injected guidance. Context refreshes at `before_agent_start`; tool changes during an active run appear in the next run's injected context. Reload existing sessions with `/reload` after installing it.
+The `prompt-context` extension adds active-tool snippets and guidelines to custom
+system prompts as a structured section. Pi's project context, skills, appended
+instructions, and other extension sections remain intact, including MCP summaries
+added afterward. Stock system prompts remain unchanged. Excluded tools contribute
+no injected guidance. Context refreshes at `before_agent_start`; tool changes
+during an active run appear in the next run's injected context. Extensions that
+force a complete system prompt override structured sections. Run `/reload` in
+existing sessions to load the extension changes and enable codemode.
 
 Use `bash` by default. Use `bg_start` for services and watchers, explicitly requested subagent work, or finite commands alongside useful independent work. A finite command's natural exit wakes the owner with its actual exit status, including success. Use `emit-to-pi` only for actionable events while a command keeps running. A notification never settles the command.
 

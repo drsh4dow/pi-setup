@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type {
 	ExtensionAPI,
-	ExtensionContext,
+	ExtensionToolContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Clock, Effect } from "effect";
@@ -33,10 +33,10 @@ const linux = process.platform === "linux";
 const now = () => Effect.runSync(Clock.currentTimeMillis);
 
 const fakeContext = (cwd: string) =>
-	unsafeFixture<ExtensionContext>({
+	unsafeFixture<ExtensionToolContext>({
 		cwd,
 		isProjectTrusted: () => false,
-		sessionManager: unsafeFixture<ExtensionContext["sessionManager"]>({
+		sessionManager: unsafeFixture<ExtensionToolContext["sessionManager"]>({
 			getSessionId: () => "test-session",
 			getSessionFile: () => undefined,
 		}),
@@ -158,6 +158,10 @@ test("override runs tagged commands transparently", { skip: !linux }, () => {
 				.join("");
 
 			assert.equal(text.trim(), "500");
+			assert.partialDeepStrictEqual(result.structuredContent, {
+				output: "500\n",
+				exit_code: 0,
+			});
 		});
 });
 
@@ -166,18 +170,24 @@ test("override passes ordinary failures through unchanged", {
 }, () => {
 	const tool = registeredBash();
 
-	return assert.rejects(
-		tool.execute(
+	return tool
+		.execute(
 			"t2",
 			{ command: "exit 7" },
 			undefined,
 			undefined,
 			fakeContext(tmpdir()),
-		),
-		(error: Error) =>
-			/Command exited with code 7/.test(error.message) &&
-			!/earlyoom/.test(error.message),
-	);
+		)
+		.then((result) => {
+			assert.equal(result.isError, true);
+			assert.deepEqual(result.content, [
+				{ type: "text", text: "(no output)\n\nCommand exited with code 7" },
+			]);
+			assert.partialDeepStrictEqual(result.structuredContent, {
+				output: "",
+				exit_code: 7,
+			});
+		});
 });
 
 test("override annotates a journal-confirmed kill", { skip: !linux }, () => {
@@ -186,19 +196,28 @@ test("override annotates a journal-confirmed kill", { skip: !linux }, () => {
 
 	// The trailing exit keeps the tool shell alive past its killed child so the
 	// SDK sees exit 137 instead of the shell's own signal death.
-	return assert
-		.rejects(
-			tool.execute(
-				"t3",
-				{ command: "sh -c 'kill -KILL $$'; code=$?; exit $code" },
-				undefined,
-				undefined,
-				fakeContext(tmpdir()),
-			),
-			(error: Error) =>
-				/Command exited with code 137/.test(error.message) &&
-				/earlyoom/.test(error.message),
+	return tool
+		.execute(
+			"t3",
+			{ command: "sh -c 'kill -KILL $$'; code=$?; exit $code" },
+			undefined,
+			undefined,
+			fakeContext(tmpdir()),
 		)
+		.then((result) => {
+			assert.equal(result.isError, true);
+
+			const text = result.content
+				.map((part) => (part.type === "text" ? part.text : ""))
+				.join("");
+
+			assert.match(text, /Command exited with code 137/);
+			assert.match(text, /earlyoom/);
+			assert.partialDeepStrictEqual(result.structuredContent, {
+				exit_code: 137,
+			});
+			assert.match(JSON.stringify(result.structuredContent), /earlyoom/);
+		})
 		.finally(() => journal.restore());
 });
 

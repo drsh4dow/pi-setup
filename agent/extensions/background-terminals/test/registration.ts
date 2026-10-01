@@ -5,6 +5,7 @@ import type {
 	ExtensionContext,
 	ExtensionEvent,
 	ExtensionHandler,
+	ExtensionToolContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Schema } from "effect";
@@ -81,7 +82,7 @@ type RegisteredTool = Pick<ToolDefinition, "name" | "executionMode"> & {
 		params: ToolParams,
 		signal: AbortSignal | undefined,
 		update: undefined,
-		context: ExtensionContext,
+		context: ExtensionToolContext,
 	): ReturnType<ToolDefinition["execute"]>;
 };
 
@@ -103,6 +104,10 @@ export function registeredExtension(
 			},
 			on<Name extends keyof SDKEvents>(name: Name, handler: Handlers[Name]) {
 				handlers[name] = handler;
+
+				return () => {
+					delete handlers[name];
+				};
 			},
 			registerCommand() {},
 			registerTool<P extends TSchema, D, S>(tool: ToolDefinition<P, D, S>) {
@@ -149,7 +154,7 @@ export function registeredExtension(
 					params,
 					signal,
 					update,
-					unsafeFixture<ExtensionContext>(context),
+					unsafeFixture<ExtensionToolContext>(context),
 				);
 
 				return Schema.decodeSync(schema)(result);

@@ -161,7 +161,6 @@ verification with this setup's system prompt.
 - `to-spec`
 - `to-tickets`
 - `typescript-best-practices`
-- `unslop`
 - `web-search`
 - `wizard`
 - `writing-for-agents`

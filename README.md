@@ -149,6 +149,7 @@ verification with this setup's system prompt.
 - `grilling`
 - `implement`
 - `improve-codebase-architecture`
+- `mailbox`
 - `maintain-verification-skill`
 - `pi-harness`
 - `principle-migrate-callers-then-delete-legacy-apis`

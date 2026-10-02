@@ -8,7 +8,8 @@
     "openai-codex/gpt-6-astra",
     "opencode-go/kimi-k3",
     "openai-codex/gpt-6.1-sol",
-    "anthropic/claude-opus-5-5"
+    "anthropic/claude-opus-5-5",
+    "anthropic/claude-fable-5-1"
   ],
   "defaultThinkingLevel": "high",
   "defaultTools": ["+codemode"],

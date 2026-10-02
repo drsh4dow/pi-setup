@@ -1,8 +1,10 @@
 # pi-setup
 
 Global Pi configuration: system prompt, vendored TypeScript extensions, skills,
-themes, and prompts. Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as the active
-system prompt.
+themes, and prompts. Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as the system
+prompt for Claude sessions. The `model-system-prompt` extension replaces it with
+[`agent/GPT_SYSTEM.md`](agent/GPT_SYSTEM.md) when a session's first prompt runs
+on a GPT model. An edit to one file does not reach sessions that use the other.
 
 Use `vp` for package management and scripts. Run
 `vp run verify` before reporting a code or tooling change.

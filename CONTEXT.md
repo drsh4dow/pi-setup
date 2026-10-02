@@ -10,6 +10,10 @@ Opinionated configuration and extensions that define how Pi behaves and exposes 
 The opinionated development environment built on Pi, including its shared agent behavior, tools, and integrations. Mimir adopts Pi as its runtime rather than replacing it.
 _Avoid_: Pi fork, Pi Dotfiles
 
+**Session Model**:
+The model in effect when a session's first prompt is sent. It selects the session's system prompt and stays fixed across later model switches, resume, and reload.
+_Avoid_: Current model, default model
+
 ### Codex accounts
 
 **Codex Account**:

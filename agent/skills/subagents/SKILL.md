@@ -65,9 +65,11 @@ session storage. Keep session persistence, extensions, skills, and normal tool
 loading enabled; do not add a tool allowlist.
 
 Pi discovers the configured system prompt, skills, and tools for the child
-process. A trusted project's `.pi/SYSTEM.md` takes precedence over the global
-`agent/SYSTEM.md`. This is normal environment loading, not a snapshot of the
-parent's conversation, temporary prompt overrides, or runtime tool selections.
+process. The child's session starts on a GPT model, so it loads
+`agent/GPT_SYSTEM.md`, which differs from the parent's prompt when the parent
+runs on Claude. A trusted project's `.pi/SYSTEM.md` takes precedence over both.
+This is normal environment loading, not a snapshot of the parent's conversation,
+temporary prompt overrides, or runtime tool selections.
 
 Tool availability does not authorize actions outside the assignment. The scope
 restrictions must remain in the assignment; they are instructions, not a

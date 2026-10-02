@@ -10,6 +10,11 @@
     "anthropic/claude-opus-5-5"
   ],
   "defaultThinkingLevel": "high",
+  "compaction": {
+    "modelOverrides": {
+      "anthropic/claude-opus-5-5": { "reserveTokens": 750000 }
+    }
+  },
   "defaultTools": ["+codemode"],
   "codemode": {
     "mode": "on"

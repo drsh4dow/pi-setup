@@ -2,17 +2,17 @@
   "lastChangelogVersion": "1.0.0",
   "packages": [],
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6-astra",
+  "defaultModel": "claude-opus-5-5",
   "enabledModels": [
     "opencode-go/glm-5.3-flash",
     "openai-codex/gpt-6-astra",
-    "opencode-go/kimi-k3",
     "openai-codex/gpt-6.1-sol",
-    "anthropic/claude-opus-5-5",
-    "anthropic/claude-fable-5-1"
+    "anthropic/claude-opus-5-5"
   ],
   "defaultThinkingLevel": "high",
-  "defaultTools": ["+codemode"],
+  "defaultTools": [
+    "+codemode"
+  ],
   "codemode": {
     "mode": "on"
   },

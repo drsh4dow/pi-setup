@@ -5,7 +5,7 @@ description: Test-driven development. Use when the user requests test-first work
 
 # Test-Driven Development
 
-TDD is the red → green → refactor loop. Apply the [test-selection policy](../../SYSTEM.md#tests-and-verification) before entering it. TDD determines implementation order after a test has earned its place, not how much coverage to add.
+TDD is the red → green → refactor loop. Before entering it, apply the system prompt's test-selection policy to decide which tests earn their place. TDD determines implementation order, not how much coverage to add.
 
 When exploring the codebase, read `CONTEXT.md` (if it exists) so test names and interface vocabulary match the project's domain language, and respect ADRs in the area you're touching.
 

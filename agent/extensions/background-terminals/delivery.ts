@@ -1,3 +1,4 @@
+import { type Static, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Clock, Effect } from "effect";
 import { sanitizeInline, sanitizeMultiline, truncateUtf8Tail } from "../../lib/text.ts";
@@ -63,17 +64,40 @@ export function summary(snapshot: TerminalMetadata): string {
   return `${sanitizeInline(snapshot.id)} ${statusSummary(snapshot)}`;
 }
 
-export function terminalMetadata(snapshot: TerminalMetadata) {
+export const terminalStateSchema = Type.Union([
+  Type.Literal("running"),
+  Type.Literal("done"),
+  Type.Literal("failed"),
+  Type.Literal("killed"),
+]);
+
+export const terminalMetadataSchema = Type.Object({
+  id: Type.String(),
+  title: Type.String(),
+  cwd: Type.String(),
+  pid: Type.Union([Type.Number(), Type.Null()]),
+  state: terminalStateSchema,
+  exitCode: Type.Union([Type.Number(), Type.Null()]),
+  signal: Type.Union([Type.String(), Type.Null()]),
+  stdoutBytes: Type.Number(),
+  stderrBytes: Type.Number(),
+});
+
+// Tool details and codemode's structured results share this shape, so absent
+// values are JSON nulls rather than undefined keys.
+export function terminalMetadata(
+  snapshot: TerminalMetadata,
+): Static<typeof terminalMetadataSchema> {
   const fields = terminalResultFields(snapshot);
 
   return {
     id: sanitizeInline(snapshot.id),
     title: sanitizeInline(snapshot.title),
     cwd: sanitizeInline(snapshot.cwd),
-    pid: snapshot.pid,
+    pid: snapshot.pid ?? null,
     state: snapshot.state,
-    exitCode: fields.exitCode,
-    signal: fields.signal,
+    exitCode: fields.exitCode ?? null,
+    signal: fields.signal ?? null,
     stdoutBytes: snapshot.stdout.totalBytes,
     stderrBytes: snapshot.stderr.totalBytes,
   };

@@ -111,10 +111,18 @@ export function registeredExtension(
         definitions.push({
           name: definition.name,
           executionMode: definition.executionMode,
-          execute(id, params, signal, _update, context) {
+          async execute(id, params, signal, _update, context) {
             assert.ok(Check(definition.parameters, params), `Invalid ${definition.name} arguments`);
 
-            return definition.execute(id, params, signal, undefined, context);
+            const result = await definition.execute(id, params, signal, undefined, context);
+
+            // Codemode scripts receive structuredContent in place of the text.
+            assert.ok(
+              definition.outputSchema && Check(definition.outputSchema, result.structuredContent),
+              `Invalid ${definition.name} structured content`,
+            );
+
+            return result;
           },
         });
       },

@@ -1,10 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
-import { Type } from "@earendil-works/pi-ai";
+import { type Static, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { sanitizeInline } from "../../lib/text.ts";
+import { sanitizeInline, sanitizeMultiline } from "../../lib/text.ts";
 import {
   registerBackgroundTerminalStatus,
   requestProcessStatusRefresh,
@@ -15,11 +15,43 @@ import {
   sanitizeErrorForDisplay,
   summary,
   terminalMetadata,
+  terminalMetadataSchema,
+  terminalStateSchema,
 } from "./delivery.ts";
 import { MAX_TRACKED } from "./manager.ts";
 import { type BackgroundTerminalSession, joinBackgroundTerminalSession } from "./session.ts";
 
 const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
+
+const observationSchema = Type.Union([
+  Type.Literal("first"),
+  Type.Literal("changed"),
+  Type.Literal("unchanged"),
+]);
+
+const statusOutputSchema = Type.Object({
+  ...terminalMetadataSchema.properties,
+  observation: observationSchema,
+  stdout: Type.String(),
+  stderr: Type.String(),
+});
+
+const listOutputSchema = Type.Object({
+  terminals: Type.Array(terminalMetadataSchema),
+  deliveryProblem: Type.Union([Type.String(), Type.Null()]),
+});
+
+const killOutputSchema = Type.Object({
+  results: Type.Array(
+    Type.Object({
+      id: Type.String(),
+      title: Type.String(),
+      state: terminalStateSchema,
+      wasRunning: Type.Boolean(),
+      killed: Type.Boolean(),
+    }),
+  ),
+});
 
 export default function backgroundTerminals(pi: ExtensionAPI) {
   const delivery = new BackgroundTerminalDelivery(pi);
@@ -61,11 +93,11 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     name: "bg_start",
     label: "Start Background Terminal",
     description:
-      "Start a non-interactive, session-scoped shell command in the background. Use bash by default; use bg_start for services and watchers, explicitly requested subagent work, or finite commands alongside independent work. Completion automatically wakes the owning agent with the real exit code. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
+      "Start a non-interactive, session-scoped shell command in the background, for services, watchers, subagents, or finite commands alongside independent work. Completion automatically wakes the owning agent with the real exit code. Use emit-to-pi <message> only for meaningful intermediate events while running; it never settles the command. Only bounded output tails are retained; redirect explicitly for durable/full logs.",
     promptSnippet:
-      "Start a service, watcher, explicitly requested subagent, or finite command alongside independent work",
+      "Start a service, watcher, subagent, or finite command alongside independent work",
     promptGuidelines: [
-      "Use bash by default. Use bg_start for services and watchers, explicitly requested subagent work, or finite commands alongside independent work.",
+      "Use bg_start only for services, watchers, subagents, and finite commands that run alongside independent work.",
       "Continue genuinely independent work. If the requested answer depends on the job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.",
       "Use meaningful titles and avoid duplicate servers or watchers.",
       "Run finite bg_start jobs without a notification wrapper to preserve their exit status. Success and failure automatically wake the owner with the real exit code. Use emit-to-pi only for actionable intermediate milestones, never as a completion signal or a trailing command that masks the work's exit code.",
@@ -76,6 +108,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
       title: Type.String({ maxLength: 160 }),
       working_dir: Type.Optional(Type.String({ maxLength: 4_096 })),
     }),
+    outputSchema: terminalMetadataSchema,
     executionMode: "parallel",
     execute(_id, params, _signal, _update, ctx) {
       return Effect.runPromise(
@@ -113,6 +146,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
             }
           });
 
+          const metadata = terminalMetadata(snapshot);
+
           return {
             content: [
               {
@@ -120,7 +155,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
                 text: `Started ${summary(snapshot)}\nCompletion automatically wakes you with the real exit code; no emit-to-pi is needed. Continue genuinely independent work. If the requested answer depends on this job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.\nOnly the newest 256 KiB per stream is retained; redirect explicitly for durable/full logs.`,
               },
             ],
-            details: terminalMetadata(snapshot),
+            details: metadata,
+            structuredContent: metadata,
           };
         }).pipe(Effect.provide(platformLayer)),
       );
@@ -132,6 +168,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     description:
       "Inspect state and bounded stdout/stderr tails, including changes since the previous bg_status read. Use for immediate inspection, not polling.",
     parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
+    outputSchema: statusOutputSchema,
     executionMode: "parallel",
     execute(_id, params) {
       return Effect.runPromise(
@@ -143,14 +180,16 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
 
           if (snapshot.state !== "running") terminalSession.consume([snapshot.id]);
 
+          const metadata = terminalMetadata(snapshot);
+
           const evidence = {
-            ...terminalMetadata(snapshot),
+            ...metadata,
             process: snapshot.state === "running" ? snapshot.process : snapshot.result,
           };
 
           const previous = observations.get(snapshot.id);
 
-          let observation = "first";
+          let observation: Static<typeof observationSchema> = "first";
 
           if (previous !== undefined) {
             observation = isDeepStrictEqual(previous, evidence) ? "unchanged" : "changed";
@@ -165,6 +204,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
             if (!oldest.done) observations.delete(oldest.value);
           }
 
+          const details = { ...metadata, observation };
+
           return {
             content: [
               {
@@ -172,7 +213,12 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
                 text: `${formatTerminalReport(snapshot)}\nObservation: ${observation} since previous bg_status read. stdout=${snapshot.stdout.totalBytes} bytes stderr=${snapshot.stderr.totalBytes} bytes.${snapshot.state === "running" ? "\nCompletion or an emit-to-pi event will wake you; do not poll." : ""}`,
               },
             ],
-            details: { ...terminalMetadata(snapshot), observation },
+            details,
+            structuredContent: {
+              ...details,
+              stdout: sanitizeMultiline(snapshot.stdout.text),
+              stderr: sanitizeMultiline(snapshot.stderr.text),
+            } satisfies Static<typeof statusOutputSchema>,
           };
         }),
       );
@@ -183,13 +229,15 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     label: "List Background Terminals",
     description: "List session-scoped tracked background terminals without their output.",
     parameters: Type.Object({}),
+    outputSchema: listOutputSchema,
     executionMode: "parallel",
     execute() {
       return Effect.runPromise(
         Effect.sync(() => {
           const entries = currentSession().list();
+          const terminals = entries.map(terminalMetadata);
 
-          const terminals = entries.length
+          const listing = entries.length
             ? entries.map(summary).join("\n")
             : "No background terminals.";
 
@@ -197,10 +245,14 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
             content: [
               {
                 type: "text",
-                text: delivery.problem ? `${terminals}\n${delivery.problem}` : terminals,
+                text: delivery.problem ? `${listing}\n${delivery.problem}` : listing,
               },
             ],
-            details: { terminals: entries.map(terminalMetadata) },
+            details: { terminals },
+            structuredContent: {
+              terminals,
+              deliveryProblem: delivery.problem ?? null,
+            } satisfies Static<typeof listOutputSchema>,
           };
         }),
       );
@@ -216,6 +268,7 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
         maxItems: 16,
       }),
     }),
+    outputSchema: killOutputSchema,
     executionMode: "parallel",
     execute(_id, params, signal) {
       const ids = [...new Set(params.ids)];
@@ -233,6 +286,13 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
           Effect.map((results) => {
             terminalSession.consume(ids);
 
+            const details = {
+              results: results.map((result) => ({
+                ...result,
+                title: sanitizeInline(result.title),
+              })),
+            };
+
             return {
               content: [
                 {
@@ -245,12 +305,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
                     .join("\n"),
                 },
               ],
-              details: {
-                results: results.map((result) => ({
-                  ...result,
-                  title: sanitizeInline(result.title),
-                })),
-              },
+              details,
+              structuredContent: details satisfies Static<typeof killOutputSchema>,
             };
           }),
         ),

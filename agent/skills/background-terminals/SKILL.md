@@ -1,11 +1,14 @@
 ---
 name: background-terminals
-description: Use when running background services, watchers, explicitly requested subagents, or finite commands alongside independent work.
+description: Use when running background services, watchers, subagents, or finite commands alongside independent work.
 ---
 
-Use `bash` by default. Use `bg_start` for services and watchers, explicitly requested subagent work, or finite commands when there is useful independent work to do. Background terminals have no interactive stdin, so commands must run without prompts or interaction.
+Background terminals have no interactive stdin, so commands must run without prompts or interaction.
 
 Before starting a server or watcher, check `bg_list` for an existing copy. Give each new terminal a distinct, meaningful title. Continue genuinely independent work. If the requested answer depends on the job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.
+
+A codemode script has no timers and cannot wait for a terminal. End the script
+after `bg_start` and let completion wake you.
 
 Completion automatically wakes the owning agent with the real exit code. Run finite commands directly: a trailing notification command can mask their exit status. Use `emit-to-pi <message>` only for actionable intermediate events while a command keeps running; it never settles the command.
 

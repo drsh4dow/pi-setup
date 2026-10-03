@@ -123,11 +123,11 @@ recorded model changes. A trusted project `.pi/SYSTEM.md` or `--system-prompt`
 applies to every model. Both files are read at load time, so run `/reload` after
 editing either.
 
-Use `bash` by default. Use `bg_start` for services and watchers, explicitly
-requested subagent work, or finite commands alongside useful independent work. A
-finite command's natural exit wakes the owner with its actual exit status,
-including success. Use `emit-to-pi` only for actionable events while a command
-keeps running. A notification never settles the command.
+Use `bg_start` only for services, watchers, subagents, and finite commands that
+run alongside independent work. A finite command's natural exit wakes the owner
+with its actual exit status, including success. Use `emit-to-pi` only for
+actionable events while a command keeps running. A notification never settles
+the command.
 
 Use `bg_status` for immediate inspection, not polling. Its bounded observations
 distinguish the first read, changed state/output, and unchanged evidence;
@@ -139,6 +139,10 @@ show status and output within a shared 24 KiB output budget; abbreviation is
 marked, and `bg_status` exposes more retained output. Full commands and working
 directories remain in `/ps` details. Use `bg_kill` to terminate a command. Full
 logs still require explicit redirection.
+
+The `bg_*` tools declare output schemas, so codemode scripts receive terminal
+metadata as objects instead of text. A `bg_status` result also carries the
+retained `stdout` and `stderr` tails for the script to filter.
 
 ### Installed skills
 

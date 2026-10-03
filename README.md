@@ -147,9 +147,7 @@ retained `stdout` and `stderr` tails for the script to filter.
 ### Installed skills
 
 The installed Matt Pocock skills and their supporting files are vendored from
-[`mattpocock/skills` at `3cca18b`](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015/skills).
-The `tdd` and `implement` skills are locally adapted to align test selection and
-verification with this setup's system prompt.
+[`mattpocock/skills` at `d81f3a1`](https://github.com/mattpocock/skills/tree/d81f3a183412e71a5b1e84ca21bc1a35eea03a60/skills).
 
 - `babysit-pr`
 - `background-terminals`
@@ -172,7 +170,6 @@ verification with this setup's system prompt.
 - `principle-migrate-callers-then-delete-legacy-apis`
 - `prototype`
 - `research`
-- `resolving-merge-conflicts`
 - `subagents`
 - `tdd`
 - `to-spec`

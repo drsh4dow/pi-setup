@@ -1,6 +1,6 @@
 ---
 name: docs-search
-description: Check framework-native capabilities before introducing custom infrastructure, or resolve uncertain or version-sensitive library and API behavior.
+description: Use before adding custom infrastructure, to check framework-native capabilities, or before relying on uncertain or version-sensitive library or API behavior. Questions about Pi itself belong to pi-harness.
 ---
 
 # Documentation search

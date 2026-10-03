@@ -1,6 +1,6 @@
 ---
 name: diagnosing-bugs
-description: Diagnose bugs and performance regressions. Use when the user asks to debug or reports broken, failing, or slow behavior.
+description: Diagnose bugs and performance regressions. Use when the user asks to debug or reports broken, failing, or slow behavior, or when a check you run fails for a reason you don't yet understand.
 ---
 
 # Diagnosing bugs

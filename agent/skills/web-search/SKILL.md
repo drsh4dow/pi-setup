@@ -1,6 +1,6 @@
 ---
 name: web-search
-description: Find and read live web sources when the answer needs evidence unavailable in the current context.
+description: Find and read live web sources when the answer needs evidence unavailable in the current context. Library and API questions start with docs-search.
 ---
 
 # Web search

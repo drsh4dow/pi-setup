@@ -1,6 +1,6 @@
 ---
 name: principle-migrate-callers-then-delete-legacy-apis
-description: Plan API migrations and coordinated refactors, including compatibility and verification boundaries.
+description: Use before changing an API, contract, or configuration format that has callers, or when planning such a migration or coordinated refactor.
 ---
 
 # Migrate callers and delete legacy APIs

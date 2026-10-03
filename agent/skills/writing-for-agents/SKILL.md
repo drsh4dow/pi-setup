@@ -1,17 +1,21 @@
 ---
 name: writing-for-agents
-description: Writing documents for agents. Use when creating or editing skills, or modifying AGENTS.md or CLAUDE.md.
+description: Writing documents for agents. Use when creating or editing skills, system prompts, AGENTS.md, or CLAUDE.md.
 ---
 
 Reference for writing any document an agent consumes: a skill, an `AGENTS.md` / `CLAUDE.md`, a doc reached by a pointer. The packaging differs; the writing does not: the same levers make each one predictable, since the agent takes the same _process_ every run rather than producing the same output.
 
-When the document you're writing is a skill, read [`SKILL-MECHANICS.md`](SKILL-MECHANICS.md) for frontmatter, invocation choice, and router skills.
+If the document is a skill, read [`SKILL-MECHANICS.md`](SKILL-MECHANICS.md) before writing it; it covers frontmatter, invocation choice, and router skills.
 
 ## Context pointers
 
 A **context pointer** is a reference held in the agent's context that names some out-of-context material and encodes the condition for reaching it. A skill's description is one; a line in `AGENTS.md` naming a doc is the same object. The pointer's _wording_, not its target, decides when the agent reaches the material, and how reliably. A must-have target behind a weakly worded pointer is a variance bug: sharpen the wording first, and inline the material only if sharpening fails.
 
-A pointer does two jobs: state what the material is, and list the **branches** that should trigger reaching it (a branch is a distinct case the document handles, so different runs take different paths through it). Every word of an always-loaded pointer costs on every turn, so it earns even harder pruning than the body:
+A pointer does two jobs: state what the material is, and list the **branches** that should trigger reaching it (a branch is a distinct case the document handles, so different runs take different paths through it). Agents check pointers at action boundaries, so phrase each branch as its **moment of use**: an action the agent is about to take or an event it observes ("before writing…", "when a check fails…"), including moments that arise mid-task, not only requests the user makes. Give each branch one owner: when two pointers cover adjacent work, each states where its scope ends.
+
+A pointer inside a body to material the agent must read is a step: place it where its condition arises and state the condition concretely, because a pointer left in background prose gets skipped.
+
+Every word of an always-loaded pointer costs on every turn, so it earns even harder pruning than the body:
 
 - **Front-load the leading word**: the pointer is where it does its triggering work.
 - **One trigger per branch.** Synonyms that rename a single branch are one branch written twice; collapse them and keep only genuinely distinct branches.

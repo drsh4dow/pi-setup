@@ -23,6 +23,7 @@ Write one self-contained assignment per subagent; the child sees none of this
 conversation. An assignment is ready when it states:
 
 - The task, with the context and source leads it needs.
+- The skills the work requires, by name.
 - The write scope: the files the child owns, or that it changes nothing.
 - A done condition the child can check.
 - The report: changes made, findings with references, judgment calls, and open

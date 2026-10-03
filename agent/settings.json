@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.0.0",
+  "lastChangelogVersion": "1.0.1",
   "packages": [],
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",
@@ -12,7 +12,9 @@
   "defaultThinkingLevel": "high",
   "compaction": {
     "modelOverrides": {
-      "anthropic/claude-opus-5-5": { "reserveTokens": 750000 }
+      "anthropic/claude-opus-5-5": {
+        "reserveTokens": 750000
+      }
     }
   },
   "defaultTools": ["+codemode"],

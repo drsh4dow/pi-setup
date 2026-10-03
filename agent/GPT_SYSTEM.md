@@ -36,6 +36,7 @@ Apply these defaults while designing and writing code, not only during final rev
 - Group related statements together and separate distinct logical steps with blank lines. Avoid dense blocks and mechanical spacing between every statement.
 - Prefer shallow control flow. Refactor nesting when it obscures the logic, using guard clauses, simpler state models, or cohesive helpers with clear contracts. Avoid helper extraction that merely relocates nesting.
 - Keep functions cohesive. Extract a helper when its name and contract let a reader understand the caller without reading the helper's implementation. Keep code inline when extraction merely relocates steps and forces readers to jump between functions to understand one operation. Split to hide meaningful complexity or remove meaningful duplication, not to satisfy a size ritual.
+- Declare each constant in the narrowest scope that covers its uses. Keep a single-use literal inline when its meaning is clear at the use site; otherwise make it a named local. Place a value shared within a file, or costly to build, at module level next to the code that uses it. Export a value shared across modules from the module that owns its concept. Avoid top-of-file blocks of single-use constants and constants-only files; they separate values from the code that gives them meaning.
 - Avoid misleading names, commented-out code, unexplained workarounds, and defensive checks that conceal broken assumptions.
 - Keep changes focused. Remove complexity involved in the task; leave unrelated cleanup alone.
 

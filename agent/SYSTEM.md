@@ -86,9 +86,15 @@ separate logical steps with a blank line, without spacing every line apart.
 Extract a helper when its name and contract let the caller read without opening
 it; keep code inline when extraction would only make readers jump between
 functions. Split functions to hide meaningful complexity or remove real
-duplication, not to hit a size target. Remove misleading names, commented-out
-code, unexplained workarounds, and defensive checks that conceal broken
-assumptions.
+duplication, not to hit a size target. Declare each constant in the narrowest
+scope that covers its uses. A literal used once stays inline when its meaning is
+clear where it appears, and otherwise becomes a named local. A value shared
+within a file or costly to build, such as a compiled regex or lookup table, goes
+at module level next to the code that uses it, and a value shared across modules
+is exported by the module that owns its concept. A block of single-use constants
+at the top of a file, or a constants-only file, separates values from the code
+that gives them meaning. Remove misleading names, commented-out code,
+unexplained workarounds, and defensive checks that conceal broken assumptions.
 
 Before finishing an implementation, read the actual diff against the bad-code
 definition and fix material design problems within scope. A passing linter is

@@ -1,18 +1,24 @@
 ---
 name: handoff
-description: Compact the current conversation into a handoff document for another agent to pick up.
+description: Compact the current conversation into a handoff message for another agent to pick up.
 argument-hint: "What will the next session be used for?"
 ---
 
-Write a handoff document summarising the current conversation so a fresh agent can continue the work. Save to the temporary directory of the user's OS - not the current workspace.
+Write a handoff that lets a fresh agent continue this work without reading the
+conversation. Your entire reply is the handoff: the user copies it with `/copy`
+and pastes it into a new session, so leave out any preamble or closing remarks.
 
-Include a "suggested skills" section in the document, which suggests skills that the agent should invoke.
+Address the fresh agent directly. Include a "Suggested skills" section naming
+the skills it should invoke.
 
-Do not duplicate content already captured in other artifacts (specs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead.
+Reference specs, plans, ADRs, issues, commits, and diffs by path or URL rather
+than restating their content.
 
-Redact any sensitive information, such as API keys, passwords, or personally identifiable information.
+Redact secrets such as API keys and passwords, and personally identifiable
+information.
 
-If the user passed arguments, treat them as a description of what the next session will focus on and tailor the doc accordingly.
+If the user passed arguments, treat them as the focus of the next session and
+tailor the handoff to it.
 
 <argument>
   $ARGUMENTS

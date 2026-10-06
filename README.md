@@ -147,7 +147,7 @@ retained `stdout` and `stderr` tails for the script to filter.
 ### Installed skills
 
 The installed Matt Pocock skills and their supporting files are vendored from
-[`mattpocock/skills` at `d81f3a1`](https://github.com/mattpocock/skills/tree/d81f3a183412e71a5b1e84ca21bc1a35eea03a60/skills).
+[`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
 
 - `babysit-pr`
 - `background-terminals`
@@ -163,15 +163,20 @@ The installed Matt Pocock skills and their supporting files are vendored from
 - `grill-with-docs`
 - `grilling`
 - `implement`
+- `implement-spec`
 - `improve-codebase-architecture`
 - `mailbox`
 - `maintain-verification-skill`
 - `pi-harness`
+- `pr`
 - `principle-migrate-callers-then-delete-legacy-apis`
 - `prototype`
 - `research`
+- `retro`
+- `setup-matt-pocock-skills`
 - `subagents`
 - `tdd`
+- `teach`
 - `to-spec`
 - `to-tickets`
 - `typescript-best-practices`

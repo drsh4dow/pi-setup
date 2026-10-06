@@ -17,9 +17,7 @@
       }
     }
   },
-  "defaultTools": [
-    "+codemode"
-  ],
+  "defaultTools": ["+codemode"],
   "codemode": {
     "mode": "on"
   },

@@ -184,7 +184,6 @@ The installed Matt Pocock skills and their supporting files are vendored from
 - `wizard`
 - `writing-for-agents`
 - `writing-good-commits`
-- `writing-good-prs`
 - `writing-good-tickets`
 
 ### Installed CLI tools

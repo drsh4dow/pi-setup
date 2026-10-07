@@ -5,9 +5,9 @@
   "defaultModel": "claude-opus-5-5",
   "enabledModels": [
     "opencode-go/glm-5.3-flash",
-    "openai-codex/gpt-6-astra",
-    "openai-codex/gpt-6.1-sol",
-    "anthropic/claude-opus-5-5"
+    "anthropic/claude-opus-5-5",
+    "openai/gpt-6.1-sol",
+    "openai/gpt-6-astra"
   ],
   "defaultThinkingLevel": "high",
   "compaction": {
@@ -17,7 +17,9 @@
       }
     }
   },
-  "defaultTools": ["+codemode"],
+  "defaultTools": [
+    "+codemode"
+  ],
   "codemode": {
     "mode": "on"
   },
@@ -35,5 +37,6 @@
   "cacheWarming": "streaming",
   "markdown": {
     "mermaid": "streaming"
-  }
+  },
+  "deviceId": "56db2cc9-59f0-4dbf-b318-126c9049b11c"
 }

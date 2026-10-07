@@ -12,7 +12,7 @@ Pick the model by the work:
 
 - `anthropic/claude-opus-5-5`: implementation, design, art, and work that
   depends on taste.
-- `openai-codex/gpt-6.1-sol`: research, scouting, code review, audits, and
+- `openai/gpt-6.1-sol`: research, scouting, code review, audits, and
   scraping.
 
 ## Prepare

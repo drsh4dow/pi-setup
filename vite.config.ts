@@ -14,6 +14,52 @@ const ignoredFiles = [
 ];
 
 export default defineConfig({
+  run: {
+    tasks: {
+      // Each cache entry would archive all three compiled binaries; building takes under a second.
+      "build:cli": {
+        command: [
+          "vp exec bun build --compile --outfile .build/bin/emit-to-pi agent/extensions/background-terminals/bin/emit-to-pi.ts",
+          "vp exec bun build --compile --outfile .build/bin/babysit-pr agent/skills/babysit-pr/scripts/babysit-pr.ts",
+          "vp exec bun build --compile --outfile .build/bin/dumpfile cli/dumpfile/src/cli.ts",
+        ],
+        cache: false,
+      },
+      "verify:strict-diagnostics": "node agent/scripts/verify-strict-diagnostics.ts",
+      "test:extensions": {
+        command:
+          "node --test $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
+        dependsOn: ["build:cli"],
+      },
+      "test:babysit-pr": {
+        command: "node --test agent/skills/babysit-pr/test/*.test.ts",
+        dependsOn: ["build:cli"],
+      },
+      "test:dumpfile": {
+        command: [
+          "bash -n cli/dumpfile/setup.sh cli/dumpfile/bin/dumpfile",
+          "node --test cli/dumpfile/test/*.test.ts",
+          "wrangler deploy --dry-run --config cli/dumpfile/wrangler.jsonc",
+        ],
+        dependsOn: ["build:cli"],
+      },
+      "test:docs": [
+        "node --test agent/scripts/test/*.test.ts",
+        "node agent/scripts/verify-docs.ts",
+      ],
+      // The dependencies run concurrently; vp check runs once they pass.
+      verify: {
+        command: "vp check",
+        dependsOn: [
+          "verify:strict-diagnostics",
+          "test:extensions",
+          "test:babysit-pr",
+          "test:dumpfile",
+          "test:docs",
+        ],
+      },
+    },
+  },
   fmt: { ignorePatterns: ignoredFiles },
   lint: {
     ignorePatterns: ignoredFiles,
@@ -55,7 +101,7 @@ export default defineConfig({
         {
           // node:test owns the completion and failure of registered tests.
           allowForKnownSafeCalls: [
-            { from: "package", package: "node:test", name: ["test", "it", "describe"] },
+            { from: "package", package: "node:test", name: ["test", "it", "describe", "suite"] },
           ],
         },
       ],

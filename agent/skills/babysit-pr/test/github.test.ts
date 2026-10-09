@@ -252,7 +252,7 @@ for (const ended of ["merged", "closed"]) {
 
 test(
   "watch delivers comments and current-target events, stays live, and persists acknowledgements",
-  { timeout: 45_000 },
+  { timeout: 15_000 },
   () =>
     withGithub(async (cwd) => {
       execFileSync("git", ["init", "--quiet", cwd]);
@@ -263,6 +263,7 @@ test(
           ...process.env,
           PATH: `${notificationBin}${delimiter}${process.env.PATH}`,
           PI_BACKGROUND_TERMINAL_NOTIFY_FD: "3",
+          BABYSIT_PR_DEBOUNCE_MS: "0",
         },
         stdio: ["ignore", "pipe", "pipe", "pipe"],
       });
@@ -292,7 +293,7 @@ test(
       try {
         const frames: unknown[] = await Promise.race([
           once(notifications, "data", {
-            signal: AbortSignal.timeout(40_000),
+            signal: AbortSignal.timeout(10_000),
           }),
           exited.then(() => {
             throw new Error(`Watcher exited before notification: ${stderr}`);

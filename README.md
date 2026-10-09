@@ -232,9 +232,12 @@ vp run verify
 ```
 
 `verify` and CI run credential-free formatting, lint, type,
-diagnostic-enforcement, and behavioral checks. The suites that exercise compiled
-CLIs rebuild them first. Live Pi integration tests remain separate: with
-provider credentials configured, run `vp run test:e2e`.
+diagnostic-enforcement, and behavioral checks. Its tasks live in
+`vite.config.ts`: the compiled CLIs build once, the suites run concurrently, and
+`vp check` runs after they pass. Vite+ replays a suite from cache when the files
+it read, including the compiled CLIs, are unchanged; `vp run --no-cache verify`
+reruns everything. Live Pi integration tests remain separate: with provider
+credentials configured, run `vp run test:e2e`.
 
 Use `vp check` for static checks, `vp check --fix` for supported fixes,
 `vp lint` for linting, and `vp fmt` for formatting. Use `vp add`, `vp remove`,

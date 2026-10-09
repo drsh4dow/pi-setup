@@ -4,38 +4,56 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const fixture = mkdtempSync(join(tmpdir(), "pi-strict-diagnostics-"));
 
-function run(args: string[]) {
-  const result = spawnSync("vp", args, { cwd: fixture, encoding: "utf8", timeout: 30_000 });
+function check() {
+  const result = spawnSync("vp", ["check"], { cwd: fixture, encoding: "utf8", timeout: 30_000 });
 
   if (result.error) throw result.error;
-  assert.equal(result.signal, null, `vp ${args.join(" ")} terminated by signal`);
+  assert.equal(result.signal, null, "vp check terminated by signal");
   assert.notEqual(result.status, null);
 
-  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+  // Vite+ tasks set FORCE_COLOR, which styles the diagnostics this script matches.
+  return {
+    status: result.status,
+    output: stripVTControlCharacters(`${result.stdout}${result.stderr}`),
+  };
 }
 
-function requireClean(args: string[]) {
-  const result = run(args);
-  assert.equal(result.status, 0, result.output);
+interface Violation {
+  path: string;
+  source: string;
+  diagnostic: string;
 }
 
-function requireDiagnostic(path: string, source: string, expected: RegExp, format = true) {
-  const destination = join(fixture, path);
-  writeFileSync(destination, source);
+// One vp check rejects every violation in the batch. Each diagnostic is attributed to
+// its file, so a single run proves each violation independently. vp check prints a
+// header line such as `x eslint(max-lines): ...` followed by a source frame that
+// opens with `[path:line:column]`.
+function requireRejected(violations: Violation[]) {
+  for (const { path, source } of violations) writeFileSync(join(fixture, path), source);
 
   try {
-    if (format) requireClean(["fmt", path]);
-    const result = run(["check"]);
-    assert.notEqual(result.status, 0, `${path} unexpectedly passed vp check`);
-    assert.match(result.output, expected, result.output);
-    console.log(`${path}: rejected with ${expected.source}`);
+    const result = check();
+    assert.notEqual(result.status, 0, `vp check unexpectedly passed\n${result.output}`);
+    const lines = result.output.split("\n");
+
+    for (const { path, diagnostic } of violations) {
+      assert.ok(
+        lines.some(
+          (line, index) =>
+            line.includes(`(${diagnostic}):`) && lines[index + 1]?.includes(`[${path}:`),
+        ),
+        `${path} was not rejected with ${diagnostic}\n${result.output}`,
+      );
+      console.log(`${path}: rejected with ${diagnostic}`);
+    }
   } finally {
-    rmSync(destination);
+    for (const { path } of violations) rmSync(join(fixture, path));
   }
 }
 
@@ -66,50 +84,66 @@ try {
     "cli/dumpfile/src",
   ];
 
-  for (const directory of sourceDirectories) {
+  for (const directory of sourceDirectories)
     mkdirSync(join(fixture, directory), { recursive: true });
-    writeFileSync(join(fixture, directory, "clean.ts"), "export const clean = true;\n");
+
+  const formatPath = "agent/extensions/format.ts";
+  writeFileSync(join(fixture, formatPath), "export const value=1;\n");
+
+  try {
+    // Formatting failures stop vp check before lint, so this violation runs alone.
+    const result = check();
+    assert.notEqual(result.status, 0, `${formatPath} unexpectedly passed vp check`);
+    assert.match(result.output, /Formatting issues found/, result.output);
+    assert.ok(
+      result.output.split("\n").some((line) => line.startsWith(`${formatPath} (`)),
+      result.output,
+    );
+    console.log(`${formatPath}: rejected with Formatting issues found`);
+  } finally {
+    rmSync(join(fixture, formatPath));
   }
 
-  requireClean(["check"]);
+  // Alone, a rejected warning proves that warnings fail the check.
+  requireRejected([
+    {
+      path: "agent/extensions/warning.ts",
+      source: "export const now = new Date();\n",
+      diagnostic: "global-date",
+    },
+  ]);
 
   // A missing project or an over-broad ignore must not silently drop owned code.
-  for (const directory of sourceDirectories) {
-    requireDiagnostic(`${directory}/type-error.ts`, "export const value: string = 1;\n", /TS2322/);
-  }
+  const typeErrors = sourceDirectories.map((directory) => ({
+    path: `${directory}/type-error.ts`,
+    source: "export const value: string = 1;\n",
+    diagnostic: "TS2322",
+  }));
 
-  requireDiagnostic(
-    "agent/extensions/format.ts",
-    "export const value=1;\n",
-    /format|Format/,
-    false,
-  );
-  requireDiagnostic(
-    "agent/extensions/effect.ts",
-    'import { Effect } from "effect";\nexport const result = Effect.all([1, 2].map(Effect.succeed));\n',
-    /all-of-map-to-for-each/,
-  );
-  requireDiagnostic(
-    "agent/extensions/typed-lint.ts",
-    "export function unsafe(value: any): string { return value; }\n",
-    /no-unsafe-return/,
-  );
-  requireDiagnostic(
-    "agent/extensions/anti-slop.ts",
-    'export const value = Reflect.get({ name: "example" }, "name");\n',
-    /no-reflect-get/,
-  );
-  requireDiagnostic(
-    "agent/extensions/warning.ts",
-    "export const now = new Date();\n",
-    /global-date/,
-  );
-  requireDiagnostic(
-    "agent/extensions/too-long.ts",
-    `${"// line\n".repeat(601)}export const value = true;\n`,
-    /max-lines/,
-  );
-  requireClean(["check"]);
+  requireRejected([
+    ...typeErrors,
+    {
+      path: "agent/extensions/effect.ts",
+      source:
+        'import { Effect } from "effect";\n\nexport const result = Effect.all([1, 2].map(Effect.succeed));\n',
+      diagnostic: "all-of-map-to-for-each",
+    },
+    {
+      path: "agent/extensions/typed-lint.ts",
+      source: "export function unsafe(value: any): string {\n  return value;\n}\n",
+      diagnostic: "no-unsafe-return",
+    },
+    {
+      path: "agent/extensions/anti-slop.ts",
+      source: 'export const value = Reflect.get({ name: "example" }, "name");\n',
+      diagnostic: "no-reflect-get",
+    },
+    {
+      path: "agent/extensions/too-long.ts",
+      source: `${"// line\n".repeat(601)}export const value = true;\n`,
+      diagnostic: "max-lines",
+    },
+  ]);
 } finally {
   rmSync(fixture, { recursive: true, force: true });
 }

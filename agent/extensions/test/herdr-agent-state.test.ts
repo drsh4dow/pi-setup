@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { suite, test } from "node:test";
 
-const { spawnSync } = process.getBuiltinModule("node:child_process");
+const { execFile, spawnSync } = process.getBuiltinModule("node:child_process");
+
+const { promisify } = process.getBuiltinModule("node:util");
+
+const execFileAsync = promisify(execFile);
 
 const extensionUrl = new URL("../herdr-agent-state.ts", import.meta.url);
 
-function runScenario(script: string) {
+// Each scenario sets Herdr environment variables, so it runs in its own process.
+async function runScenario(script: string) {
   const harnessUrl = new URL("./fixtures/herdr-harness.ts", import.meta.url);
 
-  const result = spawnSync(
+  await execFileAsync(
     process.execPath,
     [
       "--input-type=module",
@@ -23,12 +28,11 @@ ${script}
     ],
     { encoding: "utf8", timeout: 15_000 },
   );
-
-  assert.equal(result.status, 0, result.stderr);
 }
 
-test("reconciles a finished turn while a background process remains alive", () => {
-  runScenario(`
+suite("herdr agent state", { concurrency: true }, () => {
+  test("reconciles a finished turn while a background process remains alive", () =>
+    runScenario(`
 const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
 try {
   await emit("session_start");
@@ -43,11 +47,10 @@ try {
 } finally {
   child.kill();
 }
-`);
-});
+`));
 
-test("retries a failed idle report without another lifecycle event", () => {
-  runScenario(`
+  test("retries a failed idle report without another lifecycle event", () =>
+    runScenario(`
 let idleAttempts = 0;
 let accepted = false;
 respondWith((request) => {
@@ -60,11 +63,10 @@ respondWith((request) => {
 });
 await emit("session_start");
 await eventually(() => accepted, "idle must be retried after both immediate attempts fail");
-`);
-});
+`));
 
-test("retries rejected idle reports instead of treating socket data as success", () => {
-  runScenario(`
+  test("retries rejected idle reports instead of treating socket data as success", () =>
+    runScenario(`
 let idleAttempts = 0;
 let accepted = false;
 respondWith((request) => {
@@ -77,11 +79,10 @@ respondWith((request) => {
 });
 await emit("session_start");
 await eventually(() => accepted, "an error reply must not acknowledge idle");
-`);
-});
+`));
 
-test("preserves busy continuations and blocked precedence, then stops on shutdown", () => {
-  runScenario(`
+  test("preserves busy continuations and blocked precedence, then stops on shutdown", () =>
+    runScenario(`
 setIdle(false);
 await emit("session_start");
 await eventually(() => states().at(-1)?.params.state === "working", "working");
@@ -104,11 +105,10 @@ const count = reports.length;
 ctx.isIdle = () => { throw new Error("stale context accessed"); };
 await delay(1150);
 assert.equal(reports.length, count, "shutdown must stop reconciliation");
-`);
-});
+`));
 
-test("headless sessions cannot report into their parent's pane", () => {
-  runScenario(`
+  test("headless sessions cannot report into their parent's pane", () =>
+    runScenario(`
 for (const mode of ["rpc", "json", "print"]) {
   const headless = { ...ctx, mode, hasUI: true };
   await emit("session_start", headless);
@@ -119,11 +119,10 @@ for (const mode of ["rpc", "json", "print"]) {
 }
 await delay(1150);
 assert.equal(reports.length, 0);
-`);
-});
+`));
 
-test("a newer working state supersedes a failed idle delivery", () => {
-  runScenario(`
+  test("a newer working state supersedes a failed idle delivery", () =>
+    runScenario(`
 let idleAttempts = 0;
 respondWith((request) => {
   if (request.method === "pane.report_agent" && request.params.state === "idle") {
@@ -141,40 +140,39 @@ const count = states().length;
 await delay(1150);
 assert.equal(states().length, count, "must not retry superseded idle");
 assert.equal(states().at(-1).params.state, "working");
-`);
-});
+`));
 
-test("session-identity errors do not prevent lifecycle state delivery", () => {
-  runScenario(`
+  test("session-identity errors do not prevent lifecycle state delivery", () =>
+    runScenario(`
 respondWith((request) => request.method === "pane.report_agent_session"
   ? { id: request.id, error: { code: "unavailable", message: "identity unavailable" } }
   : { id: request.id, result: {} });
 await emit("session_start");
 await eventually(() => states().at(-1)?.params.state === "idle", "state must not wait for identity success");
 assert.equal(states().at(-1).params.agent_session_path, "/tmp/herdr-test-session.jsonl");
-`);
-});
+`));
 
-test("stays inert when Pi is not running inside Herdr", () => {
-  const result = spawnSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      `import extension from ${JSON.stringify(extensionUrl.href)};
+  test("stays inert when Pi is not running inside Herdr", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import extension from ${JSON.stringify(extensionUrl.href)};
 extension(new Proxy({}, { get() { process.exit(2); } }));`,
-    ],
-    {
-      encoding: "utf8",
-      timeout: 10_000,
-      env: {
-        ...process.env,
-        HERDR_ENV: "0",
-        HERDR_PANE_ID: "",
-        HERDR_SOCKET_PATH: "",
+      ],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          HERDR_ENV: "0",
+          HERDR_PANE_ID: "",
+          HERDR_SOCKET_PATH: "",
+        },
       },
-    },
-  );
+    );
 
-  assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, result.stderr);
+  });
 });

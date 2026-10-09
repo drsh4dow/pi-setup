@@ -50,10 +50,22 @@ const MAX_BACKOFF_MS = 60_000;
 export function shouldEmit(
   batch: { firstSeenAt: number; lastSeenAt: number; lastEmittedAt: number | null },
   now: number,
+  debounceMs = DEBOUNCE_MS,
 ) {
   if (batch.lastEmittedAt !== null) return now - batch.lastEmittedAt >= REMINDER_MS;
 
-  return now - batch.lastSeenAt >= DEBOUNCE_MS || now - batch.firstSeenAt >= MAX_DEBOUNCE_MS;
+  return now - batch.lastSeenAt >= debounceMs || now - batch.firstSeenAt >= MAX_DEBOUNCE_MS;
+}
+
+// Tests shorten the quiet period so they observe delivery without waiting 30 seconds.
+function debounceWindow(value: string | undefined) {
+  if (value === undefined) return DEBOUNCE_MS;
+  const debounceMs = Number(value);
+
+  if (!Number.isInteger(debounceMs) || debounceMs < 0)
+    throw new Error(`Invalid BABYSIT_PR_DEBOUNCE_MS: ${value}`);
+
+  return debounceMs;
 }
 
 function emit(message: string, cwd: string) {
@@ -146,6 +158,7 @@ async function settleDebounce(
   paths: StatePaths,
   current: Snapshot,
   trustedBots: Set<string>,
+  debounceMs: number,
 ) {
   let snapshot = current;
 
@@ -161,13 +174,13 @@ async function settleDebounce(
 
     const now = Date.now();
 
-    if (shouldEmit({ firstSeenAt, lastSeenAt, lastEmittedAt: null }, now)) {
+    if (shouldEmit({ firstSeenAt, lastSeenAt, lastEmittedAt: null }, now, debounceMs)) {
       emitPending(cwd, snapshot.pr, paths, records, false);
 
       return snapshot;
     }
 
-    const dueAt = Math.min(lastSeenAt + DEBOUNCE_MS, firstSeenAt + MAX_DEBOUNCE_MS);
+    const dueAt = Math.min(lastSeenAt + debounceMs, firstSeenAt + MAX_DEBOUNCE_MS);
 
     // oxlint-disable-next-line no-await-in-loop -- Polling, debounce, and backoff must complete before the next poll.
     await sleep(Math.max(1, dueAt - now));
@@ -187,7 +200,7 @@ function maybeRemind(cwd: string, pr: PullRequest, paths: StatePaths) {
     emitPending(cwd, pr, paths, records, true);
 }
 
-async function watch(cwd: string, reference: string, trustedBots: Set<string>) {
+async function watch(cwd: string, reference: string, trustedBots: Set<string>, debounceMs: number) {
   const initial = resolvePr(cwd, reference);
   const paths = statePaths(cwd, initial.identity);
   acquireLock(paths, trustedBots);
@@ -209,7 +222,7 @@ async function watch(cwd: string, reference: string, trustedBots: Set<string>) {
 
         if (!terminalState(snapshot.pr))
           // oxlint-disable-next-line no-await-in-loop -- Polling, debounce, and backoff must complete before the next poll.
-          snapshot = await settleDebounce(cwd, reference, paths, snapshot, trustedBots);
+          snapshot = await settleDebounce(cwd, reference, paths, snapshot, trustedBots, debounceMs);
         const ended = terminalState(snapshot.pr);
 
         if (ended) {
@@ -295,7 +308,12 @@ async function main() {
 
   switch (action) {
     case "watch":
-      await watch(cwd, reference, parseTrustedBots(ids));
+      await watch(
+        cwd,
+        reference,
+        parseTrustedBots(ids),
+        debounceWindow(process.env.BABYSIT_PR_DEBOUNCE_MS),
+      );
 
       return;
     case "drain": {

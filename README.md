@@ -18,10 +18,8 @@ and loaded directly by Pi; they are not separate packages to install.
 - Codemode enabled in `on` mode alongside the direct tools
 
 Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as this setup's system prompt. It
-defines the agent's behavior and engineering standards and is tuned for Claude.
-Sessions whose first prompt runs on a GPT model use
-[`agent/GPT_SYSTEM.md`](agent/GPT_SYSTEM.md) instead; see `model-system-prompt`
-below.
+defines the agent's behavior and engineering standards and applies to every
+model.
 
 ## Install
 
@@ -86,8 +84,6 @@ setup files by `agent/scripts/verify-docs.ts`.
   models
 - `herdr-agent-state`: Herdr pane state and Pi session reporting, with idle
   reconciliation independent of background processes
-- `model-system-prompt`: Uses `agent/GPT_SYSTEM.md` for sessions that start on a
-  GPT model
 - `process-status`: `/ps` views for background terminals and the `session_usage`
   tool
 - `prompt-context`: Restores active-tool snippets and guidelines in custom
@@ -114,14 +110,6 @@ changes during an active run appear in the next run's injected context.
 Extensions that force a complete system prompt override structured sections. Run
 `/reload` in existing sessions to load the extension changes and enable
 codemode.
-
-The `model-system-prompt` extension picks the system prompt from the model in
-effect at a session's first prompt. A model whose ID starts with `gpt-` gets
-`agent/GPT_SYSTEM.md`; every other model keeps `agent/SYSTEM.md`. Later `/model`
-switches keep the session's prompt, and resumed sessions recover it from their
-recorded model changes. A trusted project `.pi/SYSTEM.md` or `--system-prompt`
-applies to every model. Both files are read at load time, so run `/reload` after
-editing either.
 
 Use `bg_start` only for services, watchers, subagents, and finite commands that
 run alongside independent work. A finite command's natural exit wakes the owner
@@ -217,8 +205,7 @@ Custom keybindings:
 
 ```text
 agent/
-├── SYSTEM.md          # system prompt, tuned for Claude
-├── GPT_SYSTEM.md      # system prompt for sessions that start on GPT
+├── SYSTEM.md          # system prompt
 ├── settings.json      # models, thinking level, and theme
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions

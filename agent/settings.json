@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.0.4",
+  "lastChangelogVersion": "1.1.0",
   "packages": [],
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",
@@ -7,7 +7,8 @@
     "opencode-go/glm-5.3-flash",
     "anthropic/claude-opus-5-5",
     "openai/gpt-6.1-sol",
-    "openai/gpt-6-astra"
+    "openai/gpt-6-astra",
+    "anthropic/claude-fable-5-1"
   ],
   "defaultThinkingLevel": "high",
   "compaction": {
@@ -21,7 +22,7 @@
   "codemode": {
     "mode": "on"
   },
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",
   "terminal": {

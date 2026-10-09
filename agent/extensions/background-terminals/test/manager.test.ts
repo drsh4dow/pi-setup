@@ -224,11 +224,14 @@ suite("background terminal manager", { concurrency: true }, () => {
             cwd,
           });
 
-          yield* wait(100);
-          const running = manager.get(run.id);
-          assert.ok(running);
-          const childPid = Number(/child:(\d+)/.exec(running.stdout.text)?.[1]);
-          assert.ok(childPid);
+          // The shell prints the child PID after installing its TERM trap.
+          const deadline = now() + 4_000;
+
+          while (now() < deadline && !manager.get(run.id)?.stdout.text.includes("child:"))
+            yield* wait(20);
+          const output = manager.get(run.id)?.stdout.text ?? "";
+          const childPid = Number(/child:(\d+)/.exec(output)?.[1]);
+          assert.ok(childPid, output);
           const started = now();
           yield* manager.kill([run.id]);
           const snapshot = manager.get(run.id);

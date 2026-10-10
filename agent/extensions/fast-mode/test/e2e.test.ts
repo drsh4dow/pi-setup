@@ -17,22 +17,14 @@ import {
   testEffect,
   waitFor,
 } from "../../test/tmux.ts";
-import { fastServiceTier } from "../index.ts";
+import {
+  describeRequestFields,
+  type FastModeConfig,
+  FastModeSettings,
+  fastRequestFields,
+} from "../index.ts";
 
 const skip = e2eUnavailable();
-
-const settingsSchema = Schema.fromJsonString(Schema.Struct({ enabled: Schema.Boolean }));
-
-const persistedEnabled = Effect.fn("persistedEnabled")(function* (session: PiSession) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = join(session.agentDir, "gpt-fast-mode.json");
-
-  if (!(yield* fs.exists(path))) return false;
-
-  const settings = yield* Schema.decodeEffect(settingsSchema)(yield* fs.readFileString(path));
-
-  return settings.enabled;
-}, Effect.provide(BunFileSystem.layer));
 
 function footerModel(pane: string) {
   const matches = [...pane.matchAll(/\(([a-z0-9-]+)\)\s+(\S+)\s+•/g)];
@@ -42,18 +34,43 @@ function footerModel(pane: string) {
   return { provider: last[1], id: last[2] };
 }
 
-function noticeFor(enabled: boolean, model: { provider: string; id: string }) {
-  if (!enabled) return /GPT Fast mode disabled\./;
-  const serviceTier = fastServiceTier(model);
+const savedConfig = Effect.fn("savedConfig")(function* (session: PiSession) {
+  const fs = yield* FileSystem.FileSystem;
 
-  return serviceTier
-    ? new RegExp(`GPT Fast mode enabled \\(service_tier: ${serviceTier}\\)\\.`)
-    : /GPT Fast mode enabled, but .+ is not supported\./;
+  const settings = yield* Schema.decodeEffect(Schema.fromJsonString(FastModeSettings))(
+    yield* fs.readFileString(join(session.agentDir, "settings.json")),
+  );
+
+  return settings.fastMode;
+}, Effect.provide(BunFileSystem.layer));
+
+const persistedEnabled = Effect.fn("persistedEnabled")(function* (session: PiSession) {
+  const config = yield* savedConfig(session);
+
+  return config?.enabled === true;
+});
+
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
+function noticeFor(
+  enabled: boolean,
+  config: FastModeConfig | undefined,
+  model: { provider: string; id: string },
+) {
+  if (!enabled) return /Fast mode disabled\./;
+  const fields = fastRequestFields(config, model);
+
+  return fields
+    ? new RegExp(escapeRegExp(`Fast mode enabled (${describeRequestFields(fields)}).`))
+    : /Fast mode enabled, but .+ is not listed in the fastMode setting\./;
+}
+
+describe("fast-mode (real pi in tmux)", { skip }, () => {
   let session: PiSession;
   let model: { provider: string; id: string };
+  let config: FastModeConfig | undefined;
   let initialEnabled: boolean;
   let expected: boolean;
 
@@ -66,6 +83,7 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
         initialEnabled = yield* persistedEnabled(value);
         expected = initialEnabled;
         model = footerModel(yield* capture(value));
+        config = yield* savedConfig(value);
       }),
   );
 
@@ -77,15 +95,20 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
     yield* trigger;
     yield* waitFor(
       session,
-      (pane) => noticeFor(next, model).test(pane.match(/^.*GPT Fast mode .*$/gm)?.at(-1) ?? ""),
+      (pane) => noticeFor(next, config, model).test(pane.match(/^.*Fast mode .*$/gm)?.at(-1) ?? ""),
       { timeoutMs: 30_000, description },
     );
     expected = next;
     assert.equal(
       yield* persistedEnabled(session),
       next,
-      "gpt-fast-mode.json does not reflect the announced state",
+      "settings.json fastMode.enabled does not reflect the announced state",
     );
+    // The footer renders on its own frame after the notice.
+    yield* waitFor(session, (pane) => /\u26a1\ufe0e? Fast/.test(pane) === next, {
+      timeoutMs: 5_000,
+      description: `footer indicator ${next ? "shown" : "hidden"}`,
+    });
     assert.equal(yield* isDead(session), false);
   });
 
@@ -95,8 +118,8 @@ describe("gpt-fast-mode (real pi in tmux)", { skip }, () => {
     const pane = yield* capture(session);
     assert.match(
       pane,
-      /\[Extensions\][\s\S]*gpt-fast-mode/,
-      `gpt-fast-mode missing from the startup banner:\n${pane}`,
+      /\[Extensions\][\s\S]*fast-mode/,
+      `fast-mode missing from the startup banner:\n${pane}`,
     );
   });
 

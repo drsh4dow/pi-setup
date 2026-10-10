@@ -18,7 +18,9 @@
       }
     }
   },
-  "defaultTools": ["+codemode"],
+  "defaultTools": [
+    "+codemode"
+  ],
   "codemode": {
     "mode": "on"
   },
@@ -36,6 +38,30 @@
   "cacheWarming": "streaming",
   "markdown": {
     "mermaid": "streaming"
+  },
+  "fastMode": {
+    "enabled": true,
+    "providers": {
+      "anthropic": {
+        "request": {
+          "speed": "fast",
+          "betas": [
+            "fast-mode-2026-02-01"
+          ]
+        },
+        "models": [
+          "claude-opus-5-5"
+        ]
+      },
+      "openai": {
+        "request": {
+          "service_tier": "fast"
+        },
+        "models": [
+          "gpt-6.1-sol"
+        ]
+      }
+    }
   },
   "deviceId": "56db2cc9-59f0-4dbf-b318-126c9049b11c"
 }

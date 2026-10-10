@@ -14,7 +14,7 @@ and loaded directly by Pi; they are not separate packages to install.
 - Child-agent model: `openai-codex/gpt-6-luna` with high thinking
 - Theme: Catppuccin Mocha; Gruvbox Dark Hard is also included
 - Pi's built-in compaction with default settings
-- GPT Fast mode enabled
+- Fast mode enabled for the models listed under `fastMode` in `agent/settings.json`
 - Codemode enabled in `on` mode alongside the direct tools
 
 Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as this setup's system prompt. It
@@ -80,8 +80,11 @@ setup files by `agent/scripts/verify-docs.ts`.
 
 - `background-terminals`: `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for
   session-owned processes, plus `emit-to-pi` notifications
-- `gpt-fast-mode`: `/fast` and `Ctrl-Alt-M` for supported OpenAI API and Codex
-  models
+- `fast-mode`: `/fast` and `Ctrl-Alt-M` for the models listed under `fastMode`
+  in `agent/settings.json`; the toggle is saved as `fastMode.enabled`, each
+  provider entry sets the request fields to add, and array fields such as
+  Anthropic's `betas` are merged with the request's existing values. The footer
+  status line ends with `⚡ Fast` while it is on
 - `herdr-agent-state`: Herdr pane state and Pi session reporting, with idle
   reconciliation independent of background processes
 - `process-status`: `/ps` views for background terminals and the `session_usage`
@@ -199,7 +202,7 @@ Custom keybindings:
 
 - `Ctrl-P` / `Ctrl-N` — move through selectors
 - `Alt-P` — cycle enabled models
-- `Ctrl-Alt-M` — toggle GPT Fast mode
+- `Ctrl-Alt-M` — toggle Fast mode
 
 ## Repository layout
 

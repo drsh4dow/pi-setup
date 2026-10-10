@@ -115,13 +115,7 @@ const startPi = Effect.fn("startPi")(function* () {
 
   const sourceAgentDir = getAgentDir();
 
-  for (const name of [
-    "settings.json",
-    "auth.json",
-    "keybindings.json",
-    "models.json",
-    "gpt-fast-mode.json",
-  ]) {
+  for (const name of ["settings.json", "auth.json", "keybindings.json", "models.json"]) {
     const source = pathService.join(sourceAgentDir, name);
 
     if (yield* fs.exists(source)) {

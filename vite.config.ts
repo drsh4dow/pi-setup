@@ -60,7 +60,8 @@ export default defineConfig({
       },
     },
   },
-  fmt: { ignorePatterns: ignoredFiles },
+  // Pi rewrites agent/settings.json with its own JSON formatting whenever a setting changes.
+  fmt: { ignorePatterns: [...ignoredFiles, "agent/settings.json"] },
   lint: {
     ignorePatterns: ignoredFiles,
     plugins: ["typescript", "import", "unicorn", "oxc", "effecttsgo"],

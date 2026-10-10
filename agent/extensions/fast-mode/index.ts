@@ -201,13 +201,19 @@ function announceState(
   );
 }
 
-function showIndicator(ctx: ExtensionContext, enabled: boolean) {
+// The indicator appears only when requests to the current model receive the fast fields.
+function showIndicator(
+  ctx: ExtensionContext,
+  config: FastModeConfig | undefined,
+  enabled: boolean,
+) {
   if (ctx.mode !== "tui") return;
+  const active = enabled && fastRequestFields(config, ctx.model) !== undefined;
 
   // The footer orders extension statuses by key; "speed" sorts after "session-timer",
   // so the indicator follows the session time.
   // U+FE0E asks for the text glyph: U+26A1 otherwise renders as a color emoji that ignores dim.
-  ctx.ui.setStatus("speed", enabled ? ctx.ui.theme.fg("dim", "\u26a1\ufe0e Fast") : undefined);
+  ctx.ui.setStatus("speed", active ? ctx.ui.theme.fg("dim", "\u26a1\ufe0e Fast") : undefined);
 }
 
 export default function fastModeExtension(
@@ -225,8 +231,9 @@ export default function fastModeExtension(
         Effect.tap(() =>
           Effect.sync(() => {
             enabled = nextEnabled;
-            announceState(ctx, config(), enabled);
-            showIndicator(ctx, enabled);
+            const currentConfig = config();
+            announceState(ctx, currentConfig, enabled);
+            showIndicator(ctx, currentConfig, enabled);
           }),
         ),
         Effect.catch(() =>
@@ -245,9 +252,12 @@ export default function fastModeExtension(
   // Pi builds a fresh settings manager from disk for every session and reloads it on /reload,
   // so this sees toggles saved by earlier sessions and other Pi processes.
   pi.on("session_start", (_event, ctx) => {
-    enabled = config()?.enabled === true;
-    showIndicator(ctx, enabled);
+    const currentConfig = config();
+    enabled = currentConfig?.enabled === true;
+    showIndicator(ctx, currentConfig, enabled);
   });
+  // Pi updates ctx.model before emitting model_select.
+  pi.on("model_select", (_event, ctx) => showIndicator(ctx, config(), enabled));
   pi.on("before_provider_request", (event, ctx) =>
     enabled ? withFastRequest(config(), ctx.model, event.payload) : undefined,
   );

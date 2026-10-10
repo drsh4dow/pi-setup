@@ -105,9 +105,10 @@ describe("fast-mode (real pi in tmux)", { skip }, () => {
       "settings.json fastMode.enabled does not reflect the announced state",
     );
     // The footer renders on its own frame after the notice.
-    yield* waitFor(session, (pane) => /\u26a1\ufe0e? Fast/.test(pane) === next, {
+    const indicatorShown = next && fastRequestFields(config, model) !== undefined;
+    yield* waitFor(session, (pane) => /\u26a1\ufe0e? Fast/.test(pane) === indicatorShown, {
       timeoutMs: 5_000,
-      description: `footer indicator ${next ? "shown" : "hidden"}`,
+      description: `footer indicator ${indicatorShown ? "shown" : "hidden"}`,
     });
     assert.equal(yield* isDead(session), false);
   });

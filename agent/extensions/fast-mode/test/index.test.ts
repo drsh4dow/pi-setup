@@ -163,7 +163,7 @@ test("loads shortcut settings, filtering invalid entries and preserving disable 
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer))),
   ));
 
-test("/fast persists, announces, and shows toggles and only maps enabled requests", async (t) => {
+test("/fast persists, announces, and shows toggles for fast models and only maps enabled requests", async (t) => {
   const { mkdtempSync, readFileSync, rmSync, writeFileSync } = process.getBuiltinModule("node:fs");
 
   const { tmpdir } = process.getBuiltinModule("node:os");
@@ -239,6 +239,26 @@ test("/fast persists, announces, and shows toggles and only maps enabled request
   });
   await adapter.emit("session_start", { type: "session_start", reason: "new" }, ctx);
   assert.deepEqual(await request(), { ...payload, service_tier: "fast" });
+
+  const otherModel = unsafeFixture<NonNullable<ExtensionCommandContext["model"]>>({
+    provider: "opencode-go",
+    id: "glm-5.3-flash",
+  });
+
+  const selectModel = (nextModel: NonNullable<ExtensionCommandContext["model"]>) => {
+    const previousModel = ctx.model;
+    ctx.model = nextModel;
+
+    return adapter.emit(
+      "model_select",
+      { type: "model_select", model: nextModel, previousModel, source: "set" },
+      ctx,
+    );
+  };
+
+  await selectModel(otherModel);
+  await selectModel(model);
+
   await toggle("", ctx);
   assert.equal(await request(), undefined);
   ctx.model = undefined;
@@ -253,5 +273,13 @@ test("/fast persists, announces, and shows toggles and only maps enabled request
     ["Could not save Fast mode setting.", "error"],
   ]);
   const indicator = "dim:\u26a1\ufe0e Fast";
-  assert.deepEqual(indicators, [undefined, indicator, indicator, undefined, indicator]);
+  assert.deepEqual(indicators, [
+    undefined,
+    indicator,
+    indicator,
+    undefined,
+    indicator,
+    undefined,
+    undefined,
+  ]);
 });

@@ -15,36 +15,44 @@ const ignoredFiles = [
 
 export default defineConfig({
   run: {
+    // Verify stays quiet on success so agents can read its whole output. Tests use the
+    // dot reporter, which still prints each failure in full. Build and deploy progress
+    // is dropped, and their errors still reach stderr.
     tasks: {
       // Each cache entry would archive all three compiled binaries; building takes under a second.
       "build:cli": {
         command: [
-          "vp exec bun build --compile --outfile .build/bin/emit-to-pi agent/extensions/background-terminals/bin/emit-to-pi.ts",
-          "vp exec bun build --compile --outfile .build/bin/babysit-pr agent/skills/babysit-pr/scripts/babysit-pr.ts",
-          "vp exec bun build --compile --outfile .build/bin/dumpfile cli/dumpfile/src/cli.ts",
+          "vp exec bun build --compile --outfile .build/bin/emit-to-pi agent/extensions/background-terminals/bin/emit-to-pi.ts > /dev/null",
+          "vp exec bun build --compile --outfile .build/bin/babysit-pr agent/skills/babysit-pr/scripts/babysit-pr.ts > /dev/null",
+          "vp exec bun build --compile --outfile .build/bin/dumpfile cli/dumpfile/src/cli.ts > /dev/null",
         ],
         cache: false,
       },
       "verify:strict-diagnostics": "node agent/scripts/verify-strict-diagnostics.ts",
       "test:extensions": {
         command:
-          "node --test $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
+          "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
         dependsOn: ["build:cli"],
       },
       "test:babysit-pr": {
-        command: "node --test agent/skills/babysit-pr/test/*.test.ts",
+        command: "node --test --test-reporter=dot agent/skills/babysit-pr/test/*.test.ts",
         dependsOn: ["build:cli"],
       },
       "test:dumpfile": {
         command: [
           "bash -n cli/dumpfile/setup.sh cli/dumpfile/bin/dumpfile",
-          "node --test cli/dumpfile/test/*.test.ts",
-          "wrangler deploy --dry-run --config cli/dumpfile/wrangler.jsonc",
+          "node --test --test-reporter=dot cli/dumpfile/test/*.test.ts",
+          "WRANGLER_LOG=warn wrangler deploy --dry-run --config cli/dumpfile/wrangler.jsonc",
         ],
         dependsOn: ["build:cli"],
+        // The dry run bundles into .wrangler, which would otherwise make every run a cache miss.
+        cache: {
+          input: [{ auto: true }, "!cli/dumpfile/.wrangler/**"],
+          output: [{ auto: true }, "!cli/dumpfile/.wrangler/**"],
+        },
       },
       "test:docs": [
-        "node --test agent/scripts/test/*.test.ts",
+        "node --test --test-reporter=dot agent/scripts/test/*.test.ts",
         "node agent/scripts/verify-docs.ts",
       ],
       // The dependencies run concurrently; vp check runs once they pass.

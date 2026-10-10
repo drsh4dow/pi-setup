@@ -50,7 +50,6 @@ function requireRejected(violations: Violation[]) {
         ),
         `${path} was not rejected with ${diagnostic}\n${result.output}`,
       );
-      console.log(`${path}: rejected with ${diagnostic}`);
     }
   } finally {
     for (const { path } of violations) rmSync(join(fixture, path));
@@ -99,19 +98,20 @@ try {
       result.output.split("\n").some((line) => line.startsWith(`${formatPath} (`)),
       result.output,
     );
-    console.log(`${formatPath}: rejected with Formatting issues found`);
   } finally {
     rmSync(join(fixture, formatPath));
   }
 
   // Alone, a rejected warning proves that warnings fail the check.
-  requireRejected([
+  const warnings = [
     {
       path: "agent/extensions/warning.ts",
       source: "export const now = new Date();\n",
       diagnostic: "global-date",
     },
-  ]);
+  ];
+
+  requireRejected(warnings);
 
   // A missing project or an over-broad ignore must not silently drop owned code.
   const typeErrors = sourceDirectories.map((directory) => ({
@@ -120,7 +120,7 @@ try {
     diagnostic: "TS2322",
   }));
 
-  requireRejected([
+  const lintViolations = [
     ...typeErrors,
     {
       path: "agent/extensions/effect.ts",
@@ -143,7 +143,13 @@ try {
       source: `${"// line\n".repeat(601)}export const value = true;\n`,
       diagnostic: "max-lines",
     },
-  ]);
+  ];
+
+  requireRejected(lintViolations);
+
+  // The formatting violation counts as one.
+  const rejected = 1 + warnings.length + lintViolations.length;
+  console.log(`Strict diagnostics verified (${rejected} violations rejected).`);
 } finally {
   rmSync(fixture, { recursive: true, force: true });
 }

@@ -24,7 +24,7 @@
   "codemode": {
     "mode": "on"
   },
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "treeFilterMode": "default",
   "theme": "catppuccin-mocha",
   "terminal": {

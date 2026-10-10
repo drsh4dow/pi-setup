@@ -1,6 +1,6 @@
 # Notes verification map
 
-This directory is an example verification map for Notes. A generated map should use the target app's actual commands and prerequisites. For ordinary verification, select the recipe relevant to the changed behavior; only a requested full-map audit covers all features.
+This directory is the maintained source for verifying the user-facing behavior of Notes. Read the index before driving the app, then use the matching feature file as the recipe.
 
 ## Baseline preconditions
 
@@ -15,7 +15,7 @@ This directory is an example verification map for Notes. A generated map should 
 
 - Start every recipe from the baseline state unless its preconditions say otherwise.
 - Prefer ARIA roles and accessible names over CSS selectors or DOM position.
-- Adapt this example's commands to the target app when generating a map. In a generated map, follow its documented commands and investigate observed drift.
+- Treat every command as literal. Keep quoted names and flags unchanged.
 - Run browser actions through `control-notes browser`.
 - Run terminal actions through `control-notes cli -- <command>`.
 - Restore seeded data after a mutation. Do not remove proof artifacts during cleanup.
@@ -23,9 +23,9 @@ This directory is an example verification map for Notes. A generated map should 
 ## Proof and skip reporting
 
 - Capture the user action and the resulting state, not only the final screen.
-- Capture an ARIA snapshot or screenshot according to the behavior being verified; use both when each adds evidence.
+- UI proof includes an ARIA snapshot and a screenshot with the app identity visible.
 - CLI proof includes the command, stdout, stderr, and exit code.
-- When persistence is part of the contract, confirm the stored value from a second view.
+- Mutation proof includes a read-only second view of the stored value.
 - Record the feature ID and entry point used with every artifact.
 - Report an unreachable path with the attempted command and the unmet precondition.
 - Do not report a skipped entry point as verified through a different path.

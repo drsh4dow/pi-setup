@@ -12,14 +12,6 @@
         "models": [
           "claude-opus-5-5"
         ]
-      },
-      "openai": {
-        "request": {
-          "service_tier": "fast"
-        },
-        "models": [
-          "gpt-6.1-sol"
-        ]
       }
     }
   },

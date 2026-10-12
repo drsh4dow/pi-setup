@@ -14,9 +14,6 @@ the skills it should invoke.
 Reference specs, plans, ADRs, issues, commits, and diffs by path or URL rather
 than restating their content.
 
-Redact secrets such as API keys and passwords, and personally identifiable
-information.
-
 If the user passed arguments, treat them as the focus of the next session and
 tailor the handoff to it.
 

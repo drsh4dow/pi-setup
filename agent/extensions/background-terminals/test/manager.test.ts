@@ -165,8 +165,8 @@ suite("background terminal manager", { concurrency: true }, () => {
           { concurrency: "unbounded" },
         );
 
-        assert.equal(first[0].state, "killed");
-        assert.equal(second[0].state, "killed");
+        assert.equal(first[0].snapshot.state, "killed");
+        assert.equal(second[0].snapshot.state, "killed");
         assert.equal(notifications, 1);
         yield* manager.shutdown();
       }),
@@ -198,7 +198,7 @@ suite("background terminal manager", { concurrency: true }, () => {
               yield* wait(20);
             assert.match(manager.get(run.id)?.stdout.text ?? "", /automatic-termination-started/);
             const [result] = yield* manager.kill([run.id]);
-            assert.equal(result.state, "killed");
+            assert.equal(result.snapshot.state, "killed");
             assert.equal(result.killed, true);
             assert.equal(manager.get(run.id)?.state, "killed");
           } finally {

@@ -542,10 +542,9 @@ export class BackgroundTerminalManager {
 
       return {
         id,
-        title: snapshot.title,
-        state: snapshot.state,
         wasRunning,
         killed: wasRunning && snapshot.state === "killed",
+        snapshot,
       };
     });
   });

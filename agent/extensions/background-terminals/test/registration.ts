@@ -107,6 +107,7 @@ export function registeredExtension(
         };
       },
       registerCommand() {},
+      registerMessageRenderer() {},
       registerTool<P extends TSchema, D, S>(definition: ToolDefinition<P, D, S>) {
         definitions.push({
           name: definition.name,

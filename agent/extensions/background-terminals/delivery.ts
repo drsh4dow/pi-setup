@@ -1,6 +1,6 @@
 import { type Static, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Clock, Effect } from "effect";
+import { Effect } from "effect";
 import { sanitizeInline, sanitizeMultiline, truncateUtf8Tail } from "../../lib/text.ts";
 import {
   MAX_TRACKED,
@@ -10,6 +10,18 @@ import {
   terminalResultFields,
 } from "./manager.ts";
 import type { RunningTerminalNotification } from "./notifications.ts";
+import {
+  elapsedMs,
+  formatDuration,
+  type NotificationView,
+  notificationView,
+  type TerminalView,
+  terminalView,
+} from "./render.ts";
+
+export const RESULTS_MESSAGE = "background-terminal-results";
+
+export const NOTIFICATION_MESSAGE = "background-terminal-notification";
 
 const MAX_LINES = 80;
 
@@ -41,13 +53,6 @@ function tail(text: string, maxBytes = MAX_TEXT): string {
     .join("\n");
 }
 
-function elapsed(snapshot: TerminalMetadata): string {
-  const end =
-    snapshot.state === "running" ? Effect.runSync(Clock.currentTimeMillis) : snapshot.settledAt;
-
-  return `${Math.max(0, Math.round((end - snapshot.createdAt) / 1000))}s`;
-}
-
 export function statusSummary(snapshot: TerminalMetadata): string {
   const fields = terminalResultFields(snapshot);
 
@@ -57,7 +62,7 @@ export function statusSummary(snapshot: TerminalMetadata): string {
       : (fields.signal ??
         (fields.exitCode === undefined ? snapshot.state : `exit ${fields.exitCode}`));
 
-  return `[${snapshot.state}] ${sanitizeInline(snapshot.title)} · ${exit} · ${elapsed(snapshot)}`;
+  return `[${snapshot.state}] ${sanitizeInline(snapshot.title)} · ${exit} · ${formatDuration(elapsedMs(snapshot))}`;
 }
 
 export function summary(snapshot: TerminalMetadata): string {
@@ -196,7 +201,11 @@ type PendingDelivery = DeliveryItem & { attempts: number };
 interface DeliveryBatch {
   kind: DeliveryItem["kind"];
   items: PendingDelivery[];
+  customType: string;
   content: string;
+  details:
+    | { ids: string[]; terminals: TerminalView[] }
+    | { ids: string[]; notifications: NotificationView[] };
 }
 
 export class BackgroundTerminalDelivery {
@@ -288,6 +297,8 @@ export class BackgroundTerminalDelivery {
   }
   private batch(kind: DeliveryItem["kind"]): DeliveryBatch | undefined {
     const items: PendingDelivery[] = [];
+    const terminals: TerminalView[] = [];
+    const notifications: NotificationView[] = [];
 
     const parts = [
       kind === "notification"
@@ -319,9 +330,25 @@ export class BackgroundTerminalDelivery {
       parts.push(separator, rendered);
       bytes += addedBytes;
       items.push(item);
+
+      if (item.kind === "completion") terminals.push(terminalView(item.snapshot));
+      else notifications.push(notificationView(item.notification));
     }
 
-    return items.length ? { kind, items, content: parts.join("") } : undefined;
+    if (!items.length) return undefined;
+    const ids = items.map((item) => item.id);
+    const content = parts.join("");
+
+    if (kind === "completion")
+      return { kind, items, customType: RESULTS_MESSAGE, content, details: { ids, terminals } };
+
+    return {
+      kind,
+      items,
+      customType: NOTIFICATION_MESSAGE,
+      content,
+      details: { ids, notifications },
+    };
   }
   private scheduleRetry(attempt: number) {
     if (!this.context) return;
@@ -334,15 +361,15 @@ export class BackgroundTerminalDelivery {
   }
   // Returns the attempt needing backoff, if any items remain retryable.
   private sendBatch(batch: DeliveryBatch): number | undefined {
-    const ids = batch.items.map((item) => item.id);
+    const { ids } = batch.details;
 
     try {
       this.pi.sendMessage(
         {
-          customType: `background-terminal-${batch.kind === "notification" ? "notification" : "results"}`,
+          customType: batch.customType,
           content: batch.content,
           display: true,
-          details: { ids },
+          details: batch.details,
         },
         {
           deliverAs: "steer",

@@ -12,6 +12,8 @@ import {
 import {
   BackgroundTerminalDelivery,
   formatTerminalReport,
+  NOTIFICATION_MESSAGE,
+  RESULTS_MESSAGE,
   sanitizeErrorForDisplay,
   summary,
   terminalMetadata,
@@ -19,6 +21,17 @@ import {
   terminalStateSchema,
 } from "./delivery.ts";
 import { MAX_TRACKED } from "./manager.ts";
+import {
+  renderKillCall,
+  renderKillResult,
+  renderNotificationMessage,
+  renderResultsMessage,
+  renderStartCall,
+  renderStartResult,
+  renderStatusCall,
+  renderStatusResult,
+  terminalView,
+} from "./render.ts";
 import { type BackgroundTerminalSession, joinBackgroundTerminalSession } from "./session.ts";
 
 const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
@@ -88,6 +101,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
   });
   pi.on("agent_settled", () => Effect.runPromise(delivery.flush));
   pi.on("session_shutdown", () => Effect.runPromise(leaveSession()));
+  pi.registerMessageRenderer(RESULTS_MESSAGE, renderResultsMessage);
+  pi.registerMessageRenderer(NOTIFICATION_MESSAGE, renderNotificationMessage);
 
   pi.registerTool({
     name: "bg_start",
@@ -110,6 +125,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     }),
     outputSchema: terminalMetadataSchema,
     executionMode: "parallel",
+    renderCall: renderStartCall,
+    renderResult: renderStartResult,
     execute(_id, params, _signal, _update, ctx) {
       return Effect.runPromise(
         Effect.gen(function* () {
@@ -170,6 +187,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     parameters: Type.Object({ id: Type.String({ maxLength: 64 }) }),
     outputSchema: statusOutputSchema,
     executionMode: "parallel",
+    renderCall: renderStatusCall,
+    renderResult: renderStatusResult,
     execute(_id, params) {
       return Effect.runPromise(
         Effect.sync(() => {
@@ -204,8 +223,6 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
             if (!oldest.done) observations.delete(oldest.value);
           }
 
-          const details = { ...metadata, observation };
-
           return {
             content: [
               {
@@ -213,9 +230,10 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
                 text: `${formatTerminalReport(snapshot)}\nObservation: ${observation} since previous bg_status read. stdout=${snapshot.stdout.totalBytes} bytes stderr=${snapshot.stderr.totalBytes} bytes.${snapshot.state === "running" ? "\nCompletion or an emit-to-pi event will wake you; do not poll." : ""}`,
               },
             ],
-            details,
+            details: { ...metadata, observation, terminal: terminalView(snapshot) },
             structuredContent: {
-              ...details,
+              ...metadata,
+              observation,
               stdout: sanitizeMultiline(snapshot.stdout.text),
               stderr: sanitizeMultiline(snapshot.stderr.text),
             } satisfies Static<typeof statusOutputSchema>,
@@ -270,6 +288,8 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     }),
     outputSchema: killOutputSchema,
     executionMode: "parallel",
+    renderCall: renderKillCall,
+    renderResult: renderKillResult,
     execute(_id, params, signal) {
       const ids = [...new Set(params.ids)];
       const terminalSession = currentSession();
@@ -286,10 +306,13 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
           Effect.map((results) => {
             terminalSession.consume(ids);
 
-            const details = {
-              results: results.map((result) => ({
-                ...result,
-                title: sanitizeInline(result.title),
+            const outcome = {
+              results: results.map(({ id, wasRunning, killed, snapshot }) => ({
+                id,
+                title: sanitizeInline(snapshot.title),
+                state: snapshot.state,
+                wasRunning,
+                killed,
               })),
             };
 
@@ -297,16 +320,19 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
               content: [
                 {
                   type: "text" as const,
-                  text: results
+                  text: outcome.results
                     .map(
                       (result) =>
-                        `${result.id} [${result.state}] ${sanitizeInline(result.title)}${result.killed ? " · killed" : " · already settled"}`,
+                        `${result.id} [${result.state}] ${result.title}${result.killed ? " · killed" : " · already settled"}`,
                     )
                     .join("\n"),
                 },
               ],
-              details,
-              structuredContent: details satisfies Static<typeof killOutputSchema>,
+              details: {
+                ...outcome,
+                terminals: results.map(({ snapshot }) => terminalView(snapshot)),
+              },
+              structuredContent: outcome satisfies Static<typeof killOutputSchema>,
             };
           }),
         ),

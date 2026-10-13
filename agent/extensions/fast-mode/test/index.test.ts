@@ -315,8 +315,22 @@ test("/fast persists, announces, and shows toggles for fast models and only maps
   ctx.model = undefined;
   await toggle("", ctx);
   assert.equal(await request(), payload);
+  // Overlapping shortcuts must each invert the state the previous one committed.
+  await Promise.all([toggle("", ctx), toggle("", ctx)]);
+  assert.equal(
+    Schema.decodeSync(Schema.fromJsonString(FastModeSettings))(readFileSync(settingsPath, "utf8"))
+      .fastMode?.enabled,
+    true,
+  );
+  assert.equal(await request(), payload);
   rmSync(root, { recursive: true });
   await toggle("", ctx);
+  const failure = notices.pop();
+  assert.equal(failure?.[1], "error");
+  assert.match(
+    failure?.[0] ?? "",
+    /^Could not save Fast mode setting: could not lock .*settings\.json: /,
+  );
   assert.deepEqual(notices, [
     ["Fast mode enabled (service_tier: fast).", "info"],
     ["Fast mode disabled.", "info"],
@@ -326,7 +340,8 @@ test("/fast persists, announces, and shows toggles for fast models and only maps
     ],
     ["Fast mode disabled.", "info"],
     ["Fast mode enabled, but unknown model is not listed in the fastMode setting.", "warning"],
-    ["Could not save Fast mode setting.", "error"],
+    ["Fast mode disabled.", "info"],
+    ["Fast mode enabled, but unknown model is not listed in the fastMode setting.", "warning"],
   ]);
   const indicator = "dim:\u26a1\ufe0e Fast";
   assert.deepEqual(indicators, [
@@ -339,6 +354,9 @@ test("/fast persists, announces, and shows toggles for fast models and only maps
     undefined,
     undefined,
     undefined,
+    undefined,
+    undefined,
+    // Overlapping toggles without a model.
     undefined,
     undefined,
   ]);

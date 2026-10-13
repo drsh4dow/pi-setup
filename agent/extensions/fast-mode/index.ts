@@ -7,7 +7,7 @@ import {
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import { Effect, FileSystem, Schema } from "effect";
+import { Data, Effect, FileSystem, Schema, Semaphore } from "effect";
 import { lock } from "proper-lockfile";
 
 export const SETTINGS_FIELD = "fastMode";
@@ -171,13 +171,27 @@ export const loadShortcuts = Effect.fn("loadShortcuts")(
   Effect.orElseSucceed(() => [DEFAULT_SHORTCUT]),
 );
 
+class SettingsSaveError extends Data.TaggedError("SettingsSaveError")<{
+  operation: "lock" | "read" | "decode" | "encode" | "write";
+  path: string;
+  cause: unknown;
+}> {
+  override get message(): string {
+    const reason = this.cause instanceof Error ? this.cause.message : String(this.cause);
+
+    return `could not ${this.operation} ${this.path}: ${reason}`;
+  }
+}
+
 // Pi rewrites settings.json under this lock from every running process, so the toggle takes it too.
 // The options match Pi's FileSettingsStorage: the same lock path and about 200 ms of retries.
 const lockSettings = (path: string) =>
   Effect.acquireRelease(
-    Effect.tryPromise(() =>
-      lock(path, { realpath: false, retries: { retries: 10, minTimeout: 20, maxTimeout: 20 } }),
-    ),
+    Effect.tryPromise({
+      try: () =>
+        lock(path, { realpath: false, retries: { retries: 10, minTimeout: 20, maxTimeout: 20 } }),
+      catch: (cause) => new SettingsSaveError({ operation: "lock", path, cause }),
+    }),
     // release() must get no arguments: its optional first parameter is a completion callback.
     (release) => Effect.tryPromise(() => release()).pipe(Effect.ignore),
   );
@@ -185,19 +199,24 @@ const lockSettings = (path: string) =>
 const saveEnabled = Effect.fn("saveEnabled")(function* (agentDir: string, enabled: boolean) {
   const fs = yield* FileSystem.FileSystem;
   const path = join(agentDir, "settings.json");
+
+  const failed = (operation: SettingsSaveError["operation"]) => (cause: unknown) =>
+    new SettingsSaveError({ operation, path, cause });
+
   yield* lockSettings(path);
 
-  const settings = (yield* fs.exists(path))
-    ? yield* Schema.decodeEffect(GlobalSettingsFile)(yield* fs.readFileString(path))
+  const settings = (yield* fs.exists(path).pipe(Effect.mapError(failed("read"))))
+    ? yield* Schema.decodeEffect(GlobalSettingsFile)(
+        yield* fs.readFileString(path).pipe(Effect.mapError(failed("read"))),
+      ).pipe(Effect.mapError(failed("decode")))
     : {};
 
-  yield* fs.writeFileString(
-    path,
-    yield* Schema.encodeEffect(GlobalSettingsFile)({
-      ...settings,
-      [SETTINGS_FIELD]: { ...settings[SETTINGS_FIELD], enabled },
-    }),
-  );
+  const encoded = yield* Schema.encodeEffect(GlobalSettingsFile)({
+    ...settings,
+    [SETTINGS_FIELD]: { ...settings[SETTINGS_FIELD], enabled },
+  }).pipe(Effect.mapError(failed("encode")));
+
+  yield* fs.writeFileString(path, encoded).pipe(Effect.mapError(failed("write")));
 }, Effect.scoped);
 
 function announceState(
@@ -261,27 +280,36 @@ export default function fastModeExtension(
   // Read on every use so a `/name` change applies to the next request.
   const sessionName = () => pi.getSessionName();
 
-  const toggle = (ctx: ExtensionContext) => {
-    const nextEnabled = !enabled;
+  // Pi runs shortcut handlers without waiting for earlier ones, so each toggle reads the
+  // state, saves its inverse, and commits it before the next toggle starts.
+  const toggles = Semaphore.makeUnsafe(1);
 
-    return Effect.runPromise(
-      saveEnabled(agentDir, nextEnabled).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            enabled = nextEnabled;
-            const currentConfig = config();
-            const currentSessionName = sessionName();
-            announceState(ctx, currentConfig, currentSessionName, enabled);
-            showIndicator(ctx, currentConfig, currentSessionName, enabled);
-          }),
-        ),
-        Effect.catch(() =>
-          Effect.sync(() => ctx.ui.notify("Could not save Fast mode setting.", "error")),
+  const toggle = (ctx: ExtensionContext) =>
+    Effect.runPromise(
+      Effect.suspend(() => {
+        const nextEnabled = !enabled;
+
+        return saveEnabled(agentDir, nextEnabled).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              enabled = nextEnabled;
+              const currentConfig = config();
+              const currentSessionName = sessionName();
+              announceState(ctx, currentConfig, currentSessionName, enabled);
+              showIndicator(ctx, currentConfig, currentSessionName, enabled);
+            }),
+          ),
+        );
+      }).pipe(
+        (transition) => toggles.withPermit(transition),
+        Effect.catchTag("SettingsSaveError", (error) =>
+          Effect.sync(() =>
+            ctx.ui.notify(`Could not save Fast mode setting: ${error.message}`, "error"),
+          ),
         ),
         Effect.provide(BunFileSystem.layer),
       ),
     );
-  };
 
   pi.registerCommand("fast", {
     description: "Toggle Fast mode",

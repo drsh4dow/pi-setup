@@ -62,6 +62,22 @@ When an unchecked operation is necessary, keep it local and document the
 specific invariant that makes it safe and where that invariant is established.
 The comment records the reasoning; only the invariant provides safety.
 
+**Failures.** Handle each fallible operation where it is called, in a scope that
+covers only that operation, so the reader sees which call failed and what
+follows. Decide there whether to recover, add context and propagate, or stop,
+and let failures you can't handle propagate. Represent expected failures as
+values in the form the language or stack owns, such as Go's `error`, Rust's
+`Result`, Effect's error channel, or a promise's `.catch` returning a typed
+failure, and branch on them explicitly. Write failures for someone who must
+diagnose them later from the record alone: when propagating, wrap the error
+with the operation and the identifiers needed to find the affected data,
+keeping the original as its cause; where a failure stops propagating, by
+recovery or at a boundary, record it once through the project's logging or
+tracing. Catch everything only at a boundary that reports unhandled failures,
+such as a request handler or `main`. A try block around several operations, or
+a catch that drops the error without recording it, hides bugs and the step that
+failed.
+
 **Cost.** Choose data structures and algorithms for the expected workload,
 counting work hidden inside helpers, and pick straightforward alternatives to
 repeated scans or growing copies that turn quadratic. Copy for ownership,

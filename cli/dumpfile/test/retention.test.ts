@@ -122,7 +122,14 @@ test("first apply preserves unrelated deletion rules and reports their possible 
   assert.match(output.join(""), /Other expiration rules remain/);
 });
 
-for (const failure of ["read", "malformed", "write", "read-back"]) {
+const failureReports = {
+  read: "Retention read failed: network error.",
+  malformed: "Retention read failed: unexpected lifecycle response.",
+  write: "Retention apply failed: Cloudflare did not report success.",
+  "read-back": "Retention verify failed: read-back differs from the applied configuration.",
+};
+
+for (const [failure, report] of Object.entries(failureReports)) {
   test(`retention fails closed on ${failure} failure without reporting deployment`, async () => {
     let writes = 0;
     const output: string[] = [];
@@ -148,6 +155,7 @@ for (const failure of ["read", "malformed", "write", "read-back"]) {
 
     assert.equal(code, 1);
     assert.equal(writes, failure === "read" || failure === "malformed" ? 0 : 1);
+    assert.ok(output.join("").startsWith(report), output.join(""));
     assert.match(output.join(""), /No deployment is verified/);
     assert.equal(output.join("").includes("synthetic-token"), false);
   });

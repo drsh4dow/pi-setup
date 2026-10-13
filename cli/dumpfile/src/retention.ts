@@ -36,6 +36,31 @@ const lifecycleResponseSchema = Type.Object({
   }),
 });
 
+type Operation = "read" | "apply" | "verify";
+
+// The message names the failed operation and a reason this module wrote. API errors and
+// bodies can contain credentials, so they stay in the cause and never reach the output.
+class RetentionFailure extends Error {
+  constructor(operation: Operation, reason: string, options?: ErrorOptions) {
+    super(`Retention ${operation} failed: ${reason}`, options);
+  }
+}
+
+function parseAuth(text: string) {
+  let auth: unknown;
+
+  try {
+    auth = JSON.parse(text);
+  } catch {
+    // JSON.parse quotes its input, which is the token, so its message is dropped.
+    return undefined;
+  }
+
+  if (!Value.Check(authSchema, auth) || !auth.token) return undefined;
+
+  return auth;
+}
+
 export async function main(args: readonly string[], runtime: Runtime): Promise<number> {
   const [mode, account, approval] = args;
 
@@ -54,55 +79,70 @@ export async function main(args: readonly string[], runtime: Runtime): Promise<n
     return 1;
   }
 
-  try {
-    const auth: unknown = JSON.parse(runtime.auth);
+  const auth = parseAuth(runtime.auth);
 
-    if (!Value.Check(authSchema, auth) || !auth.token) {
-      runtime.write(
-        "Supply Wrangler auth token --json on stdin; API key authentication is unsupported.\n",
-      );
+  if (!auth) {
+    runtime.write(
+      "Supply Wrangler auth token --json on stdin; API key authentication is unsupported.\n",
+    );
 
-      return 1;
+    return 1;
+  }
+
+  const url = `https://api.cloudflare.com/client/v4/accounts/${account}/r2/buckets/${BUCKET_NAME}/lifecycle`;
+
+  const headers = {
+    Authorization: `Bearer ${auth.token}`,
+    "Content-Type": "application/json",
+    "cf-r2-data-catalog-check": "true",
+  };
+
+  async function send(operation: Operation, init: RequestInit) {
+    let response: Response;
+
+    try {
+      response = await runtime.fetch(url, { ...init, headers });
+    } catch (cause) {
+      throw new RetentionFailure(operation, "network error", { cause });
     }
 
-    const url = `https://api.cloudflare.com/client/v4/accounts/${account}/r2/buckets/${BUCKET_NAME}/lifecycle`;
+    if (!response.ok) throw new RetentionFailure(operation, `HTTP ${response.status}`);
 
-    const headers = {
-      Authorization: `Bearer ${auth.token}`,
-      "Content-Type": "application/json",
-      "cf-r2-data-catalog-check": "true",
-    };
-
-    async function readRules() {
-      const response = await runtime.fetch(url, { method: "GET", headers });
+    try {
       const body: unknown = await response.json();
 
-      if (!response.ok || !Value.Check(lifecycleResponseSchema, body)) {
-        throw new Error("Could not read lifecycle configuration");
-      }
-
-      return body.result.rules ?? [];
+      return body;
+    } catch (cause) {
+      throw new RetentionFailure(operation, "response is not JSON", { cause });
     }
+  }
 
-    let rules = await readRules();
+  async function readRules(operation: Operation) {
+    const body = await send(operation, { method: "GET" });
+
+    if (!Value.Check(lifecycleResponseSchema, body))
+      throw new RetentionFailure(operation, "unexpected lifecycle response");
+
+    return body.result.rules ?? [];
+  }
+
+  try {
+    let rules = await readRules("read");
     const expected = [...rules.filter((item) => item.id !== rule.id), rule];
     const configured = rules.filter((item) => item.id === rule.id);
 
     if (mode === "apply" && !isDeepStrictEqual(configured, [rule])) {
-      const response = await runtime.fetch(url, {
+      const body = await send("apply", {
         method: "PUT",
-        headers,
         body: JSON.stringify({ rules: expected }),
       });
 
-      const body: unknown = await response.json();
-
-      if (!response.ok || !Value.Check(Type.Object({ success: Type.Literal(true) }), body))
-        throw new Error("Could not apply lifecycle configuration");
-      rules = await readRules();
+      if (!Value.Check(Type.Object({ success: Type.Literal(true) }), body))
+        throw new RetentionFailure("apply", "Cloudflare did not report success");
+      rules = await readRules("verify");
 
       if (!isDeepStrictEqual(rules, expected))
-        throw new Error("Lifecycle read-back differs from applied configuration");
+        throw new RetentionFailure("verify", "read-back differs from the applied configuration");
     }
 
     const matches = isDeepStrictEqual(
@@ -127,10 +167,10 @@ export async function main(args: readonly string[], runtime: Runtime): Promise<n
     }
 
     return matches ? 0 : 1;
-  } catch {
-    // API errors can contain credentials; never echo transport messages or bodies.
+  } catch (error) {
+    if (!(error instanceof RetentionFailure)) throw error;
     runtime.write(
-      "Retention operation failed; check Wrangler credentials, API availability, and lifecycle configuration. No deployment is verified.\n",
+      `${error.message}. Check Wrangler credentials, API availability, and lifecycle configuration. No deployment is verified.\n`,
     );
 
     return 1;

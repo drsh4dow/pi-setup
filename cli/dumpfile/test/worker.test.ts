@@ -215,6 +215,45 @@ test("rejects malformed JSON and invalid request fields with specific problems",
   assert.equal(problem.type, "https://upload.drsh4dow.dev/problems/invalid-json");
 });
 
+test("internal failures log the failed operation without leaking credentials", async () => {
+  const logs: UploadLog[] = [];
+
+  const failing = [
+    createDumpfileWorker({
+      log: (event) => logs.push(event),
+      randomBytes: () => {
+        throw new TypeError("entropy unavailable");
+      },
+    }),
+    createDumpfileWorker({
+      log: (event) => logs.push(event),
+      presign: async () => {
+        throw new RangeError("secret-key rejected");
+      },
+      randomBytes: () => new Uint8Array(16),
+    }),
+  ];
+
+  for (const worker of failing) {
+    // oxlint-disable-next-line no-await-in-loop -- Logs are compared in request order.
+    const response = await worker.fetch(
+      uploadRequest({ contentType: "image/png", extension: "png", size: 1 }),
+      environment(),
+    );
+
+    assert.equal(response.status, 500);
+  }
+
+  assert.deepEqual(
+    logs.map((event) => [event.status, event.failure]),
+    [
+      [500, { operation: "generate-key", errorName: "TypeError" }],
+      [500, { operation: "sign", errorName: "RangeError" }],
+    ],
+  );
+  assert.equal(JSON.stringify(logs).includes("secret-key"), false);
+});
+
 test("aws4fetch presigns one PUT with all stored metadata bound", async () => {
   const url = await presignUpload({
     env: environment(),

@@ -37,9 +37,16 @@ export interface UploadLog {
   readonly timestamp: string;
   readonly tokenId: string;
   readonly contentType?: string;
+  readonly failure?: UploadFailure;
   readonly key?: string;
   readonly latencyMs?: number;
   readonly size?: number;
+}
+
+// Signing errors can echo request material, so a failure records the error's class, not its message.
+interface UploadFailure {
+  readonly operation: "generate-key" | "sign";
+  readonly errorName: string;
 }
 
 interface WorkerDependencies {
@@ -156,6 +163,10 @@ async function authenticated(request: Request, env: WorkerEnv): Promise<boolean>
   if (token.length === 0 || /\s/.test(token)) return false;
 
   return constantTimeEqual(await sha256(token), env.DUMPFILE_TOKEN_SHA256);
+}
+
+function errorName(cause: unknown): string {
+  return cause instanceof Error ? cause.name : "NonError";
 }
 
 function randomBytes(length: number): Uint8Array {
@@ -282,49 +293,40 @@ export function createDumpfileWorker(overrides: Partial<WorkerDependencies> = {}
         return parsed;
       }
 
+      let keyBytes: Uint8Array;
+
       try {
-        const now = startedAt;
+        keyBytes = dependencies.randomBytes(16);
+      } catch (error) {
+        log(500, { failure: { operation: "generate-key", errorName: errorName(error) } });
 
-        const key = objectKey(now, parsed.extension, dependencies.randomBytes(16));
+        return problem(
+          500,
+          "Key generation failed",
+          "The upload could not be authorized.",
+          "key-generation-failed",
+        );
+      }
 
-        const disposition = dispositionForContentType(parsed.contentType);
+      const key = objectKey(startedAt, parsed.extension, keyBytes);
+      const disposition = dispositionForContentType(parsed.contentType);
 
-        const storedContentType =
-          disposition === "inline" ? parsed.contentType : "application/octet-stream";
+      const storedContentType =
+        disposition === "inline" ? parsed.contentType : "application/octet-stream";
 
-        const headers: UploadHeaders = {
-          "Cache-Control": CACHE_CONTROL,
-          "Content-Disposition": disposition,
-          "Content-Length": String(parsed.size),
-          "Content-Type": storedContentType,
-        };
+      const headers: UploadHeaders = {
+        "Cache-Control": CACHE_CONTROL,
+        "Content-Disposition": disposition,
+        "Content-Length": String(parsed.size),
+        "Content-Type": storedContentType,
+      };
 
-        const uploadUrl = await dependencies.presign({ env, key, headers });
+      let uploadUrl: string;
 
-        const authorization: UploadAuthorization = {
-          key,
-          publicUrl: `${PUBLIC_BASE_URL}/${key}`,
-          upload: {
-            expiresAt: new Date(now.getTime() + SIGNATURE_TTL_SECONDS * 1000).toISOString(),
-            headers,
-            method: "PUT",
-            url: uploadUrl,
-          },
-        };
-
-        log(201, {
-          contentType: storedContentType,
-          key,
-          latencyMs: dependencies.now().getTime() - startedAt.getTime(),
-          size: parsed.size,
-        });
-
-        return Response.json(authorization, {
-          headers: { "Cache-Control": "no-store" },
-          status: 201,
-        });
-      } catch {
-        log(500);
+      try {
+        uploadUrl = await dependencies.presign({ env, key, headers });
+      } catch (error) {
+        log(500, { failure: { operation: "sign", errorName: errorName(error) }, key });
 
         return problem(
           500,
@@ -333,6 +335,29 @@ export function createDumpfileWorker(overrides: Partial<WorkerDependencies> = {}
           "signing-failed",
         );
       }
+
+      const authorization: UploadAuthorization = {
+        key,
+        publicUrl: `${PUBLIC_BASE_URL}/${key}`,
+        upload: {
+          expiresAt: new Date(startedAt.getTime() + SIGNATURE_TTL_SECONDS * 1000).toISOString(),
+          headers,
+          method: "PUT",
+          url: uploadUrl,
+        },
+      };
+
+      log(201, {
+        contentType: storedContentType,
+        key,
+        latencyMs: dependencies.now().getTime() - startedAt.getTime(),
+        size: parsed.size,
+      });
+
+      return Response.json(authorization, {
+        headers: { "Cache-Control": "no-store" },
+        status: 201,
+      });
     },
   };
 }

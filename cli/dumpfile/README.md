@@ -28,9 +28,10 @@ unchanged and reports retention as unverified. It also pauses for the
 bucket-scoped R2 credential, response-header rule, and billing alert because
 those steps need a human in the Cloudflare dashboard.
 
-The wizard stores public setup state in `~/.config/dumpfile/setup.env` and
-client configuration in `~/.config/dumpfile/config.env`. The client file has
-mode `0600` and contains:
+The wizard stores public setup state in `$XDG_CONFIG_HOME/dumpfile/setup.env`
+and client configuration in `$XDG_CONFIG_HOME/dumpfile/config.env`, where the
+CLI reads it. Both default to `~/.config` when `XDG_CONFIG_HOME` is unset or
+empty. The client file has mode `0600` and contains:
 
 ```dotenv
 DUMPFILE_API_URL=https://upload.drsh4dow.dev
@@ -176,9 +177,9 @@ disclosure or abuse.
 ### Revoke access
 
 Delete or replace `DUMPFILE_TOKEN_SHA256` in the Worker, then remove
-`~/.config/dumpfile/config.env`. R2 credentials remain only in Worker secrets.
-Rotate the bucket-scoped credential from Cloudflare and rerun setup if those
-secrets may have leaked.
+`$XDG_CONFIG_HOME/dumpfile/config.env`. R2 credentials remain only in Worker
+secrets. Rotate the bucket-scoped credential from Cloudflare and rerun setup if
+those secrets may have leaked.
 
 ### Repair a missing `nosniff` header
 

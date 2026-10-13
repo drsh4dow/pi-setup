@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { chmod, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -432,6 +432,24 @@ test("rejects a group-readable token file", async (t) => {
 
   assert.equal(code, 1);
   assert.match(state.stderr.join(""), /mode 0600/);
+});
+
+test("reads configuration from the XDG directory that setup writes", async (t) => {
+  const state = await harness(t);
+  const config = join(state.directory, "dumpfile/config.env");
+  await mkdir(join(state.directory, "dumpfile"));
+  await writeFile(config, "DUMPFILE_TOKEN=local-secret-token\n", { mode: 0o640 });
+  const path = join(state.directory, "proof.png");
+  await writeFile(path, "proof");
+
+  const code = await main(["upload", path], {
+    env: { XDG_CONFIG_HOME: state.directory },
+    stderr: { write: (text) => state.stderr.push(text) },
+    stdout: { write: (text) => state.stdout.push(text) },
+  });
+
+  assert.equal(code, 1);
+  assert.equal(state.stderr.join(""), `${config} must have mode 0600\n`);
 });
 
 test("never prints bearer tokens or presigned URLs on upload failure", async (t) => {

@@ -86,7 +86,9 @@ function parseEnvFile(source: string, path: string) {
 }
 
 async function readConfig(env: CliDependencies["env"]): Promise<Config> {
-  const path = env.DUMPFILE_CONFIG_FILE ?? `${homedir()}/.config/dumpfile/config.env`;
+  // setup.sh writes to ${XDG_CONFIG_HOME:-$HOME/.config}/dumpfile; keep both rules identical.
+  const configHome = env.XDG_CONFIG_HOME || `${homedir()}/.config`;
+  const path = env.DUMPFILE_CONFIG_FILE ?? `${configHome}/dumpfile/config.env`;
 
   let fromFile: Record<string, string> = {};
 

@@ -188,6 +188,7 @@ TOTAL_STAGES=10
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
 COMPONENT_DIR="$ROOT_DIR/cli/dumpfile"
+# src/cli.ts reads config.env from the same directory; keep both rules identical.
 SETUP_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/dumpfile"
 SETUP_STATE="$SETUP_DIR/setup.env"
 LOCAL_CONFIG="$SETUP_DIR/config.env"

@@ -216,6 +216,16 @@ test("renders terminal lists and cleans up its status", async () => {
   )?.render(80);
 
   assert.match(detail?.join("\n") ?? "", /output[\s\S]*line/);
+
+  // Session files are external input; an unsupported entry keeps Pi's default rendering.
+  assert.equal(
+    renderer(
+      unsafeFixture<Parameters<EntryRenderer>[0]>({ data: { list: true } }),
+      { expanded: false },
+      theme,
+    ),
+    undefined,
+  );
   await adapter.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, context);
   assert.equal(statuses.at(-1), undefined);
 });

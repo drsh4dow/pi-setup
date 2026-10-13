@@ -1,15 +1,19 @@
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Option, Schema } from "effect";
 import { sessionReportedUsage } from "./accounting.ts";
 import {
   observeProcessStatusRefresh,
-  type ProcessStatusView,
+  ProcessStatusView,
   processStatusSummary,
   processStatusView,
 } from "./status.ts";
 
 const ENTRY_TYPE = "process-status";
+
+// Entries come from session files, so data that does not match the view keeps Pi's default rendering.
+const decodeView = Schema.decodeUnknownOption(ProcessStatusView);
 
 function roundUsd(cost: number): number {
   return Math.round(cost * 1000) / 1000;
@@ -19,12 +23,15 @@ export default function processStatus(pi: ExtensionAPI) {
   let refreshStatus: (() => void) | undefined;
   observeProcessStatusRefresh(pi, () => refreshStatus?.());
 
-  pi.registerEntryRenderer<ProcessStatusView>(ENTRY_TYPE, (entry, { expanded }, theme) => {
-    if (!entry.data) return undefined;
-    const text = expanded ? entry.data.expanded : entry.data.collapsed;
+  pi.registerEntryRenderer(ENTRY_TYPE, (entry, { expanded }, theme) => {
+    const decoded = decodeView(entry.data);
+
+    if (Option.isNone(decoded)) return undefined;
+    const view = decoded.value;
+    const text = expanded ? view.expanded : view.collapsed;
     const box = new Box(1, 1, (line) => theme.bg("customMessageBg", line));
 
-    if (entry.data.list) {
+    if (view.list) {
       box.addChild({
         invalidate() {},
         render(width: number) {

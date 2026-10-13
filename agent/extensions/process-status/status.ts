@@ -12,11 +12,13 @@ const MAX_DETAIL_BYTES = 64 * 1024;
 
 type TerminalStatus = Pick<BackgroundTerminalManager, "list" | "get">;
 
-export interface ProcessStatusView {
-  collapsed: string;
-  expanded: string;
-  list: boolean;
-}
+export const ProcessStatusView = Schema.Struct({
+  collapsed: Schema.String,
+  expanded: Schema.String,
+  list: Schema.Boolean,
+});
+
+export type ProcessStatusView = typeof ProcessStatusView.Type;
 
 interface TerminalStatusRequest {
   readonly provide: (terminals: TerminalStatus) => void;

@@ -1,6 +1,6 @@
 import { type Static, Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Effect } from "effect";
+import { Cause, Effect } from "effect";
 import { sanitizeInline, sanitizeMultiline, truncateUtf8Tail } from "../../lib/text.ts";
 import {
   MAX_TRACKED,
@@ -30,10 +30,6 @@ const MAX_TEXT = 24 * 1024;
 const COMPLETION_OUTPUT_BYTES = 24 * 1024;
 
 const COMPLETION_BATCH_BYTES = 256 * 1024;
-
-const MAX_DELIVERY_ATTEMPTS = 3;
-
-const RETRY_DELAYS_MS = [100, 500] as const;
 
 const logError = (message: string) => Effect.runSync(Effect.logError(message));
 
@@ -196,11 +192,7 @@ type DeliveryItem =
       notification: RunningTerminalNotification;
     };
 
-type PendingDelivery = DeliveryItem & { attempts: number };
-
 interface DeliveryBatch {
-  kind: DeliveryItem["kind"];
-  items: PendingDelivery[];
   customType: string;
   content: string;
   details:
@@ -210,9 +202,9 @@ interface DeliveryBatch {
 
 export class BackgroundTerminalDelivery {
   private context?: ExtensionContext;
-  private readonly pending = new Map<string, PendingDelivery>();
+  private readonly pending = new Map<string, DeliveryItem>();
+  // Items evicted from a full queue, kept so bg_list can report what was never delivered.
   private readonly failed = new Map<string, Pick<DeliveryItem, "kind" | "terminalId">>();
-  private retryGeneration = 0;
   private flushState: "idle" | "flushing" = "idle";
   private readonly pi: Pick<ExtensionAPI, "sendMessage">;
   private readonly reportError: (message: string) => void;
@@ -226,7 +218,7 @@ export class BackgroundTerminalDelivery {
   get problem(): string | undefined {
     if (this.failed.size === 0) return undefined;
 
-    return `Automatic background-terminal delivery failed for ${[...this.failed.keys()].join(", ")}. Use bg_status to inspect terminal state.`;
+    return `Automatic background-terminal delivery dropped ${[...this.failed.keys()].join(", ")} from a full queue. Use bg_status to inspect terminal state.`;
   }
   setContext(context: ExtensionContext) {
     this.context = context;
@@ -256,15 +248,22 @@ export class BackgroundTerminalDelivery {
       );
     }
 
-    this.pending.set(item.id, {
-      ...item,
-      attempts: this.pending.get(item.id)?.attempts ?? 0,
-    });
+    this.pending.set(item.id, item);
 
     // Results steer into a running agent right after the current tool
     // batch; notifications wait for idle so settled terminals can drop
     // their pending notifications first.
-    if (item.kind === "completion" || this.context.isIdle()) Effect.runFork(this.flush);
+    if (item.kind === "completion" || this.context.isIdle())
+      // The forked flush has no caller to receive its failure, so it reports here.
+      Effect.runFork(
+        this.flush.pipe(
+          Effect.catchCause((cause) =>
+            Effect.sync(() =>
+              this.reportError(`[background-terminals] delivery failed: ${Cause.pretty(cause)}`),
+            ),
+          ),
+        ),
+      );
   }
   enqueue(snapshot: SettledTerminalSnapshot) {
     this.queue({
@@ -296,7 +295,7 @@ export class BackgroundTerminalDelivery {
     }
   }
   private batch(kind: DeliveryItem["kind"]): DeliveryBatch | undefined {
-    const items: PendingDelivery[] = [];
+    const ids: string[] = [];
     const terminals: TerminalView[] = [];
     const notifications: NotificationView[] = [];
 
@@ -316,11 +315,11 @@ export class BackgroundTerminalDelivery {
           ? formatTerminalNotification(item.notification)
           : formatTerminalCompletion(item.snapshot);
 
-      const separator = items.length ? "\n\n---\n\n" : "";
+      const separator = ids.length ? "\n\n---\n\n" : "";
 
       let addedBytes = Buffer.byteLength(separator) + Buffer.byteLength(rendered);
 
-      if (items.length && bytes + addedBytes > COMPLETION_BATCH_BYTES) break;
+      if (ids.length && bytes + addedBytes > COMPLETION_BATCH_BYTES) break;
 
       if (item.kind === "completion" && bytes + addedBytes > COMPLETION_BATCH_BYTES) {
         rendered = `${summary(item.snapshot)}\nCompletion detail exceeded the delivery limit; use bg_status ${item.id}.`;
@@ -329,82 +328,26 @@ export class BackgroundTerminalDelivery {
 
       parts.push(separator, rendered);
       bytes += addedBytes;
-      items.push(item);
+      ids.push(item.id);
 
       if (item.kind === "completion") terminals.push(terminalView(item.snapshot));
       else notifications.push(notificationView(item.notification));
     }
 
-    if (!items.length) return undefined;
-    const ids = items.map((item) => item.id);
+    if (!ids.length) return undefined;
     const content = parts.join("");
 
     if (kind === "completion")
-      return { kind, items, customType: RESULTS_MESSAGE, content, details: { ids, terminals } };
+      return { customType: RESULTS_MESSAGE, content, details: { ids, terminals } };
 
     return {
-      kind,
-      items,
       customType: NOTIFICATION_MESSAGE,
       content,
       details: { ids, notifications },
     };
   }
-  private scheduleRetry(attempt: number) {
-    if (!this.context) return;
-    const generation = ++this.retryGeneration;
-    Effect.runFork(
-      Effect.sleep(RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)]).pipe(
-        Effect.tap(() => (this.retryGeneration === generation ? this.flush : Effect.void)),
-      ),
-    );
-  }
-  // Returns the attempt needing backoff, if any items remain retryable.
-  private sendBatch(batch: DeliveryBatch): number | undefined {
-    const { ids } = batch.details;
-
-    try {
-      this.pi.sendMessage(
-        {
-          customType: batch.customType,
-          content: batch.content,
-          display: true,
-          details: batch.details,
-        },
-        {
-          deliverAs: "steer",
-          triggerTurn: true,
-        },
-      );
-      this.consume(ids);
-    } catch (error) {
-      let retryAttempt: number | undefined;
-      const exhausted: string[] = [];
-
-      for (const item of batch.items) {
-        item.attempts++;
-
-        if (item.attempts < MAX_DELIVERY_ATTEMPTS)
-          retryAttempt = Math.max(retryAttempt ?? 0, item.attempts);
-        else {
-          this.markFailed(item);
-          exhausted.push(item.id);
-        }
-      }
-
-      if (exhausted.length)
-        this.reportError(
-          `[background-terminals] ${batch.kind} delivery failed for ${exhausted.join(", ")}${batch.kind === "completion" ? "; use bg_status to inspect retained results" : ""}: ${sanitizeInline(String(error).slice(0, 512))}`,
-        );
-
-      return retryAttempt;
-    }
-
-    return undefined;
-  }
   flush = Effect.sync(() => {
     if (this.flushState === "flushing" || !this.context) return;
-    this.retryGeneration++;
     this.flushState = "flushing";
 
     try {
@@ -412,13 +355,21 @@ export class BackgroundTerminalDelivery {
         const batch = this.batch("notification") ?? this.batch("completion");
 
         if (!batch) return;
-        const retryAttempt = this.sendBatch(batch);
-
-        if (retryAttempt !== undefined) {
-          this.scheduleRetry(retryAttempt);
-
-          return;
-        }
+        // Pi queues the message and reports asynchronous delivery failures itself. A
+        // synchronous failure propagates and leaves the batch pending for the next flush.
+        this.pi.sendMessage(
+          {
+            customType: batch.customType,
+            content: batch.content,
+            display: true,
+            details: batch.details,
+          },
+          {
+            deliverAs: "steer",
+            triggerTurn: true,
+          },
+        );
+        this.consume(batch.details.ids);
       }
     } finally {
       this.flushState = "idle";
@@ -426,7 +377,6 @@ export class BackgroundTerminalDelivery {
   });
   clear() {
     this.context = undefined;
-    this.retryGeneration++;
     this.pending.clear();
     this.failed.clear();
   }

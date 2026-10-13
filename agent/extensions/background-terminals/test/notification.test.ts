@@ -3,6 +3,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
 import { BackgroundTerminalDelivery } from "../delivery.ts";
+import { MAX_TRACKED } from "../manager.ts";
 import { NotificationFrames } from "../notifications.ts";
 import {
   type DeliveryMessage,
@@ -152,27 +153,27 @@ test("queued delivery keeps live notifications and drops settled ones", async ()
   delivery.clear();
 });
 
-test("settlement clears exhausted notification diagnostics", () => {
-  const delivery = new BackgroundTerminalDelivery(
-    {
-      sendMessage() {
-        throw new Error("delivery unavailable");
-      },
-    },
-    () => {},
+test("settlement clears notifications evicted from a full queue", () => {
+  const diagnostics: string[] = [];
+
+  const delivery = new BackgroundTerminalDelivery({ sendMessage() {} }, (message) =>
+    diagnostics.push(message),
   );
 
   try {
+    // A busy session holds notifications, so the queue fills.
     delivery.setContext({ ...context, isIdle: () => false });
-    delivery.enqueueNotification({
-      id: "bt-1:notification-1",
-      terminalId: "bt-1",
-      title: "watcher",
-      message: "feedback",
-    });
 
-    for (let attempt = 0; attempt < 3; attempt++) Effect.runSync(delivery.flush);
-    assert.match(delivery.problem ?? "", /bt-1:notification-1/);
+    for (let index = 0; index <= MAX_TRACKED; index++)
+      delivery.enqueueNotification({
+        id: `bt-1:notification-${index}`,
+        terminalId: "bt-1",
+        title: "watcher",
+        message: "feedback",
+      });
+
+    assert.match(delivery.problem ?? "", /bt-1:notification-0 from a full queue/);
+    assert.equal(diagnostics.length, 1);
     delivery.terminalSettled("bt-1");
     assert.equal(delivery.problem, undefined);
   } finally {

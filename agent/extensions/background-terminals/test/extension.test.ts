@@ -424,57 +424,6 @@ test("completion delivers while busy, never repeats, and closed delivery stays c
   delivery.clear();
 });
 
-test("retries mixed-attempt delivery items independently", async () => {
-  let attempts = 0;
-  let idle = false;
-  const diagnostics: string[] = [];
-
-  const delivery = new BackgroundTerminalDelivery(
-    {
-      sendMessage() {
-        attempts++;
-        throw new Error("\u001b[31m\nunavailable\u202e");
-      },
-    },
-    (message) => diagnostics.push(message),
-  );
-
-  try {
-    delivery.setContext(testContext({ isIdle: () => idle }));
-
-    const snapshot = {
-      id: "bt-retry",
-      title: "retry",
-      command: "false",
-      cwd: "/",
-      state: "failed",
-      createdAt: 0,
-      settledAt: 1,
-      result: {
-        kind: "process-failure",
-        exit: { kind: "signal", signal: "SIGTERM" },
-      },
-      stdout: { text: "", totalBytes: 0, truncatedBytes: 0 },
-      stderr: { text: "", totalBytes: 0, truncatedBytes: 0 },
-    } as const;
-
-    delivery.enqueue(snapshot);
-    idle = true;
-    await Effect.runPromise(delivery.flush);
-    await sleep(150);
-    delivery.enqueue({ ...snapshot, id: "bt-late" });
-    await sleep(700);
-    assert.equal(attempts, 5);
-    assert.match(delivery.problem ?? "", /bt-retry.*bt-late/);
-    assert.equal(diagnostics.length, 2);
-    assert.ok(!diagnostics[0].includes("\u001b"));
-    assert.ok(!diagnostics[0].includes("\u202e"));
-    assert.ok(!diagnostics[0].includes("\n"));
-  } finally {
-    delivery.clear();
-  }
-});
-
 test("sanitizes displayed data and list details omit process output", async (t) => {
   const [start, status, list, kill] = await registeredTools(t);
   const ctx = { cwd: process.cwd() };

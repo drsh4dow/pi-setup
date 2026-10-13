@@ -1,25 +1,69 @@
 # Pi setup
 
-My global configuration for [Pi](https://github.com/earendil-works/pi): a strict
-system prompt, local TypeScript extensions, model defaults, themes, keybindings,
-and a small set of reusable prompts.
+My global configuration for [Pi](https://github.com/earendil-works/pi). It
+lives at `~/.pi` and holds a strict system prompt, vendored TypeScript
+extensions, skills, prompts, themes, and model defaults. Pi discovers everything
+under `~/.pi/agent` on its own, so nothing here is installed as a package.
 
-This repository is meant to live at `~/.pi`. The extensions are vendored here
-and loaded directly by Pi; they are not separate packages to install.
+[`agent/SYSTEM.md`](agent/SYSTEM.md) replaces Pi's system prompt for every
+model. It sets the agent's behavior and engineering standards. The skills hold
+the procedures for specific kinds of work.
+
+## How I work
+
+The nature of the task decides the path. Some tasks are just a conversation,
+some are research, and some are implementation that I do directly in the
+session.
+
+When I understand the scope well, or just want the agent to come up with a
+plan, I ask it to research the problem and propose one. I correct the plan, then
+rewind with a handoff, so implementation starts from the corrected plan instead
+of the research that produced it.
+
+Rewinding keeps a conclusion and drops the path that led to it. Besides plans, I
+use it after side branches where I investigate, discuss, or settle a question.
+Pressing Escape twice on an empty editor opens the session tree (`/tree` does
+the same), and I pick the point where the research or detour started. Pi can
+summarize the branch I'm leaving, or I run `/handoff`, `/copy` the result, and
+paste it at that point. I usually stay in the same session.
+
+When the scope is large or has unknowns, I reach for grilling. It is usually one
+closed run in a single session:
+
+1. `/skill:grill-with-docs` interviews me until every decision is settled and
+   records ADRs and glossary terms along the way. I use `/skill:grill-me` only
+   when the session should leave no artifacts and I just want to untangle my
+   own thinking.
+2. `/skill:to-spec` publishes the settled design as a spec issue. The grilling
+   is its input, so nothing is rewound in between.
+3. `/skill:to-tickets <spec issue>` breaks the spec into tracer-bullet tickets,
+   filed as sub-issues of the spec with blocking edges between them.
+
+Then `/skill:implement-spec <spec issue>` works through the ticket graph. Each
+ready ticket gets an implementer subagent, every ticket lands on one integration
+branch, and a `code-review` pass closes the work.
+
+The spec and ticket skills read each repository's issue tracker configuration.
+Run `/skill:setup-matt-pocock-skills` once per repository to create it.
 
 ## Defaults
 
-- Primary model: `openai-codex/gpt-6-astra` with high thinking
-- Additional models: `openai-codex/gpt-6-sol`, `opencode-go/kimi-k3`
-- Child-agent model: `openai-codex/gpt-6-luna` with high thinking
-- Theme: Catppuccin Mocha; Gruvbox Dark Hard is also included
-- Pi's built-in compaction with default settings
-- Fast mode enabled for the models listed under `fastMode` in `agent/settings.json`
-- Codemode enabled in `on` mode alongside the direct tools
+- Model: `anthropic/claude-opus-5-5` with high thinking and Fast mode on.
+- `Alt-P` cycles the enabled models: `anthropic/claude-opus-5-5`,
+  `anthropic/claude-fable-5-1`, `openai/gpt-6.1-sol`, `openai/gpt-6-astra`,
+  and `opencode-go/glm-5.3-flash`.
+- Subagents run `claude-opus-5-5` for implementation and design, and
+  `gpt-6.1-sol` for research and review.
+- Compaction is Pi's built-in one. Opus reserves 700K tokens, so it compacts
+  well before its context window fills.
+- Codemode is on alongside the direct tools.
+- The TUI runs fullscreen with Catppuccin Mocha. Gruvbox Dark Hard is included.
 
-Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as this setup's system prompt. It
-defines the agent's behavior and engineering standards and applies to every
-model.
+Custom keybindings:
+
+- `Ctrl-P` / `Ctrl-N` move through selectors.
+- `Alt-P` cycles enabled models.
+- `Ctrl-Alt-M` toggles Fast mode.
 
 ## Install
 
@@ -35,109 +79,61 @@ vp install -g @earendil-works/pi-coding-agent
 pi
 ```
 
-Use `/login` inside Pi to authenticate model providers. If `~/.pi` already
-exists, move or merge it before cloning.
+If `~/.pi` already exists, move or merge it before cloning. Use `/login` inside
+Pi to authenticate model providers.
 
-`vp install` uses Bun, patches Vite+'s Oxlint for Effect diagnostics, and builds
-standalone CLI binaries under `.build/bin`. It does not patch the Pi runtime.
-The binaries are generated for the current platform and are not committed.
+`vp install` patches Vite+'s Oxlint for Effect diagnostics and builds the
+standalone CLI binaries under `.build/bin` for the current platform. It does not
+patch the Pi runtime.
 
-Keep the direct `typebox` dependency aligned with Pi's exact version.
-Tool-schema validation shares types with Pi; independently upgrading TypeBox can
-make those types incompatible.
-
-Pi automatically discovers the extensions, skills, prompts, and themes under
-`~/.pi/agent`. No `pi install` commands are needed for this setup.
-
-Native MCP is opt-in; this setup configures no servers. Use `pi mcp add -l` from
-a repository to add a project server to `.pi/mcp.json`, then inspect it with
-`/mcp`. Keep existing CLIs unless a server adds useful capabilities. Do not
-install `pi-mcp-adapter` alongside native MCP: it replaces Pi's session
-implementation, while shell-level `pi mcp` commands still use native MCP.
-
-Codemode can batch, chain, and filter tool results without MCP. Direct tools
-remain available for simple calls. Scripts call the registered tools, including
-the local `bash` override; they do not replace `bg_start` or its completion
-notifications. Earlier tool side effects are not undone if a script fails.
-
-Skills live in this repository under `agent/skills`. To share them with tools
-that read `~/.agents/skills`, create a symlink:
+To share the skills with tools that read `~/.agents/skills`, link them:
 
 ```bash
 mkdir -p ~/.agents
 ln -s ../.pi/agent/skills ~/.agents/skills
 ```
 
-If `~/.agents/skills` already exists, merge any skills you want to keep into
-`agent/skills`, then move the original directory aside before creating the link.
+If `~/.agents/skills` already exists, merge the skills you want to keep into
+`agent/skills` and move the original directory aside first.
 
-## Installed components
+Native MCP is opt-in, and this setup configures no servers. From a repository,
+`pi mcp add -l` adds a project server to `.pi/mcp.json`, and `/mcp` inspects it.
+Do not install `pi-mcp-adapter` alongside native MCP: it replaces Pi's session
+implementation, while the shell-level `pi mcp` commands keep using native MCP.
 
-The inventories below are checked against tracked and untracked, non-ignored
-setup files by `agent/scripts/verify-docs.ts`.
+## What's included
+
+`agent/scripts/verify-docs.ts` checks the inventories below against the
+tracked and untracked, non-ignored files.
 
 ### Installed extensions
 
 - `background-terminals`: `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for
   session-owned processes, plus `emit-to-pi` notifications
-- `fast-mode`: `/fast` and `Ctrl-Alt-M` for the models listed under `fastMode`
-  in `agent/settings.json`; the toggle is saved as `fastMode.enabled`, each
-  provider entry sets the request fields to add, and array fields such as
-  Anthropic's `betas` are merged with the request's existing values. The footer
-  status line ends with `⚡ Fast` while it is on
-- `herdr-agent-state`: Herdr pane state and Pi session reporting, with idle
-  reconciliation independent of background processes
-- `process-status`: `/ps` views for background terminals and the `session_usage`
+- `fast-mode`: `/fast` and `Ctrl-Alt-M` toggle Fast mode for the models listed
+  under `fastMode` in `agent/settings.json`, and the footer shows `⚡ Fast` while
+  it is on
+- `herdr-agent-state`: Herdr pane state and Pi session reporting
+- `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
-- `prompt-context`: Restores active-tool snippets and guidelines in custom
-  system prompts
-- `sacrifice-preference`: Marks spawned work as the preferred target under Linux
+- `prompt-context`: restores active-tool snippets and guidelines, which Pi
+  omits when a custom system prompt replaces its own
+- `sacrifice-preference`: marks spawned work as the preferred target under Linux
   memory pressure
-- `session-timer`: Branch duration from the first user message, with persistent
-  clock footers on new text responses
+- `session-timer`: branch duration since the first user message, with clock
+  footers on responses
 - `skill-visibility`: `/skill-visibility` controls which loaded skills the model
   can discover
-- `tps-tracker`: Live and final output-token throughput
-- `ui-moto`: Compact model and project status header
+- `tps-tracker`: live and final output-token throughput
+- `ui-moto`: compact model and project status header
 
-`agent/extensions/herdr-agent-state.ts` is locally patched. Herdr integration
-updates overwrite it; restore the repository version and run `/reload` in
-affected Pi sessions after updating Herdr's integration.
-
-The `prompt-context` extension adds active-tool snippets and guidelines to
-custom system prompts as a structured section. Pi's project context, skills,
-appended instructions, and other extension sections remain intact, including MCP
-summaries added afterward. Stock system prompts remain unchanged. Excluded tools
-contribute no injected guidance. Context refreshes at `before_agent_start`; tool
-changes during an active run appear in the next run's injected context.
-Extensions that force a complete system prompt override structured sections. Run
-`/reload` in existing sessions to load the extension changes and enable
-codemode.
-
-Use `bg_start` only for services, watchers, subagents, and finite commands that
-run alongside independent work. A finite command's natural exit wakes the owner
-with its actual exit status, including success. Use `emit-to-pi` only for
-actionable events while a command keeps running. A notification never settles
-the command.
-
-Use `bg_status` for immediate inspection, not polling. Its bounded observations
-distinguish the first read, changed state/output, and unchanged evidence;
-elapsed time alone is not a change. Completion and `emit-to-pi` events wake the
-owner. If the requested answer depends on a job and nothing independent remains,
-give only a brief pending status and end the turn; deliver the answer after
-completion. Do not repeat the background task while waiting. Completion messages
-show status and output within a shared 24 KiB output budget; abbreviation is
-marked, and `bg_status` exposes more retained output. Full commands and working
-directories remain in `/ps` details. Use `bg_kill` to terminate a command. Full
-logs still require explicit redirection.
-
-The `bg_*` tools declare output schemas, so codemode scripts receive terminal
-metadata as objects instead of text. A `bg_status` result also carries the
-retained `stdout` and `stderr` tails for the script to filter.
+`agent/extensions/herdr-agent-state.ts` carries local patches. Updating Herdr's
+integration overwrites it, so restore the repository version afterwards and run
+`/reload` in affected sessions.
 
 ### Installed skills
 
-The installed Matt Pocock skills and their supporting files are vendored from
+The Matt Pocock skills and their supporting files are vendored from
 [`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
 
 - `babysit-pr`
@@ -177,90 +173,80 @@ The installed Matt Pocock skills and their supporting files are vendored from
 - `writing-good-commits`
 - `writing-good-tickets`
 
+### Installed prompts
+
+- `deslop`: simplify a completed work package
+- `handoff`: compact the conversation into a message for a fresh agent
+- `wait-what`: ask for a re-pitch of a message that did not land
+
 ### Installed CLI tools
 
 - [`dumpfile`](cli/dumpfile/README.md) publishes screenshots, recordings, and
-  other review evidence to immutable public R2 URLs with opt-in provisioning of
-  30-day object-age retention. Links are not permanent; deletion is
-  asynchronous. Run `./cli/dumpfile/setup.sh` once to provision Cloudflare and
-  install the command.
-
-### Installed prompts
-
-- `deslop`
-- `handoff`
-- `wait-what`
+  other review evidence to immutable public R2 URLs. The links are not
+  permanent, and setup can opt into 30-day object-age retention. Run
+  `./cli/dumpfile/setup.sh` once to provision Cloudflare and install the
+  command.
 
 ### Installed themes
 
 - `catppuccin-mocha`
 - `gruvbox-dark-hard`
 
-## Shortcuts
-
-Custom keybindings:
-
-- `Ctrl-P` / `Ctrl-N` — move through selectors
-- `Alt-P` — cycle enabled models
-- `Ctrl-Alt-M` — toggle Fast mode
-
 ## Repository layout
 
 ```text
 agent/
 ├── SYSTEM.md          # system prompt
-├── settings.json      # models, thinking level, and theme
+├── settings.json      # models, thinking level, compaction, and theme
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions
-├── skills/            # reusable agent workflows and references
+├── skills/            # agent workflows and references
 ├── prompts/           # prompt templates
 └── themes/            # Catppuccin and Gruvbox themes
 cli/
 └── dumpfile/          # R2 upload CLI, signer Worker, tests, and setup wizard
+docs/
+└── agents/            # issue tracker, triage, and domain conventions
+tools/
+└── oxlint/            # vendored anti-slop lint plugins
 ```
 
-Runtime state and secrets such as `auth.json`, sessions, API configuration, run
-history, and trusted local paths are ignored. Do not commit them.
-[`agent/trust.example.json`](agent/trust.example.json) documents the trust-file
-shape without including machine-specific paths.
+Runtime state and secrets, such as `auth.json`, sessions, run history, and
+trusted local paths, are ignored and must not be committed.
+[`agent/trust.example.json`](agent/trust.example.json) shows the trust-file
+shape without machine-specific paths.
 
 ## Development
 
-Use `vp` for dependency management and scripts. Bun is the package manager; Node
-runs the existing test suites directly from TypeScript.
+Use `vp` for dependencies and scripts. Bun is the package manager, and Node runs
+the test suites directly from TypeScript.
 
 ```bash
 vp install
 vp run verify
 ```
 
-`verify` and CI run credential-free formatting, lint, type,
+`verify`, like CI, runs credential-free formatting, lint, type,
 diagnostic-enforcement, and behavioral checks. Its tasks live in
-`vite.config.ts`: the compiled CLIs build once, the suites run concurrently, and
-`vp check` runs after they pass. Vite+ replays a suite from cache when the files
-it read, including the compiled CLIs, are unchanged; `vp run --no-cache verify`
-reruns everything. Live Pi integration tests remain separate: with provider
-credentials configured, run `vp run test:e2e`.
+`vite.config.ts`. Suites replay from cache when their inputs are unchanged, and
+`vp run --no-cache verify` reruns everything. Live Pi integration tests need
+provider credentials and run separately with `vp run test:e2e`.
 
-Use `vp check` for static checks, `vp check --fix` for supported fixes,
-`vp lint` for linting, and `vp fmt` for formatting. Use `vp add`, `vp remove`,
-and `vp update` for dependency changes. CI installs with
-`vp install --frozen-lockfile`.
+Vite+ supplies the only linter and formatter, Oxlint and Oxfmt, and
+`vite.config.ts` owns their policy. Type-aware rules, Effect diagnostics, and
+the vendored [anti-slop plugins](tools/oxlint/anti-slop/UPSTREAM.md) fail on
+warnings.
 
-`vite.config.ts` owns formatting and lint policy. Vite+ supplies the only linter
-and formatter: Oxlint and Oxfmt. Type-aware rules, Effect diagnostics, and the
-vendored [anti-slop plugins](tools/oxlint/anti-slop/UPSTREAM.md) fail on
-warnings. Native Node/test-runner and Cloudflare boundaries have scoped
-Effect-native exceptions; type-safety and anti-slop rules remain enabled there.
+Keep these versions aligned when upgrading:
 
-Keep `@oxlint/plugins` compatible with the Oxlint version reported by
-`vp toolchain`. Update Vite+ and `@effect/tsgo` together when their supported
-versions change; do not install a second linter or formatter.
+- `typebox` matches Pi's exact version, because tool schemas share types with
+  Pi.
+- `@oxlint/plugins` stays compatible with the Oxlint version that
+  `vp toolchain` reports.
+- Vite+ and `@effect/tsgo` move together.
 
 `vp run build:cli` compiles `emit-to-pi`, `babysit-pr`, and `dumpfile` with Bun.
-Background terminals prepend `.build/bin` to their command search path. The
-babysit-pr skill invokes its compiled binary directly. Source tests and
-benchmarks remain TypeScript; no JavaScript source is maintained.
+Background terminals put `.build/bin` on their command search path.
 
 ## License
 

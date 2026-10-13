@@ -12,7 +12,23 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // Effect marks its platform modules unstable. Effect is pinned exactly, so
+        // an upgrade that breaks them fails verify instead of drifting in.
+        "allowedUnstableApis": [
+          "effect/FileSystem",
+          "effect/Path",
+          "effect/PlatformError",
+          "effect/process",
+          "@effect/platform-bun/BunFileSystem",
+          "@effect/platform-bun/BunPath",
+          "@effect/platform-node-shared/NodeChildProcessSpawner"
+        ]
+      }
+    ]
   },
   "include": [
     "vite.config.ts",

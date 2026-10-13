@@ -119,7 +119,7 @@ export async function run(check: (scenario: Scenario) => Promise<void>) {
         await adapter.emit(name, { type: name }, context);
         break;
       case "agent_settled":
-        await adapter.emit(name, { type: name }, context);
+        await adapter.emit(name, { type: name, aborted: false }, context);
         break;
     }
   };

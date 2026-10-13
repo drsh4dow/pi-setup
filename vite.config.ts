@@ -186,11 +186,6 @@ export default defineConfig({
         ],
         rules: { "effecttsgo/strict-effect-provide": "off" },
       },
-      {
-        // Process APIs remain unstable; Effect is pinned exactly.
-        files: ["agent/extensions/test/tmux.ts", "agent/extensions/test/process.ts"],
-        rules: { "effecttsgo/unstable-api-usage": "off" },
-      },
     ],
   },
 });

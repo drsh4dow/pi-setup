@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: voidzero-dev/setup-vp@v1.21.1
+      - uses: voidzero-dev/setup-vp@v1.21.2
         with:
           run-install: false
           cache: true

@@ -1,0 +1,2 @@
+# Commits and diffs omit Pi's machine-local state; see agent/scripts/clean-settings.ts.
+agent/settings.json filter=pi-settings

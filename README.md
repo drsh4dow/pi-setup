@@ -82,9 +82,10 @@ pi
 If `~/.pi` already exists, move or merge it before cloning. Use `/login` inside
 Pi to authenticate model providers.
 
-`vp install` patches Vite+'s Oxlint for Effect diagnostics and builds the
-standalone CLI binaries under `.build/bin` for the current platform. It does not
-patch the Pi runtime.
+`vp install` patches Vite+'s Oxlint for Effect diagnostics, builds the
+standalone CLI binaries under `.build/bin` for the current platform, and
+registers the Git filter for `agent/settings.json`. It does not patch the Pi
+runtime.
 
 To share the skills with tools that read `~/.agents/skills`, link them:
 
@@ -216,6 +217,13 @@ Runtime state and secrets, such as `auth.json`, sessions, run history, and
 trusted local paths, are ignored and must not be committed.
 [`agent/trust.example.json`](agent/trust.example.json) shows the trust-file
 shape without machine-specific paths.
+
+Pi writes machine-local state into `agent/settings.json`, so Git sees that file
+through [`agent/scripts/clean-settings.ts`](agent/scripts/clean-settings.ts).
+Commits and diffs omit `deviceId`, `lastChangelogVersion`, and local-path
+`packages`, and record Fast mode as on, whatever the working copy holds. A
+checkout that changes the committed file overwrites the working copy: Pi
+restores its own values, and local packages must be added again.
 
 ## Development
 

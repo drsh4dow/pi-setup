@@ -60,7 +60,7 @@ try {
   // Oxlint honors repository ignore files during discovery, including node_modules.
   execFileSync("git", ["init", "--quiet", fixture]);
 
-  for (const path of ["node_modules", "tools"])
+  for (const path of ["node_modules", "oxlint"])
     symlinkSync(join(repository, path), join(fixture, path), "dir");
 
   for (const path of [

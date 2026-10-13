@@ -10,7 +10,7 @@ const ignoredFiles = [
   "agent/sessions/**",
   "agent/skills/*",
   "!agent/skills/babysit-pr/",
-  "tools/oxlint/anti-slop/**",
+  "oxlint/anti-slop/**",
 ];
 
 export default defineConfig({
@@ -77,8 +77,8 @@ export default defineConfig({
     options: { typeAware: true, typeCheck: true, denyWarnings: true },
     jsPlugins: [
       { name: "vite-plus", specifier: "vite-plus/oxlint-plugin" },
-      { name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },
-      { name: "anti-slop-effect", specifier: "./tools/oxlint/anti-slop/effect/index.ts" },
+      { name: "anti-slop", specifier: "./oxlint/anti-slop/index.ts" },
+      { name: "anti-slop-effect", specifier: "./oxlint/anti-slop/effect/index.ts" },
     ],
     rules: {
       ...effectNative.rules,

@@ -3,8 +3,8 @@
 - Source: <https://github.com/dmmulroy/anti-slop>
 - Commit: `c44ef22ca116d0ba62a3ff663a0bd13a3f3fa40b`
 - Copied directory: `skills/install-anti-slop/assets/anti-slop/`
-- Generic entry point: `tools/oxlint/anti-slop/index.ts`
-- Effect entry point: `tools/oxlint/anti-slop/effect/index.ts`
+- Generic entry point: `oxlint/anti-slop/index.ts`
+- Effect entry point: `oxlint/anti-slop/effect/index.ts`
 
 All bundled source files match that commit byte for byte. Local additions are
 this record and the upstream root MIT `LICENSE`. The nested ESLint Stylistic

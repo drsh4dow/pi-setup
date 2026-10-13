@@ -209,8 +209,7 @@ cli/
 └── dumpfile/          # R2 upload CLI, signer Worker, tests, and setup wizard
 docs/
 └── agents/            # issue tracker, triage, and domain conventions
-tools/
-└── oxlint/            # vendored anti-slop lint plugins
+oxlint/                # vendored anti-slop lint plugins
 ```
 
 Runtime state and secrets, such as `auth.json`, sessions, run history, and
@@ -243,7 +242,7 @@ provider credentials and run separately with `vp run test:e2e`.
 
 Vite+ supplies the only linter and formatter, Oxlint and Oxfmt, and
 `vite.config.ts` owns their policy. Type-aware rules, Effect diagnostics, and
-the vendored [anti-slop plugins](tools/oxlint/anti-slop/UPSTREAM.md) fail on
+the vendored [anti-slop plugins](oxlint/anti-slop/UPSTREAM.md) fail on
 warnings.
 
 Keep these versions aligned when upgrading:

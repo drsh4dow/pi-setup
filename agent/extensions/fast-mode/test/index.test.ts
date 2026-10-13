@@ -67,10 +67,8 @@ describe("fast mode config", () => {
 describe("fast mode request mapping", () => {
   for (const [provider, id, fields] of [
     ["anthropic", "claude-opus-5-5", { speed: "fast", betas: ["fast-mode-2026-02-01"] }],
-    ["anthropic@work", "claude-opus-5-5", { speed: "fast", betas: ["fast-mode-2026-02-01"] }],
     ["openai", "gpt-6.1-sol", { service_tier: "fast" }],
     ["openai-codex", "gpt-6-astra", { service_tier: "priority" }],
-    ["openai-codex@work", "gpt-6-astra", { service_tier: "priority" }],
   ] as const) {
     test(`maps ${provider}/${id} without mutating the payload`, () => {
       const model = { provider, id };

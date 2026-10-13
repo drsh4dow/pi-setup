@@ -78,14 +78,10 @@ export function fastRequestFields(
   if (!config || !model) return undefined;
   const { providers } = config;
 
-  // Account-scoped providers such as `openai-codex@work` share their base provider's entry.
-  const name = [model.provider, model.provider.split("@")[0]].find((candidate) =>
-    Object.hasOwn(providers, candidate),
-  );
+  if (!Object.hasOwn(providers, model.provider)) return undefined;
+  const provider = providers[model.provider];
 
-  const provider = name === undefined ? undefined : providers[name];
-
-  return provider?.models.includes(model.id) ? provider.request : undefined;
+  return provider.models.includes(model.id) ? provider.request : undefined;
 }
 
 export function withFastRequest<Payload>(

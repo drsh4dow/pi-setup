@@ -14,20 +14,6 @@ _Avoid_: Pi fork, Pi Dotfiles
 The model in effect when a session's first prompt is sent. It selects the session's system prompt and stays fixed across later model switches, resume, and reload.
 _Avoid_: Current model, default model
 
-### Codex accounts
-
-**Codex Account**:
-A separately authenticated ChatGPT account available for Codex requests, independent of the chosen model.
-_Avoid_: Model, provider
-
-**Codex Account Pin**:
-The Codex Account assigned at a session's first Codex use and retained across resume and reload. New sessions and forks select independently; an unavailable pinned account does not trigger automatic reassignment.
-_Avoid_: Model pin, per-prompt rotation
-
-**Codex Weekly Allowance**:
-The provider-reported percentage remaining in a Codex Account's weekly usage window, distinct from Session Usage.
-_Avoid_: Session usage, token budget
-
 ### Session timing
 
 **Session Duration**:

@@ -12,7 +12,8 @@
         },
         "models": [
           "claude-opus-5-5"
-        ]
+        ],
+        "subagentsEnabled": false
       }
     }
   },

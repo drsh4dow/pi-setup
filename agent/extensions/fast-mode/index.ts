@@ -18,6 +18,9 @@ export const DEFAULT_SHORTCUT = "ctrl+alt+m";
 
 export const RESERVED_SHORTCUTS = new Set(["ctrl+m", "enter", "return"]);
 
+// The subagents skill launches every subagent with `--name "subagent: <short assignment>"`.
+export const SUBAGENT_SESSION_PREFIX = "subagent:";
+
 const Keybindings = Schema.fromJsonString(
   Schema.Struct({
     [KEYBINDING_FIELD]: Schema.optional(Schema.Unknown),
@@ -37,12 +40,18 @@ const GlobalSettingsFile = Schema.fromJsonString(
   { space: 2 },
 );
 
+const ProviderConfig = Schema.Struct({
+  request: RequestFields,
+  models: Schema.Array(Schema.String),
+  // Absent means enabled: only an explicit false keeps subagent sessions at normal speed.
+  subagentsEnabled: Schema.optional(Schema.Boolean),
+});
+
+type ProviderConfig = typeof ProviderConfig.Type;
+
 const FastModeConfig = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
-  providers: Schema.Record(
-    Schema.String,
-    Schema.Struct({ request: RequestFields, models: Schema.Array(Schema.String) }),
-  ),
+  providers: Schema.Record(Schema.String, ProviderConfig),
 });
 
 export type FastModeConfig = typeof FastModeConfig.Type;
@@ -71,25 +80,45 @@ export function readConfig(settings: PiSettings): FastModeConfig | undefined {
   return isFastModeSettings(settings) ? settings[SETTINGS_FIELD] : undefined;
 }
 
+function isSubagentSession(sessionName: string | undefined): boolean {
+  return sessionName?.startsWith(SUBAGENT_SESSION_PREFIX) === true;
+}
+
+// The provider entry that lists the model, regardless of the session.
+function listingProvider(
+  config: FastModeConfig | undefined,
+  model: PiModel,
+): ProviderConfig | undefined {
+  if (!config || !Object.hasOwn(config.providers, model.provider)) return undefined;
+  const provider = config.providers[model.provider];
+
+  return provider.models.includes(model.id) ? provider : undefined;
+}
+
+function disabledForSubagents(provider: ProviderConfig, sessionName: string | undefined): boolean {
+  return provider.subagentsEnabled === false && isSubagentSession(sessionName);
+}
+
 export function fastRequestFields(
   config: FastModeConfig | undefined,
   model: PiModel | undefined,
+  sessionName: string | undefined,
 ): RequestFields | undefined {
-  if (!config || !model) return undefined;
-  const { providers } = config;
+  if (!model) return undefined;
+  const provider = listingProvider(config, model);
 
-  if (!Object.hasOwn(providers, model.provider)) return undefined;
-  const provider = providers[model.provider];
+  if (!provider || disabledForSubagents(provider, sessionName)) return undefined;
 
-  return provider.models.includes(model.id) ? provider.request : undefined;
+  return provider.request;
 }
 
 export function withFastRequest<Payload>(
   config: FastModeConfig | undefined,
   model: PiModel | undefined,
+  sessionName: string | undefined,
   payload: Payload,
 ) {
-  const fields = fastRequestFields(config, model);
+  const fields = fastRequestFields(config, model, sessionName);
 
   if (!fields || !isModelRequest(payload) || !isRequestFields(payload)) return payload;
 
@@ -174,6 +203,7 @@ const saveEnabled = Effect.fn("saveEnabled")(function* (agentDir: string, enable
 function announceState(
   ctx: ExtensionContext,
   config: FastModeConfig | undefined,
+  sessionName: string | undefined,
   enabled: boolean,
 ): void {
   if (!enabled) {
@@ -183,10 +213,19 @@ function announceState(
   }
 
   const model = ctx.model;
-  const fields = fastRequestFields(config, model);
+  const fields = fastRequestFields(config, model, sessionName);
 
   if (fields) {
     ctx.ui.notify(`Fast mode enabled (${describeRequestFields(fields)}).`, "info");
+
+    return;
+  }
+
+  if (model && listingProvider(config, model)) {
+    ctx.ui.notify(
+      `Fast mode enabled, but the ${SETTINGS_FIELD} setting disables ${model.provider} in subagent sessions.`,
+      "warning",
+    );
 
     return;
   }
@@ -201,10 +240,11 @@ function announceState(
 function showIndicator(
   ctx: ExtensionContext,
   config: FastModeConfig | undefined,
+  sessionName: string | undefined,
   enabled: boolean,
 ) {
   if (ctx.mode !== "tui") return;
-  const active = enabled && fastRequestFields(config, ctx.model) !== undefined;
+  const active = enabled && fastRequestFields(config, ctx.model, sessionName) !== undefined;
 
   // The footer orders extension statuses by key; "speed" sorts after "session-timer",
   // so the indicator follows the session time.
@@ -218,6 +258,8 @@ export default function fastModeExtension(
 ): Promise<void> {
   let enabled = false;
   const config = () => readConfig(pi.getSettings());
+  // Read on every use so a `/name` change applies to the next request.
+  const sessionName = () => pi.getSessionName();
 
   const toggle = (ctx: ExtensionContext) => {
     const nextEnabled = !enabled;
@@ -228,8 +270,9 @@ export default function fastModeExtension(
           Effect.sync(() => {
             enabled = nextEnabled;
             const currentConfig = config();
-            announceState(ctx, currentConfig, enabled);
-            showIndicator(ctx, currentConfig, enabled);
+            const currentSessionName = sessionName();
+            announceState(ctx, currentConfig, currentSessionName, enabled);
+            showIndicator(ctx, currentConfig, currentSessionName, enabled);
           }),
         ),
         Effect.catch(() =>
@@ -247,15 +290,17 @@ export default function fastModeExtension(
 
   // Pi builds a fresh settings manager from disk for every session and reloads it on /reload,
   // so this sees toggles saved by earlier sessions and other Pi processes.
+  // Pi records `--name` before extensions start, so subagent sessions are named by now.
   pi.on("session_start", (_event, ctx) => {
     const currentConfig = config();
     enabled = currentConfig?.enabled === true;
-    showIndicator(ctx, currentConfig, enabled);
+    showIndicator(ctx, currentConfig, sessionName(), enabled);
   });
   // Pi updates ctx.model before emitting model_select.
-  pi.on("model_select", (_event, ctx) => showIndicator(ctx, config(), enabled));
+  pi.on("model_select", (_event, ctx) => showIndicator(ctx, config(), sessionName(), enabled));
+  pi.on("session_info_changed", (event, ctx) => showIndicator(ctx, config(), event.name, enabled));
   pi.on("before_provider_request", (event, ctx) =>
-    enabled ? withFastRequest(config(), ctx.model, event.payload) : undefined,
+    enabled ? withFastRequest(config(), ctx.model, sessionName(), event.payload) : undefined,
   );
 
   return Effect.runPromise(

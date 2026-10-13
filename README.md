@@ -112,7 +112,8 @@ tracked and untracked, non-ignored files.
   session-owned processes, plus `emit-to-pi` notifications
 - `fast-mode`: `/fast` and `Ctrl-Alt-M` toggle Fast mode for the models listed
   under `fastMode` in `agent/settings.json`, and the footer shows `⚡ Fast` while
-  it is on
+  it is on. A provider entry with `subagentsEnabled: false` skips sessions
+  named `subagent: …`
 - `herdr-agent-state`: Herdr pane state and Pi session reporting
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool

@@ -60,7 +60,8 @@ function noticeFor(
   model: { provider: string; id: string },
 ) {
   if (!enabled) return /Fast mode disabled\./;
-  const fields = fastRequestFields(config, model);
+  // The tmux session starts without --name, so it is never a subagent session.
+  const fields = fastRequestFields(config, model, undefined);
 
   return fields
     ? new RegExp(escapeRegExp(`Fast mode enabled (${describeRequestFields(fields)}).`))
@@ -105,7 +106,7 @@ describe("fast-mode (real pi in tmux)", { skip }, () => {
       "settings.json fastMode.enabled does not reflect the announced state",
     );
     // The footer renders on its own frame after the notice.
-    const indicatorShown = next && fastRequestFields(config, model) !== undefined;
+    const indicatorShown = next && fastRequestFields(config, model, undefined) !== undefined;
     yield* waitFor(session, (pane) => /\u26a1\ufe0e? Fast/.test(pane) === indicatorShown, {
       timeoutMs: 5_000,
       description: `footer indicator ${indicatorShown ? "shown" : "hidden"}`,

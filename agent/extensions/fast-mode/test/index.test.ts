@@ -11,6 +11,7 @@ import extension, {
   fastRequestFields,
   loadShortcuts,
   readConfig,
+  SUBAGENT_SESSION_PREFIX,
   withFastRequest,
 } from "../index.ts";
 
@@ -22,7 +23,11 @@ const config: FastModeConfig = {
       request: { speed: "fast", betas: ["fast-mode-2026-02-01"] },
       models: ["claude-opus-5-5"],
     },
-    openai: { request: { service_tier: "fast" }, models: ["gpt-6.1-sol"] },
+    openai: {
+      request: { service_tier: "fast" },
+      models: ["gpt-6.1-sol"],
+      subagentsEnabled: false,
+    },
     "openai-codex": { request: { service_tier: "priority" }, models: ["gpt-6-astra"] },
   },
 };
@@ -38,9 +43,28 @@ describe("fast mode config", () => {
     assert.ok(repositoryConfig, "settings.json fastMode does not match the config schema");
 
     assert.deepEqual(
-      fastRequestFields(repositoryConfig, { provider: "anthropic", id: "claude-opus-5-5" }),
+      fastRequestFields(
+        repositoryConfig,
+        { provider: "anthropic", id: "claude-opus-5-5" },
+        undefined,
+      ),
       { speed: "fast", betas: ["fast-mode-2026-02-01"] },
     );
+  });
+
+  // Renaming the prefix in the skill alone would silently restore fast mode in subagents.
+  test("the subagents skill names sessions with the subagent prefix", () => {
+    const { readFileSync } = process.getBuiltinModule("node:fs");
+
+    const skill = readFileSync(
+      new URL("../../../skills/subagents/SKILL.md", import.meta.url),
+      "utf8",
+    );
+
+    const names = [...skill.matchAll(/--name "([^"]*)"/g)].map(([, name]) => name);
+    assert.ok(names.length > 0, "the subagents skill has no --name in its launch command");
+
+    for (const name of names) assert.ok(name.startsWith(SUBAGENT_SESSION_PREFIX), name);
   });
 
   test("ignores missing or invalid configs", () => {
@@ -73,8 +97,12 @@ describe("fast mode request mapping", () => {
     test(`maps ${provider}/${id} without mutating the payload`, () => {
       const model = { provider, id };
       const payload = { model: id, input: "hello" };
-      assert.deepEqual(fastRequestFields(config, model), fields);
-      assert.deepEqual(withFastRequest(config, model, payload), { ...payload, ...fields });
+      assert.deepEqual(fastRequestFields(config, model, undefined), fields);
+
+      assert.deepEqual(withFastRequest(config, model, undefined, payload), {
+        ...payload,
+        ...fields,
+      });
       assert.deepEqual(payload, { model: id, input: "hello" });
     });
   }
@@ -83,7 +111,7 @@ describe("fast mode request mapping", () => {
     const model = { provider: "anthropic", id: "claude-opus-5-5" };
 
     for (const betas of [["oauth-2025-04-20"], ["oauth-2025-04-20", "fast-mode-2026-02-01"]]) {
-      assert.deepEqual(withFastRequest(config, model, { model: model.id, betas }), {
+      assert.deepEqual(withFastRequest(config, model, undefined, { model: model.id, betas }), {
         model: model.id,
         speed: "fast",
         betas: ["oauth-2025-04-20", "fast-mode-2026-02-01"],
@@ -99,9 +127,24 @@ describe("fast mode request mapping", () => {
       { provider: "constructor", id: "gpt-6.1-sol" },
     ]) {
       const payload = { model: model.id };
-      assert.equal(fastRequestFields(config, model), undefined);
-      assert.equal(withFastRequest(config, model, payload), payload);
+      assert.equal(fastRequestFields(config, model, undefined), undefined);
+      assert.equal(withFastRequest(config, model, undefined, payload), payload);
     }
+  });
+
+  test("skips subagent sessions only for providers that set subagentsEnabled to false", () => {
+    const subagent = `${SUBAGENT_SESSION_PREFIX} review the diff`;
+    const openai = { provider: "openai", id: "gpt-6.1-sol" };
+    const anthropic = { provider: "anthropic", id: "claude-opus-5-5" };
+
+    assert.equal(fastRequestFields(config, openai, subagent), undefined);
+    assert.deepEqual(fastRequestFields(config, openai, "review the diff"), {
+      service_tier: "fast",
+    });
+    assert.deepEqual(fastRequestFields(config, anthropic, subagent), {
+      speed: "fast",
+      betas: ["fast-mode-2026-02-01"],
+    });
   });
 
   test("preserves requests for other models, non-object payloads, and missing inputs", () => {
@@ -116,12 +159,12 @@ describe("fast mode request mapping", () => {
       "request",
       1,
     ]) {
-      assert.equal(withFastRequest(config, model, payload), payload);
+      assert.equal(withFastRequest(config, model, undefined, payload), payload);
     }
 
     const payload = { model: model.id };
-    assert.equal(withFastRequest(undefined, model, payload), payload);
-    assert.equal(withFastRequest(config, undefined, payload), payload);
+    assert.equal(withFastRequest(undefined, model, undefined, payload), payload);
+    assert.equal(withFastRequest(config, undefined, undefined, payload), payload);
   });
 });
 
@@ -172,6 +215,7 @@ test("/fast persists, announces, and shows toggles for fast models and only maps
   writeFileSync(settingsPath, JSON.stringify({ theme: "x", fastMode: config }));
 
   const adapter = extensionTestAdapter();
+  let sessionName: string | undefined;
 
   let toggle: Parameters<ExtensionAPI["registerCommand"]>[1]["handler"] | undefined;
 
@@ -191,6 +235,7 @@ test("/fast persists, announces, and shows toggles for fast models and only maps
         toggle = command.handler;
       },
       registerShortcut() {},
+      getSessionName: () => sessionName,
     }),
     root,
   );
@@ -257,6 +302,14 @@ test("/fast persists, announces, and shows toggles for fast models and only maps
   await selectModel(otherModel);
   await selectModel(model);
 
+  sessionName = `${SUBAGENT_SESSION_PREFIX} review the diff`;
+  await adapter.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+  assert.equal(await request(), payload);
+  await toggle("", ctx);
+  await toggle("", ctx);
+  assert.equal(await request(), payload);
+  sessionName = undefined;
+
   await toggle("", ctx);
   assert.equal(await request(), undefined);
   ctx.model = undefined;
@@ -266,6 +319,11 @@ test("/fast persists, announces, and shows toggles for fast models and only maps
   await toggle("", ctx);
   assert.deepEqual(notices, [
     ["Fast mode enabled (service_tier: fast).", "info"],
+    ["Fast mode disabled.", "info"],
+    [
+      "Fast mode enabled, but the fastMode setting disables openai in subagent sessions.",
+      "warning",
+    ],
     ["Fast mode disabled.", "info"],
     ["Fast mode enabled, but unknown model is not listed in the fastMode setting.", "warning"],
     ["Could not save Fast mode setting.", "error"],
@@ -277,6 +335,10 @@ test("/fast persists, announces, and shows toggles for fast models and only maps
     indicator,
     undefined,
     indicator,
+    // Subagent session: session_start, then toggling off and back on.
+    undefined,
+    undefined,
+    undefined,
     undefined,
     undefined,
   ]);

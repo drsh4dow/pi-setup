@@ -48,8 +48,10 @@ pi --print \
 SUBAGENT_PROMPT
 ```
 
-Use the session name as the terminal title. Pick a heredoc delimiter that does
-not occur as a standalone line in the assignment.
+Use the session name as the terminal title. Keep the `subagent:` prefix: the
+fast-mode extension reads it to apply each provider's `subagentsEnabled`
+setting. Pick a heredoc delimiter that does not occur as a standalone line in
+the assignment.
 
 ## Use the report
 

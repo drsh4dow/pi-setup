@@ -142,7 +142,7 @@ test("status reports a dead owner and watch reclaims its lock", () =>
       mkdirSync(paths.lock, { recursive: true });
       writeFileSync(
         join(paths.lock, "owner.json"),
-        JSON.stringify({ pid: child.pid, trustedBots: [] }),
+        JSON.stringify({ pid: child.pid, token: "a".repeat(32), trustedBots: [] }),
       );
 
       const status = parseJson(
@@ -176,7 +176,7 @@ test("status and watch agree on a live owner without changing its lock", () =>
 
     mkdirSync(paths.lock, { recursive: true });
     const file = join(paths.lock, "owner.json");
-    const owner = JSON.stringify({ pid: process.pid, trustedBots: [] });
+    const owner = JSON.stringify({ pid: process.pid, token: "a".repeat(32), trustedBots: [] });
     writeFileSync(file, owner);
     const status = runCli(cwd, "status");
     assert.equal(status.status, 0, status.stderr);

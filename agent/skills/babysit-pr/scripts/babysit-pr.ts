@@ -203,12 +203,11 @@ function maybeRemind(cwd: string, pr: PullRequest, paths: StatePaths) {
 async function watch(cwd: string, reference: string, trustedBots: Set<string>, debounceMs: number) {
   const initial = resolvePr(cwd, reference);
   const paths = statePaths(cwd, initial.identity);
-  acquireLock(paths, trustedBots);
-  const release = () => rmSync(paths.lock, { recursive: true, force: true });
+  const lock = acquireLock(paths, trustedBots);
 
   for (const signal of ["SIGINT", "SIGTERM"])
     process.once(signal, () => {
-      release();
+      lock.release();
       process.exit(0);
     });
   let failureStartedAt = null;
@@ -265,7 +264,7 @@ async function watch(cwd: string, reference: string, trustedBots: Set<string>, d
       }
     }
   } finally {
-    release();
+    lock.release();
   }
 }
 

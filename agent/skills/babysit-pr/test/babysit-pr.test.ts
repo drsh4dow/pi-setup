@@ -1,15 +1,27 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   ackEvents,
+  acquireLock,
   drainEvents,
   pendingEvents,
   queueEvents,
+  readMeta,
+  readWatcherOwner,
+  reclaimStaleLock,
   reconcileResolvedReviewComments,
   reconcileUnnotifiedCheckEvents,
   statePaths,
@@ -171,23 +183,26 @@ test("human feedback from the authenticated account is actionable across comment
   ]);
 });
 
-test("the authenticated account is trusted only when it has write permission", () =>
+test("actors are trusted only with write permission, and failed lookups fail the poll", () =>
   withState("shared-login", (_paths, cwd) => {
     const originalPath = process.env.PATH;
     const gh = join(cwd, "gh");
 
+    const trusted = (script: string) => {
+      writeFileSync(gh, `#!/bin/sh\n${script}\n`, { mode: 0o700 });
+
+      return trustedLogins(cwd, identity, "author", new Set(["author"]), new Set()).has("author");
+    };
+
     try {
       process.env.PATH = `${cwd}${delimiter}${originalPath}`;
-
-      for (const permission of ["write", "read"]) {
-        writeFileSync(gh, `#!/bin/sh\nprintf '%s\\n' '${permission}'\n`, {
-          mode: 0o700,
-        });
-        assert.equal(
-          trustedLogins(cwd, identity, "author", new Set(["author"]), new Set()).has("author"),
-          permission === "write",
-        );
-      }
+      assert.equal(trusted("echo write"), true);
+      assert.equal(trusted("echo read"), false);
+      assert.equal(trusted("echo 'gh: author is not a user (HTTP 404)' >&2; exit 1"), false);
+      assert.throws(
+        () => trusted("echo 'gh: Bad credentials (HTTP 401)' >&2; exit 1"),
+        /Bad credentials/,
+      );
     } finally {
       process.env.PATH = originalPath;
     }
@@ -396,6 +411,35 @@ for (const [name, kind, corrupt] of corruptions) {
       assert.match(readdirSync(paths.events)[0], /\.corrupt-/);
     }));
 }
+
+test("state that cannot be read stays in place instead of being quarantined", () =>
+  withState("unreadable", (paths) => {
+    mkdirSync(paths.meta, { recursive: true });
+    assert.throws(() => readMeta(paths), { code: "EISDIR" });
+    assert.deepEqual(
+      readdirSync(paths.root).filter((name) => name.startsWith("meta.json")),
+      ["meta.json"],
+    );
+  }));
+
+test("a stale-owner observation cannot reclaim a later watcher's lock", () =>
+  withState("reclaim", (paths) => {
+    const exited = spawnSync(process.execPath, ["-e", ""]);
+    mkdirSync(paths.lock, { recursive: true });
+    writeFileSync(paths.lockOwner, JSON.stringify({ pid: exited.pid, token: "a".repeat(32) }));
+
+    const observed = readWatcherOwner(paths);
+    assert.ok(observed.kind === "stale");
+    const lock = acquireLock(paths, new Set());
+    // A second watcher acts on the observation it made before the first one reclaimed.
+    reclaimStaleLock(paths, observed.owner);
+    const current = readWatcherOwner(paths);
+    assert.ok(current.kind === "live");
+    assert.equal(current.owner.pid, process.pid);
+
+    lock.release();
+    assert.equal(readWatcherOwner(paths).kind, "absent");
+  }));
 
 test("watcher notifications reach the inherited owner channel through emit-to-pi", () => {
   const watcher = new URL("../scripts/babysit-pr.ts", import.meta.url).href;

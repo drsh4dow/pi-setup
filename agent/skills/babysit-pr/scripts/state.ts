@@ -26,6 +26,8 @@ const trustedBotsSchema = Type.Array(trustedBotSchema);
 
 const watcherOwnerSchema = Type.Object({
   pid: Type.Integer({ minimum: 1, maximum: 2_147_483_647 }),
+  // Names the owner's reclamation tombstone, so it must be safe as a path component.
+  token: Type.String({ pattern: "^[a-f0-9]{32}$" }),
   trustedBots: Type.Optional(trustedBotsSchema),
 });
 
@@ -57,6 +59,7 @@ export function statePaths(cwd: string, identity: PrIdentity) {
     acks: join(root, "acks"),
     notifications: join(root, "notifications"),
     lock: join(root, "watch.lock"),
+    lockOwner: join(root, "watch.lock", "owner.json"),
     meta: join(root, "meta.json"),
     eventFile: (id: string) => join(root, "events", `${id}.json`),
     ackFile: (id: string) => join(root, "acks", `${id}.json`),
@@ -87,7 +90,18 @@ const metaSchema = Type.Object({
 
 type WatcherOwner = Static<typeof watcherOwnerSchema>;
 
-type Watcher = { kind: "absent" } | { kind: "stale" } | { kind: "live"; owner: WatcherOwner };
+type Watcher =
+  | { kind: "absent" }
+  | { kind: "stale"; owner: WatcherOwner }
+  | { kind: "live"; owner: WatcherOwner };
+
+export interface WatcherLock {
+  release(): void;
+}
+
+function isErrno(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
 
 function syncDirectory(path: string) {
   let fd;
@@ -118,15 +132,25 @@ export function atomicJson(path: string, value: JsonValue) {
   syncDirectory(dirname(path));
 }
 
+// Only content that fails to parse is quarantined. A read failure says nothing about the
+// data and propagates as is; Node's error already names the operation and path.
 function readState<T>(path: string, parse: (text: string) => T): T {
+  const text = readFileSync(path, "utf8");
+
   try {
-    return parse(readFileSync(path, "utf8"));
+    return parse(text);
   } catch (error) {
     const corrupt = `${path}.corrupt-${Date.now()}`;
 
     try {
       renameSync(path, corrupt);
-    } catch {}
+    } catch (quarantineError) {
+      throw new AggregateError(
+        [error, quarantineError],
+        `Invalid babysit-pr state at ${path} could not be moved to ${corrupt}`,
+        { cause: quarantineError },
+      );
+    }
 
     throw new Error(`Invalid babysit-pr state moved to ${corrupt}`, { cause: error });
   }
@@ -319,47 +343,78 @@ export function reconcileResponseMarkers(
     if (existsSync(paths.eventFile(id))) acknowledge(paths, id, "github-marker");
 }
 
-export function readWatcherOwner(paths: StatePaths): Watcher {
-  let owner: WatcherOwner;
-
+// Returns undefined only when no lock exists.
+function readLockOwner(paths: StatePaths): WatcherOwner | undefined {
   try {
-    owner = parseJson(watcherOwnerSchema, readFileSync(join(paths.lock, "owner.json"), "utf8"));
+    return parseJson(watcherOwnerSchema, readFileSync(paths.lockOwner, "utf8"));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT" &&
-      !existsSync(paths.lock)
-    )
-      return { kind: "absent" };
+    if (isErrno(error) && error.code === "ENOENT" && !existsSync(paths.lock)) return undefined;
     // A missing or incomplete owner file may belong to a starting watcher.
     throw new Error(
       `Cannot verify babysit-pr watcher owner at ${paths.lock}. Retry if it is starting; otherwise inspect the lock before removing it.`,
       { cause: error },
     );
   }
-
-  try {
-    process.kill(owner.pid, 0);
-  } catch (error) {
-    if (!(error instanceof Error) || !("code" in error)) throw error;
-
-    if (error.code === "ESRCH") return { kind: "stale" };
-
-    if (error.code !== "EPERM") throw error;
-  }
-
-  return { kind: "live", owner };
 }
 
-export function acquireLock(paths: StatePaths, trustedBots: Set<string>) {
+function isRunning(pid: number) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if (isErrno(error) && error.code === "ESRCH") return false;
+
+    if (isErrno(error) && error.code === "EPERM") return true;
+
+    throw error;
+  }
+
+  return true;
+}
+
+export function readWatcherOwner(paths: StatePaths): Watcher {
+  for (;;) {
+    const owner = readLockOwner(paths);
+
+    if (owner === undefined) return { kind: "absent" };
+
+    if (isRunning(owner.pid)) return { kind: "live", owner };
+
+    // The owner may have released its lock between the read and its exit. Reading the
+    // same token after the owner died proves the lock is abandoned, because a dead owner
+    // cannot release it and reclamation never puts a lock back.
+    if (readLockOwner(paths)?.token === owner.token) return { kind: "stale", owner };
+  }
+}
+
+// Reclamation renames an abandoned lock to a tombstone named for its dead owner and never
+// deletes the tombstone. Renaming a directory onto an existing, non-empty one fails, so
+// once any watcher reclaims that owner's lock, every other observation of the same stale
+// owner fails here instead of moving a later owner's acquisition.
+export function reclaimStaleLock(paths: StatePaths, owner: WatcherOwner) {
+  try {
+    renameSync(paths.lock, `${paths.lock}.reclaimed-${owner.token}`);
+  } catch (error) {
+    if (isErrno(error) && ["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code ?? "")) return;
+
+    throw error;
+  }
+}
+
+// Reclamation moves only a dead owner's lock, so a lock carrying this token stays at
+// paths.lock until this process releases it.
+function releaseLock(paths: StatePaths, token: string) {
+  if (readLockOwner(paths)?.token === token) rmSync(paths.lock, { recursive: true, force: true });
+}
+
+export function acquireLock(paths: StatePaths, trustedBots: Set<string>): WatcherLock {
   mkdirSync(paths.root, { recursive: true });
+  const token = randomBytes(16).toString("hex");
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       mkdirSync(paths.lock);
     } catch (error) {
-      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      if (!isErrno(error) || error.code !== "EEXIST") throw error;
       const watcher = readWatcherOwner(paths);
 
       if (watcher.kind === "live")
@@ -367,23 +422,25 @@ export function acquireLock(paths: StatePaths, trustedBots: Set<string>) {
           cause: error,
         });
 
-      if (watcher.kind === "stale") rmSync(paths.lock, { recursive: true, force: true });
+      if (watcher.kind === "stale") reclaimStaleLock(paths, watcher.owner);
       continue;
     }
 
     try {
-      atomicJson(join(paths.lock, "owner.json"), {
+      atomicJson(paths.lockOwner, {
         version: VERSION,
         pid: process.pid,
+        token,
         trustedBots: [...trustedBots].toSorted(),
         startedAt: new Date().toISOString(),
       });
     } catch (error) {
+      // Without an owner record no other watcher can judge this lock stale, so it is still ours.
       rmSync(paths.lock, { recursive: true, force: true });
       throw error;
     }
 
-    return;
+    return { release: () => releaseLock(paths, token) };
   }
 
   throw new Error("Could not acquire the babysit-pr watcher lock");

@@ -170,18 +170,21 @@ export function trustedLogins(
       continue;
     }
 
-    const result = spawnSync(
-      "gh",
-      [
-        "api",
-        `repos/${identity.owner}/${identity.repo}/collaborators/${encodeURIComponent(login)}/permission`,
-        "--jq",
-        ".permission",
-      ],
-      { cwd, encoding: "utf8" },
-    );
+    const args = [
+      "api",
+      `repos/${identity.owner}/${identity.repo}/collaborators/${encodeURIComponent(login)}/permission`,
+      "--jq",
+      ".permission",
+    ];
 
-    if (result.status !== 0) continue;
+    const result = spawnSync("gh", args, { cwd, encoding: "utf8" });
+
+    // The snapshot already resolved this repository, so a 404 is GitHub reporting that the
+    // login is not a user. Any other failure leaves trust unknown and must fail the poll
+    // rather than silently drop the actor's feedback.
+    if (result.status !== 0 && /\(HTTP 404\)/.test(result.stderr)) continue;
+
+    if (result.status !== 0) throw new CommandError(`gh ${args.join(" ")}`, result);
 
     if (["admin", "maintain", "write"].includes(result.stdout.trim())) trusted.add(login);
   }

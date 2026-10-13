@@ -1,6 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import { type Static, Type } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  CustomMessageEntryDraft,
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
 import { Effect, FileSystem, Layer, Path } from "effect";
@@ -66,10 +70,52 @@ const killOutputSchema = Type.Object({
   ),
 });
 
-export default function backgroundTerminals(pi: ExtensionAPI) {
+const SETTLE_WAIT_MS = 10 * 60_000;
+
+const MAX_IDLE_SETTLE_WAITS = 3;
+
+// Interactive and RPC sessions outlive the turn, so completion wakes them
+// later. Print and JSON runs exit when the run settles.
+function sessionOutlivesRun(mode: ExtensionContext["mode"]): boolean {
+  switch (mode) {
+    case "tui":
+    case "rpc":
+      return true;
+    case "print":
+    case "json":
+      return false;
+    default: {
+      const unexpected: never = mode;
+      throw new Error(`Unexpected run mode: ${String(unexpected)}`);
+    }
+  }
+}
+
+const runningTerminals = (terminals: BackgroundTerminalSession) =>
+  terminals.list().filter((terminal) => terminal.state === "running");
+
+function stillRunningNotice(terminals: BackgroundTerminalSession): CustomMessageEntryDraft {
+  return {
+    type: "custom_message",
+    customType: NOTIFICATION_MESSAGE,
+    display: true,
+    content: `[Background terminals still running]\n\n${runningTerminals(terminals).map(summary).join("\n")}\n\nThis run is non-interactive: it ends at your next message without a tool call, and shutdown kills these terminals. Stop the ones you no longer need with bg_kill. End your turn again to keep waiting for the rest.`,
+  };
+}
+
+export interface BackgroundTerminalOptions {
+  /** How long a print or JSON run waits at settle for a running terminal to finish. */
+  settleWaitMs?: number;
+}
+
+export default function backgroundTerminals(
+  pi: ExtensionAPI,
+  options: BackgroundTerminalOptions = {},
+) {
   const delivery = new BackgroundTerminalDelivery(pi);
   let session: BackgroundTerminalSession | undefined;
   const observations = new Map<string, object>();
+  let idleSettleWaits = 0;
 
   const currentSession = () => {
     if (!session) throw new Error("Background terminals are unavailable before session start.");
@@ -100,6 +146,40 @@ export default function backgroundTerminals(pi: ExtensionAPI) {
     updateStatus();
   });
   pi.on("agent_settled", () => Effect.runPromise(delivery.flush));
+
+  pi.on("turn_end", ({ message }) => {
+    if (message.role === "assistant" && message.content.some((block) => block.type === "toolCall"))
+      idleSettleWaits = 0;
+  });
+
+  pi.on("agent_before_settle", ({ outcome }, ctx) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        // Captured so a shutdown during the wait cannot swap the session.
+        const terminals = session;
+
+        if (sessionOutlivesRun(ctx.mode) || outcome !== "completed" || !terminals) return undefined;
+
+        if (runningTerminals(terminals).length === 0) return undefined;
+
+        yield* delivery.waitForCompletion(options.settleWaitMs ?? SETTLE_WAIT_MS, ctx.signal);
+
+        const results = delivery.takeCompletions();
+
+        if (results) {
+          idleSettleWaits = 0;
+
+          return { entries: [results], continue: true };
+        }
+
+        idleSettleWaits++;
+
+        if (idleSettleWaits > MAX_IDLE_SETTLE_WAITS) return undefined;
+
+        return { entries: [stillRunningNotice(terminals)], continue: true };
+      }),
+    ),
+  );
   pi.on("session_shutdown", () => Effect.runPromise(leaveSession()));
   pi.registerMessageRenderer(RESULTS_MESSAGE, renderResultsMessage);
   pi.registerMessageRenderer(NOTIFICATION_MESSAGE, renderNotificationMessage);

@@ -11,7 +11,7 @@ import type {
 import { Schema } from "effect";
 import { Check } from "typebox/value";
 import { unsafeFixture } from "../../test/adapter.ts";
-import extension from "../index.ts";
+import extension, { type BackgroundTerminalOptions } from "../index.ts";
 
 const textContent = Schema.Array(
   Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
@@ -51,6 +51,21 @@ export type DeliveryMessage = ReturnType<typeof decodeMessage>;
 
 export type DeliveryOptions = Parameters<ExtensionAPI["sendMessage"]>[1];
 
+const decodeSettleResult = Schema.decodeUnknownSync(
+  Schema.UndefinedOr(
+    Schema.Struct({
+      continue: Schema.Literal(true),
+      entries: Schema.Tuple([
+        Schema.Struct({
+          type: Schema.Literal("custom_message"),
+          customType: Schema.String,
+          content: Schema.String,
+        }),
+      ]),
+    }),
+  ),
+);
+
 export function testContext({
   ui,
   ...context
@@ -88,6 +103,7 @@ type RegisteredTool = Pick<ToolDefinition, "name" | "executionMode"> & {
 
 export function registeredExtension(
   sendMessage: (message: DeliveryMessage, options: DeliveryOptions) => void = () => {},
+  extensionOptions: BackgroundTerminalOptions = {},
 ) {
   const definitions: RegisteredTool[] = [];
   const handlers: Handlers = {};
@@ -130,6 +146,7 @@ export function registeredExtension(
       sendMessage: ((message, options) =>
         sendMessage(decodeMessage(message), options)) satisfies ExtensionAPI["sendMessage"],
     }),
+    extensionOptions,
   );
 
   function tool<S extends Schema.Top & { readonly DecodingServices: never }>(
@@ -179,6 +196,20 @@ export function registeredExtension(
           Promise.resolve(handler(unsafeFixture<SDKEvents[Name]>(event), context)).then(
             () => undefined,
           );
+      },
+      async beforeSettle(context: ExtensionContext) {
+        const handler = handlers.agent_before_settle;
+        assert.ok(handler, "agent_before_settle handler missing");
+
+        return decodeSettleResult(
+          await handler(
+            unsafeFixture<SDKEvents["agent_before_settle"]>({
+              type: "agent_before_settle",
+              outcome: "completed",
+            }),
+            context,
+          ),
+        );
       },
     },
   };

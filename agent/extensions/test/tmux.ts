@@ -104,7 +104,12 @@ export function capture(session: PiSession, scrollback = false) {
   ).pipe(Effect.orElseSucceed(() => ""));
 }
 
-const startPi = Effect.fn("startPi")(function* () {
+/**
+ * Creates a scratch root whose agent directory holds the user's settings and
+ * credentials, so a live pi run neither reads nor writes the real one. Callers
+ * remove `root` when done.
+ */
+export const makePiRoot = Effect.fn("makePiRoot")(function* () {
   const root = yield* fs.makeTempDirectory({ prefix: "pi-e2e-" });
   const cwd = pathService.join(root, "workspace");
   const agentDir = pathService.join(root, "agent");
@@ -115,7 +120,15 @@ const startPi = Effect.fn("startPi")(function* () {
 
   const sourceAgentDir = getAgentDir();
 
-  for (const name of ["settings.json", "auth.json", "keybindings.json", "models.json"]) {
+  // Anthropic rejects subscription requests as third-party use without the
+  // user's system prompt.
+  for (const name of [
+    "settings.json",
+    "auth.json",
+    "keybindings.json",
+    "models.json",
+    "SYSTEM.md",
+  ]) {
     const source = pathService.join(sourceAgentDir, name);
 
     if (yield* fs.exists(source)) {
@@ -127,6 +140,16 @@ const startPi = Effect.fn("startPi")(function* () {
     pathService.join(REPOSITORY_AGENT_DIR, "themes"),
     pathService.join(agentDir, "themes"),
   );
+
+  return { root, cwd, agentDir, sessionDir };
+});
+
+/** Path of a repository extension's entry point, for `pi --extension`. */
+export const repositoryExtension = (name: string) =>
+  pathService.join(REPOSITORY_AGENT_DIR, "extensions", name, "index.ts");
+
+const startPi = Effect.fn("startPi")(function* () {
+  const { root, cwd, agentDir, sessionDir } = yield* makePiRoot();
 
   const name = `pi-e2e-${process.pid}-${sessionCounter++}`;
   const stderrPath = pathService.join(root, "pi.stderr.log");

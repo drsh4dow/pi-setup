@@ -1,5 +1,9 @@
 import { type Static, Type } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  CustomMessageEntryDraft,
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { Cause, Effect } from "effect";
 import { sanitizeInline, sanitizeMultiline, truncateUtf8Tail } from "../../lib/text.ts";
 import {
@@ -206,6 +210,7 @@ export class BackgroundTerminalDelivery {
   // Items evicted from a full queue, kept so bg_list can report what was never delivered.
   private readonly failed = new Map<string, Pick<DeliveryItem, "kind" | "terminalId">>();
   private flushState: "idle" | "flushing" = "idle";
+  private completionWaiter?: () => void;
   private readonly pi: Pick<ExtensionAPI, "sendMessage">;
   private readonly reportError: (message: string) => void;
   constructor(
@@ -250,6 +255,12 @@ export class BackgroundTerminalDelivery {
 
     this.pending.set(item.id, item);
 
+    if (item.kind === "completion" && this.completionWaiter) {
+      this.completionWaiter();
+
+      return;
+    }
+
     // Results steer into a running agent right after the current tool
     // batch; notifications wait for idle so settled terminals can drop
     // their pending notifications first.
@@ -287,6 +298,45 @@ export class BackgroundTerminalDelivery {
         if (item.kind === "notification" && item.terminalId === terminalId) queue.delete(id);
       }
     }
+  }
+  // Completes when a completion is queued, when signal aborts, or after
+  // timeoutMs. While it runs, completions wait for takeCompletions() instead of
+  // steering: the settle boundary appends them itself.
+  waitForCompletion(timeoutMs: number, signal: AbortSignal | undefined): Effect.Effect<void> {
+    return Effect.callback<void>((resume) => {
+      const done = () => {
+        signal?.removeEventListener("abort", done);
+        resume(Effect.void);
+      };
+
+      this.completionWaiter = done;
+      signal?.addEventListener("abort", done, { once: true });
+
+      // Runs when the timeout interrupts the wait.
+      return Effect.sync(() => signal?.removeEventListener("abort", done));
+    }).pipe(
+      Effect.timeoutOption(timeoutMs),
+      Effect.ensuring(
+        Effect.sync(() => {
+          this.completionWaiter = undefined;
+        }),
+      ),
+      Effect.asVoid,
+    );
+  }
+  takeCompletions(): CustomMessageEntryDraft | undefined {
+    const batch = this.batch("completion");
+
+    if (!batch) return undefined;
+    this.consume(batch.details.ids);
+
+    return {
+      type: "custom_message",
+      customType: batch.customType,
+      content: batch.content,
+      display: true,
+      details: batch.details,
+    };
   }
   consume(ids: readonly string[]) {
     for (const id of ids) {

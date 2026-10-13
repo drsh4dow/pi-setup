@@ -1,4 +1,5 @@
 {
+  "$schema": "https://pi.dev/schemas/settings.schema.json",
   "fastMode": {
     "enabled": true,
     "providers": {
@@ -15,7 +16,7 @@
       }
     }
   },
-  "lastChangelogVersion": "1.1.0",
+  "lastChangelogVersion": "1.2.0",
   "packages": [],
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",

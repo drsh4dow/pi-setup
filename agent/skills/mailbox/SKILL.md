@@ -22,15 +22,24 @@ Himalaya 2.1 CLI; check the installed command's `--help` when syntax differs.
    Read [Installation and setup](references/install-and-setup.md) only if
    `himalaya` is not installed.
 
-2. List configured accounts:
+2. List configured accounts and their addresses:
 
    ```bash
    himalaya --json account list
+   grep -E '^\[accounts\.|^email *=' \
+     "${XDG_CONFIG_HOME:-$HOME/.config}/himalaya/config.toml"
    ```
 
-   Select the account matching the user's request. Account names are
-   configuration keys, not necessarily email addresses. If the intended
-   account is ambiguous, ask before accessing or sending mail.
+   Account names are configuration keys, not necessarily email addresses.
+   The `grep` maps each name to its address without printing the
+   credentials stored in the same file.
+
+   With one account, use it. With several, use the account the request
+   identifies by name, address, domain, or organization, or the account
+   already in use for the same task in this conversation. Otherwise ask
+   which account to use, listing each name with its address, and wait for
+   the answer before accessing or sending mail. The default account is a
+   configuration fallback, not evidence of the user's intent.
 
    If Himalaya is installed but unconfigured, run `himalaya configure` in
    a human-operated terminal. It discovers settings and offers to save

@@ -116,6 +116,10 @@ tracked and untracked, non-ignored files.
   it is on. A provider entry with `subagentsEnabled: false` skips sessions
   named `subagent: …`
 - `herdr-agent-state`: Herdr pane state and Pi session reporting
+- `herdr-bg-indicator`: reports running background terminals, such as `2 bg`,
+  as the `$bg` Herdr pane token. Herdr shows it only where a sidebar row names
+  it, for example `rows = [["state_icon", "machine", "workspace", "tab", "$bg"],
+  ["agent"]]` under `[ui.sidebar.agents]` in `~/.config/herdr/config.toml`
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores active-tool snippets and guidelines, which Pi

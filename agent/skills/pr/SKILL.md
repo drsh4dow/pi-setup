@@ -1,6 +1,6 @@
 ---
 name: pr
-description: "Use when writing a PR body."
+description: "Use when writing or updating a PR title or body."
 metadata:
   credits:
     skill: show-me
@@ -9,162 +9,115 @@ metadata:
     url: "https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md"
 ---
 
-Use this template for writing the PR body:
+# PR
+
+Write a PR a reviewer can judge from the page alone: what was wrong, what
+changed, proof that it works, and where their judgment is needed.
+
+## Before writing
+
+1. Find the repository's convention: a PR template
+   (`.github/pull_request_template.md` or `.github/PULL_REQUEST_TEMPLATE/`),
+   the PR section of `CONTRIBUTING.md`, and PR rules in the workspace
+   instructions. They bind. Use their headings, fill every field they ask for,
+   and put the content below under the heading that fits.
+2. Read the final diff against the base branch and the ticket or issue it
+   resolves. Describe the diff as it stands now. After review pushes, rewrite
+   the body to match; the review history lives in its threads.
+
+## Title
+
+Write the title with the `writing-good-commits` skill, since a squash merge
+turns it into the commit subject. Phrase a fix as the behavior after it:
+
+- `fix(web): links in HTML renders open like chat links`
+- `fix(server): stop fsyncing SQLite on every commit so slow disks no longer
+  drop clients`
+
+## Body
 
 ```markdown
-## Summary
+<ticket link, or `Closes #n`>
 
-<diagram, diff-sketch, or tree>
+## Problem
 
-## Evidence
+## Change
 
-- **Before:** <screenshot/output/failing test run>
-  **After:** <screenshot/output/passing test run>
+## Verification
 
-## Merge Danger
+## Review notes
 
-**Door:** <one-way or two-way>
+## Scope
 
-<optional: description>
+## Merge danger
 
-**Blast Radius:** <one-word description>
-
-<optional: potential ramifications of merge>
+Made with <model> in <harness>.
 ```
 
-## Sections
+Problem, Change and Verification are always present. Omit any other section
+that would only say "none". Scale each section to the diff: a 20-line fix gets
+a sentence or two per section. Use the project's domain terms, from
+`GLOSSARY.md` when it exists.
 
-Skip all preambles and keep prose brief. Use the user's domain language from `GLOSSARY.md`.
+### Problem
 
-### Summary
+One or two sentences. Lead with what a user or operator saw, then the cause.
+Link the report and the evidence behind it: the issue, log query, or thread.
 
-Pick the smallest view that makes the key point clear.
+### Change
 
-- Show logic or an algorithm as pseudocode:
+Explain in prose how the change fixes the problem. Name each tradeoff and what
+it costs. When the change spans components, say why each one belongs to the
+same fix.
 
-```text
-on(save)
-  if content is unchanged
-    return cached result
-  write new content
-  return fresh result
-```
+When structure, control flow or state changed, add the smallest sketch that
+shows it. Pick one from [VISUALS.md](VISUALS.md) and place it beside the
+sentence it supports. Show changed user-facing text as a table of old and new
+copy.
 
-- Show runtime control flow as a call tree:
+### Verification
 
-```text
-submitForm
-  createSession
-    persistPrompt
-    launchAgent
-  navigateToSession
-```
+Proof that the changed behavior works, with numbers.
 
-- Show UI structure as a component tree, including state and module boundaries that matter:
+- For a visual change, show before and after for each case, cropped to the
+  changed region at 2x zoom. For narrow regions use a
+  `| Case | Before | After |` table; for wide ones use one labeled image with
+  before above after. Add a recording when motion, timing or interaction
+  matters.
+- Name the test that pins the change and how it failed without it:
+  "`test_reason` fails on the base branch with `expected 2 to equal 1`."
+- Give measurements as before → after, with the setup that produced them.
+- List the commands you ran with their pass counts. Mark failures that also
+  occur on the base branch.
+- State what you could not check, and why.
+- When a reviewer can reproduce the change, end with the steps: where to run
+  it, what to do, and what they should see.
 
-```text
-<SessionPage> (apps/example/src/routes/session.tsx)
-  useSessionEvents()
-  <SessionToolbar>
-    <RunSkillButton> (packages/ui)
-```
+Upload images and recordings with the `dumpfile` skill or the repository's own
+asset host, and embed the links. Keep PR-only assets out of the repository.
+Evidence uses synthetic data.
 
-- Show file responsibility or a broad refactor as a shallow file tree:
+### Review notes
 
-```text
-src/
-├── commands/       # parses user actions
-├── sessions/       # owns session state
-└── transport/      # sends API requests
-```
+Where the reviewer's judgment is needed:
 
-- Show component interaction, control flow, or data flow with Mermaid:
+- Decisions a reviewer might reverse, each with the alternative and why it
+  lost.
+- Review findings left unfixed, each with its reason.
+- Rules the change does not follow, as exceptions: the rule ID, the reason,
+  and the end condition.
+- Where to start reading, when the diff spans many files.
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI
-    participant Daemon
-    User->>UI: choose command
-    UI->>Daemon: send expanded prompt
-    Daemon-->>UI: stream result
-```
+### Scope
 
-- Use `diff` when the point is what changes and the surrounding shape already exists. Match the diff shape to the topic.
+What the PR leaves out on purpose, and the follow-ups it implies, linked when
+filed. Independent fixes go in separate PRs.
 
-For a component change:
+### Merge danger
 
-```diff
- <SessionPage>
-   useSessionEvents()
-   <SessionToolbar>
-+    <RunSkillButton />
-   <SessionTimeline>
-+    <SkillResultCard />
-```
+**Door:** one-way or two-way. A two-way door is one that a revert fully undoes.
+Migrations, deletions, backfills, published contracts and sent messages make a
+door one-way; name what cannot be undone.
 
-For a file-layout change:
-
-```diff
- src/
- ├── commands/
-+│   └── show-me.ts       # expands the slash command
- ├── sessions/
--└── transport.ts
-+└── transport/
-+    ├── client.ts
-+    └── stream.ts
-```
-
-For a call-tree or call-stack change:
-
-```diff
- submitForm
-   createSession
-     persistPrompt
-+    expandSkillMention
-     launchAgent
--  navigateToSession
-+  navigateToSession
-+    subscribeToEvents
-```
-
-For a state or control-flow change:
-
-```diff
- on(save)
--  write content
-+  if content is unchanged
-+    return cached result
-+  write new content
-+  invalidate cache
-```
-
-- Show the whole block when most of it is new, when omitted context would hide ownership or order, or when the user needs a copyable target shape:
-
-```ts
-function expandSkill(command: string): string {
-  const skillName = command.slice(1);
-  return `use the ${skillName} skill`;
-}
-```
-
-#### Guidance
-
-Place each visual next to the short text it supports. Keep only the calls, files, props, states, and boundaries needed to answer the user's current question or the options to resolve the current discussion point.
-
-You may use one of these, you may use several, it is unlikely you will use all of them. Use your judgement and don't overwhelm the user.
-
-### Evidence
-
-Concrete evidence that the change works. Show a before and after.
-
-Screenshots are S-tier - when the environment is set up for it and the change is visual.
-
-Execution-based evidence is A-tier. Test results, console output. Show the exact test that now fails and passes, using pseudocode.
-
-### Merge Danger
-
-Describe whether it's a one-way or two-way door. You can walk back through two-way doors, but not one-way doors. A PR that is cheap to roll back is lower risk. Changes that involve destructive actions or hard-to-reverse decisions are one-way doors.
-
-The blast radius is the potential impact or scope of the changes introduced by this PR. Consider all possibilities. Examples are layout shift, breakages for consumers, mobile responsiveness, etc.
+**Blast radius:** what breaks if the change is wrong, such as a screen, a job,
+API consumers, or a data set.

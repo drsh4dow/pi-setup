@@ -5,7 +5,6 @@ import { defineConfig } from "vite-plus";
 // are not application source. The maintained babysit-pr scripts remain checked.
 const ignoredFiles = [
   ".repos/**",
-  ".firecrawl/**",
   "agent/npm/**",
   "agent/sessions/**",
   "agent/skills/*",

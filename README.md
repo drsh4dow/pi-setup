@@ -132,6 +132,10 @@ tracked and untracked, non-ignored files.
   can discover
 - `tps-tracker`: live and final output-token throughput
 - `ui-moto`: compact model and project status header
+- `web-search`: registers the Perplexity and Exa MCP servers behind the
+  `web-search` skill. Only `perplexity_search` and `web_fetch_exa` are
+  reachable, and only from codemode. Needs `PERPLEXITY_API_KEY` and
+  `EXA_API_KEY`
 
 `agent/extensions/herdr-agent-state.ts` carries local patches. Updating Herdr's
 integration overwrites it, so restore the repository version afterwards and run

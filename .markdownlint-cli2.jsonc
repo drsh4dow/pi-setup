@@ -1,0 +1,8 @@
+{
+  "config": {
+    // agent/SYSTEM.md is sent verbatim as the system prompt, so it opens with
+    // prose before its first heading. The setting is repo-wide because editors
+    // lint the buffer through stdin, where per-file overrides cannot match.
+    "MD041": { "allow_preamble": true },
+  },
+}

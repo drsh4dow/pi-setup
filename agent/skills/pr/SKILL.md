@@ -24,6 +24,8 @@ changed, proof that it works, and where their judgment is needed.
 2. Read the final diff against the base branch and the ticket or issue it
    resolves. Describe the diff as it stands now. After review pushes, rewrite
    the body to match; the review history lives in its threads.
+3. Launch the merge danger audit now, so it runs while you write. See
+   [Merge danger](#merge-danger).
 
 ## Title
 
@@ -54,9 +56,9 @@ turns it into the commit subject. Phrase a fix as the behavior after it:
 Made with <model> in <harness>.
 ```
 
-Problem, Change and Verification are always present. Omit any other section
-that would only say "none". Scale each section to the diff: a 20-line fix gets
-a sentence or two per section. Use the project's domain terms, from
+Problem, Change, Verification and Merge danger are always present. Omit any
+other section that would only say "none". Size the body with
+[Before saving](#before-saving). Use the project's domain terms, from
 `GLOSSARY.md` when it exists.
 
 ### Problem
@@ -115,9 +117,43 @@ filed. Independent fixes go in separate PRs.
 
 ### Merge danger
 
-**Door:** one-way or two-way. A two-way door is one that a revert fully undoes.
-Migrations, deletions, backfills, published contracts and sent messages make a
-door one-way; name what cannot be undone.
+How much damage the change does if it fails, so reviewers can size their
+trust and their effort. Correctness belongs to review; this section takes the
+failure as given.
 
-**Blast radius:** what breaks if the change is wrong, such as a screen, a job,
-API consumers, or a data set.
+An audit subagent writes it, because the author frames a change by its intent
+and misses what the code reaches. Launch one with the `subagents` skill. Its
+assignment names the repository, the base ref and the ticket, and tells it to
+follow [MERGE-DANGER.md](MERGE-DANGER.md) by absolute path. Keep your own
+reasoning and draft body out of it.
+
+Paste the Severity, Door and Blast radius lines it reports. For medium or high,
+also list its widest-reach parts, with `file:line`, under Review notes as where
+to start reading. You may raise the level and must give the reason; the level
+stays at or above the audit's. Put any disagreement under Review notes. If the
+audit fails, write `**Severity:** unrated` and treat the change as high. Rerun
+the audit after every push that changes code.
+
+When the level is high, propose to the user how to shrink the reach before
+opening the PR: move the high-reach part into its own PR, put it behind a flag
+that is off by default, make a migration additive, or dry-run a backfill.
+
+When the user changes a rating, append the case to Calibration in
+[MERGE-DANGER.md](MERGE-DANGER.md): what the diff did, the level, and why.
+
+## Before saving
+
+Count the body's words, Merge danger included and evidence links and images
+excluded. The body is done when it fits the budget for the diff's changed
+lines:
+
+| Changed lines | Words |
+| ------------- | ----- |
+| under 50      | 300   |
+| 50 to 500     | 600   |
+| over 500      | 1,000 |
+
+Cut investigation history first. The reviewer needs what was wrong, what
+changed and the proof, not how you found it; that story belongs in the ticket.
+Meet the budget by removing whole sentences, and keep every remaining one a
+complete sentence.

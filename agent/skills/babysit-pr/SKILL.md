@@ -90,8 +90,9 @@ Written by Pi Agent
 Read the reply back from its original thread. The marker prevents replay if the
 process stops before local acknowledgement.
 
-After changes that affect the PR's description or evidence, update the affected
-title, text, diagrams, test plan, or media. Preserve valid human context. Use
+After a code push or a change that affects the PR's description or evidence,
+update the affected title, text, merge danger, diagrams, test plan, or media
+with the `pr` skill. Preserve valid human context. Use
 `dumpfile` when shared media needs replacement; a push alone does not require
 new evidence.
 

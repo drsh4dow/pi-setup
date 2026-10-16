@@ -128,14 +128,14 @@ integration overwrites it, so restore the repository version afterwards and run
 `wizard` and `writing-for-agents` are vendored from
 [`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
 
-The `principle-*`, `benchmark-checklist`, `sharpen`, `technical-writing`, and
-`unslop` skills are copied from
-[pstack at `99743e9`](https://github.com/cursor/plugins/tree/99743e9c151c8537cbbf1f98bb38f34ef3368453/pstack/skills).
-When syncing, reapply the local edits. Remove `disable-model-invocation: true`
-so the model can trigger them. Add a trigger for every prose surface to the
-`unslop` description. Write skill commands as `/skill:name`. Remove references
-to pstack skills and playbooks that are not installed here. Mark every copied
-skill except `sharpen` with `user-invokable: false`.
+The `principle-*`, `benchmark-checklist`, `create-verification-skill`,
+`maintain-verification-skill`, `sharpen`, `tdd`, `teach`, `technical-writing`,
+`typescript-best-practices`, and `unslop` skills are ported from
+[pstack at `99743e9`](https://github.com/cursor/plugins/tree/99743e9c151c8537cbbf1f98bb38f34ef3368453/pstack/skills)
+by [`agent/scripts/pstack-port.ts`](agent/scripts/pstack-port.ts). To sync,
+check out both the synced and the new upstream commits, run
+`node agent/scripts/pstack-port.ts sync <new>/pstack <synced>/pstack`, resolve
+any reported conflicts, and update the commit above.
 
 - `background-terminals`
 - `benchmark-checklist`

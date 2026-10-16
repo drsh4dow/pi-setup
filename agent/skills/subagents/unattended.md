@@ -10,10 +10,6 @@ Otherwise, the message you end on is your report.
 
 Before your first action, check the skill list against the assignment.
 
-When you run a playbook, your report opens with one short paragraph on the
-outcome. Its todolist comes next, each step done or `skip: <reason>`, before
-any other section.
-
 Send the report once the assignment's done condition holds, or once a blocker
 outside your control stops every remaining part. Until then, put status notes
 beside your next tool call. These endings leave owed work undone: a summary

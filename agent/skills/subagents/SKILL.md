@@ -10,19 +10,19 @@ and tools. It receives one assignment and returns one report.
 
 ## Kinds
 
-Every subagent is an owner or a delegate. The assignment names which, and the
-launch follows from it.
+Every subagent is a delegate, except an Orchestrate sub-coordinator, which is
+an owner. The launch names the kind, and the `delegate-guard` extension blocks
+any spawn the kind does not allow.
 
-- **Owner.** Receives a whole unit, such as a PR, a plan step, or a queue item,
-  and runs it the way a top-level session would. It matches the playbook, keeps
-  the todolist, and spawns the delegates its playbook names. Spawn an owner only
-  where a playbook hands a unit to one: Feature's single owner for code-coupled
-  work, the owners in Multi-phase plan, Autopilot-full, and Autopilot-stack, and
-  Orchestrate's sub-coordinators.
 - **Delegate.** Does one piece of its parent's step: code for a written scope,
   an exploration, a review, a swarm lane, an arena or architect candidate, or
   Comment Sicko. It is a leaf. Its parent owns the playbook, the todolist, the
   review of its output, and every spawn.
+- **Owner.** An Orchestrate sub-coordinator. It runs its track the way a
+  top-level session would, keeps the todolist, and launches each of its
+  workers and verifiers as a delegate. Every other playbook keeps its units,
+  PRs and plan steps included, in the session that runs it, which spawns
+  delegates directly.
 
 ## Models
 
@@ -93,7 +93,8 @@ pi --print \
 SUBAGENT_PROMPT
 ```
 
-An owner launch drops the `delegate.md` line. Use the session name as the
+An owner launch appends `owner.md` in place of `delegate.md`. A launch
+without `owner.md` is a delegate. Use the session name as the
 terminal title. Keep the `subagent:` prefix: the
 fast-mode extension reads it to apply each provider's `subagentsEnabled`
 setting. Pick a heredoc delimiter that does not occur as a standalone line in

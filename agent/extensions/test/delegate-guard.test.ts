@@ -2,14 +2,34 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { isDelegateLaunch, spawnsPiPrint } from "../delegate-guard.ts";
+import { spawnGuard } from "../delegate-guard.ts";
 
 const skill = readFileSync(new URL("../../skills/subagents/SKILL.md", import.meta.url), "utf8");
 
-test("the subagents skill's launch block starts a delegate and is a blocked spawn", () => {
+const UNATTENDED = "/h/.pi/agent/skills/subagents/unattended.md";
+
+const OWNER = "/h/.pi/agent/skills/subagents/owner.md";
+
+const DELEGATE = "/h/.pi/agent/skills/subagents/delegate.md";
+
+const DELEGATE_BLOCK = /^Delegates spawn nothing/;
+
+const OWNER_BLOCK = /^Owners launch only delegates/;
+
+function guardFor(argv: readonly string[]): (command: string) => string | undefined {
+  const guard = spawnGuard(argv);
+  assert.ok(guard, `a subagent launched with ${argv.join(" ")} gets a guard`);
+
+  return guard;
+}
+
+const delegateArgv = ["node", "pi", "--print", "--append-system-prompt", UNATTENDED];
+
+const ownerArgv = [...delegateArgv, "--append-system-prompt", OWNER];
+
+test("the subagents skill's launch block starts a delegate, which an owner may run", () => {
   const launch = skill.match(/## Launch[\s\S]*?```bash\n([\s\S]*?)```/)?.[1];
   assert.ok(launch, "subagents SKILL.md has a bash launch block under ## Launch");
-  assert.ok(spawnsPiPrint(launch));
 
   const argv = launch
     .replaceAll("\\\n", " ")
@@ -17,22 +37,46 @@ test("the subagents skill's launch block starts a delegate and is a blocked spaw
     .split(/\s+/)
     .map((word) => word.replaceAll('"', ""));
 
-  assert.ok(isDelegateLaunch(argv), "the launch appends the prompt the guard recognizes");
+  const asOwner = argv.map((word) => word.replace("subagents/delegate.md", "subagents/owner.md"));
+  const ownerLaunch = launch.replace("subagents/delegate.md", "subagents/owner.md");
+
+  assert.notEqual(ownerLaunch, launch, "the launch block appends delegate.md");
+  assert.match(guardFor(argv)(launch) ?? "", DELEGATE_BLOCK, "a delegate may not spawn");
+  assert.equal(guardFor(asOwner)(launch), undefined, "an owner may launch a delegate");
+  assert.match(
+    guardFor(asOwner)(ownerLaunch) ?? "",
+    OWNER_BLOCK,
+    "an owner may not launch an owner",
+  );
 });
 
-test("pi print-mode spawns are recognized in common shapes", () => {
+test("a process without unattended.md is a root and gets no guard", () => {
+  assert.equal(spawnGuard(["node", "pi"]), undefined);
+  assert.equal(
+    spawnGuard(["node", "pi", "--print", "--append-system-prompt", DELEGATE]),
+    undefined,
+  );
+});
+
+test("a subagent without owner.md is a delegate and spawns no pi print launch", () => {
+  const delegateGuard = guardFor(delegateArgv);
+
   for (const command of [
     'pi -p "say ok"',
     'pi --print --no-session "say ok"',
     'cd /tmp/app && pi --model anthropic/claude-opus-5-5 --print "hi"',
     "/home/u/.bun/bin/pi --print <<'EOF'\nhi\nEOF",
     "FOO=1 pi \\\n  --thinking high \\\n  --print",
+    `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE} "hi"`,
   ]) {
-    assert.ok(spawnsPiPrint(command), command);
+    assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
   }
 });
 
-test("other commands pass", () => {
+test("commands that are not pi print launches pass", () => {
+  const delegateGuard = guardFor(delegateArgv);
+  const ownerGuard = guardFor(ownerArgv);
+
   for (const command of [
     "vp run verify",
     "mkdir -p pi",
@@ -42,25 +86,30 @@ test("other commands pass", () => {
     "pi --help",
     "api --print",
   ]) {
-    assert.equal(spawnsPiPrint(command), false, command);
+    assert.equal(delegateGuard(command), undefined, command);
+    assert.equal(ownerGuard(command), undefined, command);
   }
 });
 
-test("only a launch that appends delegate.md is a delegate", () => {
-  const owner = [
-    "node",
-    "pi",
-    "--print",
-    "--append-system-prompt",
-    "/h/.pi/agent/skills/subagents/unattended.md",
-  ];
+test("an owner's guard judges each launch by its own appends", () => {
+  const ownerGuard = guardFor(ownerArgv);
+  const delegateLaunch = `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt "${DELEGATE}"`;
 
-  assert.equal(isDelegateLaunch(owner), false);
-  assert.ok(
-    isDelegateLaunch([
-      ...owner,
-      "--append-system-prompt",
-      "/h/.pi/agent/skills/subagents/delegate.md",
-    ]),
+  assert.equal(ownerGuard(`cd /tmp/app && ${delegateLaunch} "hi"`), undefined);
+  assert.equal(ownerGuard(`${delegateLaunch} "a" & ${delegateLaunch} "b"`), undefined);
+  assert.equal(ownerGuard(`${delegateLaunch} "hi" 2>&1 | tee log`), undefined);
+  assert.equal(
+    ownerGuard(`${delegateLaunch} <<'TASK'\nNever run pi --print yourself.\nTASK`),
+    undefined,
+    "a heredoc body is not a launch",
   );
+
+  for (const command of [
+    'pi --print "hi"',
+    `pi --print --append-system-prompt ${DELEGATE} --append-system-prompt ${DELEGATE}; pi --print`,
+    `${delegateLaunch} <<'TASK'\nhi\nTASK\npi -p "again"`,
+    `${delegateLaunch} --append-system-prompt ${OWNER}`,
+  ]) {
+    assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
+  }
 });

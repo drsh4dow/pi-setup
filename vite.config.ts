@@ -1,11 +1,12 @@
 import { effectNative, strict as effectStrict } from "@effect/tsgo/oxlint-presets";
 import { defineConfig } from "vite-plus";
 
-// Reference checkouts, runtime state, installed skills, and vendored lint rules
-// are not application source.
+// Reference checkouts, runtime state, installed skills, vendored pstack support
+// files, and vendored lint rules are not application source.
 const ignoredFiles = [
   ".repos/**",
   "agent/npm/**",
+  "agent/poteto/**",
   "agent/sessions/**",
   "agent/skills/*",
   "oxlint/anti-slop/**",
@@ -47,6 +48,7 @@ export default defineConfig({
       "test:docs": [
         "node --test --test-reporter=dot agent/scripts/test/*.test.ts",
         "node agent/scripts/verify-docs.ts",
+        "node agent/scripts/pstack-port.ts check",
       ],
       // The dependencies run concurrently; vp check runs once they pass.
       verify: {

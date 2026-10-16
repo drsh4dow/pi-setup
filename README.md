@@ -129,24 +129,31 @@ integration overwrites it, so restore the repository version afterwards and run
 `wizard` and `writing-for-agents` are vendored from
 [`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
 
-The `principle-*`, `benchmark-checklist`, `create-verification-skill`,
-`maintain-verification-skill`, `sharpen`, `tdd`, `teach`, `technical-writing`,
-`typescript-best-practices`, and `unslop` skills are ported from
-[pstack at `99743e9`](https://github.com/cursor/plugins/tree/99743e9c151c8537cbbf1f98bb38f34ef3368453/pstack/skills)
-by [`agent/scripts/pstack-port.ts`](agent/scripts/pstack-port.ts). To sync,
-check out both the synced and the new upstream commits, run
-`node agent/scripts/pstack-port.ts sync <new>/pstack <synced>/pstack`, resolve
-any reported conflicts, and update the commit above.
+Every skill whose name also appears in pstack is ported from it. See
+[pstack](#pstack).
 
+- `architect`
+- `arena`
+- `automate-me`
 - `background-terminals`
 - `benchmark-checklist`
+- `blast-radius`
+- `bro`
+- `correct`
 - `create-verification-skill`
 - `docs-search`
 - `dumpfile`
+- `figure-it-out`
 - `frontend-design`
+- `how`
+- `in-your-own-words`
+- `interrogate`
+- `ketchup`
 - `mailbox`
 - `maintain-verification-skill`
+- `no-comments`
 - `pi-harness`
+- `poteto-help`
 - `principle-attack-the-premise`
 - `principle-boundary-discipline`
 - `principle-build-the-lever`
@@ -171,14 +178,19 @@ any reported conflicts, and update the commit above.
 - `principle-subtract-before-you-add`
 - `principle-test-behavior-not-implementation`
 - `principle-type-system-discipline`
+- `recall`
+- `reflect`
 - `sharpen`
+- `show-me-your-work`
 - `subagents`
+- `swarm`
 - `tdd`
 - `teach`
 - `technical-writing`
 - `typescript-best-practices`
 - `unslop`
 - `web-search`
+- `why`
 - `wizard`
 - `writing-for-agents`
 - `writing-good-tickets`
@@ -201,6 +213,49 @@ any reported conflicts, and update the commit above.
 
 - `catppuccin-mocha`
 - `gruvbox-dark-hard`
+
+## pstack
+
+The system prompt and most skills come from
+[pstack at `99743e9`](https://github.com/cursor/plugins/tree/99743e9c151c8537cbbf1f98bb38f34ef3368453/pstack),
+Lauren Tan's Cursor plugin. [`agent/SYSTEM.md`](agent/SYSTEM.md) is its
+`poteto-mode` skill rewritten as a system prompt, and
+[`agent/poteto/`](agent/poteto/) holds that skill's playbooks, references, and
+scripts. The scripts are vendored as-is: lint, format, and type checks skip
+them. Not ported: `setup-pstack`, `make-bot-ui`, the `poteto-agent` wrapper,
+the worktree-cleanup playbook, and the Benny automations.
+
+[`agent/scripts/pstack-port.ts`](agent/scripts/pstack-port.ts) does the
+mechanical part of the port: file placement, relative links, frontmatter, and
+`/skill:name` commands. The Cursor-specific parts are local edits, mapped as
+follows:
+
+| pstack on Cursor                                                       | Pi                                                                                                                                                            |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Task` subagents, `subagent_type`, `poteto-agent`, `run_in_background` | `pi --print` subagents started with `bg_start`, per the `subagents` skill. Every subagent already runs `SYSTEM.md`.                                           |
+| `readonly: true`                                                       | The assignment's write scope says the subagent changes nothing.                                                                                               |
+| Cloud agents and cloud VMs                                             | Local subagents, each in its own git worktree with its own ports and state.                                                                                   |
+| Resuming a subagent                                                    | `pi --print --session <file>` on its session file.                                                                                                            |
+| `comment-sicko` agent                                                  | `no-comments/references/comment-sicko.md`, passed with `--append-system-prompt`.                                                                              |
+| `pstack-models.mdc`, `/setup-pstack`, Grok and Cursor model slugs      | The role's row in the `subagents` model table, passed as `--model` and `--thinking`.                                                                          |
+| `AskQuestion`                                                          | A plain question at the end of the reply.                                                                                                                     |
+| Todolist                                                               | A Markdown checklist in the reply, as `SYSTEM.md` defines it.                                                                                                 |
+| `/loop`                                                                | A background terminal whose completion wakes the agent: the watcher command for an event, `sleep <seconds>` for a cadence. Terminals end with the Pi session. |
+| `control-ui`                                                           | The `agent-browser` skill.                                                                                                                                    |
+| `control-cli`                                                          | The `background-terminals` skill, with tmux for TUIs.                                                                                                         |
+| `create-skill`                                                         | The `writing-for-agents` skill.                                                                                                                               |
+| `/deslop`                                                              | The [`deslop`](agent/prompts/deslop.md) prompt, read and applied by the agent.                                                                                |
+| `agent-transcripts/`                                                   | Pi session files: `$PI_SESSION_FILE` and the other sessions in its directory.                                                                                 |
+| `/poteto-mode` and the `poteto-mode` skill                             | `agent/SYSTEM.md`, loaded for every session.                                                                                                                  |
+| `.cursor/skills/`                                                      | `.agents/skills/`                                                                                                                                             |
+| Cursor's built-in babysit, Plan Mode, and Custom Modes                 | Removed.                                                                                                                                                      |
+
+To sync, check out the synced and the new upstream commits, run
+`node agent/scripts/pstack-port.ts sync <new>/pstack <synced>/pstack`, resolve
+the reported conflicts, port new upstream text in `poteto-mode/SKILL.md` into
+`SYSTEM.md` by hand, and update the commit above. `vp run verify` runs
+`pstack-port.ts check`, which fails on Cursor-only terms that a sync brings
+back.
 
 ## Repository layout
 

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "vp exec effect-tsgo patch --oxlint && vp run build:cli && git config filter.pi-settings.clean 'node agent/scripts/clean-settings.ts' && git config filter.pi-settings.required true",
+    "prepare": "vp exec effect-tsgo patch --oxlint && vp run build:cli && (test -e agent/settings.json || cp agent/default.settings.json agent/settings.json)",
     "bench:terminals": "node agent/extensions/background-terminals/test/list.bench.ts",
     "test:background-terminals": "vp run build:cli && node --test agent/extensions/background-terminals/test/*.test.ts",
     "test:process-status": "node --test agent/extensions/process-status/test/*.test.ts",

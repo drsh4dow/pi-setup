@@ -38,9 +38,9 @@ describe("fast mode config", () => {
 
     const { fastMode: repositoryConfig } = Schema.decodeSync(
       Schema.fromJsonString(FastModeSettings),
-    )(readFileSync(new URL("../../../settings.json", import.meta.url), "utf8"));
+    )(readFileSync(new URL("../../../default.settings.json", import.meta.url), "utf8"));
 
-    assert.ok(repositoryConfig, "settings.json fastMode does not match the config schema");
+    assert.ok(repositoryConfig, "default.settings.json fastMode does not match the config schema");
 
     assert.deepEqual(
       fastRequestFields(

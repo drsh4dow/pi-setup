@@ -198,8 +198,8 @@ Pi to authenticate model providers.
 
 `vp install` patches Vite+'s Oxlint for Effect diagnostics, builds the
 standalone CLI binaries under `.build/bin` for the current platform, and
-registers the Git filter for `agent/settings.json`. It does not patch the Pi
-runtime.
+copies `agent/default.settings.json` to `agent/settings.json` when that file
+does not exist. It does not patch the Pi runtime.
 
 To share the skills with tools that read `~/.agents/skills`, link them:
 
@@ -395,7 +395,7 @@ back.
 agent/
 ├── SYSTEM.md          # system prompt, ported from pstack's poteto-mode
 ├── poteto/            # pstack playbooks, references, and scripts
-├── settings.json      # models, thinking level, compaction, and theme
+├── default.settings.json  # models, thinking level, compaction, and theme
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions
 ├── skills/            # agent workflows and references
@@ -411,12 +411,11 @@ trusted local paths, are ignored and must not be committed.
 [`agent/trust.example.json`](agent/trust.example.json) shows the trust-file
 shape without machine-specific paths.
 
-Pi writes machine-local state into `agent/settings.json`, so Git sees that file
-through [`agent/scripts/clean-settings.ts`](agent/scripts/clean-settings.ts).
-Commits and diffs omit `deviceId`, `lastChangelogVersion`, and local-path
-`packages`, and record Fast mode as on, whatever the working copy holds. A
-checkout that changes the committed file overwrites the working copy: Pi
-restores its own values, and local packages must be added again.
+Pi reads `agent/settings.json` and writes machine-local state into it, so Git
+ignores that file. The repository defaults live in
+[`agent/default.settings.json`](agent/default.settings.json). To share a
+setting, change the default file and copy the setting into your own
+`agent/settings.json`.
 
 ## Development
 

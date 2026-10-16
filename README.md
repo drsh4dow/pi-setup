@@ -27,6 +27,40 @@ the same), and I pick the point where the research or detour started. Pi can
 summarize the branch I'm leaving, or I run `/handoff`, `/copy` the result, and
 paste it at that point. I usually stay in the same session.
 
+### Take a ticket to a PR
+
+The system prompt leans autonomous, so I name a stop at each stage where a
+wrong ticket or a wrong design would be expensive. The agent waits at every
+stop I name.
+
+**1. Check the ticket.** The agent reads the code and plays the ticket back
+before it designs anything, so a wrong premise shows up early.
+
+```text
+Ticket: <paste it, or gh issue view 123>.
+Read the code it touches. Restate the goal, the problem, and what the ticket
+assumes about the system. Flag anything that contradicts the code or looks
+wrong. Don't design or change anything yet.
+```
+
+**2. Review the design.** The agent runs `how` and `architect`, then stops
+with the design. I read the usage sketch first, because awkward call sites mean
+the types are wrong.
+
+```text
+Implement it. Architect it with a checkpoint: show me the usage sketch, the
+types, the rationale, and the open questions, then stop. Don't write
+implementation code until I approve the design.
+```
+
+**3. Approve the PR.** The agent delegates the code, verifies it on the real
+app, and commits. It opens the PR only after I see the result.
+
+```text
+Approved. Build it against the sketch and verify it. Commit locally and show
+me the diff summary and the evidence before you open the PR.
+```
+
 ## Defaults
 
 - Model: `anthropic/claude-opus-5-5` with high thinking and Fast mode on.

@@ -225,6 +225,9 @@ tracked and untracked, non-ignored files.
 
 - `background-terminals`: `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for
   session-owned processes, plus `emit-to-pi` notifications
+- `delegate-guard`: blocks `pi --print` and `pi -p` spawns in a subagent
+  launched with `subagents/delegate.md` appended, through `bash`, `bg_start`,
+  and codemode alike
 - `fast-mode`: `/fast` and `Ctrl-Alt-M` toggle Fast mode for the models listed
   under `fastMode` in `agent/settings.json`, and the footer shows `⚡ Fast` while
   it is on. A provider entry with `subagentsEnabled: false` skips sessions

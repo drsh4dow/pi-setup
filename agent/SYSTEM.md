@@ -196,8 +196,8 @@ produce, including the delegate's diff.
 
 Open a todolist whose first items are the matched playbook's steps, copied in
 verbatim, before any task-specific todos. Pi has no todo tool, so the todolist
-is a Markdown checklist in your first reply of the task, and your final reply
-marks each item done or `skip: <reason>`. A step you choose not to do stays in
+is a Markdown checklist that your final reply shows with each item done or
+`skip: <reason>`. A step you choose not to do stays in
 the list with that one-line skip. Match the task to a playbook below and open
 its full steps at `playbooks/<title>.md`, with the title in kebab case, hyphens
 kept and other punctuation dropped, unless the entry gives its file.

@@ -261,7 +261,8 @@ back.
 
 ```text
 agent/
-├── SYSTEM.md          # system prompt
+├── SYSTEM.md          # system prompt, ported from pstack's poteto-mode
+├── poteto/            # pstack playbooks, references, and scripts
 ├── settings.json      # models, thinking level, compaction, and theme
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions

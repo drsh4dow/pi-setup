@@ -37,7 +37,7 @@ Then execute the design. Add its steps to the todolist as concrete items between
 Each unit is an experiment. State the hypothesis, make the smallest change, measure against the predicate on the real artifact, keep it if it advanced, revert it if it didn't. Apply the **sequence-verifiable-units** principle skill, verifying each unit before starting the next instead of batching checks at the end.
 
 - Verify by inspecting the artifact, never a self-report. When something passes too easily, suspect the observation method before the system.
-- A unit that changes code runs its own playbook, such as Feature or Bug fix, so a delegate or an owner writes the code while you plan, review, and verify.
+- A unit that changes code runs its own playbook, such as Feature or Bug fix, so a delegate writes the code while you plan, review, and verify.
 - Pair delegated work with a judge. If a worker games the gate, reset and harden the contract. If the gate itself is wrong, fix the gate in its own change rather than routing around it.
 - A verdict is VERIFIED, NOT VERIFIED, or INCONCLUSIVE. Inconclusive is not a pass. Don't hide a negative.
 

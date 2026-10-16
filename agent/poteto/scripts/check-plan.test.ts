@@ -16,7 +16,7 @@ ${rule}
 
 ## Program checklist
 ### Arm the program
-### Spawn owners
+### Run the PRs
 ### PR mechanics
 ### Verdict and merge
 ### Boot recipe

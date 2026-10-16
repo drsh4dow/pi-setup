@@ -1,6 +1,6 @@
 ---
 name: docs-search
-description: Use before adding custom infrastructure, to check framework-native capabilities, or before relying on uncertain or version-sensitive library or API behavior. Questions about Pi itself belong to pi-harness.
+description: Use before building on an SDK, framework, or platform API, to check native capabilities before adding custom infrastructure, or before relying on uncertain or version-sensitive behavior. Questions about Pi and its @earendil-works libraries belong to pi-harness.
 ---
 
 # Documentation search

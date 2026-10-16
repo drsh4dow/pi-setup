@@ -1,6 +1,6 @@
 ---
 name: pi-harness
-description: Read before modifying or answering questions about the pi harness.
+description: Read before modifying, building on, or answering questions about the pi harness or its @earendil-works libraries (pi-ai, pi-durable, pi-mcp, pi-codemode, chord).
 ---
 
 # Pi harness
@@ -22,6 +22,8 @@ Under that root:
 Resolve `docs/...` and `examples/...` references against this installation
 root, not the working directory. If the installation moves, locate the
 package behind the active `pi` executable.
+
+The `@earendil-works` libraries install beside it in the same `node_modules/@earendil-works/` directory, each with a `README.md` and `dist/*.d.ts`. Files their npm packages omit, such as `test/examples/`, live in the `earendil-works/pi` GitHub repository under `packages/<name>/`.
 
 Prefer installed documentation for the running version. When targeting
 another version, use its matching documentation and source.

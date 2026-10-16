@@ -24,7 +24,6 @@ import {
   terminalMetadataSchema,
   terminalStateSchema,
 } from "./delivery.ts";
-import { MAX_TRACKED } from "./manager.ts";
 import {
   renderKillCall,
   renderKillResult,
@@ -294,14 +293,7 @@ export default function backgroundTerminals(
             observation = isDeepStrictEqual(previous, evidence) ? "unchanged" : "changed";
           }
 
-          observations.delete(snapshot.id);
           observations.set(snapshot.id, evidence);
-
-          if (observations.size > MAX_TRACKED) {
-            const oldest = observations.keys().next();
-
-            if (!oldest.done) observations.delete(oldest.value);
-          }
 
           return {
             content: [

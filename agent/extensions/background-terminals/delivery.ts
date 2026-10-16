@@ -7,7 +7,6 @@ import type {
 import { Cause, Effect } from "effect";
 import { sanitizeInline, sanitizeMultiline, truncateUtf8Tail } from "../../lib/text.ts";
 import {
-  MAX_TRACKED,
   type SettledTerminalSnapshot,
   type TerminalMetadata,
   type TerminalSnapshot,
@@ -26,6 +25,9 @@ import {
 export const RESULTS_MESSAGE = "background-terminal-results";
 
 export const NOTIFICATION_MESSAGE = "background-terminal-notification";
+
+// emit-to-pi notifications are unbounded per terminal, so each delivery queue is bounded.
+export const MAX_QUEUED_PER_KIND = 32;
 
 const MAX_LINES = 80;
 
@@ -235,7 +237,7 @@ export class BackgroundTerminalDelivery {
       terminalId: item.terminalId,
     });
 
-    if (this.failed.size <= MAX_TRACKED) return;
+    if (this.failed.size <= MAX_QUEUED_PER_KIND) return;
     const oldest = this.failed.keys().next();
 
     if (!oldest.done) this.failed.delete(oldest.value);
@@ -245,7 +247,7 @@ export class BackgroundTerminalDelivery {
 
     const sameKind = [...this.pending.values()].filter((pending) => pending.kind === item.kind);
 
-    if (!this.pending.has(item.id) && sameKind.length === MAX_TRACKED) {
+    if (!this.pending.has(item.id) && sameKind.length === MAX_QUEUED_PER_KIND) {
       const [oldest] = sameKind;
       this.markFailed(oldest);
       this.reportError(
@@ -401,7 +403,7 @@ export class BackgroundTerminalDelivery {
     this.flushState = "flushing";
 
     try {
-      for (let sent = 0; sent < MAX_TRACKED * 2; sent++) {
+      for (let sent = 0; sent < MAX_QUEUED_PER_KIND * 2; sent++) {
         const batch = this.batch("notification") ?? this.batch("completion");
 
         if (!batch) return;

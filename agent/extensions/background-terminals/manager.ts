@@ -34,11 +34,6 @@ const { spawn } = process.getBuiltinModule("node:child_process");
 
 type ChildProcess = ReturnType<typeof spawn>;
 
-// Capacity is per session. earlyoom bounds the machine.
-export const MAX_RUNNING_PER_OWNER = 8;
-
-export const MAX_TRACKED = 32;
-
 const TERM_GRACE_MS = 2_000;
 
 const PIPE_GRACE_MS = 1_000;
@@ -179,34 +174,9 @@ export class BackgroundTerminalManager {
       stderr: terminal.stderr.metadata(),
     };
   }
-  private prune(limit = MAX_TRACKED) {
-    while (this.entries.size > limit) {
-      const oldest = [...this.entries.values()]
-        .filter((entry): entry is Extract<Entry, { kind: "settled" }> => entry.kind === "settled")
-        .toSorted((a, b) => a.snapshot.settledAt - b.snapshot.settledAt)[0];
-
-      if (!oldest) return;
-      this.entries.delete(oldest.snapshot.id);
-    }
-  }
-
   start(options: { command: string; title: string; cwd: string }): RunningTerminalSnapshot {
     if (this.lifecycle.kind !== "running")
       throw new Error("Background terminal manager is shutting down.");
-
-    let running = 0;
-
-    for (const entry of this.entries.values()) {
-      if (entry.kind !== "settled") running++;
-    }
-
-    if (running >= MAX_RUNNING_PER_OWNER) {
-      throw new Error(
-        `Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${running}. Kill one with bg_kill.`,
-      );
-    }
-
-    this.prune(MAX_TRACKED - 1);
 
     const invocation =
       process.platform === "win32"
@@ -394,7 +364,6 @@ export class BackgroundTerminalManager {
     }
 
     Effect.runSync(Deferred.succeed(terminal.settlement, snapshot));
-    this.prune();
 
     return snapshot;
   }

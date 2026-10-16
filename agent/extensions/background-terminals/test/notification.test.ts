@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
-import { BackgroundTerminalDelivery } from "../delivery.ts";
-import { MAX_TRACKED } from "../manager.ts";
+import { BackgroundTerminalDelivery, MAX_QUEUED_PER_KIND } from "../delivery.ts";
 import { NotificationFrames } from "../notifications.ts";
 import {
   type DeliveryMessage,
@@ -164,7 +163,7 @@ test("settlement clears notifications evicted from a full queue", () => {
     // A busy session holds notifications, so the queue fills.
     delivery.setContext({ ...context, isIdle: () => false });
 
-    for (let index = 0; index <= MAX_TRACKED; index++)
+    for (let index = 0; index <= MAX_QUEUED_PER_KIND; index++)
       delivery.enqueueNotification({
         id: `bt-1:notification-${index}`,
         terminalId: "bt-1",

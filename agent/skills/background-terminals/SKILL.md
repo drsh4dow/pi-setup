@@ -16,8 +16,6 @@ Completion messages contain status and output, with a shared 24 KiB output budge
 
 ## Limits and ownership
 
-Each stream retains only its newest 256 KiB. Redirect output to a file when the full log must survive. Each session can run eight terminals and track 32. Once history is full, a new terminal evicts the oldest settled entry, never a running one.
+Each stream retains only its newest 256 KiB. Redirect output to a file when the full log must survive.
 
 Terminals belong to the owning Pi session and stop when it shuts down. They are not persistent services independent of Pi. Windows descendant cleanup is best effort after the tracked shell exits.
-
-Background commands share the worktree without write isolation. Run concurrent mutations only when each process owns disjoint files and build artifacts. Before finishing the task, keep each live terminal for a stated current need or stop it with `bg_kill`.

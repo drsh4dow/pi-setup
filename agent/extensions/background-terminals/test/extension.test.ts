@@ -3,7 +3,6 @@ import test, { type TestContext } from "node:test";
 import { Effect } from "effect";
 import { processIsGone } from "../../test/process.ts";
 import { BackgroundTerminalDelivery } from "../delivery.ts";
-import { MAX_RUNNING_PER_OWNER, MAX_TRACKED } from "../manager.ts";
 import {
   type DeliveryMessage,
   type DeliveryOptions,
@@ -138,124 +137,6 @@ test(
     }
   },
 );
-
-test("child completions cannot evict a parent's retained result", async () => {
-  const { tools: parentTools, handlers: parentHandlers } = registeredExtension();
-
-  const { tools: childTools, handlers: childHandlers } = registeredExtension();
-
-  const context = testContext({
-    cwd: process.cwd(),
-    hasUI: false,
-    isIdle: () => false,
-  });
-
-  await parentHandlers.get("session_start")?.({}, context);
-  await childHandlers.get("session_start")?.({}, context);
-  const [parentStart, parentStatus] = parentTools;
-  const [childStart, childStatus] = childTools;
-
-  try {
-    const parent = await parentStart.execute(
-      "parent",
-      { command: "printf parent-result", title: "parent result" },
-      undefined,
-      undefined,
-      context,
-    );
-
-    await eventually(async () =>
-      (
-        await parentStatus.execute("parent-ready", { id: parent.details.id })
-      ).content[0].text.includes("[done]"),
-    );
-
-    for (let index = 0; index < MAX_TRACKED; index++) {
-      // oxlint-disable-next-line no-await-in-loop -- Drive the shared fixture and observe each result before the next step.
-      const child = await childStart.execute(
-        `child-${index}`,
-        { command: "true", title: `child ${index}` },
-        undefined,
-        undefined,
-        context,
-      );
-
-      // oxlint-disable-next-line no-await-in-loop -- Drive the shared fixture and observe each result before the next step.
-      await eventually(async () =>
-        (
-          await childStatus.execute(`child-ready-${index}`, {
-            id: child.details.id,
-          })
-        ).content[0].text.includes("[done]"),
-      );
-    }
-
-    const retained = await parentStatus.execute("parent-retained", {
-      id: parent.details.id,
-    });
-
-    assert.match(retained.content[0].text, /parent-result/);
-  } finally {
-    await childHandlers.get("session_shutdown")?.({}, context);
-    await parentHandlers.get("session_shutdown")?.({}, context);
-  }
-});
-
-test("a saturated child cannot exhaust the parent's terminal slots", async () => {
-  const { tools: parentTools, handlers: parentHandlers } = registeredExtension();
-
-  const { tools: childTools, handlers: childHandlers } = registeredExtension();
-
-  const context = testContext({
-    cwd: process.cwd(),
-    hasUI: false,
-    isIdle: () => false,
-  });
-
-  await parentHandlers.get("session_start")?.({}, context);
-  await childHandlers.get("session_start")?.({}, context);
-  const [childStart] = childTools;
-  const [parentStart] = parentTools;
-
-  try {
-    for (let index = 0; index < MAX_RUNNING_PER_OWNER; index++) {
-      // oxlint-disable-next-line no-await-in-loop -- Drive the shared fixture and observe each result before the next step.
-      await childStart.execute(
-        `child-${index}`,
-        { command: "sleep 30", title: `child ${index}` },
-        undefined,
-        undefined,
-        context,
-      );
-    }
-
-    await assert.rejects(
-      childStart.execute(
-        "child-overflow",
-        { command: "sleep 30", title: "child overflow" },
-        undefined,
-        undefined,
-        context,
-      ),
-      new RegExp(
-        `Max ${MAX_RUNNING_PER_OWNER} background terminals can run concurrently per session; this session is running ${MAX_RUNNING_PER_OWNER}\\.`,
-      ),
-    );
-
-    const parentTerminal = await parentStart.execute(
-      "parent-1",
-      { command: "sleep 30", title: "parent work" },
-      undefined,
-      undefined,
-      context,
-    );
-
-    assert.ok(parentTerminal.details.id);
-  } finally {
-    await childHandlers.get("session_shutdown")?.({}, context);
-    await parentHandlers.get("session_shutdown")?.({}, context);
-  }
-});
 
 test("headless terminals survive agent end and stop at session shutdown", async () => {
   const { tools, handlers } = registeredExtension();

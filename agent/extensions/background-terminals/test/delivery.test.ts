@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BackgroundTerminalDelivery, formatTerminalReport } from "../delivery.ts";
-import { MAX_TRACKED } from "../manager.ts";
+import {
+  BackgroundTerminalDelivery,
+  formatTerminalReport,
+  MAX_QUEUED_PER_KIND,
+} from "../delivery.ts";
 import { type SettledTerminalSnapshot, Tail } from "../terminal.ts";
 import { type DeliveryMessage, decodeMessage, testContext } from "./registration.ts";
 
@@ -67,7 +70,7 @@ test("splits queued completions into bounded batches without losing results", ()
 
       // Completions arriving during delivery must wait for the next batch.
       if (messages.length === 1)
-        for (let index = 1; index < MAX_TRACKED; index++)
+        for (let index = 1; index < MAX_QUEUED_PER_KIND; index++)
           delivery.enqueue({ ...terminal, id: `bt-${index}` });
     },
   });
@@ -81,7 +84,7 @@ test("splits queued completions into bounded batches without losing results", ()
     assert.ok(messages.every((message) => Buffer.byteLength(message.content) <= 256 * 1024));
     assert.deepEqual(
       messages.flatMap((message) => message.details.ids),
-      Array.from({ length: MAX_TRACKED }, (_, index) => `bt-${index}`),
+      Array.from({ length: MAX_QUEUED_PER_KIND }, (_, index) => `bt-${index}`),
     );
     assert.ok(messages.every((message) => !message.content.includes("�")));
   } finally {

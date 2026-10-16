@@ -11,7 +11,6 @@ import test, { suite } from "node:test";
 import { processIsGone } from "../../test/process.ts";
 import {
   BackgroundTerminalManager,
-  MAX_TRACKED,
   RETAINED_BYTES,
   type SettledTerminalSnapshot,
   terminalResultFields,
@@ -123,32 +122,6 @@ suite("background terminal manager", { concurrency: true }, () => {
         assert.equal(Buffer.byteLength(snapshot.stdout.text), RETAINED_BYTES);
         assert.equal(snapshot.stdout.truncatedBytes, writes - RETAINED_BYTES);
         assert.equal(snapshot.stdout.text.slice(-20), "45678901234567890123");
-        yield* manager.shutdown();
-      }),
-    ));
-
-  test("prunes to the tracked bound without evicting running entries", () =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        const manager = new BackgroundTerminalManager();
-
-        const running = Array.from({ length: 2 }, (_, index) =>
-          manager.start({ command: "sleep 30", title: String(index), cwd }),
-        );
-
-        for (let index = 0; index < MAX_TRACKED + 3; index++) {
-          const run = manager.start({
-            command: "true",
-            title: `quick-${index}`,
-            cwd,
-          });
-
-          yield* settled(manager, run.id);
-        }
-
-        assert.equal(manager.list().length, MAX_TRACKED);
-        const tracked = new Set(manager.list().map((entry) => entry.id));
-        assert.ok(running.every((run) => tracked.has(run.id)));
         yield* manager.shutdown();
       }),
     ));

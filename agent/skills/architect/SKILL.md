@@ -21,13 +21,15 @@ Open a todolist with one entry per phase before starting.
 
 Build a real mental model of every system the new code touches. Run the **how** skill over the relevant subsystems. Naming a file isn't grounding. Produce the architectural explanation `how` prescribes. If the design redefines ownership or layering, also run the **why** skill on the existing shape so the rationale becomes a constraint, not a guess.
 
-Skip Phase A only when the work is genuinely greenfield with no surrounding system to integrate.
+Skip Phase A only when the work is genuinely greenfield with no surrounding system to integrate. An upstream example or template grounds only the parts it covers.
 
 ## Phase B: Sketch
 
 Run the **arena** skill with the design-sketch task and the Phase A grounding artifacts. Pass `references/runner-prompt.md` as each runner's prompt.
 
 Take the runners from the `architect runners` role in the subagents skill, in place of the `arena runners` role.
+
+Run Phase B on every part of the design that no upstream example covers. When you replace a phase with a lighter substitute, such as one second opinion instead of an arena, add the substitute to the todolist so it runs.
 
 Design it twice. Require at least two structurally distinct candidates before synthesis, even when the first looks sufficient. This is the **exhaust-the-design-space** principle skill made concrete. Whole-shape alternatives, not point fixes inside one shape.
 

@@ -9,7 +9,7 @@ When the task matches no playbook, design one. The deliverable before any code i
 
 ## Start
 
-Open a todolist whose first item is to review the system prompt's Principles section. Then add the phases below as todos.
+Open a todolist whose first item is to review the system prompt's Principles section. Then add the phases below as todos, with "present the Phase A framing and end the turn" as its own todo before Phase B.
 
 ## Phase A: Frame
 
@@ -19,11 +19,11 @@ Ground first, then commit. Don't start the run until you can state:
 - Scope, quantified: rough units and effort, plus the blockers grounding surfaced.
 - The rigor level, biased high. One-way doors and high blast radius get more. Reversible low-stakes steps get less. Rigor is gates and artifacts, not "try harder".
 
-Present the framing and tradeoffs before committing to a long run. Reversible work proceeds (the **never-block-on-the-human** principle skill), but a multi-hour run earns one checkpoint.
+Then present the framing as the reply that ends the turn: the predicate, the scope, the rigor level, the open product calls, and the risks grounding surfaced. This checkpoint comes before the first scaffold, spike, or project file, and reversibility does not move it. Under a full-autonomy grant, report the framing and proceed.
 
 ## Phase B: Design the workflow
 
-Decompose into atomic, independently-landable units. Sequence riskiest-unknown-first. Scaffold and verification come before features (the **foundational-thinking** principle skill).
+Decompose into atomic, independently-landable units. Sequence riskiest-unknown-first. In an empty repo the domain model is the riskiest unknown, so its types are the first unit. Scaffold and verification come before features (the **foundational-thinking** principle skill).
 
 - Build the verification harness before the work, with the baseline captured from the pre-change state, so the check reads as "old value vs new value".
 - For one-way-door design decisions, run the **architect** skill (it runs **arena**). Skip it for mechanical work whose shape is already concrete. A second arena over a settled design is over-engineering (the **laziness-protocol** principle skill).

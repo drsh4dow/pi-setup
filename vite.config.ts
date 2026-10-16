@@ -2,13 +2,12 @@ import { effectNative, strict as effectStrict } from "@effect/tsgo/oxlint-preset
 import { defineConfig } from "vite-plus";
 
 // Reference checkouts, runtime state, installed skills, and vendored lint rules
-// are not application source. The maintained babysit-pr scripts remain checked.
+// are not application source.
 const ignoredFiles = [
   ".repos/**",
   "agent/npm/**",
   "agent/sessions/**",
   "agent/skills/*",
-  "!agent/skills/babysit-pr/",
   "oxlint/anti-slop/**",
 ];
 
@@ -18,11 +17,10 @@ export default defineConfig({
     // dot reporter, which still prints each failure in full. Build and deploy progress
     // is dropped, and their errors still reach stderr.
     tasks: {
-      // Each cache entry would archive all three compiled binaries; building takes under a second.
+      // Each cache entry would archive both compiled binaries; building takes under a second.
       "build:cli": {
         command: [
           "vp exec bun build --compile --outfile .build/bin/emit-to-pi agent/extensions/background-terminals/bin/emit-to-pi.ts > /dev/null",
-          "vp exec bun build --compile --outfile .build/bin/babysit-pr agent/skills/babysit-pr/scripts/babysit-pr.ts > /dev/null",
           "vp exec bun build --compile --outfile .build/bin/dumpfile cli/dumpfile/src/cli.ts > /dev/null",
         ],
         cache: false,
@@ -31,10 +29,6 @@ export default defineConfig({
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
-        dependsOn: ["build:cli"],
-      },
-      "test:babysit-pr": {
-        command: "node --test --test-reporter=dot agent/skills/babysit-pr/test/*.test.ts",
         dependsOn: ["build:cli"],
       },
       "test:dumpfile": {
@@ -57,13 +51,7 @@ export default defineConfig({
       // The dependencies run concurrently; vp check runs once they pass.
       verify: {
         command: "vp check",
-        dependsOn: [
-          "verify:strict-diagnostics",
-          "test:extensions",
-          "test:babysit-pr",
-          "test:dumpfile",
-          "test:docs",
-        ],
+        dependsOn: ["verify:strict-diagnostics", "test:extensions", "test:dumpfile", "test:docs"],
       },
     },
   },
@@ -156,7 +144,6 @@ export default defineConfig({
         files: [
           "**/test/**",
           "agent/scripts/**",
-          "agent/skills/babysit-pr/**",
           "agent/extensions/background-terminals/bin/**",
           "cli/dumpfile/**",
           "vite.config.ts",

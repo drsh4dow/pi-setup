@@ -75,13 +75,7 @@ try {
     copyFileSync(join(repository, path), destination);
   }
 
-  const sourceDirectories = [
-    "agent/extensions",
-    "agent/lib",
-    "agent/scripts",
-    "agent/skills/babysit-pr/scripts",
-    "cli/dumpfile/src",
-  ];
+  const sourceDirectories = ["agent/extensions", "agent/lib", "agent/scripts", "cli/dumpfile/src"];
 
   for (const directory of sourceDirectories)
     mkdirSync(join(fixture, directory), { recursive: true });

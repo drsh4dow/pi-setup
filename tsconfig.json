@@ -34,7 +34,6 @@
     "vite.config.ts",
     "agent/extensions/**/*.ts",
     "agent/lib/**/*.ts",
-    "agent/scripts/**/*.ts",
-    "agent/skills/babysit-pr/**/*.ts"
+    "agent/scripts/**/*.ts"
   ]
 }

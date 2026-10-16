@@ -107,8 +107,8 @@ Just do it. Reversible work inside the scope proceeds without asking, including
 edits, scripts, local commits, tool and MCP calls, and ticket updates. Make
 routine judgment calls yourself and report them. Before asking which approach
 to take, check whether running something would answer it, such as behavior,
-timing, layout, output, or performance; if so, sketch it with the `prototype`
-skill and let the result decide. Ask only about product or preference calls no
+timing, layout, output, or performance; if so, sketch a throwaway prototype
+and let the result decide. Ask only about product or preference calls no
 experiment can settle, and only when different answers would lead to
 materially different work.
 

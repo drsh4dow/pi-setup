@@ -27,21 +27,6 @@ the same), and I pick the point where the research or detour started. Pi can
 summarize the branch I'm leaving, or I run `/handoff`, `/copy` the result, and
 paste it at that point. I usually stay in the same session.
 
-When the scope is large or has unknowns, I reach for grilling. It is usually one
-closed run in a single session:
-
-1. `/skill:grill-with-docs` interviews me until every decision is settled and
-   records ADRs and glossary terms along the way. I use `/skill:grill-me` only
-   when the session should leave no artifacts and I just want to untangle my
-   own thinking.
-2. `/skill:to-spec` publishes the settled design as a spec issue. The grilling
-   is its input, so nothing is rewound in between.
-3. `/skill:to-tickets <spec issue>` breaks the spec into tracer-bullet tickets,
-   filed as sub-issues of the spec with blocking edges between them.
-
-The spec and ticket skills read each repository's issue tracker configuration.
-Run `/skill:setup-matt-pocock-skills` once per repository to create it.
-
 ## Defaults
 
 - Model: `anthropic/claude-opus-5-5` with high thinking and Fast mode on.
@@ -140,9 +125,8 @@ integration overwrites it, so restore the repository version afterwards and run
 
 ### Installed skills
 
-The Matt Pocock skills and their supporting files are vendored from
+`wizard` and `writing-for-agents` are vendored from
 [`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
-`pr` is rewritten locally and no longer tracks upstream; skip it when syncing.
 
 The `principle-*`, `benchmark-checklist`, `sharpen`, `technical-writing`, and
 `unslop` skills are copied from
@@ -150,30 +134,18 @@ The `principle-*`, `benchmark-checklist`, `sharpen`, `technical-writing`, and
 When syncing, reapply the local edits. Remove `disable-model-invocation: true`
 so the model can trigger them. Add a trigger for every prose surface to the
 `unslop` description. Write skill commands as `/skill:name`. Remove references
-to pstack skills and playbooks that are not installed here. Route PR
-descriptions and commit messages from `technical-writing` to the `pr` and
-`writing-good-commits` skills. Mark every copied skill except `sharpen` with
-`user-invokable: false`.
+to pstack skills and playbooks that are not installed here. Mark every copied
+skill except `sharpen` with `user-invokable: false`.
 
-- `babysit-pr`
 - `background-terminals`
 - `benchmark-checklist`
-- `code-review`
-- `codebase-design`
 - `create-verification-skill`
-- `diagnosing-bugs`
 - `docs-search`
-- `domain-modeling`
 - `dumpfile`
 - `frontend-design`
-- `grill-me`
-- `grill-with-docs`
-- `grilling`
-- `improve-codebase-architecture`
 - `mailbox`
 - `maintain-verification-skill`
 - `pi-harness`
-- `pr`
 - `principle-attack-the-premise`
 - `principle-boundary-discipline`
 - `principle-build-the-lever`
@@ -198,23 +170,16 @@ descriptions and commit messages from `technical-writing` to the `pr` and
 - `principle-subtract-before-you-add`
 - `principle-test-behavior-not-implementation`
 - `principle-type-system-discipline`
-- `prototype`
-- `research`
-- `retro`
-- `setup-matt-pocock-skills`
 - `sharpen`
 - `subagents`
 - `tdd`
 - `teach`
 - `technical-writing`
-- `to-spec`
-- `to-tickets`
 - `typescript-best-practices`
 - `unslop`
 - `web-search`
 - `wizard`
 - `writing-for-agents`
-- `writing-good-commits`
 - `writing-good-tickets`
 
 ### Installed prompts
@@ -249,8 +214,6 @@ agent/
 └── themes/            # Catppuccin and Gruvbox themes
 cli/
 └── dumpfile/          # R2 upload CLI, signer Worker, tests, and setup wizard
-docs/
-└── agents/            # issue tracker, triage, and domain conventions
 oxlint/                # vendored anti-slop lint plugins
 ```
 
@@ -295,7 +258,7 @@ Keep these versions aligned when upgrading:
   `vp toolchain` reports.
 - Vite+ and `@effect/tsgo` move together.
 
-`vp run build:cli` compiles `emit-to-pi`, `babysit-pr`, and `dumpfile` with Bun.
+`vp run build:cli` compiles `emit-to-pi` and `dumpfile` with Bun.
 Background terminals put `.build/bin` on their command search path.
 
 ## License

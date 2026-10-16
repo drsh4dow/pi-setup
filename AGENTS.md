@@ -16,19 +16,6 @@ submodule as read-only reference and keep application imports on the installed
 `effect` and `@effect/*` packages. If it is absent, initialize it with
 `git submodule update --init --recursive`.
 
-## Agent skills
+## Issue tracker
 
-### Issue tracker
-
-Issues live as GitHub issues in `drsh4dow/pi-setup`, driven by the `gh` CLI. See
-`docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-The five canonical triage roles, each label string equal to its name. See
-`docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See
-`docs/agents/domain.md`.
+Issues live as GitHub issues in `drsh4dow/pi-setup`, driven by the `gh` CLI.

@@ -8,7 +8,7 @@ description: Read before using subagents.
 A subagent is a separate `pi --print` process with the normal prompt, skills,
 and tools. It receives one assignment and returns one report.
 
-Pick the model by the work:
+Allowed models:
 
 - `anthropic/claude-opus-5-5`
 

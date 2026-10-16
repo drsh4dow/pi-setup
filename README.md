@@ -128,7 +128,8 @@ ticket touches and make it prove behavior on the running app.
 - `Alt-P` cycles the enabled models: `anthropic/claude-opus-5-5`,
   `anthropic/claude-fable-5-1`, `openai/gpt-6.1-sol`, `openai/gpt-6-astra`,
   and `opencode-go/glm-5.3-flash`.
-- Subagents run `claude-opus-5-5`. Review and design panels pair it with
+- Subagents run `claude-opus-5-5`, and scouting roles run `claude-haiku-5-5`.
+  Thinking tops out at `high`. Review and design panels pair Opus with
   `gpt-6.1-sol`. The role table lives in the
   [`subagents`](agent/skills/subagents/SKILL.md) skill.
 - Compaction is Pi's built-in one. Opus reserves 700K tokens, so it compacts

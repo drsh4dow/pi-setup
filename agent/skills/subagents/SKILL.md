@@ -15,12 +15,12 @@ playbooks name the role, such as "the `how explorer` role".
 
 | Role | Model | Thinking |
 | --- | --- | --- |
-| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | `anthropic/claude-opus-5-5` | `high` |
+| `how explorer`, `why investigators`, `swarm scouts` | `anthropic/claude-haiku-5-5` | `medium` |
+| `hardest tasks`, `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | `anthropic/claude-opus-5-5` | `high` |
 | `judgment and prose` | `anthropic/claude-opus-5-5` | `high` |
-| `hardest tasks` | `anthropic/claude-opus-5-5` | `xhigh` |
-| `how explorer`, `how explainer` | `anthropic/claude-opus-5-5` | `high` |
-| `why investigators`, `why synthesizer` | `anthropic/claude-opus-5-5` | `high` |
-| `reflect tooling`, `reflect judgment, divergent, synthesizer` | `anthropic/claude-opus-5-5` | `high` |
+| `how explainer`, `why synthesizer` | `anthropic/claude-opus-5-5` | `high` |
+| `reflect judgment, divergent, synthesizer` | `anthropic/claude-opus-5-5` | `high` |
+| `reflect tooling` | `anthropic/claude-opus-5-5` | `medium` |
 | `swarm workers` | `anthropic/claude-opus-5-5` | `high` |
 | `arena runners`, `architect runners`, `interrogate reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 | `arena cross-judge pool` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
@@ -31,10 +31,15 @@ value is independent judgment. From the cross-judge pool, pick one model whose
 family differs from the candidates being judged, when possible.
 
 The hardest changes, such as cross-cutting design, concurrency, or subtle
-algorithms, take the `hardest tasks` role. Raise thinking one step for
-especially subtle work and lower it for routine work, keeping the role's model
-so a panel stays diverse. If a model fails to launch, rerun that seat on
-`anthropic/claude-opus-5-5` and say so in your report.
+algorithms, take the `hardest tasks` role. `high` is the thinking ceiling for
+every model. Haiku runs at `medium`. Opus stays between `medium` and `high`.
+Lower a `high` Opus role to `medium` for routine, precisely specified work such
+as mechanical renames, applying a written diff, or one edit repeated across
+files. Keep the role's model so a
+panel stays diverse. When a Haiku report fails a spot check, such as a wrong
+reference or a missed file, rerun that slice on Opus at `medium`. If a model
+fails to launch, rerun that seat on `anthropic/claude-opus-5-5` at `high` and
+say so in your report.
 
 ## Prepare
 

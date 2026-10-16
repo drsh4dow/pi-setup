@@ -33,8 +33,9 @@ paste it at that point. I usually stay in the same session.
 - `Alt-P` cycles the enabled models: `anthropic/claude-opus-5-5`,
   `anthropic/claude-fable-5-1`, `openai/gpt-6.1-sol`, `openai/gpt-6-astra`,
   and `opencode-go/glm-5.3-flash`.
-- Subagents run `claude-opus-5-5` for implementation and design, and
-  `gpt-6.1-sol` for research and review.
+- Subagents run `claude-opus-5-5`. Review and design panels pair it with
+  `gpt-6.1-sol`. The role table lives in the
+  [`subagents`](agent/skills/subagents/SKILL.md) skill.
 - Compaction is Pi's built-in one. Opus reserves 700K tokens, so it compacts
   well before its context window fills.
 - Codemode is on alongside the direct tools.

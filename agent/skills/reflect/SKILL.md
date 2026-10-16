@@ -27,15 +27,15 @@ Each reviewer and the synthesizer run the role named below in the subagents skil
 
 | Lens | Role | Prompt template |
 |---|---|---|
-| Judgment | `reflect judgment, divergent, synthesizer` | `references/judgment-reviewer.md` |
+| Judgment | `reflect judgment, synthesizer` | `references/judgment-reviewer.md` |
 | Tooling | `reflect tooling` | `references/tooling-reviewer.md` |
-| Divergent | `reflect judgment, divergent, synthesizer` | `references/divergent-reviewer.md` |
+| Divergent | `reflect divergent` | `references/divergent-reviewer.md` |
 
 Pass each template verbatim, substituting the transcript path or digest where marked. Reviewers return findings in their final report.
 
 ## 3. Synthesize
 
-One subagent in the `reflect judgment, divergent, synthesizer` role. It spot-verifies citations through MCP. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list.
+One subagent in the `reflect judgment, synthesizer` role. It spot-verifies citations through MCP. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list.
 
 ## 4. Structural enforcement check
 

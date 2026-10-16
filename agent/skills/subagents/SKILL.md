@@ -19,7 +19,8 @@ playbooks name the role, such as "the `how explorer` role".
 | `hardest tasks`, `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | `anthropic/claude-opus-5-5` | `high` |
 | `judgment and prose` | `anthropic/claude-opus-5-5` | `high` |
 | `how explainer`, `why synthesizer` | `anthropic/claude-opus-5-5` | `high` |
-| `reflect judgment, divergent, synthesizer` | `anthropic/claude-opus-5-5` | `high` |
+| `reflect judgment, synthesizer` | `anthropic/claude-opus-5-5` | `high` |
+| `reflect divergent` | `openai/gpt-6.1-sol` | `high` |
 | `reflect tooling` | `anthropic/claude-opus-5-5` | `medium` |
 | `swarm workers` | `anthropic/claude-opus-5-5` | `high` |
 | `arena runners`, `architect runners`, `interrogate reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |

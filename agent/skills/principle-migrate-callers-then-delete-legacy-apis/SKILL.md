@@ -1,16 +1,14 @@
 ---
 name: principle-migrate-callers-then-delete-legacy-apis
-description: Use before changing an API, contract, or configuration format that has callers, or when planning such a migration or coordinated refactor.
+description: "Apply when introducing a new internal API while old callers still exist. Migrate callers and delete the old API in the same wave instead of preserving compatibility layers."
+user-invokable: false
 ---
 
-# Migrate callers and delete legacy APIs
+# Migrate Callers Then Delete Legacy APIs
 
-For internal APIs whose callers can change together, inventory callers, migrate them, and delete the old API in the same refactor. Preserve compatibility only for real consumer or deployment constraints.
+- Update tests to assert the new contract, and delete tests that only protect pre-refactor implementation details
 
-Choose coherent verification boundaries before a wide migration. Coordinated edits may temporarily break within a scoped, reversible unit; check the unit before building further on it. Verification need not follow every individual edit.
-
-When consumers deploy independently, use expand–contract: introduce the new form, migrate consumers, then remove the old form once no dependent consumer remains. State the condition for removing compatibility code.
-
-Keep commits reviewable and branch operations within the authorized workflow. Update relevant contracts and examples. Remove obsolete implementation-coupled tests without automatically replacing each one; retain protection for meaningful failures.
-
-Complete relevant and repository-required checks at the final boundary. Intermediate checks should localize failures, not repeat completed verification without a reason.
+**When this applies:**
+- No external users depend on backward compatibility
+- The project can absorb coordinated breaking changes
+- The new API is part of a simplification or refactor initiative

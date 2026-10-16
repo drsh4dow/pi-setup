@@ -51,6 +51,7 @@ test("omits skills that users cannot invoke from the visibility picker", (t) =>
             assert.equal(name, "skill-visibility");
             handler = command.handler;
           },
+          on: () => () => {},
         }),
       );
       assert.ok(handler);

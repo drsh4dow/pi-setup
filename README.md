@@ -39,10 +39,6 @@ closed run in a single session:
 3. `/skill:to-tickets <spec issue>` breaks the spec into tracer-bullet tickets,
    filed as sub-issues of the spec with blocking edges between them.
 
-Then `/skill:implement-spec <spec issue>` works through the ticket graph. Each
-ready ticket gets an implementer subagent, every ticket lands on one integration
-branch, and a `code-review` pass closes the work.
-
 The spec and ticket skills read each repository's issue tracker configuration.
 Run `/skill:setup-matt-pocock-skills` once per repository to create it.
 
@@ -129,7 +125,8 @@ tracked and untracked, non-ignored files.
 - `session-timer`: branch duration since the first user message, with clock
   footers on responses
 - `skill-visibility`: `/skill-visibility` controls which loaded skills the model
-  can discover
+  can discover, and skills marked `user-invokable: false` stay out of `/skill:`
+  autocomplete
 - `tps-tracker`: live and final output-token throughput
 - `ui-moto`: compact model and project status header
 - `web-search`: registers the Perplexity and Exa MCP servers behind the
@@ -147,8 +144,20 @@ The Matt Pocock skills and their supporting files are vendored from
 [`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
 `pr` is rewritten locally and no longer tracks upstream; skip it when syncing.
 
+The `principle-*`, `benchmark-checklist`, `sharpen`, `technical-writing`, and
+`unslop` skills are copied from
+[pstack at `99743e9`](https://github.com/cursor/plugins/tree/99743e9c151c8537cbbf1f98bb38f34ef3368453/pstack/skills).
+When syncing, reapply the local edits. Remove `disable-model-invocation: true`
+so the model can trigger them. Add a trigger for every prose surface to the
+`unslop` description. Write skill commands as `/skill:name`. Remove references
+to pstack skills and playbooks that are not installed here. Route PR
+descriptions and commit messages from `technical-writing` to the `pr` and
+`writing-good-commits` skills. Mark every copied skill except `sharpen` with
+`user-invokable: false`.
+
 - `babysit-pr`
 - `background-terminals`
+- `benchmark-checklist`
 - `code-review`
 - `codebase-design`
 - `create-verification-skill`
@@ -160,24 +169,48 @@ The Matt Pocock skills and their supporting files are vendored from
 - `grill-me`
 - `grill-with-docs`
 - `grilling`
-- `implement`
-- `implement-spec`
 - `improve-codebase-architecture`
 - `mailbox`
 - `maintain-verification-skill`
 - `pi-harness`
 - `pr`
+- `principle-attack-the-premise`
+- `principle-boundary-discipline`
+- `principle-build-the-lever`
+- `principle-encode-lessons-in-structure`
+- `principle-exhaust-the-design-space`
+- `principle-experience-first`
+- `principle-explain-the-number`
+- `principle-fix-root-causes`
+- `principle-foundational-thinking`
+- `principle-guard-the-context-window`
+- `principle-laziness-protocol`
+- `principle-make-operations-idempotent`
 - `principle-migrate-callers-then-delete-legacy-apis`
+- `principle-minimize-reader-load`
+- `principle-model-the-domain`
+- `principle-never-block-on-the-human`
+- `principle-outcome-oriented-execution`
+- `principle-prove-it-works`
+- `principle-redesign-from-first-principles`
+- `principle-separate-before-serializing-shared-state`
+- `principle-sequence-verifiable-units`
+- `principle-subtract-before-you-add`
+- `principle-test-behavior-not-implementation`
+- `principle-type-system-discipline`
 - `prototype`
 - `research`
 - `retro`
 - `setup-matt-pocock-skills`
+- `sharpen`
 - `subagents`
 - `tdd`
 - `teach`
+- `technical-writing`
 - `to-spec`
 - `to-tickets`
 - `typescript-best-practices`
+- `unslop`
 - `web-search`
 - `wizard`
 - `writing-for-agents`

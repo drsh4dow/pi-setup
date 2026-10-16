@@ -3,7 +3,9 @@ import {
   type ExtensionCommandContext,
   parseFrontmatter,
   type Skill,
+  type SlashCommandInfo,
 } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, FileSystem, Result } from "effect";
 
@@ -45,6 +47,60 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
   });
+
+  pi.on("session_start", (_event, ctx) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        if (!ctx.hasUI) return;
+
+        const hiddenCommands = yield* listUserHiddenSkillCommands(pi.getCommands());
+
+        if (hiddenCommands.size > 0) {
+          ctx.ui.addAutocompleteProvider((current) => hideSkillCommands(current, hiddenCommands));
+        }
+      }),
+    ),
+  );
+}
+
+// Pi registers a `/skill:<name>` command for every skill and has no frontmatter
+// to opt out, so skills marked `user-invokable: false` are dropped from slash
+// command autocomplete here. Typing the full command still runs the skill.
+const listUserHiddenSkillCommands = Effect.fn("listUserHiddenSkillCommands")(function* (
+  commands: SlashCommandInfo[],
+) {
+  const hiddenCommands = new Set<string>();
+
+  for (const command of commands) {
+    if (command.source !== "skill") continue;
+
+    if (!(yield* isUserInvokable(command.sourceInfo.path))) hiddenCommands.add(command.name);
+  }
+
+  return hiddenCommands;
+});
+
+function hideSkillCommands(
+  current: AutocompleteProvider,
+  hiddenCommands: ReadonlySet<string>,
+): AutocompleteProvider {
+  return {
+    ...(current.triggerCharacters && { triggerCharacters: current.triggerCharacters }),
+    getSuggestions: (lines, cursorLine, cursorCol, options) =>
+      current.getSuggestions(lines, cursorLine, cursorCol, options).then((suggestions) => {
+        if (!suggestions) return suggestions;
+
+        const items = suggestions.items.filter((item) => !hiddenCommands.has(item.value));
+
+        if (items.length === 0) return null;
+
+        return { ...suggestions, items };
+      }),
+    applyCompletion: (lines, cursorLine, cursorCol, item, prefix) =>
+      current.applyCompletion(lines, cursorLine, cursorCol, item, prefix),
+    shouldTriggerFileCompletion: (lines, cursorLine, cursorCol) =>
+      current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true,
+  };
 }
 
 const chooseSkillVisibility = Effect.fn("chooseSkillVisibility")(function* (

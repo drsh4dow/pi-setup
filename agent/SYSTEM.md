@@ -269,6 +269,16 @@ bespoke run, orchestrate runs the program.
   File: `playbooks/multi-phase-plan.md`.
 - **Opening a PR.** Invoked at the end of every other playbook.
 
+# Project instructions
+
+Pi loads one context file per directory, and only from the working directory
+and its parent directories. It takes the first that exists of
+`AGENTS.override.md`, `AGENTS.md`, or `CLAUDE.md`. Before your first read or
+edit under a subdirectory, apply the same lookup to each directory between the
+working directory and that file, read the file it finds, and follow it like
+the files Pi loaded. Where two files conflict, the one closer to the file you
+touch wins.
+
 # Skills
 
 A skill holds the procedure for a kind of work, and a matching skill's

@@ -64,16 +64,32 @@ me the diff summary and the evidence before you open the PR.
 ### Start a new project
 
 With no existing code, the expensive mistake is the wrong data model, so I
-review the design before anything else exists.
+review the design before anything else exists. The examples follow one project,
+a web app where an on-call team logs incidents and reads a weekly summary.
 
-1. Run `/skill:sharpen` on a paragraph that says who the project is for and
-   how I'll know it works.
+1. Sharpen the idea. I say who the project is for and how I'll know it works.
+
+   ```text
+   /skill:sharpen
+   New project: a web app where an on-call team of five logs incidents and
+   reads a weekly summary. It works when someone logs an incident in under a
+   minute and Monday's summary lists every incident from the past week.
+   Don't write code yet.
+   ```
+
 2. Ask for the design with a stop. Architect skips grounding here because there
    is no system to study.
 
    ```text
    Architect the core data model and module map with a checkpoint. Show me the
    usage sketch, the types, the rationale, and the open questions, then stop.
+   ```
+
+   I push back on the design in plain words until the types fit every case.
+
+   ```text
+   An incident can be reopened. Model its status so a reopened incident keeps
+   its earlier resolution, then redo the sketch.
    ```
 
 3. Scaffold the checks before any feature.
@@ -83,20 +99,40 @@ review the design before anything else exists.
    command, and an AGENTS.md that names it. No features yet.
    ```
 
-4. Once a user can reach the first feature, run
-   `/skill:create-verification-skill`. It writes `.agents/skills/verify-<app>/`,
-   which Pi discovers on its own. Earlier, it has nothing to drive.
-5. Add features one ticket at a time with the flow above. Every few features,
-   run `/skill:maintain-verification-skill` to add them to the feature map.
+4. Build the first feature with the ticket flow above.
+
+   ```text
+   Ticket: log an incident. A team member enters a title, a severity, and a
+   start time, and the incident appears at the top of the list.
+   ```
+
+5. Once a user can reach that feature, generate the verify skill. It writes
+   `.agents/skills/verify-<app>/`, which Pi discovers on its own. Earlier, it
+   has nothing to drive.
+
+   ```text
+   /skill:create-verification-skill
+   ```
+
+6. Add the rest one ticket at a time. Every few features, run
+   `/skill:maintain-verification-skill` to add them to the feature map.
+
+   ```text
+   Ticket: weekly summary. Every Monday, the summary page lists last week's
+   incidents grouped by severity, with time to resolve for each.
+   ```
 
 ### Work in a large legacy codebase
 
 The agent can't understand millions of lines, so I keep it on the slice the
 ticket touches and make it prove behavior on the running app.
 
-1. Start Pi in the package I'm changing, not the repository root. Pi loads
-   `AGENTS.md` and `.agents/skills/` from the working directory upward.
-2. Make the package runnable and drivable before the first change.
+1. Start Pi at the repository root and name the package in every prompt. The
+   system prompt makes the agent read a package's own `AGENTS.md` before it
+   touches that package. Pi discovers skills only in the root
+   `.agents/skills/`, so verify skills go there.
+2. Make the package runnable and drivable before the first change. Each app
+   gets its own `verify-<app>` skill.
 
    ```text
    /skill:create-verification-skill

@@ -120,9 +120,10 @@ I'll…" leaves the step undone.
 
 A subagent is a `pi --print` process. Launch, models, and reports follow the
 **subagents** skill, and its model table names each role's model and thinking
-level. Every subagent runs this system prompt, so a delegate inside a playbook
-step needs no wrapper. The session that receives the task runs the playbook.
-Never spawn a subagent to run the playbook itself. Routed workflow skills
+level. Every subagent runs this system prompt, as an owner or a delegate per
+the subagents skill. The session that receives a task runs its playbook. An
+owner receives its unit as a task. A delegate does one piece of its parent's
+step and spawns nothing. Routed workflow skills
 (`how`, `why`, `interrogate`, `reflect`, `swarm`) name their own roles for
 diverse-model review. Respect what the skill prescribes.
 

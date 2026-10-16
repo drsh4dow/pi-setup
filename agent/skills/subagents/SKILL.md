@@ -8,6 +8,22 @@ description: Read before using subagents.
 A subagent is a separate `pi --print` process with the normal prompt, skills,
 and tools. It receives one assignment and returns one report.
 
+## Kinds
+
+Every subagent is an owner or a delegate. The assignment names which, and the
+launch follows from it.
+
+- **Owner.** Receives a whole unit, such as a PR, a plan step, or a queue item,
+  and runs it the way a top-level session would. It matches the playbook, keeps
+  the todolist, and spawns the delegates its playbook names. Spawn an owner only
+  where a playbook hands a unit to one: Feature's single owner for code-coupled
+  work, the owners in Multi-phase plan, Autopilot-full, and Autopilot-stack, and
+  Orchestrate's sub-coordinators.
+- **Delegate.** Does one piece of its parent's step: code for a written scope,
+  an exploration, a review, a swarm lane, an arena or architect candidate, or
+  Comment Sicko. It is a leaf. Its parent owns the playbook, the todolist, the
+  review of its output, and every spawn.
+
 ## Models
 
 Each subagent runs the model and thinking level of its role. Skills and
@@ -49,6 +65,7 @@ Read and apply [writing-for-agents](../writing-for-agents/SKILL.md).
 Write one self-contained assignment per subagent; the child sees none of this
 conversation. An assignment is ready when it states:
 
+- The kind, owner or delegate.
 - The task, with the context and source leads it needs.
 - The skills the work requires, by name.
 - The write scope: the files the child owns, or that it changes nothing.
@@ -70,18 +87,21 @@ pi --print \
   --model <model> \
   --thinking high \
   --append-system-prompt "$HOME/.pi/agent/skills/subagents/unattended.md" \
+  --append-system-prompt "$HOME/.pi/agent/skills/subagents/delegate.md" \
   --name "subagent: <short assignment>" <<'SUBAGENT_PROMPT'
 <assignment>
 SUBAGENT_PROMPT
 ```
 
-Use the session name as the terminal title. Keep the `subagent:` prefix: the
+An owner launch drops the `delegate.md` line. Use the session name as the
+terminal title. Keep the `subagent:` prefix: the
 fast-mode extension reads it to apply each provider's `subagentsEnabled`
 setting. Pick a heredoc delimiter that does not occur as a standalone line in
 the assignment.
 
 ## Use the report
 
-For changes, read the diff and run the repository's verification yourself: the
+Read an owner's todolist before its diff, and send back a skipped step its
+playbook marks mandatory. For changes, read the diff and run the repository's verification yourself: the
 report states what the child intended, and the diff shows what it did. For
 findings, check consequential claims against their cited sources.

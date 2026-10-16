@@ -61,6 +61,67 @@ Approved. Build it against the sketch and verify it. Commit locally and show
 me the diff summary and the evidence before you open the PR.
 ```
 
+### Start a new project
+
+With no existing code, the expensive mistake is the wrong data model, so I
+review the design before anything else exists.
+
+1. Run `/skill:sharpen` on a paragraph that says who the project is for and
+   how I'll know it works.
+2. Ask for the design with a stop. Architect skips grounding here because there
+   is no system to study.
+
+   ```text
+   Architect the core data model and module map with a checkpoint. Show me the
+   usage sketch, the types, the rationale, and the open questions, then stop.
+   ```
+
+3. Scaffold the checks before any feature.
+
+   ```text
+   Scaffold the project from the approved design: strict types, lint, a verify
+   command, and an AGENTS.md that names it. No features yet.
+   ```
+
+4. Once a user can reach the first feature, run
+   `/skill:create-verification-skill`. It writes `.agents/skills/verify-<app>/`,
+   which Pi discovers on its own. Earlier, it has nothing to drive.
+5. Add features one ticket at a time with the flow above. Every few features,
+   run `/skill:maintain-verification-skill` to add them to the feature map.
+
+### Work in a large legacy codebase
+
+The agent can't understand millions of lines, so I keep it on the slice the
+ticket touches and make it prove behavior on the running app.
+
+1. Start Pi in the package I'm changing, not the repository root. Pi loads
+   `AGENTS.md` and `.agents/skills/` from the working directory upward.
+2. Make the package runnable and drivable before the first change.
+
+   ```text
+   /skill:create-verification-skill
+   Scope: <the service or package>. If it doesn't build or start, tell me
+   exactly why before you generate anything.
+   ```
+
+3. Map the slice, and ask why for anything that looks pointless. Old code often
+   has a reason nobody remembers.
+
+   ```text
+   How does <subsystem> handle <what the ticket touches>? Then, why is
+   <odd part> built this way? Cite the code and the history. Change nothing.
+   ```
+
+4. Take the ticket through the flow above. Stage 1 matters most here, because
+   tickets often describe how the code used to work.
+5. Run `/skill:blast-radius` on any diff I don't trust before it merges.
+6. When a verify run fails because the app changed rather than broke, run
+   `/skill:maintain-verification-skill`.
+7. Clean up through the tickets, not in one sweep. `/skill:correct` turns a
+   mistake agents repeat into a type, lint, or test, and it fails only on new
+   cases of a pattern that is already common. A migration across many call
+   sites goes to `/skill:figure-it-out`.
+
 ## Defaults
 
 - Model: `anthropic/claude-opus-5-5` with high thinking and Fast mode on.

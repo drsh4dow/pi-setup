@@ -2,8 +2,8 @@
 // A subagent (PI_SUBAGENT_RUN set) reports no session identity, so herdr never restores it
 // without its parent. It reports under `pi:subagent`, because herdr ignores a `herdr:pi` report
 // without an identity and restores only sessions that official sources report.
-// A subagent reports `working` from its first agent_start until shutdown, because its run lasts
-// until it writes its outcome.
+// A subagent reports `working` from session_start until shutdown, because its whole life is its
+// task.
 // Herdr integration updates overwrite this file; preserve this patch until upstreamed.
 // HERDR_INTEGRATION_ID=pi
 // HERDR_INTEGRATION_VERSION=8
@@ -109,7 +109,6 @@ export default function (pi: ExtensionAPI) {
   function createSession(initialContext: ExtensionContext) {
     let context = initialContext;
     let stopped = false;
-    let started = false;
     let blockedCount = 0;
     let blockedMessage: string | undefined;
     let desired: { state: AgentState; message: string | undefined } | undefined;
@@ -180,7 +179,7 @@ export default function (pi: ExtensionAPI) {
       let state: AgentState;
 
       if (blockedCount > 0) state = "blocked";
-      else if (subagent && started) state = "working";
+      else if (subagent) state = "working";
       else state = context.isIdle() ? "idle" : "working";
 
       const message = blockedCount > 0 ? blockedMessage : undefined;
@@ -224,10 +223,6 @@ export default function (pi: ExtensionAPI) {
 
     return {
       update,
-      start(ctx: ExtensionContext) {
-        started = true;
-        update(ctx, true);
-      },
       blocked(data: typeof BlockedEvent.Type) {
         if (!data.active) {
           blockedCount = Math.max(0, blockedCount - 1);
@@ -262,7 +257,7 @@ export default function (pi: ExtensionAPI) {
     session = createSession(ctx);
     session.update(ctx, true, event.reason);
   });
-  pi.on("agent_start", (_event, ctx) => session?.start(ctx));
+  pi.on("agent_start", (_event, ctx) => session?.update(ctx, true));
   pi.on("agent_settled", (_event, ctx) => session?.update(ctx, false));
   pi.on("session_shutdown", () => {
     session?.stop();

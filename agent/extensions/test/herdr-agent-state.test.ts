@@ -167,6 +167,18 @@ assert.ok(states().every((report) => report.params.agent_session_id === undefine
       { PI_SUBAGENT_RUN: "/tmp/pi-subagent-test-run" },
     ));
 
+  test("a subagent reports working from session start, before its task starts", () =>
+    runScenario(
+      `
+setIdle(true);
+await emit("session_start");
+await eventually(() => states().length > 0, "a state report");
+await emit("agent_start");
+assert.deepEqual(states().map((report) => report.params.state), ["working"]);
+`,
+      { PI_SUBAGENT_RUN: "/tmp/pi-subagent-test-run" },
+    ));
+
   test("a subagent stays working while it waits at settle and between runs", () =>
     runScenario(
       `

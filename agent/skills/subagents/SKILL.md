@@ -5,8 +5,9 @@ description: Read before using subagents.
 
 # Subagents
 
-A subagent is a separate `pi --print` process with the normal prompt, skills,
-and tools. It receives one assignment and returns one report.
+A subagent is a separate Pi process, started with `pi-subagent`, with the
+normal prompt, skills, and tools. It receives one assignment and returns one
+report.
 
 ## Kinds
 
@@ -83,7 +84,7 @@ Read [background-terminals](../background-terminals/SKILL.md), then start each
 subagent with `bg_start` in the project directory:
 
 ```bash
-pi --print \
+pi-subagent \
   --model <model> \
   --thinking high \
   --append-system-prompt "$HOME/.pi/agent/skills/subagents/unattended.md" \
@@ -92,6 +93,11 @@ pi --print \
 <assignment>
 SUBAGENT_PROMPT
 ```
+
+`pi-subagent` takes the arguments of `pi --print`. Inside herdr, the child
+runs as a read-only Pi chat in a pane of the parent's workspace. Outside
+herdr, it runs `pi --print`. Either way, the launch prints the child's report
+on stdout and exits 0 on success, as `pi --print` does.
 
 An owner launch appends `owner.md` in place of `delegate.md`. A launch
 without `owner.md` is a delegate. Use the session name as the

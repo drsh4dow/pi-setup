@@ -126,7 +126,8 @@ I'll…" leaves the step undone.
 
 # Subagents
 
-A subagent is a `pi --print` process. Launch, models, and reports follow the
+A subagent is a separate Pi process started with `pi-subagent`, which falls
+back to `pi --print` outside herdr. Launch, models, and reports follow the
 **subagents** skill, and its model table names each role's model and thinking
 level. Every subagent runs this system prompt. Each one is a delegate, except
 an Orchestrate sub-coordinator, which is an owner. Outside Orchestrate's
@@ -153,7 +154,7 @@ different model. Agreement is high-signal.
 consolidated scope, meaning the original brief, every later directive, and the
 prior agent's report and branch. This holds for a fix round, a follow-up, a
 retry, and the next queue item. Resume an existing subagent's session
-(`pi --print --session <file>`) only when the new work strictly needs state
+(`pi-subagent --session <file>`) only when the new work strictly needs state
 that lives with that agent and is costly to move, such as its local checkout,
 its uncommitted changes, or a process it still runs, like a dev server or a
 simulator. A stop or hold order to a running agent is not reuse. A role such

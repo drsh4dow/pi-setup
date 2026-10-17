@@ -51,13 +51,12 @@ const runPi = Effect.fn("runPi")(function* (
 
   const exitCode = yield* handle.exitCode;
 
-  // A process pi left behind can hold stderr open, so the copy gets a moment, not a promise.
+  // A process pi left behind can hold the stderr pipe open.
   yield* Fiber.join(copying).pipe(Effect.timeout("1 second"), Effect.ignore);
 
   return exitCode;
 }, Effect.scoped);
 
-/** Runs pi in the pane and records its pid, its stderr, and how it exited for the launcher. */
 export const runPaneChild = Effect.fn("runPaneChild")(function* (
   runDirectory: string,
   paneEnv: Environment,

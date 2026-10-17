@@ -122,7 +122,6 @@ export const RunOutcome = Schema.Union([
 
 export type RunOutcome = typeof RunOutcome.Type;
 
-/** What the child leaves in the run directory: an outcome, or a hand-back before it sent anything. */
 export const ChildResult = Schema.Union([
   RunOutcome,
   Schema.Struct({ kind: Schema.Literal("printInstead"), reason: Schema.String }),
@@ -170,7 +169,6 @@ function isContinuationByte(byte: number | undefined): boolean {
   return byte !== undefined && (byte & 0xc0) === 0x80;
 }
 
-/** Where the last complete UTF-8 character of `bytes` ends. A malformed tail counts as complete. */
 function completeCharactersEnd(bytes: Uint8Array): number {
   let lead = bytes.length - 1;
 
@@ -183,7 +181,6 @@ function completeCharactersEnd(bytes: Uint8Array): number {
   return lead + utf8SequenceLength(leadByte) > bytes.length ? lead : bytes.length;
 }
 
-/** The longest prefix of `bytes`, which starts on a character boundary, that fits `budget`. */
 function utf8Prefix(bytes: Uint8Array, budget: number): Uint8Array {
   if (bytes.length <= budget) return bytes;
 

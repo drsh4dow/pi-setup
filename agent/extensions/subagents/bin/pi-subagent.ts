@@ -436,7 +436,6 @@ const runInPane = Effect.fn("runInPane")(function* (
 
   const files = runFiles(runDirectory);
 
-  // Finalizers run in reverse, so this copy runs after the pane closes and before the directory goes.
   const forwardOnce = yield* Effect.cached(forwardStderr(files.stderr));
   yield* Effect.addFinalizer(() => forwardOnce.pipe(Effect.ignore));
 

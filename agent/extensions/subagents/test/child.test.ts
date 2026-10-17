@@ -174,8 +174,7 @@ async function startChild({
       const command = commands.get(prompt.slice(1));
 
       assert.ok(command, `${prompt} is a registered command`);
-      // Pi runs deferred prompts one at a time, each after the previous one finished.
-      // oxlint-disable-next-line no-await-in-loop
+      // oxlint-disable-next-line no-await-in-loop -- Pi runs deferred prompts one at a time.
       await command.handler("", ctx);
     }
   };

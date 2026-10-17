@@ -1,9 +1,9 @@
-// Locally patched Herdr integration: reconcile idle state after missed lifecycle reports, and
-// report a subagent (PI_SUBAGENT_RUN set) under its own source. Herdr ignores a `herdr:pi` state
-// report without a session identity, and restores only sessions that official sources report,
-// so this source keeps a subagent's state authoritative and herdr's restore never brings it back
-// as a writable chat without its parent. A subagent stays `working` from its first run until it
-// shuts down, because it settles only once its outcome is written.
+// Locally patched Herdr integration. It reconciles idle state after missed lifecycle reports.
+// A subagent (PI_SUBAGENT_RUN set) reports no session identity, so herdr never restores it
+// without its parent. It reports under `pi:subagent`, because herdr ignores a `herdr:pi` report
+// without an identity and restores only sessions that official sources report.
+// A subagent reports `working` from its first agent_start until shutdown, because its run lasts
+// until it writes its outcome.
 // Herdr integration updates overwrite this file; preserve this patch until upstreamed.
 // HERDR_INTEGRATION_ID=pi
 // HERDR_INTEGRATION_VERSION=8

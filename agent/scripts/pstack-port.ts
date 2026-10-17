@@ -289,7 +289,7 @@ function sync(pstack: string, previousPstack: string | undefined) {
 const cursorVocabulary: [RegExp, string][] = [
   [
     /\bsubagent_type\b|\bTask (?:tool|calls?|subagents?)\b|`Task`|run_in_background|environment: "cloud"|\bpoteto-agent\b|generalPurpose|readonly: (?:true|false)|[Cc]loud agents?\b/,
-    "a `pi --print` subagent per the subagents skill",
+    "a subagent started with `pi-subagent`, per the subagents skill",
   ],
   [/\bAskQuestion\b/, "a plain question at the end of the reply"],
   [/pstack-models|setup-pstack|\bgrok\b/i, "a role in the subagents skill's model table"],

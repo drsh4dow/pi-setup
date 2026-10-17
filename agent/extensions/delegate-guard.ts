@@ -22,6 +22,21 @@ const LINE_CONTINUATION = /\\\r?\n/g;
 
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
+const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
+  "bash",
+  "env",
+  "exec",
+  "nice",
+  "nohup",
+  "setsid",
+  "sh",
+  "time",
+  "timeout",
+  "zsh",
+]);
+
+const TIMEOUT_DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
+
 // `&` next to `<` or `>` is a redirection such as `2>&1`, not a separator.
 const COMMAND_SEPARATOR = /&&|\|\||;|\||(?<![<>])&(?!>)|\r?\n/;
 
@@ -81,14 +96,6 @@ function words(simpleCommand: string): string[] {
     .map((word) => word.replaceAll(/["']/g, ""));
 }
 
-function commandArgv(argv: readonly string[]): readonly string[] {
-  const commandIndex = argv.findIndex((word) => !ENV_ASSIGNMENT.test(word));
-
-  if (commandIndex === -1) return [];
-
-  return argv.slice(commandIndex);
-}
-
 function isPi(word: string): boolean {
   return word === "pi" || word.endsWith("/pi");
 }
@@ -97,15 +104,34 @@ function isPiSubagent(word: string): boolean {
   return word === "pi-subagent" || word.endsWith("/pi-subagent");
 }
 
+// `pi-subagent` needs no flag to launch, so it counts only in command position.
+// Otherwise `rg pi-subagent` and `test -x .../pi-subagent` would read as launches.
+function isWrapperWord(word: string): boolean {
+  return (
+    ENV_ASSIGNMENT.test(word) ||
+    COMMAND_WRAPPERS.has(word) ||
+    word.startsWith("-") ||
+    TIMEOUT_DURATION.test(word)
+  );
+}
+
+function piSubagentLaunch(argv: readonly string[]): PiLaunchArgv | undefined {
+  const commandIndex = argv.findIndex((word) => !isWrapperWord(word));
+  const commandWord = argv[commandIndex];
+
+  if (commandWord === undefined || !isPiSubagent(commandWord)) return undefined;
+
+  return argv.slice(commandIndex);
+}
+
 function subagentLaunches(command: string): PiLaunchArgv[] {
   const joined = withoutHeredocBodies(command).replace(LINE_CONTINUATION, " ");
 
   return joined.split(COMMAND_SEPARATOR).flatMap((simpleCommand) => {
     const argv = words(simpleCommand);
-    const invocation = commandArgv(argv);
-    const commandWord = invocation[0];
+    const subagentLaunch = piSubagentLaunch(argv);
 
-    if (commandWord !== undefined && isPiSubagent(commandWord)) return [invocation];
+    if (subagentLaunch !== undefined) return [subagentLaunch];
 
     const piIndex = argv.findIndex(isPi);
 

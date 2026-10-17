@@ -17,6 +17,7 @@ const reportSchema = Schema.Struct({
   id: Schema.String,
   method: Schema.Literals(["pane.report_agent", "pane.report_agent_session"]),
   params: Schema.Struct({
+    source: Schema.String,
     state: Schema.optional(Schema.Literals(["idle", "working", "blocked"])),
     message: Schema.optional(Schema.String),
     agent_session_path: Schema.optional(Schema.String),

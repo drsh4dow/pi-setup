@@ -41,6 +41,7 @@ type AssistantReply = Extract<AgentMessage, { role: "assistant" }>;
 type Phase =
   | { readonly kind: "starting" }
   | { readonly kind: "claimedElsewhere" }
+  | { readonly kind: "claimFailed" }
   | { readonly kind: "awaitingDelivery" }
   | { readonly kind: "awaitingStart" }
   | { readonly kind: "running" }
@@ -174,7 +175,8 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
   let dialogsOpened = 0;
   let inputLocked = false;
 
-  const governs = () => phase.kind !== "claimedElsewhere" && phase.kind !== "settled";
+  const governs = () =>
+    phase.kind !== "claimedElsewhere" && phase.kind !== "claimFailed" && phase.kind !== "settled";
 
   const finish = Effect.fn("subagent.finish")(function* (
     ctx: ExtensionContext,
@@ -210,6 +212,11 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
       Effect.map((claimed) => {
         phase = claimed ? { kind: "awaitingDelivery" } : { kind: "claimedElsewhere" };
       }),
+      Effect.tapError(() =>
+        Effect.sync(() => {
+          phase = { kind: "claimFailed" };
+        }),
+      ),
     );
   });
 

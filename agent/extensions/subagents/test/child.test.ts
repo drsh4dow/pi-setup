@@ -183,7 +183,9 @@ async function startChild({
     ctx,
     emit: adapter.emit,
     notices,
+    runDirectory,
     sent,
+    filtersTerminalInput: () => terminalInput.length > 0,
     shutdowns: () => shutdowns,
     type: (data: string) => {
       const [handler] = terminalInput;
@@ -381,6 +383,30 @@ suite("subagent child", () => {
     assert.deepEqual(await elsewhere.emit("project_trust", event, elsewhere.ctx), {
       trusted: "undecided",
     });
+  });
+
+  test("a Pi that cannot claim the run answers no trust prompt and locks no input", async () => {
+    const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-subagent-agent-"));
+    runDirectories.push(agentDir);
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    const child = await startChild();
+
+    await rm(child.runDirectory, { recursive: true, force: true });
+
+    assert.deepEqual(
+      await child.emit("project_trust", { type: "project_trust", cwd: agentDir }, child.ctx),
+      { trusted: "undecided" },
+    );
+
+    await child.start();
+
+    assert.equal(child.filtersTerminalInput(), false, "typed keys reach Pi");
+    assert.deepEqual(
+      await child.emit("input", { type: "input", text: "hello", source: "interactive" }, child.ctx),
+      { action: "continue" },
+    );
+    assert.deepEqual(child.sent, []);
   });
 
   test("processes the child starts do not inherit the run", async () => {

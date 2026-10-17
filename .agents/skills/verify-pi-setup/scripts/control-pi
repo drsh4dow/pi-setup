@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CHECKOUT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
+SOCKET=verify-pi-setup
+SCRATCH_BASE=${TMPDIR:-/tmp}/verify-pi-setup
+EVIDENCE_BASE=$HOME/.local/state/pi-agent/verify-pi-setup
+LIVE_AGENT_DIR=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}
+READY_PATTERN='[0-9.]+%/[0-9]'
+
+usage() {
+  cat <<'EOF'
+control-pi launch [RUN_ID]          start an isolated Pi and wait for its footer
+control-pi doctor RUN_ID            read-only health check of the instance
+control-pi send RUN_ID TEXT         type TEXT literally, then press Enter
+control-pi keys RUN_ID KEY...       send tmux key names (C-o, Escape, C-M-m, Down)
+control-pi capture RUN_ID           print the visible pane
+control-pi wait RUN_ID ERE [SECS]   wait until the pane matches ERE (default 60 s)
+control-pi snap RUN_ID NAME         save the pane to EVIDENCE/NAME.txt
+control-pi path RUN_ID scratch|evidence|agent
+control-pi stop RUN_ID              tear down the instance and keep the evidence
+control-pi list                     list runs that still have scratch state
+EOF
+}
+
+die() {
+  echo "control-pi: $*" >&2
+  exit 1
+}
+
+tm() {
+  tmux -L "$SOCKET" "$@"
+}
+
+bind_run() {
+  RUN_ID=${1:-}
+  [[ $RUN_ID =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid run id '$RUN_ID'"
+  SCRATCH=$SCRATCH_BASE/$RUN_ID
+  AGENT_DIR=$SCRATCH/agent
+  EVIDENCE=$EVIDENCE_BASE/$RUN_ID
+  SESSION=vps-$RUN_ID
+  PANE="=$SESSION:"
+  STDERR_LOG=$SCRATCH/pi.stderr.log
+}
+
+session_alive() {
+  tm has-session -t "=$SESSION" 2>/dev/null &&
+    [[ $(tm list-panes -t "$PANE" -F '#{pane_dead}') == 0 ]]
+}
+
+pane() {
+  tm capture-pane -p -J -t "$PANE" 2>/dev/null || true
+}
+
+pi_pid() {
+  local shell_pid
+  shell_pid=$(tm list-panes -t "$PANE" -F '#{pane_pid}' 2>/dev/null) || return 1
+  pgrep -P "$shell_pid" -x pi | head -n 1
+}
+
+pids_tagged_with_run() {
+  local pid
+  for pid in $(pgrep -u "$UID"); do
+    if grep -qxz "VERIFY_PI_SETUP_RUN=$RUN_ID" "/proc/$pid/environ" 2>/dev/null; then
+      echo "$pid"
+    fi
+  done
+}
+
+oauth_providers() {
+  jq -r 'to_entries[] | select(.value.type == "oauth") | .key' "$1"
+}
+
+cmd_launch() {
+  bind_run "${1:-$(date +%Y%m%dT%H%M%S)-$$}"
+  [[ -e $SCRATCH ]] && die "run $RUN_ID already exists; stop it or pick another id"
+  [[ -d $CHECKOUT/node_modules/effect ]] || die "run 'vp install' in $CHECKOUT first"
+  [[ -x $CHECKOUT/.build/bin/emit-to-pi ]] || die "run 'vp run build:cli' in $CHECKOUT first"
+  [[ -f $LIVE_AGENT_DIR/auth.json ]] || die "no credentials at $LIVE_AGENT_DIR/auth.json; run /login in Pi"
+
+  # Refresh in the live directory, under Pi's own lock, so the scratch copy never needs to.
+  local provider
+  for provider in $(oauth_providers "$LIVE_AGENT_DIR/auth.json"); do
+    PI_CODING_AGENT_DIR=$LIVE_AGENT_DIR pi auth print-bearer-token --provider "$provider" --min-expiry 30m >/dev/null ||
+      echo "control-pi: warning: could not refresh $provider credentials" >&2
+  done
+
+  mkdir -p "$AGENT_DIR" "$SCRATCH/workspace" "$SCRATCH/sessions" "$EVIDENCE"
+  trap 'launch_failed' EXIT
+  echo "$CHECKOUT" >"$SCRATCH/checkout"
+  install -m 600 "$LIVE_AGENT_DIR/auth.json" "$AGENT_DIR/auth.json"
+  cp "$CHECKOUT/agent/SYSTEM.md" "$CHECKOUT/agent/keybindings.json" "$AGENT_DIR/"
+  cp -R "$CHECKOUT/agent/skills" "$CHECKOUT/agent/prompts" "$CHECKOUT/agent/themes" "$AGENT_DIR/"
+  # Extensions resolve imports from their own path, so they load in place from the checkout.
+  jq --arg extensions "$CHECKOUT/agent/extensions" '. + {extensions: [$extensions]}' \
+    "$CHECKOUT/agent/default.settings.json" >"$AGENT_DIR/settings.json"
+
+  local unset_args=() name
+  for name in $(compgen -e); do
+    [[ $name == PI_* || $name == HERDR_* ]] && unset_args+=(-u "$name")
+  done
+
+  local command
+  command=$(printf '%q ' env "${unset_args[@]}" \
+    "VERIFY_PI_SETUP_RUN=$RUN_ID" \
+    "PI_CODING_AGENT_DIR=$AGENT_DIR" \
+    PI_SKIP_VERSION_CHECK=1 \
+    HERDR_ENV=0 \
+    pi --session-dir "$SCRATCH/sessions" --no-skills --skill "$AGENT_DIR/skills")
+  tm new-session -d -s "$SESSION" -x 200 -y 50 -c "$SCRATCH/workspace" "$command 2>$(printf '%q' "$STDERR_LOG")"
+  tm set-option -t "$PANE" remain-on-exit on >/dev/null
+
+  wait_for "$READY_PATTERN" 60
+  trap - EXIT
+
+  echo "run=$RUN_ID"
+  echo "scratch=$SCRATCH"
+  echo "evidence=$EVIDENCE"
+  echo "attach=tmux -L $SOCKET attach -t $SESSION"
+}
+
+launch_failed() {
+  pane >"$EVIDENCE/launch-failure.pane.txt"
+  cp "$STDERR_LOG" "$EVIDENCE/launch-failure.stderr.log" 2>/dev/null || true
+  cmd_stop "$RUN_ID" >/dev/null
+  echo "control-pi: launch failed; see $EVIDENCE/launch-failure.*" >&2
+}
+
+wait_for() {
+  local pattern=$1 deadline=$((SECONDS + ${2:-60}))
+  while ((SECONDS < deadline)); do
+    if pane | grep -qE -- "$pattern"; then
+      return 0
+    fi
+    if ! session_alive; then
+      echo "control-pi: Pi exited while waiting for /$pattern/" >&2
+      cat "$STDERR_LOG" >&2 2>/dev/null || true
+      return 1
+    fi
+    sleep 0.25
+  done
+  echo "control-pi: timed out waiting for /$pattern/" >&2
+  pane >&2
+  return 1
+}
+
+pi_env_has() {
+  grep -qxz -- "$2" "/proc/$1/environ"
+}
+
+extensions_from_checkout() {
+  [[ $(jq -r '.extensions[0]' "$AGENT_DIR/settings.json" 2>/dev/null) == "$CHECKOUT/agent/extensions" ]]
+}
+
+stderr_clean() {
+  ! grep -qiE 'error|uncaught' "$STDERR_LOG" 2>/dev/null
+}
+
+footer_rendered() {
+  pane | grep -qE -- "$READY_PATTERN"
+}
+
+cmd_doctor() {
+  bind_run "${1:-}"
+  local failures=0 pid
+
+  check() {
+    local description=$1
+    shift
+    if "$@"; then
+      echo "ok    $description"
+    else
+      echo "FAIL  $description"
+      failures=$((failures + 1))
+    fi
+  }
+
+  check "scratch directory $SCRATCH exists" test -d "$AGENT_DIR"
+  check "tmux session $SESSION is alive on socket $SOCKET" session_alive
+  pid=$(pi_pid || true)
+  check "pi process found (pid ${pid:-none})" test -n "$pid"
+  if [[ -n $pid ]]; then
+    check "pi uses the scratch agent directory, not the live one" pi_env_has "$pid" "PI_CODING_AGENT_DIR=$AGENT_DIR"
+    check "pi reports nothing to Herdr" pi_env_has "$pid" HERDR_ENV=0
+  fi
+  check "extensions load from $CHECKOUT/agent/extensions" extensions_from_checkout
+  check "stderr has no errors" stderr_clean
+  check "footer is rendered" footer_rendered
+  check "evidence directory $EVIDENCE exists" test -d "$EVIDENCE"
+
+  echo "info  checkout $(git -C "$CHECKOUT" rev-parse --short HEAD)$(git -C "$CHECKOUT" diff --quiet HEAD -- agent || echo ' (agent/ has uncommitted changes)')"
+  echo "info  $(pi --version 2>/dev/null | head -n 1)"
+  local provider expires
+  for provider in $(oauth_providers "$AGENT_DIR/auth.json" 2>/dev/null); do
+    expires=$(jq -r --arg p "$provider" '.[$p].expires' "$AGENT_DIR/auth.json")
+    echo "info  $provider credentials expire in $(((expires / 1000 - $(date +%s)) / 60)) min"
+  done
+
+  ((failures == 0))
+}
+
+cmd_stop() {
+  bind_run "${1:-}"
+  mkdir -p "$EVIDENCE"
+  [[ -f $STDERR_LOG ]] && cp "$STDERR_LOG" "$EVIDENCE/pi.stderr.log"
+
+  if [[ -f $AGENT_DIR/auth.json && -f $LIVE_AGENT_DIR/auth.json ]]; then
+    local provider
+    for provider in $(oauth_providers "$AGENT_DIR/auth.json"); do
+      if ! jq -e --arg p "$provider" --slurpfile live "$LIVE_AGENT_DIR/auth.json" \
+        '.[$p].refresh == $live[0][$p].refresh' "$AGENT_DIR/auth.json" >/dev/null; then
+        echo "control-pi: warning: the run refreshed $provider credentials; if Pi later fails to refresh them, run /login" >&2
+      fi
+    done
+  fi
+
+  tm kill-session -t "=$SESSION" 2>/dev/null || true
+  local -a pids
+  for _ in 1 2 3 4 5 6 7 8; do
+    mapfile -t pids < <(pids_tagged_with_run)
+    ((${#pids[@]} == 0)) && break
+    kill "${pids[@]}" 2>/dev/null || true
+    sleep 0.25
+  done
+  mapfile -t pids < <(pids_tagged_with_run)
+  if ((${#pids[@]} > 0)); then
+    kill -9 "${pids[@]}" 2>/dev/null || true
+  fi
+
+  rm -rf "$SCRATCH"
+  echo "stopped $RUN_ID; evidence kept in $EVIDENCE"
+}
+
+cmd_list() {
+  local dir
+  [[ -d $SCRATCH_BASE ]] || return 0
+  for dir in "$SCRATCH_BASE"/*/; do
+    [[ -d $dir ]] || continue
+    bind_run "$(basename "$dir")"
+    if session_alive; then
+      echo "$RUN_ID alive  $(cat "$SCRATCH/checkout" 2>/dev/null)"
+    else
+      echo "$RUN_ID dead   $(cat "$SCRATCH/checkout" 2>/dev/null)"
+    fi
+  done
+}
+
+subcommand=${1:-}
+shift || true
+case $subcommand in
+launch) cmd_launch "$@" ;;
+doctor) cmd_doctor "$@" ;;
+send)
+  bind_run "${1:-}"
+  session_alive || die "run $RUN_ID is not alive"
+  tm send-keys -t "$PANE" -l -- "${2:?text required}"
+  sleep 0.15
+  tm send-keys -t "$PANE" Enter
+  ;;
+keys)
+  bind_run "${1:-}"
+  shift
+  session_alive || die "run $RUN_ID is not alive"
+  tm send-keys -t "$PANE" "$@"
+  ;;
+capture)
+  bind_run "${1:-}"
+  pane
+  ;;
+wait)
+  bind_run "${1:-}"
+  wait_for "${2:?pattern required}" "${3:-60}"
+  ;;
+snap)
+  bind_run "${1:-}"
+  mkdir -p "$EVIDENCE"
+  pane >"$EVIDENCE/${2:?name required}.txt"
+  echo "$EVIDENCE/$2.txt"
+  ;;
+path)
+  bind_run "${1:-}"
+  case ${2:-} in
+  scratch) echo "$SCRATCH" ;;
+  evidence) echo "$EVIDENCE" ;;
+  agent) echo "$AGENT_DIR" ;;
+  *) die "path kind must be scratch, evidence, or agent" ;;
+  esac
+  ;;
+stop) cmd_stop "$@" ;;
+list) cmd_list ;;
+*)
+  usage
+  [[ $subcommand == help || $subcommand == -h ]]
+  ;;
+esac

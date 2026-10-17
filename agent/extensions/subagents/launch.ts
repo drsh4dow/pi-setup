@@ -13,13 +13,11 @@ export const WorkspaceId = Schema.NonEmptyString.pipe(Schema.brand("WorkspaceId"
 
 export type WorkspaceId = typeof WorkspaceId.Type;
 
-/** The pane a launcher runs in, as `herdr pane get` reports it. */
 export const HerdrPane = Schema.Struct({
   pane_id: PaneId,
   workspace_id: WorkspaceId,
 });
 
-/** Where a launcher sits in herdr, and the depth its child will have. */
 export interface Lineage {
   readonly parentPane: PaneId;
   readonly workspace: WorkspaceId;
@@ -58,7 +56,6 @@ const ParentDepth = Schema.Struct({
   ),
 });
 
-/** Herdr mode needs the same three variables `herdr-agent-state.ts` checks. */
 export const modeFrom = Effect.fnUntraced(function* (env: Environment) {
   const caller = Schema.decodeUnknownOption(HerdrCaller)(env);
 
@@ -76,7 +73,6 @@ export function treeLabel(depth: number, name: string): string {
 
 const SESSION_NAME_PREFIX = "subagent:";
 
-/** The short name a child shows in herdr, taken from the `--name` the subagents skill passes. */
 export function subagentName(sessionName: string | undefined): string {
   if (sessionName === undefined) return "subagent";
 
@@ -87,10 +83,6 @@ export function subagentName(sessionName: string | undefined): string {
   return short === "" ? "subagent" : short;
 }
 
-/**
- * The arguments a read-only TUI child cannot honor the way `pi --print` does, so `pi-subagent`
- * runs `pi --print` for them. Returns why, or undefined when the TUI child can run them.
- */
 export function printOnlyReason(args: Args): string | undefined {
   if (args.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
     return "pi rejects these arguments";
@@ -113,7 +105,6 @@ export function printOnlyReason(args: Args): string | undefined {
   return undefined;
 }
 
-/** `report` holds the exact bytes `pi --print` would write to stdout. */
 export const RunOutcome = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("completed"), report: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("truncated"), report: Schema.String }),
@@ -132,7 +123,6 @@ export function exitCodeFor(outcome: RunOutcome): 0 | 1 | 2 {
   return EXIT_CODES[outcome.kind];
 }
 
-/** What the pane child needs to start `pi` as the launcher would have. */
 export const ChildLaunch = Schema.Struct({
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
@@ -141,14 +131,6 @@ export const ChildLaunch = Schema.Struct({
 
 export type ChildLaunch = typeof ChildLaunch.Type;
 
-/**
- * The run directory is private (0700) because `launch.json` holds the launcher's environment,
- * API keys included. Nothing secret goes into argv, where other users can read it.
- *
- * The launcher writes `launch.json` and `task.md`. The pane child writes `started` (its pid),
- * `stderr` (pi's), and `exit`. The child extension creates `claim` when its session starts, and
- * writes `outcome.json` when the run settles.
- */
 export function runFiles(runDirectory: string) {
   return {
     launch: `${runDirectory}/launch.json`,
@@ -161,10 +143,8 @@ export function runFiles(runDirectory: string) {
   };
 }
 
-/** The file descriptor this names belongs to the launcher's process and does not reach the pane. */
 const LAUNCHER_ONLY = new Set(["PI_BACKGROUND_TERMINAL_NOTIFY_FD"]);
 
-/** Variables that describe the terminal and the herdr pane, which the pane knows and the launcher does not. */
 function paneOwned(name: string): boolean {
   return (
     name.startsWith("HERDR_") ||

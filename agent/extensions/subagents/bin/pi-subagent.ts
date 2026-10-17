@@ -35,23 +35,17 @@ import {
   type WorkspaceId,
 } from "../launch.ts";
 
-/** The hidden entry the child's pane runs. It loads the launcher's environment, then runs `pi`. */
 const PANE_CHILD = "__pane-child";
 
-/** A child that has not opened its Pi session by then is stuck, for example on a startup prompt. */
 const STARTUP_TIMEOUT_MS = 60_000;
 
-/** How much of pi's stderr the pane child keeps for the launcher to print. */
 const STDERR_LIMIT = 64 * 1024;
 
-/** What this process was started with, read once at the native boundary. */
 interface Invocation {
   readonly args: readonly string[];
   readonly env: Environment;
   readonly cwd: string;
-  /** The command that starts this program again: the compiled binary, or bun and this script. */
   readonly self: readonly string[];
-  /** Where run directories go: `XDG_RUNTIME_DIR`, or the system temp directory. */
   readonly runtimeRoot: string;
   readonly uid: number;
 }
@@ -96,12 +90,10 @@ const decodeJson = <S extends Schema.Decoder<unknown>>(schema: S) =>
 
 const encodeLaunch = Schema.encodeEffect(Schema.fromJsonString(ChildLaunch));
 
-/** A pane this launcher created, which it must close on every exit path. */
 type ChildPane =
   | { readonly kind: "tab"; readonly tab: TabId; readonly pane: PaneId }
   | { readonly kind: "split"; readonly pane: PaneId };
 
-/** How the pane child ended, as the launcher observes it. */
 type ChildEnd =
   | { readonly kind: "exited"; readonly exitCode: number }
   | { readonly kind: "lost"; readonly reason: string };
@@ -117,7 +109,6 @@ const write = (stream: NodeJS.WriteStream, text: string) =>
 const log = Effect.fn("log")(function* (message: string) {
   const now = yield* DateTime.now;
 
-  // Nothing useful follows a failed write to stderr, so a log line never fails its caller.
   yield* write(process.stderr, `pi-subagent ${DateTime.formatIso(now)} ${message}\n`).pipe(
     Effect.ignore,
   );
@@ -127,10 +118,6 @@ function shellQuote(word: string): string {
   return `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
-/**
- * Each pane opens in its run directory, which no other pane shares. If herdr creates a pane and
- * the call still fails, the directory is how the launcher finds the pane to close it.
- */
 const closeStrays = Effect.fn("closeStrays")(
   function* (runDirectory: string) {
     const listed = yield* herdr(["pane", "list"]).pipe(
@@ -219,11 +206,6 @@ const closePane = Effect.fn("closePane")(function* (child: ChildPane) {
   );
 });
 
-/**
- * Another user who can rename entries in the root could swap the run directory for their own
- * and read `launch.json`. A root the user or root owns, and others cannot write to without the
- * sticky bit, rules that out.
- */
 const checkRuntimeRoot = Effect.fn("checkRuntimeRoot")(function* (root: string, uid: number) {
   const fs = yield* FileSystem.FileSystem;
   const info = yield* fs.stat(root);
@@ -254,7 +236,6 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** One look at the run directory: has the child ended, been lost, or neither yet? */
 const observeChild = Effect.fn("observeChild")(function* (
   files: ReturnType<typeof runFiles>,
   deadline: number,
@@ -272,7 +253,6 @@ const observeChild = Effect.fn("observeChild")(function* (
     : Option.none<number>();
 
   if (Option.isSome(panePid) && !isAlive(panePid.value)) {
-    // The pane child writes `exit` and then exits, so `exit` may have landed after the check above.
     if (yield* fs.exists(files.exit)) return Option.none<ChildEnd>();
 
     return Option.some<ChildEnd>({
@@ -323,7 +303,6 @@ const readOutcome = Effect.fn("readOutcome")(function* (path: string, exitCode: 
   return yield* fs.readFileString(path).pipe(Effect.flatMap(decodeJson(RunOutcome)));
 });
 
-/** `pi --print` writes its stderr to the caller, so the launcher passes on what pi wrote in the pane. */
 const forwardStderr = Effect.fn("forwardStderr")(function* (path: string) {
   const fs = yield* FileSystem.FileSystem;
 
@@ -460,7 +439,6 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
 const writeAtomically = Effect.fn("writeAtomically")(function* (path: string, text: string) {
   const fs = yield* FileSystem.FileSystem;
 
-  // The launcher polls for these files, so it must never see one half-written.
   yield* fs.writeFileString(`${path}.partial`, text);
   yield* fs.rename(`${path}.partial`, path);
 });
@@ -493,7 +471,6 @@ const runPi = Effect.fn("runPi")(function* (
   const stderrFile = yield* fs.open(files.stderr, { flag: "a" });
   let kept = 0;
 
-  // pi's stderr still reaches the pane; its first STDERR_LIMIT bytes also go to the launcher.
   const copying = yield* handle.stderr.pipe(
     Stream.runForEach((chunk) => {
       const part = chunk.subarray(0, Math.max(0, STDERR_LIMIT - kept));
@@ -578,7 +555,6 @@ for (const [signal, exitCode] of Object.entries(SIGNAL_EXIT_CODES)) {
   // `on`, not `once`: pi's signal-exit dependency re-raises a signal it sees no other listener for.
   process.on(signal, () => {
     signalExitCode = exitCode;
-    // Interrupting runs the scope's finalizers, which close the child's pane.
     Effect.runFork(Fiber.interrupt(fiber));
   });
 }

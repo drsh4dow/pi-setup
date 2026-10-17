@@ -112,7 +112,9 @@ function firstToken(task: string): string {
 
 /**
  * Why `pi --print` must run this task instead: the TUI shows these failures and warnings only in
- * its pane, and runs an extension command with a TUI context.
+ * its pane, and runs an extension command with a TUI context. An extension that fails mid-run
+ * still reports only in the pane, where print mode writes to stderr: Pi hands extension errors to
+ * the TUI's error view, and no extension event carries them.
  */
 function printOnlyTaskReason(
   ctx: ExtensionContext,

@@ -86,6 +86,7 @@ test("commands that are not pi print launches pass", () => {
     "pi --help",
     "api --print",
     "rg -n pi-subagent agent",
+    "grep -rn pi-subagent agent",
     "test -x .build/bin/pi-subagent",
   ]) {
     assert.equal(delegateGuard(command), undefined, command);
@@ -127,6 +128,35 @@ test("a delegate is blocked from every pi-subagent launch", () => {
   ]) {
     assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
   }
+});
+
+for (const command of [
+  "timeout 120 pi-subagent --model m",
+  "nohup pi-subagent --model m",
+  "env FOO=1 pi-subagent --model m",
+  "exec pi-subagent --model m",
+  "time pi-subagent --model m",
+  "bash -c 'pi-subagent --model m'",
+  "timeout -k 5 10m /home/u/.pi/.build/bin/pi-subagent --model m",
+]) {
+  test(`a delegate is blocked from a wrapped pi-subagent launch: ${command}`, () => {
+    assert.match(guardFor(delegateArgv)(command) ?? "", DELEGATE_BLOCK);
+  });
+}
+
+test("an owner's wrapped pi-subagent launch is judged by its appends", () => {
+  const ownerGuard = guardFor(ownerArgv);
+
+  assert.match(
+    ownerGuard(`timeout 900 pi-subagent --append-system-prompt ${UNATTENDED} --model m`) ?? "",
+    OWNER_BLOCK,
+  );
+  assert.equal(
+    ownerGuard(
+      `timeout 900 pi-subagent --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE}`,
+    ),
+    undefined,
+  );
 });
 
 test("an owner's pi-subagent launch without delegate.md is blocked", () => {

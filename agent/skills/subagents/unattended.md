@@ -1,7 +1,8 @@
 # Subagent run
 
-You are a subagent running under `pi --print`. The parent agent receives only
-your final message, and nobody answers questions before then.
+You are a subagent, a separate Pi process started with `pi-subagent`, which
+falls back to `pi --print` outside herdr. The parent agent receives only your
+final message, and nobody answers questions before then.
 
 A message without a tool call ends your run. While background terminals you
 started are still running, Pi waits for the next one to finish and returns its

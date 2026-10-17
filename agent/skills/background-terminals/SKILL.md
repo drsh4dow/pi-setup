@@ -1,6 +1,7 @@
 ---
 name: background-terminals
 description: Use when running background services, watchers, subagents, or finite commands alongside independent work.
+user-invokable: false
 ---
 
 Background terminals have no interactive stdin, so commands must run without prompts or interaction.

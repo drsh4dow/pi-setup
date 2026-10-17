@@ -319,12 +319,17 @@ and leaves no process behind. The differences below are known and accepted.
 
 ### Installed skills
 
+`agent-browser` is adapted from the
+[`vercel-labs/agent-browser`](https://github.com/vercel-labs/agent-browser/tree/main/skills/agent-browser)
+skill.
+
 `wizard` and `writing-for-agents` are vendored from
 [`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
 
 Every skill whose name also appears in pstack is ported from it. See
 [pstack](#pstack).
 
+- `agent-browser`
 - `architect`
 - `arena`
 - `automate-me`

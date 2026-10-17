@@ -1,6 +1,7 @@
 ---
 name: subagents
 description: Read before using subagents.
+user-invokable: false
 ---
 
 # Subagents

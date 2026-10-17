@@ -53,11 +53,15 @@ const commandOnlySkills = new Set([
 ]);
 
 // Skills the model applies on its own, kept out of `/skill:` autocomplete.
+const commandHiddenSkills = new Set([
+  "benchmark-checklist",
+  "technical-writing",
+  "typescript-best-practices",
+  "unslop",
+]);
+
 function hiddenFromCommands(skill: string) {
-  return (
-    skill.startsWith("principle-") ||
-    ["benchmark-checklist", "technical-writing", "unslop"].includes(skill)
-  );
+  return skill.startsWith("principle-") || commandHiddenSkills.has(skill);
 }
 
 function destination(upstreamPath: string) {

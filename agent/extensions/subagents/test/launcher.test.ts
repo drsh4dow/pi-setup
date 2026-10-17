@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -100,20 +101,23 @@ async function fakeHerdr(behavior: FakePi) {
   delete baseEnv.PI_SUBAGENT_DEPTH;
   delete baseEnv.PI_SUBAGENT_RUN;
 
+  const piClaimed = async () => {
+    const runs = await readdir(runtime);
+
+    return runs.length > 0 && existsSync(path.join(runtime, runs[0], "claim"));
+  };
+
   return {
     root,
     runtime,
     herdrCalls: async () => (await readFile(path.join(root, "herdr.log"), "utf8")).split("\n"),
     writeOutcome: (outcome: { readonly kind: string; readonly report: string }) =>
       writeFile(path.join(root, "outcome.json"), JSON.stringify(outcome)),
-    async waitForPaneRun() {
+    async waitForHangingPi() {
       const deadline = Date.now() + 10_000;
 
-      const paneRuns = async () =>
-        (await this.herdrCalls()).some((call) => call.startsWith("pane run"));
-
       // oxlint-disable-next-line no-await-in-loop -- Each poll follows the previous one.
-      while (!(await paneRuns()) && Date.now() < deadline) {
+      while (!(await piClaimed()) && Date.now() < deadline) {
         // oxlint-disable-next-line no-await-in-loop -- Each poll follows the previous one.
         await delay(20);
       }
@@ -188,8 +192,7 @@ suite("pi-subagent launcher", () => {
     const herdr = await fakeHerdr("hang");
     const run = herdr.launch();
 
-    await herdr.waitForPaneRun();
-    await delay(300);
+    await herdr.waitForHangingPi();
     run.child.kill("SIGTERM");
 
     const { code, stderr } = await run.result();
@@ -204,8 +207,7 @@ suite("pi-subagent launcher", () => {
     const herdr = await fakeHerdr("hang");
     const run = herdr.launch({ env: { FAKE_CLOSE_FAIL: "1" } });
 
-    await herdr.waitForPaneRun();
-    await delay(300);
+    await herdr.waitForHangingPi();
     run.child.kill("SIGTERM");
 
     const { code, stderr } = await run.result();

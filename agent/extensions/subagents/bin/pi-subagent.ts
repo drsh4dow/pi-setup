@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 
 import os from "node:os";
+import type { Args } from "@earendil-works/pi-coding-agent";
 import {
   Clock,
-  Console,
   Data,
   DateTime,
   Effect,
@@ -15,23 +15,29 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { herdr, platform } from "../herdr.ts";
+import type { CommandInput } from "effect/process/ChildProcess";
+import { closeAbandonedPanes, herdr, platform } from "../herdr.ts";
+import { runPaneChild } from "./pane-child.ts";
 import {
   ChildLaunch,
-  childEnv,
+  ChildResult,
   type Environment,
   exitCodeFor,
   HerdrPane,
   type Mode,
   modeFrom,
   PaneId,
+  PaneListResponse,
   type Placement,
   placementFor,
   printOnlyReason,
-  RunOutcome,
+  RUN_DIRECTORY_PREFIX,
+  type RunOutcome,
   runFiles,
+  runtimeRoot,
   subagentName,
   TabId,
+  treeLabel,
   type WorkspaceId,
 } from "../launch.ts";
 
@@ -39,7 +45,7 @@ const PANE_CHILD = "__pane-child";
 
 const SESSION_OPEN_TIMEOUT_MS = 60_000;
 
-const FORWARDED_STDERR_LIMIT_BYTES = 64 * 1024;
+const LABEL_SOURCE = "pi:subagent";
 
 interface Invocation {
   readonly args: readonly string[];
@@ -58,6 +64,17 @@ class UnsafeRuntimeRoot extends Data.TaggedError("UnsafeRuntimeRoot")<{ readonly
   }
 }
 
+class SignalError extends Data.TaggedError("SignalError")<{
+  readonly pid: number;
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    const reason = this.cause instanceof Error ? this.cause.message : "failed";
+
+    return `kill -TERM -${this.pid}: ${reason}`;
+  }
+}
+
 class StdioError extends Data.TaggedError("StdioError")<{ readonly cause: Error }> {
   override get message(): string {
     return `could not write the report: ${this.cause.message}`;
@@ -65,12 +82,6 @@ class StdioError extends Data.TaggedError("StdioError")<{ readonly cause: Error 
 }
 
 const PaneGetResponse = Schema.Struct({ result: Schema.Struct({ pane: HerdrPane }) });
-
-const PaneListResponse = Schema.Struct({
-  result: Schema.Struct({
-    panes: Schema.Array(Schema.Struct({ pane_id: PaneId, cwd: Schema.String })),
-  }),
-});
 
 const TabCreateResponse = Schema.Struct({
   result: Schema.Struct({
@@ -97,6 +108,12 @@ type ChildPane =
 type ChildEnd =
   | { readonly kind: "exited"; readonly exitCode: number }
   | { readonly kind: "lost"; readonly reason: string };
+
+type PaneRun =
+  | { readonly kind: "reported"; readonly exitCode: number }
+  | { readonly kind: "printInstead"; readonly reason: string };
+
+type RunFiles = ReturnType<typeof runFiles>;
 
 /** Bun drops pending pipe writes on `process.exit`, so every write waits for its callback. */
 const write = (stream: NodeJS.WriteStream, text: string) =>
@@ -133,6 +150,13 @@ const closePanesOpenedIn = Effect.fn("closePanesOpenedIn")(
     );
   },
   Effect.catch((error) => log(`could not look for stray panes: ${error.message}`)),
+);
+
+const closePanesOfFinishedRuns = closeAbandonedPanes().pipe(
+  Effect.flatMap((closed) =>
+    Effect.forEach(closed, (pane) => log(`closed pane ${pane}, left by a finished run`)),
+  ),
+  Effect.catch((error) => log(`could not look for panes of finished runs: ${error.message}`)),
 );
 
 const createTab = Effect.fn("createTab")(function* (
@@ -193,8 +217,46 @@ const openPane = Effect.fn("openPane")(function* (
   );
 });
 
+const labelPane = Effect.fn("labelPane")(function* (pane: PaneId, label: string) {
+  yield* herdr([
+    "pane",
+    "report-metadata",
+    pane,
+    "--source",
+    LABEL_SOURCE,
+    "--display-agent",
+    label,
+  ]).pipe(Effect.catch((error) => log(`could not label pane ${pane}: ${error.message}`)));
+});
+
+const readInteger = Effect.fn("readInteger")(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+
+  return yield* fs.readFileString(path).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Integer)));
+});
+
+// Herdr runs a pane's command as its own process group, and pi stays in the pane child's group.
+const stopPaneChild = Effect.fn("stopPaneChild")(
+  function* (files: RunFiles) {
+    const fs = yield* FileSystem.FileSystem;
+
+    if ((yield* fs.exists(files.exit)) || !(yield* fs.exists(files.started))) return;
+
+    const pid = yield* readInteger(files.started);
+
+    if (!isAlive(pid)) return;
+
+    yield* Effect.try({
+      try: () => process.kill(-pid, "SIGTERM"),
+      catch: (cause) => new SignalError({ pid, cause }),
+    });
+    yield* log(`sent SIGTERM to the pane child's process group ${pid}`);
+  },
+  Effect.catch((error) => log(`could not stop the pane child: ${error.message}`)),
+);
+
 // Closing the pane is what stops the child Pi; a signal to the launcher never reaches it.
-const closePane = Effect.fn("closePane")(function* (child: ChildPane) {
+const closePane = Effect.fn("closePane")(function* (child: ChildPane, files: RunFiles) {
   const [args, described] =
     child.kind === "tab"
       ? [["tab", "close", child.tab], `tab ${child.tab}`]
@@ -202,7 +264,11 @@ const closePane = Effect.fn("closePane")(function* (child: ChildPane) {
 
   yield* herdr(args).pipe(
     Effect.andThen(log(`closed ${described}`)),
-    Effect.catch((error) => log(`could not close ${described}: ${error.message}`)),
+    Effect.catch((error) =>
+      log(`could not close ${described}: ${error.message}`).pipe(
+        Effect.andThen(stopPaneChild(files)),
+      ),
+    ),
   );
 });
 
@@ -220,12 +286,6 @@ const checkRuntimeRoot = Effect.fn("checkRuntimeRoot")(function* (root: string, 
   return root;
 });
 
-const readInteger = Effect.fn("readInteger")(function* (path: string) {
-  const fs = yield* FileSystem.FileSystem;
-
-  return yield* fs.readFileString(path).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Integer)));
-});
-
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -236,10 +296,7 @@ function isAlive(pid: number): boolean {
   }
 }
 
-const observeChild = Effect.fn("observeChild")(function* (
-  files: ReturnType<typeof runFiles>,
-  deadline: number,
-) {
+const observeChild = Effect.fn("observeChild")(function* (files: RunFiles, deadline: number) {
   const fs = yield* FileSystem.FileSystem;
 
   const panePid = (yield* fs.exists(files.started))
@@ -278,7 +335,7 @@ const observeChild = Effect.fn("observeChild")(function* (
   });
 });
 
-const awaitChild = Effect.fn("awaitChild")(function* (files: ReturnType<typeof runFiles>) {
+const awaitChild = Effect.fn("awaitChild")(function* (files: RunFiles) {
   const deadline = (yield* Clock.currentTimeMillis) + SESSION_OPEN_TIMEOUT_MS;
 
   while (true) {
@@ -290,17 +347,17 @@ const awaitChild = Effect.fn("awaitChild")(function* (files: ReturnType<typeof r
   }
 });
 
-const readOutcome = Effect.fn("readOutcome")(function* (path: string, exitCode: number) {
+const readResult = Effect.fn("readResult")(function* (path: string, exitCode: number) {
   const fs = yield* FileSystem.FileSystem;
 
   if (!(yield* fs.exists(path))) {
     return {
       kind: "failed",
       reason: `pi exited with code ${exitCode} before the run settled.`,
-    } satisfies RunOutcome;
+    } satisfies ChildResult;
   }
 
-  return yield* fs.readFileString(path).pipe(Effect.flatMap(decodeJson(RunOutcome)));
+  return yield* fs.readFileString(path).pipe(Effect.flatMap(decodeJson(ChildResult)));
 });
 
 const forwardStderr = Effect.fn("forwardStderr")(function* (path: string) {
@@ -333,14 +390,9 @@ const reportOutcome = Effect.fn("reportOutcome")(function* (outcome: RunOutcome)
       yield* write(process.stderr, `${outcome.reason}\n`);
       break;
   }
-
-  return exitCodeFor(outcome);
 });
 
-const runPrint = Effect.fn("runPrint")(function* (
-  args: readonly string[],
-  stdin: "inherit" | "ignore",
-) {
+const runPrint = Effect.fn("runPrint")(function* (args: readonly string[], stdin: CommandInput) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   return yield* spawner.exitCode(
@@ -353,29 +405,15 @@ const runPrint = Effect.fn("runPrint")(function* (
   );
 });
 
-const runInHerdr = Effect.fn("runInHerdr")(function* (
+const runInPane = Effect.fn("runInPane")(function* (
   mode: Extract<Mode, { kind: "herdr" }>,
   invocation: Invocation,
+  name: string,
+  task: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const { parseArgs } = yield* Effect.promise(() => import("@earendil-works/pi-coding-agent"));
-  const parsed = parseArgs([...invocation.args]);
-  const unsupported = printOnlyReason(parsed);
 
-  if (unsupported !== undefined) {
-    yield* log(`running pi --print, because ${unsupported}`);
-
-    return yield* runPrint(invocation.args, "inherit");
-  }
-
-  // `pi --print` trims stdin and prompts nothing when it is empty.
-  const task = (yield* Effect.promise(() => Bun.stdin.text())).trim();
-
-  if (task === "") {
-    yield* log("running pi --print, because stdin held no assignment");
-
-    return yield* runPrint(invocation.args, "ignore");
-  }
+  yield* closePanesOfFinishedRuns;
 
   const caller = yield* herdr(["pane", "get", mode.pane]).pipe(
     Effect.flatMap(decodeJson(PaneGetResponse)),
@@ -389,16 +427,18 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
     depth: mode.depth,
   });
 
-  const name = subagentName(parsed.name);
-
-  const runtimeRoot = yield* checkRuntimeRoot(invocation.runtimeRoot, invocation.uid);
+  const root = yield* checkRuntimeRoot(invocation.runtimeRoot, invocation.uid);
 
   const runDirectory = yield* fs.makeTempDirectoryScoped({
-    directory: runtimeRoot,
-    prefix: "pi-subagent-",
+    directory: root,
+    prefix: RUN_DIRECTORY_PREFIX,
   });
 
   const files = runFiles(runDirectory);
+
+  // Finalizers run in reverse, so this copy runs after the pane closes and before the directory goes.
+  const forwardOnce = yield* Effect.cached(forwardStderr(files.stderr));
+  yield* Effect.addFinalizer(() => forwardOnce.pipe(Effect.ignore));
 
   const launch = yield* encodeLaunch({
     args: invocation.args,
@@ -406,7 +446,6 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
     env: {
       ...invocation.env,
       PI_SUBAGENT_RUN: runDirectory,
-      PI_SUBAGENT_NAME: name,
       PI_SUBAGENT_DEPTH: String(mode.depth),
     },
   });
@@ -416,9 +455,10 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
 
   const child = yield* Effect.acquireRelease(
     openPane(placement, workspace, runDirectory, name),
-    closePane,
+    (opened) => closePane(opened, files),
   );
 
+  yield* labelPane(child.pane, treeLabel(mode.depth, name));
   yield* log(`started ${name} in pane ${child.pane}`);
   yield* herdr([
     "pane",
@@ -429,84 +469,63 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
 
   const end = yield* awaitChild(files);
 
-  yield* forwardStderr(files.stderr);
+  yield* forwardOnce;
 
-  if (end.kind === "lost") return yield* reportOutcome({ kind: "failed", reason: end.reason });
+  if (end.kind === "lost") {
+    const failed = { kind: "failed", reason: end.reason } satisfies RunOutcome;
 
-  return yield* readOutcome(files.outcome, end.exitCode).pipe(Effect.flatMap(reportOutcome));
+    yield* reportOutcome(failed);
+
+    return { kind: "reported", exitCode: exitCodeFor(failed, 0) } satisfies PaneRun;
+  }
+
+  const result = yield* readResult(files.outcome, end.exitCode);
+
+  if (result.kind === "printInstead") return result satisfies PaneRun;
+
+  yield* reportOutcome(result);
+
+  return { kind: "reported", exitCode: exitCodeFor(result, end.exitCode) } satisfies PaneRun;
 }, Effect.scoped);
 
-const writeAtomically = Effect.fn("writeAtomically")(function* (path: string, text: string) {
-  const fs = yield* FileSystem.FileSystem;
-
-  yield* fs.writeFileString(`${path}.partial`, text);
-  yield* fs.rename(`${path}.partial`, path);
-});
-
-const runPi = Effect.fn("runPi")(function* (
-  files: ReturnType<typeof runFiles>,
-  paneEnv: Environment,
+const runInHerdr = Effect.fn("runInHerdr")(function* (
+  mode: Extract<Mode, { kind: "herdr" }>,
+  invocation: Invocation,
+  parsed: Args,
 ) {
-  const fs = yield* FileSystem.FileSystem;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const unsupported = printOnlyReason(parsed);
 
-  const launch = yield* fs
-    .readFileString(files.launch)
-    .pipe(Effect.flatMap(decodeJson(ChildLaunch)));
+  if (unsupported !== undefined) {
+    yield* log(`running pi --print, because ${unsupported}`);
 
-  yield* fs.remove(files.launch);
+    return yield* runPrint(invocation.args, "inherit");
+  }
 
-  const handle = yield* spawner.spawn(
-    ChildProcess.make("pi", launch.args, {
-      cwd: launch.cwd,
-      env: childEnv(launch.env, paneEnv),
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "pipe",
-      // The TUI must stay in the pane's foreground process group to read the terminal.
-      detached: false,
-    }),
-  );
+  // `pi --print` reads no assignment from a terminal.
+  if (process.stdin.isTTY) {
+    yield* log("running pi --print, because stdin is a terminal");
 
-  const stderrFile = yield* fs.open(files.stderr, { flag: "a" });
-  let forwardedBytes = 0;
+    return yield* runPrint(invocation.args, "inherit");
+  }
 
-  const copying = yield* handle.stderr.pipe(
-    Stream.runForEach((chunk) => {
-      const part = chunk.subarray(0, Math.max(0, FORWARDED_STDERR_LIMIT_BYTES - forwardedBytes));
-      forwardedBytes += part.length;
+  const assignment = yield* Effect.promise(() => Bun.stdin.text());
 
-      return Effect.sync(() => process.stderr.write(chunk)).pipe(
-        Effect.andThen(part.length > 0 ? stderrFile.write(part) : Effect.void),
-      );
-    }),
-    Effect.ignore,
-    Effect.forkScoped,
-  );
+  // `pi --print` trims stdin and prompts nothing when it is empty.
+  const task = assignment.trim();
 
-  const exitCode = yield* handle.exitCode;
+  if (task === "") {
+    yield* log("running pi --print, because stdin held no assignment");
 
-  // A process pi left behind can hold stderr open, so the copy gets a moment, not a promise.
-  yield* Fiber.join(copying).pipe(Effect.timeout("1 second"), Effect.ignore);
+    return yield* runPrint(invocation.args, "ignore");
+  }
 
-  return exitCode;
-}, Effect.scoped);
+  const run = yield* runInPane(mode, invocation, subagentName(parsed.name), task);
 
-const runPaneChild = Effect.fn("runPaneChild")(function* (
-  runDirectory: string,
-  paneEnv: Environment,
-) {
-  const files = runFiles(runDirectory);
+  if (run.kind === "reported") return run.exitCode;
 
-  yield* writeAtomically(files.started, String(process.pid));
+  yield* log(`running pi --print, because ${run.reason}`);
 
-  const exitCode = yield* runPi(files, paneEnv).pipe(
-    Effect.catch((error) => Console.error(`pi-subagent: ${error.message}`).pipe(Effect.as(1))),
-  );
-
-  yield* writeAtomically(files.exit, String(exitCode));
-
-  return exitCode;
+  return yield* runPrint(invocation.args, Stream.make(new TextEncoder().encode(assignment)));
 });
 
 const main = Effect.fn("main")(function* (invocation: Invocation) {
@@ -516,7 +535,10 @@ const main = Effect.fn("main")(function* (invocation: Invocation) {
     return yield* runPaneChild(second, invocation.env);
   }
 
-  if (invocation.args.some((arg) => arg === "--print" || arg === "-p")) {
+  const { parseArgs } = yield* Effect.promise(() => import("@earendil-works/pi-coding-agent"));
+  const parsed = parseArgs([...invocation.args]);
+
+  if (parsed.print === true) {
     return yield* new UsageError({
       message: "pi-subagent always runs one assignment to a report; drop --print.",
     });
@@ -526,12 +548,18 @@ const main = Effect.fn("main")(function* (invocation: Invocation) {
 
   if (mode.kind === "print") return yield* runPrint(invocation.args, "inherit");
 
-  return yield* runInHerdr(mode, invocation);
+  return yield* runInHerdr(mode, invocation, parsed);
 });
 
 const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as const;
 
 const compiled = Bun.main.startsWith("/$bunfs/");
+
+// Bun also reports a failed pipe write as an 'error' event, which kills the process before cleanup
+// when nothing listens. The write's own callback carries the failure.
+process.stdout.on("error", () => {});
+
+process.stderr.on("error", () => {});
 
 const fiber = Effect.runFork(
   main({
@@ -539,7 +567,7 @@ const fiber = Effect.runFork(
     env: process.env,
     cwd: process.cwd(),
     relaunchCommand: compiled ? [process.execPath] : [process.execPath, Bun.main],
-    runtimeRoot: process.env.XDG_RUNTIME_DIR ?? os.tmpdir(),
+    runtimeRoot: runtimeRoot(process.env, os.tmpdir()),
     uid: process.getuid?.() ?? -1,
   }).pipe(
     Effect.catch((error) =>

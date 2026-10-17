@@ -237,6 +237,7 @@ export function stderrRecorder(limit: number) {
 }
 
 export const ChildLaunch = Schema.Struct({
+  launcherPid: Schema.Int,
   args: Schema.Array(Schema.String),
   cwd: Schema.String,
   env: Schema.Record(Schema.String, Schema.UndefinedOr(Schema.String)),

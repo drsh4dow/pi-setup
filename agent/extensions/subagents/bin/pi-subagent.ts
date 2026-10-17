@@ -57,6 +57,7 @@ interface Invocation {
   readonly relaunchCommand: readonly string[];
   readonly runtimeRoot: string;
   readonly uid: number;
+  readonly pid: number;
 }
 
 class UsageError extends Data.TaggedError("UsageError")<{ readonly message: string }> {}
@@ -425,6 +426,7 @@ const runInPane = Effect.fn("runInPane")(function* (
   yield* Effect.addFinalizer(() => forwardOnce.pipe(Effect.ignore));
 
   const launch = yield* encodeLaunch({
+    launcherPid: invocation.pid,
     args: invocation.args,
     cwd: invocation.cwd,
     env: {
@@ -560,6 +562,7 @@ const fiber = Effect.runFork(
     relaunchCommand: compiled ? [process.execPath] : [process.execPath, Bun.main],
     runtimeRoot: runtimeRoot(process.env, os.tmpdir()),
     uid: process.getuid?.() ?? -1,
+    pid: process.pid,
   }).pipe(
     Effect.catch((error) =>
       write(process.stderr, `pi-subagent: ${error.message}\n`).pipe(Effect.ignore, Effect.as(1)),

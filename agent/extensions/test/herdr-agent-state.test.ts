@@ -152,7 +152,22 @@ await eventually(() => states().at(-1)?.params.state === "idle", "state must not
 assert.equal(states().at(-1).params.agent_session_path, "/tmp/herdr-test-session.jsonl");
 `));
 
-  test("a subagent reports its state but no session identity for herdr to restore", () =>
+  test("a subagent reports under its own source, with no session identity for herdr to restore", () =>
+    runScenario(
+      `
+await emit("session_start");
+setIdle(false);
+await emit("agent_start");
+await eventually(() => states().at(-1)?.params.state === "working", "working");
+assert.deepEqual(reports.filter((report) => report.method === "pane.report_agent_session"), []);
+assert.ok(states().every((report) => report.params.source === "pi:subagent"));
+assert.ok(states().every((report) => report.params.agent_session_path === undefined));
+assert.ok(states().every((report) => report.params.agent_session_id === undefined));
+`,
+      { PI_SUBAGENT_RUN: "/tmp/pi-subagent-test-run" },
+    ));
+
+  test("a subagent stays working while it waits at settle and between runs", () =>
     runScenario(
       `
 await emit("session_start");
@@ -161,10 +176,8 @@ await emit("agent_start");
 await eventually(() => states().at(-1)?.params.state === "working", "working");
 setIdle(true);
 await emit("agent_settled");
-await eventually(() => states().at(-1)?.params.state === "idle", "idle");
-assert.deepEqual(reports.filter((report) => report.method === "pane.report_agent_session"), []);
-assert.ok(states().every((report) => report.params.agent_session_path === undefined));
-assert.ok(states().every((report) => report.params.agent_session_id === undefined));
+await delay(1300);
+assert.equal(states().at(-1)?.params.state, "working");
 `,
       { PI_SUBAGENT_RUN: "/tmp/pi-subagent-test-run" },
     ));

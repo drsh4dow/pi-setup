@@ -1,6 +1,9 @@
 // Locally patched Herdr integration: reconcile idle state after missed lifecycle reports, and
-// report no session identity for a subagent (PI_SUBAGENT_RUN set), so herdr's restore never
-// brings one back as a writable chat without its parent.
+// report a subagent (PI_SUBAGENT_RUN set) under its own source. Herdr ignores a `herdr:pi` state
+// report without a session identity, and restores only sessions that official sources report,
+// so this source keeps a subagent's state authoritative and herdr's restore never brings it back
+// as a writable chat without its parent. A subagent stays `working` from its first run until it
+// shuts down, because it settles only once its outcome is written.
 // Herdr integration updates overwrite this file; preserve this patch until upstreamed.
 // HERDR_INTEGRATION_ID=pi
 // HERDR_INTEGRATION_VERSION=8
@@ -16,7 +19,7 @@ type Request = {
   method: "pane.report_agent" | "pane.report_agent_session";
   params: {
     pane_id: string;
-    source: "herdr:pi";
+    source: "herdr:pi" | "pi:subagent";
     agent: "pi";
     seq: number;
     agent_session_path?: string;
@@ -54,7 +57,9 @@ export default function (pi: ExtensionAPI) {
     }),
   );
 
-  const reportsIdentity = config.subagentRun === "";
+  const subagent = config.subagentRun !== "";
+
+  const source = subagent ? "pi:subagent" : "herdr:pi";
 
   if (config.enabled !== "1" || !config.socketPath || !config.paneId) return;
 
@@ -104,6 +109,7 @@ export default function (pi: ExtensionAPI) {
   function createSession(initialContext: ExtensionContext) {
     let context = initialContext;
     let stopped = false;
+    let started = false;
     let blockedCount = 0;
     let blockedMessage: string | undefined;
     let desired: { state: AgentState; message: string | undefined } | undefined;
@@ -121,7 +127,7 @@ export default function (pi: ExtensionAPI) {
 
       const identity: Pick<Request["params"], "agent_session_path" | "agent_session_id"> = {};
 
-      if (reportsIdentity) {
+      if (!subagent) {
         if (file?.startsWith("/")) identity.agent_session_path = file;
         else if (id) identity.agent_session_id = id;
       }
@@ -133,7 +139,7 @@ export default function (pi: ExtensionAPI) {
         method,
         params: {
           pane_id: config.paneId,
-          source: "herdr:pi",
+          source,
           agent: "pi",
           seq,
           ...identity,
@@ -174,6 +180,7 @@ export default function (pi: ExtensionAPI) {
       let state: AgentState;
 
       if (blockedCount > 0) state = "blocked";
+      else if (subagent && started) state = "working";
       else state = context.isIdle() ? "idle" : "working";
 
       const message = blockedCount > 0 ? blockedMessage : undefined;
@@ -205,15 +212,21 @@ export default function (pi: ExtensionAPI) {
       cancelReconcile = undefined;
     });
 
-    return {
-      update(ctx: ExtensionContext, reportSession: boolean, reason?: string) {
-        context = ctx;
+    function update(ctx: ExtensionContext, reportSession: boolean, reason?: string) {
+      context = ctx;
 
-        if (reportSession && reportsIdentity)
-          pendingSession = request("pane.report_agent_session", {
-            session_start_source: reason,
-          });
-        publish();
+      if (reportSession && !subagent)
+        pendingSession = request("pane.report_agent_session", {
+          session_start_source: reason,
+        });
+      publish();
+    }
+
+    return {
+      update,
+      start(ctx: ExtensionContext) {
+        started = true;
+        update(ctx, true);
       },
       blocked(data: typeof BlockedEvent.Type) {
         if (!data.active) {
@@ -249,7 +262,7 @@ export default function (pi: ExtensionAPI) {
     session = createSession(ctx);
     session.update(ctx, true, event.reason);
   });
-  pi.on("agent_start", (_event, ctx) => session?.update(ctx, true));
+  pi.on("agent_start", (_event, ctx) => session?.start(ctx));
   pi.on("agent_settled", (_event, ctx) => session?.update(ctx, false));
   pi.on("session_shutdown", () => {
     session?.stop();

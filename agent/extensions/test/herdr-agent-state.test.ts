@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 const extensionUrl = new URL("../herdr-agent-state.ts", import.meta.url);
 
 // Each scenario sets Herdr environment variables, so it runs in its own process.
-async function runScenario(script: string) {
+async function runScenario(script: string, env: Record<string, string> = {}) {
   const harnessUrl = new URL("./fixtures/herdr-harness.ts", import.meta.url);
 
   await execFileAsync(
@@ -26,7 +26,7 @@ await run(async ({ ctx, emit, events, eventually, reports, states, setIdle, resp
 ${script}
 });`,
     ],
-    { encoding: "utf8", timeout: 15_000 },
+    { encoding: "utf8", timeout: 15_000, env: { ...process.env, ...env } },
   );
 }
 
@@ -151,6 +151,22 @@ await emit("session_start");
 await eventually(() => states().at(-1)?.params.state === "idle", "state must not wait for identity success");
 assert.equal(states().at(-1).params.agent_session_path, "/tmp/herdr-test-session.jsonl");
 `));
+
+  test("a subagent reports its state but no session identity for herdr to restore", () =>
+    runScenario(
+      `
+await emit("session_start");
+setIdle(false);
+await emit("agent_start");
+await eventually(() => states().at(-1)?.params.state === "working", "working");
+setIdle(true);
+await emit("agent_settled");
+await eventually(() => states().at(-1)?.params.state === "idle", "idle");
+assert.deepEqual(reports.filter((report) => report.method === "pane.report_agent_session"), []);
+assert.ok(states().every((report) => report.params.agent_session_path === undefined));
+`,
+      { PI_SUBAGENT_RUN: "/tmp/pi-subagent-test-run" },
+    ));
 
   test("stays inert when Pi is not running inside Herdr", () => {
     const result = spawnSync(

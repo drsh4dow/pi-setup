@@ -249,6 +249,9 @@ tracked and untracked, non-ignored files.
 - `skill-visibility`: `/skill-visibility` controls which loaded skills the model
   can discover, and skills marked `user-invokable: false` stay out of `/skill:`
   autocomplete
+- `subagents`: the `pi-subagent` launcher runs a subagent as a read-only Pi
+  chat in its own Herdr pane, listed under its parent in the agents sidebar.
+  Outside Herdr it runs `pi --print`
 - `tps-tracker`: live and final output-token throughput
 - `ui-moto`: compact model and project status header
 - `web-search`: registers the Perplexity and Exa MCP servers behind the

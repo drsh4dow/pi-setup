@@ -81,6 +81,14 @@ function words(simpleCommand: string): string[] {
     .map((word) => word.replaceAll(/["']/g, ""));
 }
 
+function commandArgv(argv: readonly string[]): readonly string[] {
+  const commandIndex = argv.findIndex((word) => !ENV_ASSIGNMENT.test(word));
+
+  if (commandIndex === -1) return [];
+
+  return argv.slice(commandIndex);
+}
+
 function isPi(word: string): boolean {
   return word === "pi" || word.endsWith("/pi");
 }
@@ -94,10 +102,10 @@ function subagentLaunches(command: string): PiLaunchArgv[] {
 
   return joined.split(COMMAND_SEPARATOR).flatMap((simpleCommand) => {
     const argv = words(simpleCommand);
-    const commandIndex = argv.findIndex((word) => !ENV_ASSIGNMENT.test(word));
-    const commandWord = argv[commandIndex];
+    const invocation = commandArgv(argv);
+    const commandWord = invocation[0];
 
-    if (commandWord !== undefined && isPiSubagent(commandWord)) return [argv.slice(commandIndex)];
+    if (commandWord !== undefined && isPiSubagent(commandWord)) return [invocation];
 
     const piIndex = argv.findIndex(isPi);
 

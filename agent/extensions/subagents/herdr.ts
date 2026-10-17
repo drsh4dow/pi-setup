@@ -1,5 +1,16 @@
-import { Data, Effect, Stream } from "effect";
+import * as BunChildProcessSpawner from "@effect/platform-bun/BunChildProcessSpawner";
+import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Data, Effect, Layer, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+
+/** The file system and process spawner that the launcher and the child extension run on. */
+export const platform = Layer.mergeAll(
+  BunFileSystem.layer,
+  BunChildProcessSpawner.layer.pipe(
+    Layer.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
+  ),
+);
 
 export class HerdrError extends Data.TaggedError("HerdrError")<{
   readonly args: readonly string[];

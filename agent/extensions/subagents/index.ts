@@ -1,32 +1,53 @@
-import type {
-  AgentEndEvent,
-  ExtensionAPI,
-  ExtensionContext,
+import {
+  type AgentEndEvent,
+  type ExtensionAPI,
+  type ExtensionContext,
+  getAgentDir,
+  ProjectTrustStore,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import * as BunChildProcessSpawner from "@effect/platform-bun/BunChildProcessSpawner";
-import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
-import * as BunPath from "@effect/platform-bun/BunPath";
-import { Config, Effect, FileSystem, Layer, Option, Schema } from "effect";
-import { herdr } from "./herdr.ts";
+import { matchesKey } from "@earendil-works/pi-tui";
+import { Config, ConfigProvider, Duration, Effect, FileSystem, Option, Schema } from "effect";
+import { herdr, platform } from "./herdr.ts";
 import { RunOutcome, runFiles, treeLabel } from "./launch.ts";
 
 const READ_ONLY_NOTICE = "Read-only subagent. Steer it from its parent.";
 
 const SOURCE = "pi:subagent";
 
+/**
+ * The child cancels a dialog by sending itself this key. Its input filter turns the key into
+ * Escape only while a dialog is open, so a key that lands after the dialog closed never reaches
+ * the editor, where Escape would abort the run.
+ */
+const DISMISS_KEY = "f12";
+
+const ESCAPE = "\u001b";
+
 type AgentMessage = AgentEndEvent["messages"][number];
 
 type AssistantReply = Extract<AgentMessage, { role: "assistant" }>;
 
 /**
- * `delivering` covers the gap between `session_start` and the task's `sendUserMessage`, so a run
- * another extension starts first is not mistaken for the assignment.
+ * `inert` means another Pi process claimed this run, so this one is an ordinary session.
+ * `delivering` covers the gap before the task is submitted, so a run another extension starts
+ * first is not mistaken for the assignment. `submitted` means Pi has the task and has not yet
+ * started a run for it.
  */
 type Phase =
   | { readonly kind: "starting" }
+  | { readonly kind: "inert" }
   | { readonly kind: "delivering" }
+  | { readonly kind: "submitted" }
   | { readonly kind: "running"; readonly messages: readonly AgentMessage[] }
   | { readonly kind: "settled" };
+
+export interface SubagentChildOptions {
+  /** How long Pi may hold the submitted task without starting a run before the run fails. */
+  readonly startTimeout?: Duration.Input;
+  /** How long a dialog may stay open after the child cancels it before the run fails. */
+  readonly dialogTimeout?: Duration.Input;
+}
 
 const subagentRun = Config.all({
   directory: Config.String("PI_SUBAGENT_RUN").pipe(Config.option),
@@ -35,27 +56,11 @@ const subagentRun = Config.all({
   pane: Config.String("HERDR_PANE_ID").pipe(Config.option),
 });
 
-const fileSystem = BunFileSystem.layer;
-
-const services = Layer.mergeAll(
-  fileSystem,
-  BunChildProcessSpawner.layer.pipe(Layer.provide(Layer.mergeAll(fileSystem, BunPath.layer))),
-);
-
 const encodeOutcome = Schema.encodeEffect(Schema.fromJsonString(RunOutcome));
 
-function lastReply(messages: readonly AgentMessage[]): AssistantReply | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-
-    if (message?.role === "assistant") return message;
-  }
-
-  return undefined;
-}
-
-function replyText(reply: AssistantReply): string {
-  return reply.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+/** The bytes `pi --print` writes for a reply: each text part followed by a newline. */
+function printedText(reply: AssistantReply): string {
+  return reply.content.flatMap((part) => (part.type === "text" ? [`${part.text}\n`] : [])).join("");
 }
 
 /** An abort usually lands after a tool call, so the partial report is the latest text the model wrote. */
@@ -63,45 +68,65 @@ function partialReport(messages: readonly AgentMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
 
-    if (message?.role === "assistant" && replyText(message) !== "") return replyText(message);
+    if (message?.role !== "assistant") continue;
+
+    const text = printedText(message);
+
+    if (text !== "") return text;
   }
 
   return "";
 }
 
-/** Mirrors how `pi --print` turns the final assistant message into stdout and an exit code. */
+/** Mirrors how `pi --print` turns the final message into stdout and an exit code. */
 function outcomeOf(aborted: boolean, messages: readonly AgentMessage[]): RunOutcome {
   if (aborted) return { kind: "aborted", report: partialReport(messages) };
 
-  const reply = lastReply(messages);
+  const last = messages.at(-1);
 
-  if (reply === undefined) {
-    return { kind: "failed", reason: "The run settled without an assistant reply." };
+  if (last?.role !== "assistant") return { kind: "completed", report: "" };
+
+  if (last.stopReason === "error" || last.stopReason === "aborted") {
+    const reason =
+      last.errorMessage === undefined || last.errorMessage === ""
+        ? `Request ${last.stopReason}`
+        : last.errorMessage;
+
+    return { kind: "failed", reason };
   }
 
-  if (reply.stopReason === "error" || reply.stopReason === "aborted") {
-    return { kind: "failed", reason: reply.errorMessage ?? `Request ${reply.stopReason}` };
-  }
+  if (last.stopReason === "length") return { kind: "truncated", report: printedText(last) };
 
-  if (reply.stopReason === "length") {
-    return {
-      kind: "failed",
-      reason: "Response was truncated: the model reached its output token limit.",
-    };
-  }
-
-  return { kind: "completed", report: replyText(reply) };
+  return { kind: "completed", report: printedText(last) };
 }
 
-export default function subagentChild(pi: ExtensionAPI) {
-  const run = Effect.runSync(subagentRun);
+/** Why Pi rejected a task it never started, as far as the session shows. */
+function unstartedReason(ctx: ExtensionContext, waited: Duration.Duration): string {
+  const model = ctx.model;
+
+  if (model !== undefined && !ctx.modelRegistry.getProviderAuthStatus(model.provider).configured) {
+    return `Pi did not start the task: no API key or login for provider "${model.provider}".`;
+  }
+
+  return `Pi did not start the task within ${Duration.format(waited)}; it rejected the prompt.`;
+}
+
+export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOptions = {}) {
+  // Effect's default provider keeps the environment it saw first; this reads it as it is at load.
+  const run = Effect.runSync(subagentRun.parse(ConfigProvider.fromEnv()));
 
   if (Option.isNone(run.directory)) return;
 
   const files = runFiles(run.directory.value);
   const label = treeLabel(run.depth, run.name);
+  const startTimeout = Duration.fromInputUnsafe(options.startTimeout ?? "30 seconds");
+  const dialogTimeout = Duration.fromInputUnsafe(options.dialogTimeout ?? "5 seconds");
   let phase: Phase = { kind: "starting" };
-  let promptOpen = false;
+  let openDialog: number | undefined;
+  let dialogsOpened = 0;
+  let inputLocked = false;
+
+  const governs = () => phase.kind !== "inert" && phase.kind !== "settled";
 
   const settle = Effect.fn("subagent.settle")(function* (
     ctx: ExtensionContext,
@@ -120,6 +145,36 @@ export default function subagentChild(pi: ExtensionAPI) {
     yield* Effect.sync(() => ctx.shutdown());
   });
 
+  /** The first Pi process that opens a session for this run owns it. Its descendants inherit the
+   * variables until it scrubs them, and stay ordinary sessions. */
+  const claimRun = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+
+    return yield* fs.writeFileString(files.claim, String(process.pid), { flag: "wx" }).pipe(
+      Effect.as(true),
+      Effect.catchReason("PlatformError", "AlreadyExists", () => Effect.succeed(false)),
+    );
+  });
+
+  // Every typed key and shortcut goes through this filter first, so the editor, slash commands,
+  // `!` commands, and app shortcuts never see one. Escape still aborts the run.
+  const lockInput = (ctx: ExtensionContext) => {
+    if (inputLocked) return;
+
+    inputLocked = true;
+    ctx.ui.onTerminalInput((data) => {
+      if (matchesKey(data, DISMISS_KEY)) {
+        return openDialog === undefined ? { consume: true } : { data: ESCAPE };
+      }
+
+      if (matchesKey(data, "escape")) return undefined;
+
+      if (matchesKey(data, "enter")) ctx.ui.notify(READ_ONLY_NOTICE, "warning");
+
+      return { consume: true };
+    });
+  };
+
   const reportLabel = Effect.suspend(() => {
     if (Option.isNone(run.pane)) return Effect.void;
 
@@ -134,91 +189,184 @@ export default function subagentChild(pi: ExtensionAPI) {
     ]);
   });
 
-  const deliverTask = Effect.fn("subagent.deliverTask")(function* (ctx: ExtensionContext) {
-    yield* reportLabel.pipe(
-      Effect.catch((error) =>
-        Effect.sync(() => ctx.ui.notify(`Herdr label failed: ${error.message}`, "warning")),
-      ),
+  const watchStart = Effect.fn("subagent.watchStart")(function* (ctx: ExtensionContext) {
+    // A busy session may still run the task as a follow-up, so only an idle one has rejected it.
+    yield* Effect.sleep(startTimeout).pipe(
+      Effect.repeat({ until: () => phase.kind !== "submitted" || ctx.isIdle() }),
     );
 
+    if (phase.kind === "submitted") {
+      yield* settle(ctx, { kind: "failed", reason: unstartedReason(ctx, startTimeout) });
+    }
+  });
+
+  const deliverTask = Effect.fn("subagent.deliverTask")(function* (ctx: ExtensionContext) {
     const fs = yield* FileSystem.FileSystem;
 
-    const task = yield* fs
-      .readFileString(files.task)
-      .pipe(
+    const [, task] = yield* Effect.all(
+      [
+        reportLabel.pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => ctx.ui.notify(`Herdr label failed: ${error.message}`, "warning")),
+          ),
+        ),
+        fs.readFileString(files.task).pipe(Effect.option),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    if (Option.isNone(task)) {
+      return yield* settle(ctx, { kind: "failed", reason: `Could not read ${files.task}.` });
+    }
+
+    // `pi --print` exits 1 before prompting when no model is available; interactive mode does not.
+    if (ctx.model === undefined) {
+      return yield* settle(ctx, {
+        kind: "failed",
+        reason:
+          "No model is available. Pass --model, or set up a provider with an API key or /login.",
+      });
+    }
+
+    phase = { kind: "submitted" };
+    pi.sendUserMessage(task.value, { expandPromptTemplates: true, deliverAs: "followUp" });
+
+    return yield* watchStart(ctx);
+  });
+
+  const dismissDialog = Effect.fn("subagent.dismissDialog")(function* (
+    ctx: ExtensionContext,
+    dialog: number,
+    kind: string,
+  ) {
+    if (Option.isSome(run.pane)) {
+      yield* herdr(["pane", "send-keys", run.pane.value, DISMISS_KEY]).pipe(
         Effect.catch((error) =>
-          settle(ctx, { kind: "failed", reason: `Could not read the task: ${error.message}` }).pipe(
-            Effect.as(undefined),
+          Effect.sync(() =>
+            ctx.ui.notify(`Could not cancel the dialog: ${error.message}`, "error"),
           ),
         ),
       );
+    }
 
-    if (task === undefined) return;
+    yield* Effect.sleep(dialogTimeout);
 
-    phase = { kind: "running", messages: [] };
-    pi.sendUserMessage(task);
+    if (openDialog === dialog && governs()) {
+      yield* settle(ctx, {
+        kind: "failed",
+        reason: `An extension opened a ${kind} dialog that stayed open after cancellation. Nobody can answer a subagent's dialogs.`,
+      });
+    }
   });
 
-  const dismissPrompt = Effect.suspend(() => {
-    if (!promptOpen || Option.isNone(run.pane)) return Effect.void;
+  // Print mode never asks about project trust. It takes the stored decision, then
+  // defaultProjectTrust, then untrusted. The child answers only where Pi would ask.
+  pi.on("project_trust", (event) => {
+    const agentDir = getAgentDir();
+    const stored = new ProjectTrustStore(agentDir).get(event.cwd);
+    const policy = SettingsManager.create(event.cwd, agentDir).getDefaultProjectTrust();
 
-    return herdr(["pane", "send-keys", run.pane.value, "esc"]);
+    if (stored !== null || policy !== "ask") return { trusted: "undecided" };
+
+    return { trusted: "no" };
+  });
+
+  pi.on("session_start", (_event, ctx) => {
+    if (phase.kind !== "starting") return undefined;
+
+    return Effect.runPromise(
+      claimRun.pipe(
+        Effect.catch((error) =>
+          Effect.sync(() =>
+            ctx.ui.notify(`Could not claim the run: ${error.message}`, "error"),
+          ).pipe(Effect.as(false)),
+        ),
+        Effect.provide(platform),
+        Effect.map((claimed) => {
+          if (!claimed) {
+            phase = { kind: "inert" };
+
+            return;
+          }
+
+          // Pi's bash tool, bg_start, and every other spawn copy process.env, so a nested Pi
+          // would otherwise take this run over. The depth stays, for nested launches.
+          // oxlint-disable-next-line effecttsgo/process-env -- The scrub must reach process.env itself.
+          delete process.env.PI_SUBAGENT_RUN;
+          // oxlint-disable-next-line effecttsgo/process-env -- The scrub must reach process.env itself.
+          delete process.env.PI_SUBAGENT_NAME;
+          phase = { kind: "delivering" };
+          lockInput(ctx);
+        }),
+      ),
+    );
+  });
+
+  // Pi emits this once every session_start handler has finished. herdr-agent-state creates its
+  // reporter in its own session_start handler, and a run that starts before it stays `idle` in herdr.
+  pi.on("resources_discover", (_event, ctx) => {
+    if (phase.kind === "delivering")
+      Effect.runFork(deliverTask(ctx).pipe(Effect.provide(platform)));
+
+    return undefined;
   });
 
   pi.on("input", (event, ctx) => {
-    if (event.source === "extension") return { action: "continue" };
+    if (!governs() || event.source === "extension") return { action: "continue" };
 
     ctx.ui.notify(READ_ONLY_NOTICE, "warning");
 
     return { action: "handled" };
   });
 
-  pi.on("session_start", (_event, ctx) => {
-    if (phase.kind !== "starting") return;
+  // Interactive mode skips a command whose handler throws. A result would land in the model's context.
+  pi.on("user_bash", () => {
+    if (governs()) throw new Error(READ_ONLY_NOTICE);
 
-    phase = { kind: "delivering" };
+    return undefined;
+  });
 
-    // Herdr-agent-state creates its reporter in its own session_start handler. A run that starts
-    // before that handler has run stays `idle` in herdr, so the task waits for this fiber.
-    Effect.runFork(deliverTask(ctx).pipe(Effect.provide(services)));
+  pi.on("session_before_switch", () => (governs() ? { cancel: true } : undefined));
+  pi.on("session_before_fork", () => (governs() ? { cancel: true } : undefined));
+  pi.on("session_before_tree", () => (governs() ? { cancel: true } : undefined));
+  pi.on("session_before_compact", (event) =>
+    governs() && event.reason === "manual" ? { cancel: true } : undefined,
+  );
+
+  pi.on("agent_start", () => {
+    if (phase.kind === "submitted") phase = { kind: "running", messages: [] };
   });
 
   pi.on("agent_end", (event) => {
-    if (phase.kind !== "running") return;
+    if (phase.kind !== "submitted" && phase.kind !== "running") return;
 
     if (event.messages.length > 0) phase = { kind: "running", messages: event.messages };
   });
 
   pi.on("agent_settled", (event, ctx) => {
-    const settling =
-      phase.kind === "running"
-        ? settle(ctx, outcomeOf(event.aborted, phase.messages))
-        : Effect.void;
+    if (phase.kind !== "running") return undefined;
 
-    return Effect.runPromise(settling.pipe(Effect.provide(services)));
+    return Effect.runPromise(
+      settle(ctx, outcomeOf(event.aborted, phase.messages)).pipe(Effect.provide(platform)),
+    );
   });
 
   // Print mode answers every dialog at once with its cancel value. Escape is the cancel key of
-  // every built-in dialog, so the child sends it to its own pane.
+  // every built-in dialog, and no extension API answers another extension's dialog in the TUI.
   pi.on("ui_prompt_start", (event, ctx) => {
-    promptOpen = true;
+    if (!governs()) return;
+
+    dialogsOpened += 1;
+    openDialog = dialogsOpened;
+    lockInput(ctx);
     ctx.ui.notify(
-      `Dismissed a ${event.kind} prompt: nobody answers a subagent's dialogs.`,
+      `Cancelled a ${event.kind} dialog: nobody answers a subagent's dialogs.`,
       "warning",
     );
-    Effect.runFork(
-      dismissPrompt.pipe(
-        Effect.catch((error) =>
-          Effect.sync(() =>
-            ctx.ui.notify(`Could not dismiss the prompt: ${error.message}`, "error"),
-          ),
-        ),
-        Effect.provide(services),
-      ),
-    );
+    Effect.runFork(dismissDialog(ctx, openDialog, event.kind).pipe(Effect.provide(platform)));
   });
 
   pi.on("ui_prompt_end", () => {
-    promptOpen = false;
+    openDialog = undefined;
   });
 }

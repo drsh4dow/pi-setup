@@ -164,6 +164,7 @@ await emit("agent_settled");
 await eventually(() => states().at(-1)?.params.state === "idle", "idle");
 assert.deepEqual(reports.filter((report) => report.method === "pane.report_agent_session"), []);
 assert.ok(states().every((report) => report.params.agent_session_path === undefined));
+assert.ok(states().every((report) => report.params.agent_session_id === undefined));
 `,
       { PI_SUBAGENT_RUN: "/tmp/pi-subagent-test-run" },
     ));

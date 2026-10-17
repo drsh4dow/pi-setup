@@ -1,3 +1,4 @@
+import type { Args } from "@earendil-works/pi-coding-agent";
 import { Effect, Option, Schema } from "effect";
 
 export const PaneId = Schema.NonEmptyString.pipe(Schema.brand("PaneId"));
@@ -15,7 +16,6 @@ export type WorkspaceId = typeof WorkspaceId.Type;
 /** The pane a launcher runs in, as `herdr pane get` reports it. */
 export const HerdrPane = Schema.Struct({
   pane_id: PaneId,
-  tab_id: TabId,
   workspace_id: WorkspaceId,
 });
 
@@ -77,10 +77,7 @@ export function treeLabel(depth: number, name: string): string {
 const SESSION_NAME_PREFIX = "subagent:";
 
 /** The short name a child shows in herdr, taken from the `--name` the subagents skill passes. */
-export function subagentName(args: readonly string[]): string {
-  const flag = args.findLastIndex((arg) => arg === "--name" || arg === "-n");
-  const sessionName = flag === -1 ? undefined : args[flag + 1];
-
+export function subagentName(sessionName: string | undefined): string {
   if (sessionName === undefined) return "subagent";
 
   const short = sessionName.startsWith(SESSION_NAME_PREFIX)
@@ -90,15 +87,43 @@ export function subagentName(args: readonly string[]): string {
   return short === "" ? "subagent" : short;
 }
 
+/**
+ * The arguments a read-only TUI child cannot honor the way `pi --print` does, so `pi-subagent`
+ * runs `pi --print` for them. Returns why, or undefined when the TUI child can run them.
+ */
+export function printOnlyReason(args: Args): string | undefined {
+  if (args.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
+    return "pi rejects these arguments";
+  }
+
+  if (args.messages.length > 0) return "the arguments hold messages";
+
+  if (args.fileArgs.length > 0) return "the arguments attach @file inputs";
+
+  if (args.mode !== undefined) return `--mode ${args.mode} replaces the chat`;
+
+  if (args.resume) return "--resume opens a session picker";
+
+  if (args.noExtensions) return "--no-extensions disables the child's extension";
+
+  if (args.help || args.version || args.listModels !== undefined || args.export !== undefined) {
+    return "the arguments ask for output instead of a run";
+  }
+
+  return undefined;
+}
+
+/** `report` holds the exact bytes `pi --print` would write to stdout. */
 export const RunOutcome = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("completed"), report: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("truncated"), report: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("aborted"), report: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("failed"), reason: Schema.String }),
 ]);
 
 export type RunOutcome = typeof RunOutcome.Type;
 
-const EXIT_CODES = { completed: 0, failed: 1, aborted: 2 } as const satisfies Record<
+const EXIT_CODES = { completed: 0, truncated: 1, failed: 1, aborted: 2 } as const satisfies Record<
   RunOutcome["kind"],
   number
 >;
@@ -119,11 +144,18 @@ export type ChildLaunch = typeof ChildLaunch.Type;
 /**
  * The run directory is private (0700) because `launch.json` holds the launcher's environment,
  * API keys included. Nothing secret goes into argv, where other users can read it.
+ *
+ * The launcher writes `launch.json` and `task.md`. The pane child writes `started` (its pid),
+ * `stderr` (pi's), and `exit`. The child extension creates `claim` when its session starts, and
+ * writes `outcome.json` when the run settles.
  */
 export function runFiles(runDirectory: string) {
   return {
     launch: `${runDirectory}/launch.json`,
     task: `${runDirectory}/task.md`,
+    started: `${runDirectory}/started`,
+    claim: `${runDirectory}/claim`,
+    stderr: `${runDirectory}/stderr`,
     outcome: `${runDirectory}/outcome.json`,
     exit: `${runDirectory}/exit`,
   };

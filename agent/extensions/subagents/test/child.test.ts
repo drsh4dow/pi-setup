@@ -42,7 +42,6 @@ function assistant(content: AssistantReply["content"], stopReason: AssistantRepl
   return unsafeFixture<AssistantReply>({ role: "assistant", content, stopReason });
 }
 
-// The child reports its label to HERDR_PANE_ID; a test must never reach the caller's herdr.
 delete process.env.HERDR_PANE_ID;
 
 const runDirectories: string[] = [];
@@ -138,7 +137,6 @@ async function startChild({
 }
 
 suite("subagent child", () => {
-  // A child whose task never starts still writes its outcome when the start timeout fires.
   after(() =>
     Promise.all(
       runDirectories.map((directory) =>

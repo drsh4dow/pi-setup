@@ -74,8 +74,7 @@ const SETTLE_WAIT_MS = 10 * 60_000;
 const MAX_IDLE_SETTLE_WAITS = 3;
 
 // Interactive and RPC sessions outlive the turn, so completion wakes them
-// later. Print and JSON runs exit when the run settles, and so does a
-// subagent's TUI session, which pi-subagent shuts down at settle.
+// later. Print and JSON runs exit when the run settles.
 function sessionOutlivesRun(mode: ExtensionContext["mode"], subagent: boolean): boolean {
   switch (mode) {
     case "tui":
@@ -115,7 +114,6 @@ export default function backgroundTerminals(
 ) {
   const delivery = new BackgroundTerminalDelivery(pi);
 
-  // Read at load, before the subagents extension scrubs the variable from process.env.
   const subagent = Option.isSome(
     Effect.runSync(
       Config.String("PI_SUBAGENT_RUN").pipe(Config.option).parse(ConfigProvider.fromEnv()),

@@ -15,11 +15,6 @@ const READ_ONLY_NOTICE = "Read-only subagent. Steer it from its parent.";
 
 const SOURCE = "pi:subagent";
 
-/**
- * The child cancels a dialog by sending itself this key. Its input filter turns the key into
- * Escape only while a dialog is open, so a key that lands after the dialog closed never reaches
- * the editor, where Escape would abort the run.
- */
 const DISMISS_KEY = "f12";
 
 const ESCAPE = "\u001b";
@@ -28,12 +23,6 @@ type AgentMessage = AgentEndEvent["messages"][number];
 
 type AssistantReply = Extract<AgentMessage, { role: "assistant" }>;
 
-/**
- * `inert` means another Pi process claimed this run, so this one is an ordinary session.
- * `delivering` covers the gap before the task is submitted, so a run another extension starts
- * first is not mistaken for the assignment. `submitted` means Pi has the task and has not yet
- * started a run for it.
- */
 type Phase =
   | { readonly kind: "starting" }
   | { readonly kind: "inert" }
@@ -43,9 +32,7 @@ type Phase =
   | { readonly kind: "settled" };
 
 export interface SubagentChildOptions {
-  /** How long Pi may hold the submitted task without starting a run before the run fails. */
   readonly startTimeout?: Duration.Input;
-  /** How long a dialog may stay open after the child cancels it before the run fails. */
   readonly dialogTimeout?: Duration.Input;
 }
 
@@ -58,12 +45,10 @@ const subagentRun = Config.all({
 
 const encodeOutcome = Schema.encodeEffect(Schema.fromJsonString(RunOutcome));
 
-/** The bytes `pi --print` writes for a reply: each text part followed by a newline. */
 function printedText(reply: AssistantReply): string {
   return reply.content.flatMap((part) => (part.type === "text" ? [`${part.text}\n`] : [])).join("");
 }
 
-/** An abort usually lands after a tool call, so the partial report is the latest text the model wrote. */
 function partialReport(messages: readonly AgentMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -78,7 +63,6 @@ function partialReport(messages: readonly AgentMessage[]): string {
   return "";
 }
 
-/** Mirrors how `pi --print` turns the final message into stdout and an exit code. */
 function outcomeOf(aborted: boolean, messages: readonly AgentMessage[]): RunOutcome {
   if (aborted) return { kind: "aborted", report: partialReport(messages) };
 
@@ -100,7 +84,6 @@ function outcomeOf(aborted: boolean, messages: readonly AgentMessage[]): RunOutc
   return { kind: "completed", report: printedText(last) };
 }
 
-/** Why Pi rejected a task it never started, as far as the session shows. */
 function unstartedReason(ctx: ExtensionContext, waited: Duration.Duration): string {
   const model = ctx.model;
 
@@ -145,8 +128,6 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
     yield* Effect.sync(() => ctx.shutdown());
   });
 
-  /** The first Pi process that opens a session for this run owns it. Its descendants inherit the
-   * variables until it scrubs them, and stay ordinary sessions. */
   const claimRun = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
@@ -156,8 +137,6 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
     );
   });
 
-  // Every typed key and shortcut goes through this filter first, so the editor, slash commands,
-  // `!` commands, and app shortcuts never see one. Escape still aborts the run.
   const lockInput = (ctx: ExtensionContext) => {
     if (inputLocked) return;
 
@@ -219,7 +198,6 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
       return yield* settle(ctx, { kind: "failed", reason: `Could not read ${files.task}.` });
     }
 
-    // `pi --print` exits 1 before prompting when no model is available; interactive mode does not.
     if (ctx.model === undefined) {
       return yield* settle(ctx, {
         kind: "failed",
@@ -289,8 +267,6 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
             return;
           }
 
-          // Pi's bash tool, bg_start, and every other spawn copy process.env, so a nested Pi
-          // would otherwise take this run over. The depth stays, for nested launches.
           // oxlint-disable-next-line effecttsgo/process-env -- The scrub must reach process.env itself.
           delete process.env.PI_SUBAGENT_RUN;
           // oxlint-disable-next-line effecttsgo/process-env -- The scrub must reach process.env itself.

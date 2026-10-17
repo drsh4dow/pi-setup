@@ -121,7 +121,6 @@ export default function (pi: ExtensionAPI) {
 
       const identity: Pick<Request["params"], "agent_session_path" | "agent_session_id"> = {};
 
-      // State reports carry the identity too, so a subagent sends it in no report at all.
       if (reportsIdentity) {
         if (file?.startsWith("/")) identity.agent_session_path = file;
         else if (id) identity.agent_session_id = id;

@@ -18,7 +18,6 @@ export default defineConfig({
     // dot reporter, which still prints each failure in full. Build and deploy progress
     // is dropped, and their errors still reach stderr.
     tasks: {
-      // Each cache entry would archive all three compiled binaries; building takes under a second.
       "build:cli": {
         command: [
           "vp exec bun build --compile --outfile .build/bin/emit-to-pi agent/extensions/background-terminals/bin/emit-to-pi.ts > /dev/null",

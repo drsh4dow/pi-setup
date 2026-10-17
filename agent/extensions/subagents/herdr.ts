@@ -4,7 +4,6 @@ import * as BunPath from "@effect/platform-bun/BunPath";
 import { Data, Effect, Layer, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-/** The file system and process spawner that the launcher and the child extension run on. */
 export const platform = Layer.mergeAll(
   BunFileSystem.layer,
   BunChildProcessSpawner.layer.pipe(
@@ -22,7 +21,6 @@ export class HerdrError extends Data.TaggedError("HerdrError")<{
   }
 }
 
-/** Runs one herdr CLI command against the session in `HERDR_SOCKET_PATH` and returns its stdout. */
 export const herdr = Effect.fn("herdr")(
   function* (args: readonly string[]) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

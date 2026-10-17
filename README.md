@@ -333,9 +333,11 @@ Every skill whose name also appears in pstack is ported from it. See
 
 ### Installed prompts
 
+- `bro`: restate the last message in plain language, with no jargon
 - `deslop`: simplify a completed work package
 - `handoff`: compact the conversation into a message for a fresh agent
-- `wait-what`: ask for a re-pitch of a message that did not land
+- `restate-sharpened`: load the sharpen skill and restate the user's goals and
+  problem
 
 ### Installed CLI tools
 

@@ -227,8 +227,6 @@ const readInteger = Effect.fn("readInteger")(function* (path: string) {
   return yield* fs.readFileString(path).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Integer)));
 });
 
-// The pane child leads the pane's process group, and pi stays in that group, which can outlive its
-// leader.
 const stopPiGroup = Effect.fn("stopPiGroup")(
   function* (files: RunFiles) {
     const fs = yield* FileSystem.FileSystem;
@@ -439,7 +437,6 @@ const runInPane = Effect.fn("runInPane")(function* (
   yield* fs.writeFileString(files.task, task, { mode: 0o600 });
   yield* fs.writeFileString(files.launch, launch, { mode: 0o600 });
 
-  // A herdr call can block for seconds, so everything else is cleaned up before the pane closes.
   const child = yield* Effect.acquireRelease(
     openPane(placement, workspace, runDirectory, name),
     (opened) =>

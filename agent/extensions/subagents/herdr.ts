@@ -37,8 +37,6 @@ export class HerdrError extends Data.TaggedError("HerdrError")<{
 export const herdr = Effect.fn("herdr")(
   function* (args: readonly string[]) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    // In the caller's process group, so the SIGKILL that `bg_kill` sends that group 2 s after
-    // SIGTERM also ends a herdr call that cleanup is still waiting on.
     const handle = yield* spawner.spawn(ChildProcess.make("herdr", args, { detached: false }));
 
     const [exitCode, stdout, stderr] = yield* Effect.all(
@@ -64,9 +62,7 @@ const decodePaneList = Schema.decodeUnknownEffect(Schema.fromJsonString(PaneList
 
 /**
  * Herdr saves a session before it hangs up its panes, so a subagent pane open at `herdr session
- * stop` comes back on restart in a directory its launcher has since removed. A launcher killed while
- * it closes its pane leaves the pane live, and herdr reports its cwd with the ` (deleted)` suffix
- * Linux adds, which names no existing path.
+ * stop` comes back on restart in a directory its launcher has since removed.
  */
 export const closeAbandonedPanes = Effect.fn("closeAbandonedPanes")(function* () {
   const fs = yield* FileSystem.FileSystem;

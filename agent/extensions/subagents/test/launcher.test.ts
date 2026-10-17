@@ -11,8 +11,7 @@ const launcher = path.resolve(import.meta.dirname, "../../../../.build/bin/pi-su
 
 // Herdr types `pane run` into the pane's shell, which runs it in its own session; the trailing
 // `exec sleep` stands in for that shell's prompt. Herdr removes a pane once its process exits, and
-// closing a pane hangs its session up. The launcher kills each herdr call's process group when the
-// call returns, so `pane run` waits until the pane's command has left it.
+// closing a pane hangs its session up.
 const FAKE_HERDR = `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$FAKE_ROOT/herdr.log"
 case "$1 $2" in
@@ -79,7 +78,6 @@ interface Launch {
   readonly args?: readonly string[];
   readonly closeStdout?: boolean;
   readonly env?: NodeJS.ProcessEnv;
-  /** Starts the launcher as its own process group, as `bg_start` does. */
   readonly ownGroup?: boolean;
 }
 

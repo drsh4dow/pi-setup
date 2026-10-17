@@ -304,6 +304,10 @@ and leaves no process behind. The differences below are known and accepted.
   that adds an autocomplete provider, or discovery that takes over 10 s, lets
   the task arrive before discovered skills and prompts are installed. The
   extensions in this repository add none during discovery.
+- **A descendant that starts first.** If an extension starts another Pi
+  process before the child's own `session_start` handler runs, and that process
+  reaches `session_start` first, it claims the run and receives the task
+  instead of the child.
 - **Rebound dialog cancel key.** The child cancels an extension dialog by
   sending Escape. If `tui.select.cancel` is rebound away from Escape, every
   dialog stays open and fails the run after 5 s.

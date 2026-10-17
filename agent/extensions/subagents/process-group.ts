@@ -1,7 +1,5 @@
 import { Data, type Duration, Effect, Option } from "effect";
 
-// `bg_kill` sends SIGKILL to the launcher's process group 2 s after SIGTERM, and a group the
-// launcher stops must be gone before then.
 const TERM_GRACE = "1500 millis";
 
 const KILL_GRACE = "250 millis";
@@ -42,10 +40,6 @@ const signalGroup = (group: number, signal: NodeJS.Signals) =>
     catch: (cause) => new SignalError({ group, signal, cause }),
   });
 
-/**
- * Gives the group `exitGrace` to leave on its own, then sends SIGTERM and then SIGKILL, and says
- * what ended it.
- */
 export const stopProcessGroup = Effect.fn("stopProcessGroup")(function* (
   group: number,
   exitGrace: Duration.Input,

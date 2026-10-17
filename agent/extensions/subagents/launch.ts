@@ -149,7 +149,8 @@ export function runtimeRoot(env: Environment, temporaryDirectory: string): strin
 
 export const RUN_DIRECTORY_PREFIX = "pi-subagent-";
 
-const RUN_DIRECTORY_NAME = /\/pi-subagent-[A-Za-z0-9]{6}$/;
+// Herdr reads a live pane's cwd from /proc/<pid>/cwd, where Linux marks a removed directory.
+const RUN_DIRECTORY_NAME = /\/pi-subagent-[A-Za-z0-9]{6}( \(deleted\))?$/;
 
 export function isRunDirectory(path: string): boolean {
   return RUN_DIRECTORY_NAME.test(path);

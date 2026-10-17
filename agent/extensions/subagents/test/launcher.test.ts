@@ -9,9 +9,10 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const launcher = path.resolve(import.meta.dirname, "../../../../.build/bin/pi-subagent");
 
-// Herdr runs a pane's command in its own session, and closing the pane hangs that session up.
-// The launcher kills each herdr call's process group when the call returns, so `pane run` waits
-// until the pane's command has left it.
+// Herdr types `pane run` into the pane's shell, which runs it in its own session; the trailing
+// `exec sleep` stands in for that shell's prompt. Herdr removes a pane once its process exits, and
+// closing a pane hangs its session up. The launcher kills each herdr call's process group when the
+// call returns, so `pane run` waits until the pane's command has left it.
 const FAKE_HERDR = `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$FAKE_ROOT/herdr.log"
 case "$1 $2" in
@@ -20,24 +21,38 @@ case "$1 $2" in
   "pane close"|"pane report-metadata") echo '{"result":{}}' ;;
   "tab create") echo '{"result":{"tab":{"tab_id":"w1:t9"},"root_pane":{"pane_id":"w1:p9"}}}' ;;
   "pane run")
-    setsid bash -c "$4" </dev/null >/dev/null 2>&1 &
+    setsid bash -c "$4; exec sleep 600" </dev/null >/dev/null 2>&1 &
     pane=$!
-    until [ "$(ps -o sid= -p "$pane" | tr -d ' ')" = "$pane" ]; do sleep 0.01; done
+    until [ "$(ps -o sid= -p "$pane" | tr -d ' ')" = "$pane" ] || ! kill -0 "$pane" 2>/dev/null; do
+      sleep 0.01
+    done
     echo "$pane" > "$FAKE_ROOT/pane.pid"
     echo '{"result":{}}' ;;
   "tab close")
+    touch "$FAKE_ROOT/closing"
+    sleep "\${FAKE_CLOSE_SLEEP:-0}"
     if [ -n "$FAKE_CLOSE_FAIL" ]; then echo "close failed" >&2; exit 1; fi
-    kill -HUP -- "-$(cat "$FAKE_ROOT/pane.pid")"; echo '{"result":{}}' ;;
+    pane=$(cat "$FAKE_ROOT/pane.pid")
+    if ! kill -0 "$pane" 2>/dev/null; then
+      echo '{"id":"cli:request","error":{"code":"tab_not_found","message":"tab not found"}}' >&2
+      exit 1
+    fi
+    touch "$FAKE_ROOT/shell-at-close"
+    kill -HUP -- "-$pane"; echo '{"result":{}}' ;;
   *) echo "unexpected herdr call: $*" >&2; exit 1 ;;
 esac
 `;
 
 const FAKE_PI = `#!/usr/bin/env bash
+echo $$ > "$FAKE_ROOT/pi.pid"
 case "$FAKE_PI" in
   report) cp "$FAKE_ROOT/outcome.json" "$PI_SUBAGENT_RUN/outcome.json" ;;
   hang)
-    echo $$ > "$FAKE_ROOT/pi.pid"
     echo "pi was here" >&2
+    touch "$PI_SUBAGENT_RUN/claim"
+    exec sleep 60 ;;
+  stubborn)
+    trap '' TERM HUP
     touch "$PI_SUBAGENT_RUN/claim"
     exec sleep 60 ;;
   orphan) kill -KILL "$PPID"; exec sleep 60 ;;
@@ -51,12 +66,21 @@ case "$FAKE_PI" in
 esac
 `;
 
-type FakePi = "report" | "hang" | "orphan" | "noisy" | "failsAfterReport" | "handsBack";
+type FakePi =
+  | "report"
+  | "hang"
+  | "stubborn"
+  | "orphan"
+  | "noisy"
+  | "failsAfterReport"
+  | "handsBack";
 
 interface Launch {
   readonly args?: readonly string[];
   readonly closeStdout?: boolean;
   readonly env?: NodeJS.ProcessEnv;
+  /** Starts the launcher as its own process group, as `bg_start` does. */
+  readonly ownGroup?: boolean;
 }
 
 const ASSIGNMENT = "Reply with the report.";
@@ -71,6 +95,18 @@ function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+async function until(condition: () => boolean | Promise<boolean>, deadlineMs = 10_000) {
+  const deadline = Date.now() + deadlineMs;
+
+  // oxlint-disable-next-line no-await-in-loop -- Each poll follows the previous one.
+  while (!(await condition()) && Date.now() < deadline) {
+    // oxlint-disable-next-line no-await-in-loop -- Each poll follows the previous one.
+    await delay(20);
+  }
+
+  return condition();
 }
 
 async function fakeHerdr(behavior: FakePi) {
@@ -111,20 +147,16 @@ async function fakeHerdr(behavior: FakePi) {
     root,
     runtime,
     herdrCalls: async () => (await readFile(path.join(root, "herdr.log"), "utf8")).split("\n"),
+    piPid: async () => Number(await readFile(path.join(root, "pi.pid"), "utf8")),
     writeOutcome: (outcome: { readonly kind: string; readonly report: string }) =>
       writeFile(path.join(root, "outcome.json"), JSON.stringify(outcome)),
     async waitForHangingPi() {
-      const deadline = Date.now() + 10_000;
-
-      // oxlint-disable-next-line no-await-in-loop -- Each poll follows the previous one.
-      while (!(await piClaimed()) && Date.now() < deadline) {
-        // oxlint-disable-next-line no-await-in-loop -- Each poll follows the previous one.
-        await delay(20);
-      }
+      assert.ok(await until(piClaimed), "pi claimed the run");
     },
-    launch({ args = [], closeStdout = false, env = {} }: Launch = {}) {
+    launch({ args = [], closeStdout = false, env = {}, ownGroup = false }: Launch = {}) {
       const child = spawn(launcher, ["--name", "subagent:alpha", ...args], {
         env: { ...baseEnv, ...env },
+        detached: ownGroup,
       });
 
       const stdout: Buffer[] = [];
@@ -211,11 +243,55 @@ suite("pi-subagent launcher", () => {
     run.child.kill("SIGTERM");
 
     const { code, stderr } = await run.result();
-    const pi = Number(await readFile(path.join(herdr.root, "pi.pid"), "utf8"));
 
     assert.equal(code, 143, stderr.toString());
-    await delay(200);
-    assert.equal(isAlive(pi), false, "pi is stopped");
+    assert.equal(isAlive(await herdr.piPid()), false, "pi is stopped");
+  });
+
+  test("a pi that outlives its pane child is stopped, even when herdr cannot close the pane", async () => {
+    const herdr = await fakeHerdr("orphan");
+
+    const { code, stderr } = await herdr.launch({ env: { FAKE_CLOSE_FAIL: "1" } }).result();
+
+    assert.equal(code, 1, stderr.toString());
+    assert.equal(isAlive(await herdr.piPid()), false, "pi is stopped");
+    assert.deepEqual(await readdir(herdr.runtime), [], "the run directory is removed");
+  });
+
+  test("a pi that ignores SIGTERM and SIGHUP is killed before the launcher exits", async () => {
+    const herdr = await fakeHerdr("stubborn");
+    const run = herdr.launch();
+
+    await herdr.waitForHangingPi();
+    run.child.kill("SIGTERM");
+
+    const { code, stderr } = await run.result();
+
+    assert.equal(code, 143, stderr.toString());
+    assert.equal(isAlive(await herdr.piPid()), false, "pi is stopped");
+    assert.match(stderr.toString(), /stopped pi's process group \d+ with SIGKILL/);
+  });
+
+  test("a slow pane close leaves nothing behind when bg_kill escalates to SIGKILL at 2 s", async () => {
+    const herdr = await fakeHerdr("hang");
+    const run = herdr.launch({ env: { FAKE_CLOSE_SLEEP: "5" }, ownGroup: true });
+    const group = run.child.pid;
+
+    assert.ok(group !== undefined);
+    await herdr.waitForHangingPi();
+    process.kill(-group, "SIGTERM");
+    await until(() => existsSync(path.join(herdr.root, "closing")), 2000);
+
+    const pi = await herdr.piPid();
+    const piStopped = !isAlive(pi);
+    const runDirectories = await readdir(herdr.runtime);
+
+    process.kill(-group, "SIGKILL");
+    await run.result();
+
+    assert.equal(piStopped, true, "pi is stopped before the pane closes");
+    assert.deepEqual(runDirectories, [], "the run directory is removed before the pane closes");
+    assert.ok(await until(() => !isAlive(-group)), "nothing in the launcher's group survives");
   });
 
   test("a caller that closes stdout gets exit 1, and the launcher still cleans up", async () => {
@@ -226,7 +302,25 @@ suite("pi-subagent launcher", () => {
     const { code, stderr } = await herdr.launch({ closeStdout: true }).result();
 
     assert.equal(code, 1, stderr.toString());
-    assert.match(stderr.toString(), /closed tab w1:t9/);
+    assert.ok((await herdr.herdrCalls()).includes("tab close w1:t9"), "the pane is closed");
+    assert.deepEqual(await readdir(herdr.runtime), [], "the run directory is removed");
+  });
+
+  test("no shell is left in the pane after pi exits, and the pane herdr removed counts as closed", async () => {
+    const herdr = await fakeHerdr("report");
+
+    await herdr.writeOutcome({ kind: "completed", report: "REPORT\n" });
+
+    const { code, stdout, stderr } = await herdr.launch().result();
+
+    assert.equal(code, 0, stderr.toString());
+    assert.equal(stdout, "REPORT\n");
+    assert.equal(
+      existsSync(path.join(herdr.root, "shell-at-close")),
+      false,
+      "no shell in the pane",
+    );
+    assert.match(stderr.toString(), /tab w1:t9 had already closed/);
     assert.deepEqual(await readdir(herdr.runtime), [], "the run directory is removed");
   });
 
@@ -311,5 +405,29 @@ suite("pi-subagent launcher", () => {
     assert.ok(calls.includes("pane close w1:p5"), "the finished run's pane is closed");
     assert.ok(!calls.includes("pane close w1:p6"), "a live run's pane stays");
     assert.ok(!calls.includes("pane close w1:p7"), "other panes stay");
+  });
+
+  test("closes a live pane whose run directory was removed", async () => {
+    const herdr = await fakeHerdr("report");
+
+    await herdr.writeOutcome({ kind: "completed", report: "" });
+    await writeFile(
+      path.join(herdr.root, "panes.json"),
+      JSON.stringify({
+        result: {
+          panes: [
+            {
+              pane_id: "w1:p8",
+              cwd: `${path.join(herdr.runtime, "pi-subagent-Ef56Gh")} (deleted)`,
+            },
+          ],
+        },
+      }),
+    );
+
+    const { code, stderr } = await herdr.launch().result();
+
+    assert.equal(code, 0, stderr.toString());
+    assert.ok((await herdr.herdrCalls()).includes("pane close w1:p8"), "the pane is closed");
   });
 });

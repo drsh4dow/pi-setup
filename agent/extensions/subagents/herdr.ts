@@ -1,7 +1,7 @@
 import * as BunChildProcessSpawner from "@effect/platform-bun/BunChildProcessSpawner";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { Data, Effect, FileSystem, Layer, Schema, Stream } from "effect";
+import { Data, Effect, FileSystem, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { isRunDirectory, PaneListResponse } from "./launch.ts";
 
@@ -12,6 +12,10 @@ export const platform = Layer.mergeAll(
   ),
 );
 
+const decodeErrorResponse = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ code: Schema.String }) })),
+);
+
 export class HerdrError extends Data.TaggedError("HerdrError")<{
   readonly args: readonly string[];
   readonly exitCode: number;
@@ -20,12 +24,22 @@ export class HerdrError extends Data.TaggedError("HerdrError")<{
   override get message(): string {
     return `herdr ${this.args.join(" ")} exited with ${this.exitCode}: ${this.stderr.trim()}`;
   }
+
+  get targetGone(): boolean {
+    return Option.exists(
+      decodeErrorResponse(this.stderr.trim()),
+      (response) =>
+        response.error.code === "pane_not_found" || response.error.code === "tab_not_found",
+    );
+  }
 }
 
 export const herdr = Effect.fn("herdr")(
   function* (args: readonly string[]) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const handle = yield* spawner.spawn(ChildProcess.make("herdr", args));
+    // In the caller's process group, so the SIGKILL that `bg_kill` sends that group 2 s after
+    // SIGTERM also ends a herdr call that cleanup is still waiting on.
+    const handle = yield* spawner.spawn(ChildProcess.make("herdr", args, { detached: false }));
 
     const [exitCode, stdout, stderr] = yield* Effect.all(
       [
@@ -50,7 +64,9 @@ const decodePaneList = Schema.decodeUnknownEffect(Schema.fromJsonString(PaneList
 
 /**
  * Herdr saves a session before it hangs up its panes, so a subagent pane open at `herdr session
- * stop` comes back on restart in a directory its launcher has since removed.
+ * stop` comes back on restart in a directory its launcher has since removed. A launcher killed while
+ * it closes its pane leaves the pane live, and herdr reports its cwd with the ` (deleted)` suffix
+ * Linux adds, which names no existing path.
  */
 export const closeAbandonedPanes = Effect.fn("closeAbandonedPanes")(function* () {
   const fs = yield* FileSystem.FileSystem;

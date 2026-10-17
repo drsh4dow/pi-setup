@@ -1,8 +1,13 @@
 import { Console, Effect, FileSystem, Fiber, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { ChildLaunch, childEnv, type Environment, runFiles, stderrRecorder } from "../launch.ts";
+import { isAlive, stopProcessGroup } from "../process-group.ts";
 
 const FORWARDED_STDERR_LIMIT_BYTES = 64 * 1024;
+
+const LAUNCHER_POLL_INTERVAL = "200 millis";
+
+type PiEnd = { readonly kind: "exited"; readonly exitCode: number } | { readonly kind: "orphaned" };
 
 const decodeLaunch = Schema.decodeUnknownEffect(Schema.fromJsonString(ChildLaunch));
 
@@ -13,12 +18,39 @@ const writeAtomically = Effect.fn("writeAtomically")(function* (path: string, te
   yield* fs.rename(`${path}.partial`, path);
 });
 
-const runPi = Effect.fn("runPi")(function* (
-  files: ReturnType<typeof runFiles>,
-  paneEnv: Environment,
-) {
+/**
+ * A launcher killed by SIGKILL cleans up nothing, so the pane child watches it. Linux hands out
+ * pids in order up to `pid_max`, so another process cannot take the launcher's pid within one poll.
+ */
+const launcherExit = (launcherPid: number) =>
+  Effect.sleep(LAUNCHER_POLL_INTERVAL).pipe(Effect.repeat({ until: () => !isAlive(launcherPid) }));
+
+/**
+ * Pi runs in this process's group, so the group's SIGTERM reaches this process too. Only the
+ * group's SIGKILL may end it, after the run directory is gone.
+ */
+const abandonRun = Effect.fn("abandonRun")(function* (runDirectory: string) {
+  const fs = yield* FileSystem.FileSystem;
+
+  yield* fs
+    .remove(runDirectory, { recursive: true, force: true })
+    .pipe(
+      Effect.catch((error) =>
+        Console.error(`pi-subagent: could not remove ${runDirectory}: ${error.message}`),
+      ),
+    );
+
+  const stopped = yield* stopProcessGroup(process.pid, "0 millis");
+
+  return yield* Effect.die(
+    new Error(`the pane child outlived pi's process group ${process.pid} (${stopped})`),
+  );
+}, Effect.uninterruptible);
+
+const runPi = Effect.fn("runPi")(function* (runDirectory: string, paneEnv: Environment) {
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const files = runFiles(runDirectory);
 
   const launch = yield* fs.readFileString(files.launch).pipe(Effect.flatMap(decodeLaunch));
 
@@ -49,12 +81,17 @@ const runPi = Effect.fn("runPi")(function* (
     Effect.forkScoped,
   );
 
-  const exitCode = yield* handle.exitCode;
+  const end = yield* Effect.raceFirst(
+    handle.exitCode.pipe(Effect.map((exitCode): PiEnd => ({ kind: "exited", exitCode }))),
+    launcherExit(launch.launcherPid).pipe(Effect.as<PiEnd>({ kind: "orphaned" })),
+  );
+
+  if (end.kind === "orphaned") return yield* abandonRun(runDirectory);
 
   // A process pi left behind can hold the stderr pipe open.
   yield* Fiber.join(copying).pipe(Effect.timeout("1 second"), Effect.ignore);
 
-  return exitCode;
+  return end.exitCode;
 }, Effect.scoped);
 
 export const runPaneChild = Effect.fn("runPaneChild")(function* (
@@ -65,7 +102,7 @@ export const runPaneChild = Effect.fn("runPaneChild")(function* (
 
   yield* writeAtomically(files.started, String(process.pid));
 
-  const exitCode = yield* runPi(files, paneEnv).pipe(
+  const exitCode = yield* runPi(runDirectory, paneEnv).pipe(
     Effect.catch((error) => Console.error(`pi-subagent: ${error.message}`).pipe(Effect.as(1))),
   );
 

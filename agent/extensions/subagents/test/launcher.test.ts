@@ -146,6 +146,13 @@ async function fakeHerdr(behavior: FakePi) {
     runtime,
     herdrCalls: async () => (await readFile(path.join(root, "herdr.log"), "utf8")).split("\n"),
     piPid: async () => Number(await readFile(path.join(root, "pi.pid"), "utf8")),
+    async panePid() {
+      const file = path.join(root, "pane.pid");
+
+      assert.ok(await until(() => existsSync(file)), "herdr started the pane");
+
+      return Number(await readFile(file, "utf8"));
+    },
     writeOutcome: (outcome: { readonly kind: string; readonly report: string }) =>
       writeFile(path.join(root, "outcome.json"), JSON.stringify(outcome)),
     async waitForHangingPi() {
@@ -290,6 +297,46 @@ suite("pi-subagent launcher", () => {
     assert.equal(piStopped, true, "pi is stopped before the pane closes");
     assert.deepEqual(runDirectories, [], "the run directory is removed before the pane closes");
     assert.ok(await until(() => !isAlive(-group)), "nothing in the launcher's group survives");
+  });
+
+  test("a SIGKILL to the launcher stops pi, removes the run directory, and ends the pane", async () => {
+    const herdr = await fakeHerdr("hang");
+    const run = herdr.launch();
+
+    await herdr.waitForHangingPi();
+
+    const [pi, pane] = await Promise.all([herdr.piPid(), herdr.panePid()]);
+
+    run.child.kill("SIGKILL");
+    await run.result();
+
+    assert.ok(await until(() => !isAlive(pi), 5000), "pi is stopped");
+    assert.ok(
+      await until(async () => (await readdir(herdr.runtime)).length === 0, 5000),
+      "the run directory is removed",
+    );
+    assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
+  });
+
+  test("a SIGKILL to the launcher's group stops a pi that ignores SIGTERM, and removes the run directory", async () => {
+    const herdr = await fakeHerdr("stubborn");
+    const run = herdr.launch({ ownGroup: true });
+    const group = run.child.pid;
+
+    assert.ok(group !== undefined);
+    await herdr.waitForHangingPi();
+
+    const [pi, pane] = await Promise.all([herdr.piPid(), herdr.panePid()]);
+
+    process.kill(-group, "SIGKILL");
+    await run.result();
+
+    assert.ok(await until(() => !isAlive(pi), 5000), "pi is stopped");
+    assert.ok(
+      await until(async () => (await readdir(herdr.runtime)).length === 0, 5000),
+      "the run directory is removed",
+    );
+    assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
   });
 
   test("a caller that closes stdout gets exit 1, and the launcher still cleans up", async () => {

@@ -75,10 +75,10 @@ const MAX_IDLE_SETTLE_WAITS = 3;
 
 // Interactive and RPC sessions outlive the turn, so completion wakes them
 // later. Print and JSON runs exit when the run settles.
-function sessionOutlivesRun(mode: ExtensionContext["mode"], subagent: boolean): boolean {
+function sessionOutlivesRun(mode: ExtensionContext["mode"], shutsDownAtSettle: boolean): boolean {
   switch (mode) {
     case "tui":
-      return !subagent;
+      return !shutsDownAtSettle;
     case "rpc":
       return true;
     case "print":
@@ -114,7 +114,7 @@ export default function backgroundTerminals(
 ) {
   const delivery = new BackgroundTerminalDelivery(pi);
 
-  const subagent = Option.isSome(
+  const subagentSessionAtLoad = Option.isSome(
     Effect.runSync(
       Config.String("PI_SUBAGENT_RUN").pipe(Config.option).parse(ConfigProvider.fromEnv()),
     ),
@@ -165,7 +165,11 @@ export default function backgroundTerminals(
         // Captured so a shutdown during the wait cannot swap the session.
         const terminals = session;
 
-        if (sessionOutlivesRun(ctx.mode, subagent) || outcome !== "completed" || !terminals)
+        if (
+          sessionOutlivesRun(ctx.mode, subagentSessionAtLoad) ||
+          outcome !== "completed" ||
+          !terminals
+        )
           return undefined;
 
         if (runningTerminals(terminals).length === 0) return undefined;

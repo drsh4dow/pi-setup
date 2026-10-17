@@ -19,21 +19,25 @@ const DISMISS_KEY = "f12";
 
 const ESCAPE = "\u001b";
 
+function escapeOnlyWhileDialogOpen(dialogOpen: boolean) {
+  return dialogOpen ? { data: ESCAPE } : { consume: true };
+}
+
 type AgentMessage = AgentEndEvent["messages"][number];
 
 type AssistantReply = Extract<AgentMessage, { role: "assistant" }>;
 
 type Phase =
   | { readonly kind: "starting" }
-  | { readonly kind: "inert" }
-  | { readonly kind: "delivering" }
-  | { readonly kind: "submitted" }
+  | { readonly kind: "claimedElsewhere" }
+  | { readonly kind: "awaitingDelivery" }
+  | { readonly kind: "awaitingStart" }
   | { readonly kind: "running"; readonly messages: readonly AgentMessage[] }
   | { readonly kind: "settled" };
 
 export interface SubagentChildOptions {
-  readonly startTimeout?: Duration.Input;
-  readonly dialogTimeout?: Duration.Input;
+  readonly taskStartTimeout?: Duration.Input;
+  readonly dialogCancelTimeout?: Duration.Input;
 }
 
 const subagentRun = Config.all({
@@ -49,7 +53,7 @@ function printedText(reply: AssistantReply): string {
   return reply.content.flatMap((part) => (part.type === "text" ? [`${part.text}\n`] : [])).join("");
 }
 
-function partialReport(messages: readonly AgentMessage[]): string {
+function latestAssistantText(messages: readonly AgentMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
 
@@ -63,8 +67,8 @@ function partialReport(messages: readonly AgentMessage[]): string {
   return "";
 }
 
-function outcomeOf(aborted: boolean, messages: readonly AgentMessage[]): RunOutcome {
-  if (aborted) return { kind: "aborted", report: partialReport(messages) };
+function printModeOutcome(aborted: boolean, messages: readonly AgentMessage[]): RunOutcome {
+  if (aborted) return { kind: "aborted", report: latestAssistantText(messages) };
 
   const last = messages.at(-1);
 
@@ -94,6 +98,13 @@ function unstartedReason(ctx: ExtensionContext, waited: Duration.Duration): stri
   return `Pi did not start the task within ${Duration.format(waited)}; it rejected the prompt.`;
 }
 
+function stopChildrenInheritingRun() {
+  // oxlint-disable-next-line effecttsgo/process-env -- The scrub must reach process.env itself.
+  delete process.env.PI_SUBAGENT_RUN;
+  // oxlint-disable-next-line effecttsgo/process-env -- The scrub must reach process.env itself.
+  delete process.env.PI_SUBAGENT_NAME;
+}
+
 export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOptions = {}) {
   // Effect's default provider keeps the environment it saw first; this reads it as it is at load.
   const run = Effect.runSync(subagentRun.parse(ConfigProvider.fromEnv()));
@@ -102,14 +113,14 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
 
   const files = runFiles(run.directory.value);
   const label = treeLabel(run.depth, run.name);
-  const startTimeout = Duration.fromInputUnsafe(options.startTimeout ?? "30 seconds");
-  const dialogTimeout = Duration.fromInputUnsafe(options.dialogTimeout ?? "5 seconds");
+  const taskStartTimeout = Duration.fromInputUnsafe(options.taskStartTimeout ?? "30 seconds");
+  const dialogCancelTimeout = Duration.fromInputUnsafe(options.dialogCancelTimeout ?? "5 seconds");
   let phase: Phase = { kind: "starting" };
   let openDialog: number | undefined;
   let dialogsOpened = 0;
   let inputLocked = false;
 
-  const governs = () => phase.kind !== "inert" && phase.kind !== "settled";
+  const governs = () => phase.kind !== "claimedElsewhere" && phase.kind !== "settled";
 
   const settle = Effect.fn("subagent.settle")(function* (
     ctx: ExtensionContext,
@@ -142,9 +153,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
 
     inputLocked = true;
     ctx.ui.onTerminalInput((data) => {
-      if (matchesKey(data, DISMISS_KEY)) {
-        return openDialog === undefined ? { consume: true } : { data: ESCAPE };
-      }
+      if (matchesKey(data, DISMISS_KEY)) return escapeOnlyWhileDialogOpen(openDialog !== undefined);
 
       if (matchesKey(data, "escape")) return undefined;
 
@@ -170,12 +179,12 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
 
   const watchStart = Effect.fn("subagent.watchStart")(function* (ctx: ExtensionContext) {
     // A busy session may still run the task as a follow-up, so only an idle one has rejected it.
-    yield* Effect.sleep(startTimeout).pipe(
-      Effect.repeat({ until: () => phase.kind !== "submitted" || ctx.isIdle() }),
+    yield* Effect.sleep(taskStartTimeout).pipe(
+      Effect.repeat({ until: () => phase.kind !== "awaitingStart" || ctx.isIdle() }),
     );
 
-    if (phase.kind === "submitted") {
-      yield* settle(ctx, { kind: "failed", reason: unstartedReason(ctx, startTimeout) });
+    if (phase.kind === "awaitingStart") {
+      yield* settle(ctx, { kind: "failed", reason: unstartedReason(ctx, taskStartTimeout) });
     }
   });
 
@@ -206,7 +215,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
       });
     }
 
-    phase = { kind: "submitted" };
+    phase = { kind: "awaitingStart" };
     pi.sendUserMessage(task.value, { expandPromptTemplates: true, deliverAs: "followUp" });
 
     return yield* watchStart(ctx);
@@ -227,7 +236,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
       );
     }
 
-    yield* Effect.sleep(dialogTimeout);
+    yield* Effect.sleep(dialogCancelTimeout);
 
     if (openDialog === dialog && governs()) {
       yield* settle(ctx, {
@@ -262,16 +271,13 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
         Effect.provide(platform),
         Effect.map((claimed) => {
           if (!claimed) {
-            phase = { kind: "inert" };
+            phase = { kind: "claimedElsewhere" };
 
             return;
           }
 
-          // oxlint-disable-next-line effecttsgo/process-env -- The scrub must reach process.env itself.
-          delete process.env.PI_SUBAGENT_RUN;
-          // oxlint-disable-next-line effecttsgo/process-env -- The scrub must reach process.env itself.
-          delete process.env.PI_SUBAGENT_NAME;
-          phase = { kind: "delivering" };
+          stopChildrenInheritingRun();
+          phase = { kind: "awaitingDelivery" };
           lockInput(ctx);
         }),
       ),
@@ -281,7 +287,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
   // Pi emits this once every session_start handler has finished. herdr-agent-state creates its
   // reporter in its own session_start handler, and a run that starts before it stays `idle` in herdr.
   pi.on("resources_discover", (_event, ctx) => {
-    if (phase.kind === "delivering")
+    if (phase.kind === "awaitingDelivery")
       Effect.runFork(deliverTask(ctx).pipe(Effect.provide(platform)));
 
     return undefined;
@@ -310,11 +316,11 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
   );
 
   pi.on("agent_start", () => {
-    if (phase.kind === "submitted") phase = { kind: "running", messages: [] };
+    if (phase.kind === "awaitingStart") phase = { kind: "running", messages: [] };
   });
 
   pi.on("agent_end", (event) => {
-    if (phase.kind !== "submitted" && phase.kind !== "running") return;
+    if (phase.kind !== "awaitingStart" && phase.kind !== "running") return;
 
     if (event.messages.length > 0) phase = { kind: "running", messages: event.messages };
   });
@@ -323,7 +329,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
     if (phase.kind !== "running") return undefined;
 
     return Effect.runPromise(
-      settle(ctx, outcomeOf(event.aborted, phase.messages)).pipe(Effect.provide(platform)),
+      settle(ctx, printModeOutcome(event.aborted, phase.messages)).pipe(Effect.provide(platform)),
     );
   });
 

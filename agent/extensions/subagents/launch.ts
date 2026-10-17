@@ -143,7 +143,7 @@ export function runFiles(runDirectory: string) {
   };
 }
 
-const LAUNCHER_ONLY = new Set(["PI_BACKGROUND_TERMINAL_NOTIFY_FD"]);
+const LAUNCHER_FILE_DESCRIPTOR_VARIABLES = new Set(["PI_BACKGROUND_TERMINAL_NOTIFY_FD"]);
 
 function paneOwned(name: string): boolean {
   return (
@@ -160,7 +160,7 @@ function paneOwned(name: string): boolean {
  */
 export function childEnv(launcher: Environment, pane: Environment): Environment {
   const inherited = Object.entries(launcher).filter(
-    ([name]) => !paneOwned(name) && !LAUNCHER_ONLY.has(name),
+    ([name]) => !paneOwned(name) && !LAUNCHER_FILE_DESCRIPTOR_VARIABLES.has(name),
   );
 
   const fromPane = Object.entries(pane).filter(([name]) => paneOwned(name));

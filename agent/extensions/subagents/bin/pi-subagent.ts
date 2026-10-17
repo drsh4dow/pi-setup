@@ -17,6 +17,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { CommandInput } from "effect/process/ChildProcess";
 import { closeAbandonedPanes, herdr, platform } from "../herdr.ts";
+import { isAlive, stopProcessGroup } from "../process-group.ts";
 import { runPaneChild } from "./pane-child.ts";
 import {
   ChildLaunch,
@@ -47,6 +48,8 @@ const SESSION_OPEN_TIMEOUT_MS = 60_000;
 
 const LABEL_SOURCE = "pi:subagent";
 
+const EXITED_PI_GROUP_GRACE = "1 second";
+
 interface Invocation {
   readonly args: readonly string[];
   readonly env: Environment;
@@ -61,17 +64,6 @@ class UsageError extends Data.TaggedError("UsageError")<{ readonly message: stri
 class UnsafeRuntimeRoot extends Data.TaggedError("UnsafeRuntimeRoot")<{ readonly root: string }> {
   override get message(): string {
     return `${this.root} lets other users rename entries in it, so it cannot hold a run directory. Set XDG_RUNTIME_DIR.`;
-  }
-}
-
-class SignalError extends Data.TaggedError("SignalError")<{
-  readonly pid: number;
-  readonly cause: unknown;
-}> {
-  override get message(): string {
-    const reason = this.cause instanceof Error ? this.cause.message : "failed";
-
-    return `kill -TERM -${this.pid}: ${reason}`;
   }
 }
 
@@ -235,28 +227,28 @@ const readInteger = Effect.fn("readInteger")(function* (path: string) {
   return yield* fs.readFileString(path).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Integer)));
 });
 
-// Herdr runs a pane's command as its own process group, and pi stays in the pane child's group.
-const stopPaneChild = Effect.fn("stopPaneChild")(
+// The pane child leads the pane's process group, and pi stays in that group, which can outlive its
+// leader.
+const stopPiGroup = Effect.fn("stopPiGroup")(
   function* (files: RunFiles) {
     const fs = yield* FileSystem.FileSystem;
 
-    if ((yield* fs.exists(files.exit)) || !(yield* fs.exists(files.started))) return;
+    if (!(yield* fs.exists(files.started))) return;
 
-    const pid = yield* readInteger(files.started);
+    const group = yield* readInteger(files.started);
+    const piExited = yield* fs.exists(files.exit);
+    const stopped = yield* stopProcessGroup(group, piExited ? EXITED_PI_GROUP_GRACE : "0 millis");
 
-    if (!isAlive(pid)) return;
-
-    yield* Effect.try({
-      try: () => process.kill(-pid, "SIGTERM"),
-      catch: (cause) => new SignalError({ pid, cause }),
-    });
-    yield* log(`sent SIGTERM to the pane child's process group ${pid}`);
+    if (stopped === "survived") {
+      yield* log(`pi's process group ${group} is still alive after SIGKILL`);
+    } else if (stopped !== "exited") {
+      yield* log(`stopped pi's process group ${group} with ${stopped}`);
+    }
   },
-  Effect.catch((error) => log(`could not stop the pane child: ${error.message}`)),
+  Effect.catch((error) => log(`could not stop pi's process group: ${error.message}`)),
 );
 
-// Closing the pane is what stops the child Pi; a signal to the launcher never reaches it.
-const closePane = Effect.fn("closePane")(function* (child: ChildPane, files: RunFiles) {
+const closePane = Effect.fn("closePane")(function* (child: ChildPane) {
   const [args, described] =
     child.kind === "tab"
       ? [["tab", "close", child.tab], `tab ${child.tab}`]
@@ -264,11 +256,10 @@ const closePane = Effect.fn("closePane")(function* (child: ChildPane, files: Run
 
   yield* herdr(args).pipe(
     Effect.andThen(log(`closed ${described}`)),
-    Effect.catch((error) =>
-      log(`could not close ${described}: ${error.message}`).pipe(
-        Effect.andThen(stopPaneChild(files)),
-      ),
+    Effect.catchTag("HerdrError", (error) =>
+      error.targetGone ? log(`${described} had already closed`) : Effect.fail(error),
     ),
+    Effect.catch((error) => log(`could not close ${described}: ${error.message}`)),
   );
 });
 
@@ -285,16 +276,6 @@ const checkRuntimeRoot = Effect.fn("checkRuntimeRoot")(function* (root: string, 
 
   return root;
 });
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
-}
 
 const observeChild = Effect.fn("observeChild")(function* (files: RunFiles, deadline: number) {
   const fs = yield* FileSystem.FileSystem;
@@ -429,12 +410,18 @@ const runInPane = Effect.fn("runInPane")(function* (
 
   const root = yield* checkRuntimeRoot(invocation.runtimeRoot, invocation.uid);
 
-  const runDirectory = yield* fs.makeTempDirectoryScoped({
+  const runDirectory = yield* fs.makeTempDirectory({
     directory: root,
     prefix: RUN_DIRECTORY_PREFIX,
   });
 
   const files = runFiles(runDirectory);
+
+  const removeRunDirectory = fs
+    .remove(runDirectory, { recursive: true, force: true })
+    .pipe(Effect.catch((error) => log(`could not remove ${runDirectory}: ${error.message}`)));
+
+  yield* Effect.addFinalizer(() => removeRunDirectory);
 
   const forwardOnce = yield* Effect.cached(forwardStderr(files.stderr));
   yield* Effect.addFinalizer(() => forwardOnce.pipe(Effect.ignore));
@@ -452,18 +439,26 @@ const runInPane = Effect.fn("runInPane")(function* (
   yield* fs.writeFileString(files.task, task, { mode: 0o600 });
   yield* fs.writeFileString(files.launch, launch, { mode: 0o600 });
 
+  // A herdr call can block for seconds, so everything else is cleaned up before the pane closes.
   const child = yield* Effect.acquireRelease(
     openPane(placement, workspace, runDirectory, name),
-    (opened) => closePane(opened, files),
+    (opened) =>
+      stopPiGroup(files).pipe(
+        Effect.andThen(forwardOnce.pipe(Effect.ignore)),
+        Effect.andThen(removeRunDirectory),
+        Effect.andThen(closePane(opened)),
+      ),
   );
 
   yield* labelPane(child.pane, treeLabel(mode.depth, name));
   yield* log(`started ${name} in pane ${child.pane}`);
+  // `exec` leaves no shell in the pane to take keystrokes after pi exits, and herdr removes a pane
+  // once its process exits.
   yield* herdr([
     "pane",
     "run",
     child.pane,
-    [...invocation.relaunchCommand, PANE_CHILD, runDirectory].map(shellQuote).join(" "),
+    `exec ${[...invocation.relaunchCommand, PANE_CHILD, runDirectory].map(shellQuote).join(" ")}`,
   ]);
 
   const end = yield* awaitChild(files);

@@ -383,8 +383,9 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
     if (phase.kind === "awaitingStart" || phase.kind === "settling") phase = { kind: "running" };
   });
 
-  // Pi runs prompts that agent_settled handlers send only after every handler returns, so the
-  // report queues behind them as one more deferred prompt.
+  // Pi runs prompts that agent_settled handlers send in handler order, after every handler returns.
+  // The report queues behind prompts from extensions that load before this one, and ahead of
+  // prompts from extensions that load after it.
   pi.on("agent_settled", (event) => {
     if (phase.kind !== "running") return;
 
@@ -407,8 +408,9 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
     },
   });
 
-  // Print mode answers every dialog at once with its cancel value. Escape is the cancel key of
-  // every built-in dialog, and no extension API answers another extension's dialog in the TUI.
+  // Print mode answers every dialog at once with its cancel value. Built-in dialogs cancel on
+  // `tui.select.cancel`, Escape by default, and no extension API answers another extension's dialog
+  // in the TUI. A user who rebinds that key away from Escape makes every dialog fail the run.
   // A custom() dialog differs, because its factory runs here, which print mode never does, and it
   // can resolve with its own value instead of undefined.
   pi.on("ui_prompt_start", (event, ctx) => {

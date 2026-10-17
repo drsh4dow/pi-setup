@@ -454,8 +454,6 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
 
   if (end.kind === "lost") return yield* reportOutcome({ kind: "failed", reason: end.reason });
 
-  yield* log(`child exited with code ${end.exitCode}`);
-
   return yield* readOutcome(files.outcome, end.exitCode).pipe(Effect.flatMap(reportOutcome));
 }, Effect.scoped);
 

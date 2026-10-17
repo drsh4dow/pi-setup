@@ -7,7 +7,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { sanitizeInline, sanitizeMultiline } from "../../lib/text.ts";
 import {
   registerBackgroundTerminalStatus,
@@ -74,10 +74,12 @@ const SETTLE_WAIT_MS = 10 * 60_000;
 const MAX_IDLE_SETTLE_WAITS = 3;
 
 // Interactive and RPC sessions outlive the turn, so completion wakes them
-// later. Print and JSON runs exit when the run settles.
-function sessionOutlivesRun(mode: ExtensionContext["mode"]): boolean {
+// later. Print and JSON runs exit when the run settles, and so does a
+// subagent's TUI session, which pi-subagent shuts down at settle.
+function sessionOutlivesRun(mode: ExtensionContext["mode"], subagent: boolean): boolean {
   switch (mode) {
     case "tui":
+      return !subagent;
     case "rpc":
       return true;
     case "print":
@@ -112,6 +114,14 @@ export default function backgroundTerminals(
   options: BackgroundTerminalOptions = {},
 ) {
   const delivery = new BackgroundTerminalDelivery(pi);
+
+  // Read at load, before the subagents extension scrubs the variable from process.env.
+  const subagent = Option.isSome(
+    Effect.runSync(
+      Config.String("PI_SUBAGENT_RUN").pipe(Config.option).parse(ConfigProvider.fromEnv()),
+    ),
+  );
+
   let session: BackgroundTerminalSession | undefined;
   const observations = new Map<string, object>();
   let idleSettleWaits = 0;
@@ -157,7 +167,8 @@ export default function backgroundTerminals(
         // Captured so a shutdown during the wait cannot swap the session.
         const terminals = session;
 
-        if (sessionOutlivesRun(ctx.mode) || outcome !== "completed" || !terminals) return undefined;
+        if (sessionOutlivesRun(ctx.mode, subagent) || outcome !== "completed" || !terminals)
+          return undefined;
 
         if (runningTerminals(terminals).length === 0) return undefined;
 

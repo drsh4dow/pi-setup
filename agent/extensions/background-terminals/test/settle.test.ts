@@ -53,6 +53,22 @@ test("an interactive session settles without waiting for running terminals", asy
   assert.equal(await fixture.settle(), undefined);
 });
 
+test("a subagent's interactive session waits at settle, as a print run does", async (t) => {
+  process.env.PI_SUBAGENT_RUN = "/tmp/pi-subagent-settle-probe";
+  t.after(() => {
+    delete process.env.PI_SUBAGENT_RUN;
+  });
+
+  const fixture = await settleFixture(t, "tui");
+  await fixture.start("sleep 0.2; echo done");
+
+  const result = await fixture.settle();
+
+  assert.ok(result, "settle must continue the run");
+  assert.equal(result.entries[0].customType, RESULTS_MESSAGE);
+  assert.match(result.entries[0].content, /done/);
+});
+
 test("a print run stops waiting after three idle waits on a terminal that keeps running", async (t) => {
   const fixture = await settleFixture(t, "print", { settleWaitMs: 50 });
   await fixture.start("sleep 10");

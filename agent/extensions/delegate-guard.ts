@@ -14,11 +14,13 @@ const DELEGATE_REASON =
   "Delegates spawn nothing. Finish your piece, and name in your report the helper your parent should spawn.";
 
 const OWNER_REASON =
-  "Owners launch only delegates. Append skills/subagents/delegate.md to every pi --print launch, per the subagents skill.";
+  "Owners launch only delegates. Append skills/subagents/delegate.md to every pi-subagent launch, per the subagents skill.";
 
 const HEREDOC = /(?<!<)<<(-?)\s*(['"]?)([^\s'"<>;&|()]+)\2/g;
 
 const LINE_CONTINUATION = /\\\r?\n/g;
+
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 // `&` next to `<` or `>` is a redirection such as `2>&1`, not a separator.
 const COMMAND_SEPARATOR = /&&|\|\||;|\||(?<![<>])&(?!>)|\r?\n/;
@@ -83,11 +85,21 @@ function isPi(word: string): boolean {
   return word === "pi" || word.endsWith("/pi");
 }
 
-function piPrintLaunches(command: string): PiLaunchArgv[] {
+function isPiSubagent(word: string): boolean {
+  return word === "pi-subagent" || word.endsWith("/pi-subagent");
+}
+
+function subagentLaunches(command: string): PiLaunchArgv[] {
   const joined = withoutHeredocBodies(command).replace(LINE_CONTINUATION, " ");
 
   return joined.split(COMMAND_SEPARATOR).flatMap((simpleCommand) => {
     const argv = words(simpleCommand);
+    const commandIndex = argv.findIndex((word) => !ENV_ASSIGNMENT.test(word));
+    const commandWord = argv[commandIndex];
+
+    // Only the command word counts, so `rg pi-subagent` or `test -x .build/bin/pi-subagent` still runs.
+    if (commandWord !== undefined && isPiSubagent(commandWord)) return [argv.slice(commandIndex)];
+
     const piIndex = argv.findIndex(isPi);
 
     if (piIndex === -1) return [];
@@ -119,14 +131,14 @@ export function spawnGuard(
       return undefined;
     case "delegate":
       return (command) => {
-        if (piPrintLaunches(command).length === 0) return undefined;
+        if (subagentLaunches(command).length === 0) return undefined;
 
         return DELEGATE_REASON;
       };
 
     case "owner":
       return (command) => {
-        if (piPrintLaunches(command).every(launchesDelegate)) return undefined;
+        if (subagentLaunches(command).every(launchesDelegate)) return undefined;
 
         return OWNER_REASON;
       };

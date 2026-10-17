@@ -111,10 +111,9 @@ function firstToken(task: string): string {
 }
 
 /**
- * Why `pi --print` must run this task instead: the TUI shows these failures and warnings only in
- * its pane, and runs an extension command with a TUI context. An extension that fails mid-run
- * still reports only in the pane, where print mode writes to stderr: Pi hands extension errors to
- * the TUI's error view, and no extension event carries them.
+ * The TUI shows these failures only in its pane and runs an extension command with a TUI context,
+ * so `pi --print` must run such a task. An extension error mid-run still shows only in the pane,
+ * because Pi hands extension errors to the TUI's error view and no extension event carries them.
  */
 function printOnlyTaskReason(
   ctx: ExtensionContext,
@@ -378,7 +377,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
   });
 
   // Pi runs prompts that agent_settled handlers send only after every handler returns, so the
-  // report waits behind them as one more deferred prompt: this command.
+  // report queues behind them as one more deferred prompt.
   pi.on("agent_settled", (event) => {
     if (phase.kind !== "running") return;
 
@@ -403,8 +402,8 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
 
   // Print mode answers every dialog at once with its cancel value. Escape is the cancel key of
   // every built-in dialog, and no extension API answers another extension's dialog in the TUI.
-  // A custom() dialog differs: its factory runs here, which print mode never does, and it can
-  // resolve with its own value instead of undefined.
+  // A custom() dialog differs, because its factory runs here, which print mode never does, and it
+  // can resolve with its own value instead of undefined.
   pi.on("ui_prompt_start", (event, ctx) => {
     if (!governs()) return;
 

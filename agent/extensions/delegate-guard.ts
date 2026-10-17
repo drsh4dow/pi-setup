@@ -97,7 +97,6 @@ function subagentLaunches(command: string): PiLaunchArgv[] {
     const commandIndex = argv.findIndex((word) => !ENV_ASSIGNMENT.test(word));
     const commandWord = argv[commandIndex];
 
-    // Only the command word counts, so `rg pi-subagent` or `test -x .build/bin/pi-subagent` still runs.
     if (commandWord !== undefined && isPiSubagent(commandWord)) return [argv.slice(commandIndex)];
 
     const piIndex = argv.findIndex(isPi);

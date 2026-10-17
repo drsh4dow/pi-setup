@@ -18,10 +18,11 @@ export default defineConfig({
     // dot reporter, which still prints each failure in full. Build and deploy progress
     // is dropped, and their errors still reach stderr.
     tasks: {
-      // Each cache entry would archive both compiled binaries; building takes under a second.
+      // Each cache entry would archive all three compiled binaries; building takes under a second.
       "build:cli": {
         command: [
           "vp exec bun build --compile --outfile .build/bin/emit-to-pi agent/extensions/background-terminals/bin/emit-to-pi.ts > /dev/null",
+          "vp exec bun build --compile --outfile .build/bin/pi-subagent agent/extensions/subagents/bin/pi-subagent.ts > /dev/null",
           "vp exec bun build --compile --outfile .build/bin/dumpfile cli/dumpfile/src/cli.ts > /dev/null",
         ],
         cache: false,
@@ -147,6 +148,7 @@ export default defineConfig({
           "**/test/**",
           "agent/scripts/**",
           "agent/extensions/background-terminals/bin/**",
+          "agent/extensions/subagents/bin/**",
           "cli/dumpfile/**",
           "vite.config.ts",
         ],
@@ -170,6 +172,7 @@ export default defineConfig({
         files: [
           "**/test/**",
           "agent/extensions/*/index.ts",
+          "agent/extensions/subagents/bin/pi-subagent.ts",
           "agent/extensions/herdr-agent-state.ts",
         ],
         rules: { "effecttsgo/strict-effect-provide": "off" },

@@ -1,4 +1,6 @@
-// Locally patched Herdr integration: reconcile idle state after missed lifecycle reports.
+// Locally patched Herdr integration: reconcile idle state after missed lifecycle reports, and
+// report no session identity for a subagent (PI_SUBAGENT_RUN set), so herdr's restore never
+// brings one back as a writable chat without its parent.
 // Herdr integration updates overwrite this file; preserve this patch until upstreamed.
 // HERDR_INTEGRATION_ID=pi
 // HERDR_INTEGRATION_VERSION=8
@@ -48,8 +50,11 @@ export default function (pi: ExtensionAPI) {
       enabled: Config.String("HERDR_ENV").pipe(Config.withDefault("")),
       socketPath: Config.String("HERDR_SOCKET_PATH").pipe(Config.withDefault("")),
       paneId: Config.String("HERDR_PANE_ID").pipe(Config.withDefault("")),
+      subagentRun: Config.String("PI_SUBAGENT_RUN").pipe(Config.withDefault("")),
     }),
   );
+
+  const reportsIdentity = config.subagentRun === "";
 
   if (config.enabled !== "1" || !config.socketPath || !config.paneId) return;
 
@@ -116,8 +121,11 @@ export default function (pi: ExtensionAPI) {
 
       const identity: Pick<Request["params"], "agent_session_path" | "agent_session_id"> = {};
 
-      if (file?.startsWith("/")) identity.agent_session_path = file;
-      else if (id) identity.agent_session_id = id;
+      // State reports carry the identity too, so a subagent sends it in no report at all.
+      if (reportsIdentity) {
+        if (file?.startsWith("/")) identity.agent_session_path = file;
+        else if (id) identity.agent_session_id = id;
+      }
 
       seq += 1;
 
@@ -202,7 +210,7 @@ export default function (pi: ExtensionAPI) {
       update(ctx: ExtensionContext, reportSession: boolean, reason?: string) {
         context = ctx;
 
-        if (reportSession)
+        if (reportSession && reportsIdentity)
           pendingSession = request("pane.report_agent_session", {
             session_start_source: reason,
           });

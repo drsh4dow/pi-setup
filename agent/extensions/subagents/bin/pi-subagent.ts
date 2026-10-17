@@ -37,15 +37,15 @@ import {
 
 const PANE_CHILD = "__pane-child";
 
-const STARTUP_TIMEOUT_MS = 60_000;
+const SESSION_OPEN_TIMEOUT_MS = 60_000;
 
-const STDERR_LIMIT = 64 * 1024;
+const FORWARDED_STDERR_LIMIT_BYTES = 64 * 1024;
 
 interface Invocation {
   readonly args: readonly string[];
   readonly env: Environment;
   readonly cwd: string;
-  readonly self: readonly string[];
+  readonly relaunchCommand: readonly string[];
   readonly runtimeRoot: string;
   readonly uid: number;
 }
@@ -118,7 +118,7 @@ function shellQuote(word: string): string {
   return `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
-const closeStrays = Effect.fn("closeStrays")(
+const closePanesOpenedIn = Effect.fn("closePanesOpenedIn")(
   function* (runDirectory: string) {
     const listed = yield* herdr(["pane", "list"]).pipe(
       Effect.flatMap(decodeJson(PaneListResponse)),
@@ -152,7 +152,7 @@ const createTab = Effect.fn("createTab")(function* (
     "--no-focus",
   ]).pipe(
     Effect.flatMap(decodeJson(TabCreateResponse)),
-    Effect.tapError(() => closeStrays(runDirectory)),
+    Effect.tapError(() => closePanesOpenedIn(runDirectory)),
   );
 
   return {
@@ -184,7 +184,7 @@ const openPane = Effect.fn("openPane")(function* (
     Effect.map(
       (created) => ({ kind: "split", pane: created.result.pane.pane_id }) satisfies ChildPane,
     ),
-    Effect.tapError(() => closeStrays(runDirectory)),
+    Effect.tapError(() => closePanesOpenedIn(runDirectory)),
     Effect.catch((error) =>
       log(
         `could not split pane ${placement.target} (${error.message}); opening a tab instead`,
@@ -242,22 +242,22 @@ const observeChild = Effect.fn("observeChild")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
 
+  const panePid = (yield* fs.exists(files.started))
+    ? Option.some(yield* readInteger(files.started))
+    : Option.none<number>();
+
+  const deadPanePid = Option.filter(panePid, (pid) => !isAlive(pid));
+
   if (yield* fs.exists(files.exit)) {
     const exitCode = yield* readInteger(files.exit);
 
     return Option.some<ChildEnd>({ kind: "exited", exitCode });
   }
 
-  const panePid = (yield* fs.exists(files.started))
-    ? Option.some(yield* readInteger(files.started))
-    : Option.none<number>();
-
-  if (Option.isSome(panePid) && !isAlive(panePid.value)) {
-    if (yield* fs.exists(files.exit)) return Option.none<ChildEnd>();
-
+  if (Option.isSome(deadPanePid)) {
     return Option.some<ChildEnd>({
       kind: "lost",
-      reason: `The pane child (pid ${panePid.value}) died without recording how pi exited.`,
+      reason: `The pane child (pid ${deadPanePid.value}) died without recording how pi exited.`,
     });
   }
 
@@ -268,18 +268,18 @@ const observeChild = Effect.fn("observeChild")(function* (
   if (Option.isNone(panePid)) {
     return Option.some<ChildEnd>({
       kind: "lost",
-      reason: "The herdr pane never started the child within 60s.",
+      reason: `The herdr pane never started the child within ${SESSION_OPEN_TIMEOUT_MS / 1000}s.`,
     });
   }
 
   return Option.some<ChildEnd>({
     kind: "lost",
-    reason: "Pi did not open its session within 60s; it may be waiting on a startup prompt.",
+    reason: `Pi did not open its session within ${SESSION_OPEN_TIMEOUT_MS / 1000}s; it may be waiting on a startup prompt.`,
   });
 });
 
 const awaitChild = Effect.fn("awaitChild")(function* (files: ReturnType<typeof runFiles>) {
-  const deadline = (yield* Clock.currentTimeMillis) + STARTUP_TIMEOUT_MS;
+  const deadline = (yield* Clock.currentTimeMillis) + SESSION_OPEN_TIMEOUT_MS;
 
   while (true) {
     const observed = yield* observeChild(files, deadline);
@@ -424,7 +424,7 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
     "pane",
     "run",
     child.pane,
-    [...invocation.self, PANE_CHILD, runDirectory].map(shellQuote).join(" "),
+    [...invocation.relaunchCommand, PANE_CHILD, runDirectory].map(shellQuote).join(" "),
   ]);
 
   const end = yield* awaitChild(files);
@@ -469,12 +469,12 @@ const runPi = Effect.fn("runPi")(function* (
   );
 
   const stderrFile = yield* fs.open(files.stderr, { flag: "a" });
-  let kept = 0;
+  let forwardedBytes = 0;
 
   const copying = yield* handle.stderr.pipe(
     Stream.runForEach((chunk) => {
-      const part = chunk.subarray(0, Math.max(0, STDERR_LIMIT - kept));
-      kept += part.length;
+      const part = chunk.subarray(0, Math.max(0, FORWARDED_STDERR_LIMIT_BYTES - forwardedBytes));
+      forwardedBytes += part.length;
 
       return Effect.sync(() => process.stderr.write(chunk)).pipe(
         Effect.andThen(part.length > 0 ? stderrFile.write(part) : Effect.void),
@@ -538,7 +538,7 @@ const fiber = Effect.runFork(
     args: process.argv.slice(2),
     env: process.env,
     cwd: process.cwd(),
-    self: compiled ? [process.execPath] : [process.execPath, Bun.main],
+    relaunchCommand: compiled ? [process.execPath] : [process.execPath, Bun.main],
     runtimeRoot: process.env.XDG_RUNTIME_DIR ?? os.tmpdir(),
     uid: process.getuid?.() ?? -1,
   }).pipe(

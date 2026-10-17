@@ -53,7 +53,7 @@ interface ChildFixture {
 }
 
 async function startChild({
-  options = { startTimeout: "200 millis" },
+  options = { taskStartTimeout: "200 millis" },
   withoutModel = false,
   claimedElsewhere = false,
 }: ChildFixture = {}) {
@@ -272,7 +272,7 @@ suite("subagent child", () => {
   });
 
   test("a task Pi never starts fails the run with the reason", async () => {
-    const child = await startChild({ options: { startTimeout: "50 millis" } });
+    const child = await startChild({ options: { taskStartTimeout: "50 millis" } });
 
     await child.start();
     await eventually(() => child.shutdowns() === 1, "the run ends");
@@ -295,7 +295,7 @@ suite("subagent child", () => {
 
   test("the dismissal key cancels only an open dialog, and a dialog that stays open fails the run", async () => {
     const child = await startChild({
-      options: { startTimeout: "200 millis", dialogTimeout: "100 millis" },
+      options: { taskStartTimeout: "200 millis", dialogCancelTimeout: "100 millis" },
     });
 
     await child.start();

@@ -7,6 +7,8 @@ import {
   modeFrom,
   PaneId,
   placementFor,
+  runtimeRoot,
+  stderrRecorder,
   treeLabel,
   WorkspaceId,
 } from "../launch.ts";
@@ -55,6 +57,32 @@ suite("modeFrom", () => {
       assert.deepEqual(Effect.runSync(modeFrom(env)), { kind: "print" });
     });
   }
+});
+
+suite("runtimeRoot", () => {
+  test("an empty XDG_RUNTIME_DIR counts as unset", () => {
+    assert.equal(runtimeRoot({ XDG_RUNTIME_DIR: "" }, "/tmp"), "/tmp");
+    assert.equal(runtimeRoot({ XDG_RUNTIME_DIR: "/run/user/1000" }, "/tmp"), "/run/user/1000");
+  });
+});
+
+suite("stderrRecorder", () => {
+  test("keeps whole characters across chunk boundaries and at the limit", () => {
+    const record = stderrRecorder(5);
+    const encoder = new TextEncoder();
+    const e = encoder.encode("é");
+
+    const recorded = [
+      record(Uint8Array.of(...encoder.encode("ab"), e[0] ?? 0)),
+      record(Uint8Array.of(e[1] ?? 0, ...encoder.encode("cdé"))),
+      record(encoder.encode("dropped")),
+    ];
+
+    assert.match(
+      recorded.map((bytes) => new TextDecoder("utf-8", { fatal: true }).decode(bytes)).join(""),
+      /^abéc\npi-subagent: pi wrote more than [\d.]+ KiB to stderr; the rest is not forwarded\.\n$/,
+    );
+  });
 });
 
 suite("treeLabel", () => {

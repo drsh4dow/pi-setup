@@ -18,6 +18,12 @@ export const HerdrPane = Schema.Struct({
   workspace_id: WorkspaceId,
 });
 
+export const PaneListResponse = Schema.Struct({
+  result: Schema.Struct({
+    panes: Schema.Array(Schema.Struct({ pane_id: PaneId, cwd: Schema.String })),
+  }),
+});
+
 export interface Lineage {
   readonly parentPane: PaneId;
   readonly workspace: WorkspaceId;
@@ -50,6 +56,8 @@ const HerdrCaller = Schema.Struct({
   HERDR_PANE_ID: PaneId,
 });
 
+export const herdrCaller = Schema.decodeUnknownOption(HerdrCaller);
+
 const ParentDepth = Schema.Struct({
   PI_SUBAGENT_DEPTH: Schema.optionalKey(
     Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
@@ -57,7 +65,7 @@ const ParentDepth = Schema.Struct({
 });
 
 export const modeFrom = Effect.fnUntraced(function* (env: Environment) {
-  const caller = Schema.decodeUnknownOption(HerdrCaller)(env);
+  const caller = herdrCaller(env);
 
   if (Option.isNone(caller)) return { kind: "print" } satisfies Mode;
 
@@ -114,13 +122,120 @@ export const RunOutcome = Schema.Union([
 
 export type RunOutcome = typeof RunOutcome.Type;
 
+/** What the child leaves in the run directory: an outcome, or a hand-back before it sent anything. */
+export const ChildResult = Schema.Union([
+  RunOutcome,
+  Schema.Struct({ kind: Schema.Literal("printInstead"), reason: Schema.String }),
+]);
+
+export type ChildResult = typeof ChildResult.Type;
+
 const EXIT_CODES = { completed: 0, truncated: 1, failed: 1, aborted: 2 } as const satisfies Record<
   RunOutcome["kind"],
   number
 >;
 
-export function exitCodeFor(outcome: RunOutcome): 0 | 1 | 2 {
-  return EXIT_CODES[outcome.kind];
+/** `pi --print` exits with Pi's own code when Pi fails after printing, so a non-zero exit wins. */
+export function exitCodeFor(outcome: RunOutcome, piExitCode: number): number {
+  return piExitCode === 0 ? EXIT_CODES[outcome.kind] : piExitCode;
+}
+
+export function runtimeRoot(env: Environment, temporaryDirectory: string): string {
+  const configured = env.XDG_RUNTIME_DIR;
+
+  if (configured === undefined || configured === "") return temporaryDirectory;
+
+  return configured;
+}
+
+export const RUN_DIRECTORY_PREFIX = "pi-subagent-";
+
+const RUN_DIRECTORY_NAME = /\/pi-subagent-[A-Za-z0-9]{6}$/;
+
+export function isRunDirectory(path: string): boolean {
+  return RUN_DIRECTORY_NAME.test(path);
+}
+
+function utf8SequenceLength(leadByte: number): number {
+  if (leadByte >= 0xf0) return 4;
+
+  if (leadByte >= 0xe0) return 3;
+
+  if (leadByte >= 0xc0) return 2;
+
+  return 1;
+}
+
+function isContinuationByte(byte: number | undefined): boolean {
+  return byte !== undefined && (byte & 0xc0) === 0x80;
+}
+
+/** Where the last complete UTF-8 character of `bytes` ends. A malformed tail counts as complete. */
+function completeCharactersEnd(bytes: Uint8Array): number {
+  let lead = bytes.length - 1;
+
+  while (lead > bytes.length - 4 && lead > 0 && isContinuationByte(bytes[lead])) lead -= 1;
+
+  const leadByte = bytes[lead];
+
+  if (leadByte === undefined || isContinuationByte(leadByte)) return bytes.length;
+
+  return lead + utf8SequenceLength(leadByte) > bytes.length ? lead : bytes.length;
+}
+
+/** The longest prefix of `bytes`, which starts on a character boundary, that fits `budget`. */
+function utf8Prefix(bytes: Uint8Array, budget: number): Uint8Array {
+  if (bytes.length <= budget) return bytes;
+
+  let end = budget;
+
+  while (end > 0 && isContinuationByte(bytes[end])) end -= 1;
+
+  return bytes.subarray(0, end);
+}
+
+/**
+ * Returns, for each chunk of a byte stream, the bytes to record so the record holds the first
+ * `limit` bytes without a split UTF-8 character, then one line saying the rest was dropped. Bytes
+ * of a character that a chunk boundary split wait for the next chunk.
+ */
+export function stderrRecorder(limit: number) {
+  const encoder = new TextEncoder();
+  const notice = `pi-subagent: pi wrote more than ${limit / 1024} KiB to stderr; the rest is not forwarded.\n`;
+  let recorded = 0;
+  let pending = new Uint8Array(0);
+  let endsWithNewline = true;
+  let full = false;
+
+  return (chunk: Uint8Array): Uint8Array => {
+    if (full) return new Uint8Array(0);
+
+    const joined = new Uint8Array(pending.length + chunk.length);
+    joined.set(pending);
+    joined.set(chunk, pending.length);
+
+    const end = completeCharactersEnd(joined);
+    pending = joined.slice(end);
+
+    const complete = joined.subarray(0, end);
+    const kept = utf8Prefix(complete, limit - recorded);
+    recorded += kept.length;
+
+    const last = kept.at(-1);
+
+    if (last !== undefined) endsWithNewline = last === 0x0a;
+
+    if (kept.length === complete.length) return kept;
+
+    full = true;
+
+    const truncation = encoder.encode(endsWithNewline ? notice : `\n${notice}`);
+    const record = new Uint8Array(kept.length + truncation.length);
+    record.set(kept);
+    record.set(truncation, kept.length);
+
+    return record;
+  };
 }
 
 export const ChildLaunch = Schema.Struct({

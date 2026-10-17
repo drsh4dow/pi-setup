@@ -251,7 +251,9 @@ tracked and untracked, non-ignored files.
   autocomplete
 - `subagents`: the `pi-subagent` launcher runs a subagent as a read-only Pi
   chat in its own Herdr pane, listed under its parent in the agents sidebar.
-  Outside Herdr it runs `pi --print`
+  Outside Herdr it runs `pi --print`. It also runs `pi --print` where the pane
+  cannot match it: a terminal on stdin, an extension command as the task, or a
+  missing model, login, or catalog entry
 - `tps-tracker`: live and final output-token throughput
 - `ui-moto`: compact model and project status header
 - `web-search`: registers the Perplexity and Exa MCP servers behind the

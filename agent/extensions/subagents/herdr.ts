@@ -1,8 +1,9 @@
 import * as BunChildProcessSpawner from "@effect/platform-bun/BunChildProcessSpawner";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { Data, Effect, Layer, Stream } from "effect";
+import { Data, Effect, FileSystem, Layer, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { isRunDirectory, PaneListResponse } from "./launch.ts";
 
 export const platform = Layer.mergeAll(
   BunFileSystem.layer,
@@ -44,3 +45,23 @@ export const herdr = Effect.fn("herdr")(
   Effect.scoped,
   Effect.timeout("10 seconds"),
 );
+
+const decodePaneList = Schema.decodeUnknownEffect(Schema.fromJsonString(PaneListResponse));
+
+/**
+ * Herdr saves a session before it hangs up its panes, so a subagent pane open at `herdr session
+ * stop` comes back on restart in a directory its launcher has since removed.
+ */
+export const closeAbandonedPanes = Effect.fn("closeAbandonedPanes")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const listed = yield* herdr(["pane", "list"]).pipe(Effect.flatMap(decodePaneList));
+
+  const abandoned = yield* Effect.filter(
+    listed.result.panes.filter((pane) => isRunDirectory(pane.cwd)),
+    (pane) => fs.exists(pane.cwd).pipe(Effect.map((exists) => !exists)),
+  );
+
+  yield* Effect.forEach(abandoned, (pane) => herdr(["pane", "close", pane.pane_id]));
+
+  return abandoned.map((pane) => pane.pane_id);
+});

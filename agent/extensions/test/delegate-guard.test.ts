@@ -85,6 +85,8 @@ test("commands that are not pi print launches pass", () => {
     "ls ~/.pi/agent -p",
     "pi --help",
     "api --print",
+    "rg -n pi-subagent agent",
+    "test -x .build/bin/pi-subagent",
   ]) {
     assert.equal(delegateGuard(command), undefined, command);
     assert.equal(ownerGuard(command), undefined, command);
@@ -112,4 +114,39 @@ test("an owner's guard judges each launch by its own appends", () => {
   ]) {
     assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
   }
+});
+
+test("a delegate is blocked from every pi-subagent launch", () => {
+  const delegateGuard = guardFor(delegateArgv);
+
+  for (const command of [
+    "pi-subagent <<'EOF'\nhi\nEOF",
+    "/home/u/.pi/.build/bin/pi-subagent --model anthropic/claude-opus-5-5",
+    "cd /tmp/app && FOO=1 pi-subagent \\\n  --thinking high",
+    `pi-subagent --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE}`,
+  ]) {
+    assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
+  }
+});
+
+test("an owner's pi-subagent launch without delegate.md is blocked", () => {
+  const ownerGuard = guardFor(ownerArgv);
+
+  for (const command of [
+    "pi-subagent <<'EOF'\nhi\nEOF",
+    `pi-subagent --append-system-prompt ${UNATTENDED} --append-system-prompt ${OWNER}`,
+  ]) {
+    assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
+  }
+});
+
+test("an owner's pi-subagent launch with delegate.md is allowed", () => {
+  const ownerGuard = guardFor(ownerArgv);
+
+  assert.equal(
+    ownerGuard(
+      `pi-subagent --append-system-prompt ${UNATTENDED} --append-system-prompt "${DELEGATE}" <<'TASK'\nhi\nTASK`,
+    ),
+    undefined,
+  );
 });

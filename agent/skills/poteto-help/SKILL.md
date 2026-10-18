@@ -53,7 +53,7 @@ The default answer is a plain task prompt. The system prompt's playbooks run mos
 | Know why code is shaped this way, or where a number came from | [`/skill:why`](../why/SKILL.md) |
 | Understand a change or subsystem, explained plainly | [`/skill:teach`](../teach/SKILL.md) |
 | Catch up on their own recent work on a topic | [`/skill:recall`](../recall/SKILL.md) |
-| Catch up on what changed in this chat since their last message, in a few plain sentences and small visuals, with enough context to decide each action item | [`/skill:ketchup`](../ketchup/SKILL.md) |
+| Catch up on what changed in this chat since their last message, in plain words and small visuals, with every item waiting on them listed and decidable from the reply alone | [`/skill:ketchup`](../ketchup/SKILL.md) |
 | Know what a small diff could break outside itself | [`/skill:blast-radius`](../blast-radius/SKILL.md) |
 | Settle types and module shape before code that crosses a function boundary | [`/skill:architect`](../architect/SKILL.md) |
 | Get several attempts at one brief, merged into the best one | [`/skill:arena`](../arena/SKILL.md) |
@@ -67,6 +67,7 @@ The default answer is a plain task prompt. The system prompt's playbooks run mos
 | Hear the last reply again in plain words | [`/skill:bro`](../bro/SKILL.md) |
 | Give agents a scripted way to drive the app and prove behavior | [`/skill:create-verification-skill`](../create-verification-skill/SKILL.md) |
 | Bring a verification skill and its feature map back in line with the app | [`/skill:maintain-verification-skill`](../maintain-verification-skill/SKILL.md) |
+| Formally verify a race, invariant, or other property that tests rarely reach | [`/skill:create-formal-verification-skill`](../create-formal-verification-skill/SKILL.md) |
 | Vet a performance number before reporting or acting on it | [`/skill:benchmark-checklist`](../benchmark-checklist/SKILL.md) |
 | Run a large or cross-cutting change, or one to review after stepping away | [`/skill:figure-it-out`](../figure-it-out/SKILL.md) |
 | Keep a decision log during a run, and review it afterward | [`/skill:show-me-your-work`](../show-me-your-work/SKILL.md) |

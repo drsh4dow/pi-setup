@@ -338,6 +338,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `blast-radius`
 - `bro`
 - `correct`
+- `create-formal-verification-skill`
 - `create-verification-skill`
 - `docs-search`
 - `dumpfile`

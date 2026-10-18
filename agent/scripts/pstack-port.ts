@@ -59,6 +59,7 @@ const invocations = new Map<string, Invocation>(
     "blast-radius": "both",
     bro: "user",
     correct: "both",
+    "create-formal-verification-skill": "user",
     "create-verification-skill": "user",
     "figure-it-out": "both",
     how: "both",

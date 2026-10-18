@@ -517,6 +517,12 @@ diagnostic-enforcement, and behavioral checks. Its tasks live in
 `vp run --no-cache verify` reruns everything. Live Pi integration tests need
 provider credentials and run separately with `vp run test:e2e`.
 
+`agent/scripts/verify-skills.ts` checks the skill packages under
+`agent/skills/` and `.agents/skills/`. It fails when a file under a skill's
+`scripts/` directory starts with `#!` but is not executable, either in the git
+index or on disk, and names the `chmod +x <path> && git add <path>` command that
+fixes it.
+
 `.agents/skills/verify-subagent-run/scripts/check` model-checks the subagent
 run lifecycle with TLA+. It needs Java 11 or newer and downloads TLC once, so
 `verify` leaves it out. Run it after changing `agent/extensions/subagents/` or

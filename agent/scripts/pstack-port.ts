@@ -44,47 +44,44 @@ const skippedFiles = new Set([
   "skills/poteto-mode/scripts/worktree-audit.sh",
 ]);
 
-// Who can load a skill. "user": only the user's `/skill:name`. "model": only the model,
-// kept out of `/skill:` autocomplete. "both": either.
-type Invocation = "user" | "both" | "model";
+type Invocation = "user-only" | "both" | "model-only";
 
-// Every ported skill except principle-*, which are "model". Sync stops on a skill missing
-// here, because upstream marks almost every skill command-only and Pi needs a decision.
+// Upstream marks almost every skill command-only, so each one needs a decision here.
 const invocations = new Map<string, Invocation>(
   Object.entries({
     architect: "both",
     arena: "both",
     "automate-me": "both",
-    "benchmark-checklist": "model",
+    "benchmark-checklist": "model-only",
     "blast-radius": "both",
-    bro: "user",
+    bro: "user-only",
     correct: "both",
-    "create-formal-verification-skill": "user",
-    "create-verification-skill": "user",
+    "create-formal-verification-skill": "user-only",
+    "create-verification-skill": "user-only",
     "figure-it-out": "both",
     how: "both",
-    "in-your-own-words": "user",
+    "in-your-own-words": "user-only",
     interrogate: "both",
-    ketchup: "user",
-    "maintain-verification-skill": "user",
+    ketchup: "user-only",
+    "maintain-verification-skill": "user-only",
     "no-comments": "both",
-    "poteto-help": "user",
+    "poteto-help": "user-only",
     recall: "both",
     reflect: "both",
     sharpen: "both",
     "show-me-your-work": "both",
     swarm: "both",
     tdd: "both",
-    teach: "user",
-    "technical-writing": "model",
-    "typescript-best-practices": "model",
-    unslop: "model",
+    teach: "user-only",
+    "technical-writing": "model-only",
+    "typescript-best-practices": "model-only",
+    unslop: "model-only",
     why: "both",
   } satisfies Record<string, Invocation>),
 );
 
 function skillInvocation(skill: string) {
-  if (skill.startsWith("principle-")) return "model";
+  if (skill.startsWith("principle-")) return "model-only";
 
   return invocations.get(skill);
 }
@@ -92,9 +89,9 @@ function skillInvocation(skill: string) {
 const commandOnlyLine = "disable-model-invocation: true";
 
 const invocationLines: Record<Invocation, string[]> = {
-  user: [commandOnlyLine],
+  "user-only": [commandOnlyLine],
   both: [],
-  model: ["user-invokable: false"],
+  "model-only": ["user-invokable: false"],
 };
 
 function destination(upstreamPath: string) {
@@ -194,8 +191,6 @@ function editFrontmatter(text: string, edit: (lines: string[]) => string[]) {
   return `---\n${lines.join("\n")}\n---\n${text.slice(frontmatter[0].length)}`;
 }
 
-// Replaces both invocation lines with the ones `invocation` names, placed after the
-// description and any indented continuation lines it has.
 function withInvocation(lines: string[], invocation: Invocation) {
   const kept = lines.filter((line) => !/^(?:disable-model-invocation|user-invokable):/.test(line));
   let insertAt = kept.findIndex((line) => line.startsWith("description:")) + 1;
@@ -207,8 +202,6 @@ function withInvocation(lines: string[], invocation: Invocation) {
   return kept;
 }
 
-// A skill the table no longer classifies can only come from the previously synced tree;
-// it keeps upstream's lines.
 function rewriteFrontmatter(text: string, skill: string) {
   return editFrontmatter(text, (lines) => {
     const invocation = skillInvocation(skill);
@@ -224,8 +217,6 @@ function rewriteFrontmatter(text: string, skill: string) {
   });
 }
 
-// Parses the new upstream tree's skills into their invocations, or names each skill the
-// table is missing.
 function classifySkills(pstack: string, files: Map<string, string>) {
   const classified = new Map<string, Invocation>();
   const missing: string[] = [];
@@ -246,7 +237,7 @@ function classifySkills(pstack: string, files: Map<string, string>) {
       : "Upstream lets the model load it.";
 
     missing.push(
-      `skills/${skill}: new upstream skill. Add it to \`invocations\` in agent/scripts/pstack-port.ts as "user", "both", or "model". ${upstreamChoice}`,
+      `skills/${skill}: new upstream skill. Add it to \`invocations\` in agent/scripts/pstack-port.ts as "user-only", "both", or "model-only". ${upstreamChoice}`,
     );
   }
 
@@ -335,9 +326,7 @@ function writeLocal(localPath: string, text: string) {
   writeFileSync(localPath, text);
 }
 
-// The merge keeps a local SKILL.md's invocation lines as a local edit, so a skill moved to
-// another invocation in the table only changes here.
-function applyInvocations(classified: Map<string, Invocation>) {
+function overrideMergedInvocations(classified: Map<string, Invocation>) {
   for (const [skill, invocation] of classified) {
     const localPath = join(agentDirectory, "skills", skill, "SKILL.md");
     const local = readIfPresent(localPath);
@@ -484,7 +473,7 @@ function sync(ref: string) {
         report.push(`changed upstream, port by hand: ${upstreamPath}`);
     }
 
-    applyInvocations(classified);
+    overrideMergedInvocations(classified);
     writeFileSync(pinFile, `${commit}\n`);
   } finally {
     rmSync(scratch, { recursive: true, force: true });

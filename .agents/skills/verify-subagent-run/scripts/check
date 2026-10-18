@@ -141,7 +141,7 @@ failed=0
 check_citations || failed=1
 fetch_tlc
 
-for cfg in SubagentRun.cfg ShutdownHangs.cfg; do
+for cfg in SubagentRun.cfg ShutdownHangs.cfg DescendantShutdownHangs.cfg; do
   run_model "$cfg" || failed=1
 done
 

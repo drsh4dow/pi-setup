@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
 const checker = new URL("../verify-skills.ts", import.meta.url).pathname;
@@ -21,6 +21,10 @@ function repository(t: TestContext, files: Record<string, string>) {
   execFileSync("git", ["add", "."], { cwd: root });
 
   return root;
+}
+
+function skillManifest(path: string, description: string) {
+  return `---\nname: ${basename(dirname(path))}\ndescription: ${description}\n---\n`;
 }
 
 function run(cwd: string) {
@@ -42,6 +46,9 @@ test("requires the executable bit on shebang skill scripts in the index and on d
   const root = repository(t, {
     [scripts[0]]: "#!/usr/bin/env bash\n",
     [scripts[1]]: "#!/usr/bin/env node\n",
+    "agent/skills/example/SKILL.md": "---\nname: example\ndescription: An example skill.\n---\n",
+    ".agents/skills/verify-example/SKILL.md":
+      "---\nname: verify-example\ndescription: Verify the example app.\n---\n",
     "agent/skills/example/scripts/data.tsv": "phase\tdecision\n",
     "agent/scripts/tool.ts": "#!/usr/bin/env node\n",
   });
@@ -60,4 +67,84 @@ test("requires the executable bit on shebang skill scripts in the index and on d
   execFileSync("git", ["add", ...scripts], { cwd: root });
   const executable = run(root);
   assert.equal(executable.status, 0, executable.stderr);
+});
+
+test("fails on SKILL.md frontmatter that Pi drops or that names another directory", (t) => {
+  const unparsable = [
+    "agent/skills/docs-search/SKILL.md",
+    "agent/skills/group/nested/SKILL.md",
+    "agent/skills/untracked/SKILL.md",
+  ];
+
+  const misnamed = ".agents/skills/verify-example/SKILL.md";
+  const unquotedColon = "Use before building on a platform API: to check";
+
+  const root = repository(t, {
+    [unparsable[0]]: skillManifest(unparsable[0], unquotedColon),
+    [unparsable[1]]: skillManifest(unparsable[1], unquotedColon),
+    [misnamed]: "---\nname: verify-other\ndescription: Verify the example app.\n---\n",
+    "agent/skills/valid/SKILL.md": "---\nname: valid\ndescription: A valid skill.\n---\n",
+  });
+
+  mkdirSync(join(root, dirname(unparsable[2])));
+  writeFileSync(join(root, unparsable[2]), skillManifest(unparsable[2], unquotedColon));
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+
+  for (const manifest of unparsable) {
+    assert.match(result.stderr, new RegExp(`^${manifest}: `, "m"));
+  }
+
+  assert.match(
+    result.stderr,
+    new RegExp(`${misnamed}: name "verify-other" does not match its directory "verify-example"`),
+  );
+  assert.doesNotMatch(result.stderr, /skills\/valid\//);
+
+  for (const manifest of unparsable) {
+    writeFileSync(join(root, manifest), skillManifest(manifest, '"Use before: check"'));
+  }
+
+  writeFileSync(
+    join(root, misnamed),
+    "---\nname: verify-example\ndescription: Verify the example app.\n---\n",
+  );
+  const fixed = run(root);
+  assert.equal(fixed.status, 0, fixed.stderr);
+});
+
+test("loads .agents/skills and nested skills in the layout a session uses", (t) => {
+  const architect = "agent/skills/architect/SKILL.md";
+  const guide = ".agents/skills/notes/guide.md";
+  const nestedScript = "agent/skills/group/nested/scripts/run.sh";
+
+  const root = repository(t, {
+    [architect]: skillManifest(architect, "Sketch types first."),
+    [guide]: "---\nname: architect\ndescription: A guide beside no SKILL.md.\n---\n",
+    ".agents/skills/readme.md": "---\nname: readme\ndescription: Pi skips this root file.\n---\n",
+    "agent/skills/group/nested/SKILL.md": skillManifest(
+      "agent/skills/group/nested/SKILL.md",
+      "A nested skill.",
+    ),
+    [nestedScript]: "#!/usr/bin/env bash\n",
+  });
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    new RegExp(
+      `^${architect}: name "architect" collision\\. Pi drops this file and keeps ${guide}$`,
+      "m",
+    ),
+  );
+  assertNamesFix(result.stderr, [nestedScript]);
+  assert.doesNotMatch(result.stderr, /readme/);
+
+  rmSync(join(root, guide));
+  chmodSync(join(root, nestedScript), 0o755);
+  execFileSync("git", ["add", "--all"], { cwd: root });
+  const fixed = run(root);
+  assert.equal(fixed.status, 0, fixed.stderr);
 });

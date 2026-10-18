@@ -26,6 +26,44 @@ export default function (pi) {
 }
 `;
 
+const TASK_MARKER = `import { writeFileSync } from "node:fs";
+
+export default function (pi) {
+  pi.on("before_agent_start", () => {
+    writeFileSync(process.env.TASK_STARTED, "");
+  });
+}
+`;
+
+const SESSION_MARKER = `import { writeFileSync } from "node:fs";
+
+export default function (pi) {
+  pi.on("session_start", () => {
+    writeFileSync(process.env.DESCENDANT_STARTED, "");
+  });
+}
+`;
+
+const STARTS_A_DESCENDANT = `import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+
+export default async function () {
+  spawn("pi", ["--mode", "rpc", "--no-session", "--extension", process.env.SUBAGENT_EXTENSION, "--extension", process.env.EXTENSION_DIR + "/SESSION_MARKER.ts"], {
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+
+  while (!existsSync(process.env.DESCENDANT_STARTED)) await delay(50);
+}
+`;
+
+const EXTENSIONS = {
+  STALLS_THEN_HANGS_ON_SHUTDOWN,
+  TASK_MARKER,
+  SESSION_MARKER,
+  STARTS_A_DESCENDANT,
+};
+
 const REFUSING_MODEL = JSON.stringify({
   providers: {
     refusing: {
@@ -82,26 +120,29 @@ suite("pi-subagent (real pi in a herdr pane)", { skip: unavailable() }, () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test("a SIGKILL during the launcher's SIGTERM grace leaves no pi whose session_shutdown hangs", async () => {
+  async function launch(piExtensions: readonly (keyof typeof EXTENSIONS)[]) {
     const root = await mkdtemp(path.join(os.tmpdir(), "pi-subagent-e2e-"));
     const runtime = path.join(root, "runtime");
     const agentDir = path.join(root, "agent");
-    const hang = path.join(root, "hanging-shutdown.ts");
-    const taskStarted = path.join(root, "task-started");
 
     roots.push(root);
+    await Promise.all([mkdir(runtime, { mode: 0o700 }), mkdir(agentDir, { mode: 0o700 })]);
+
     await Promise.all([
-      mkdir(runtime, { mode: 0o700 }),
-      mkdir(agentDir, { mode: 0o700 }),
-      writeFile(hang, STALLS_THEN_HANGS_ON_SHUTDOWN),
+      writeFile(path.join(agentDir, "models.json"), REFUSING_MODEL),
+      ...Object.entries(EXTENSIONS).map(([name, source]) =>
+        writeFile(path.join(root, `${name}.ts`), source),
+      ),
     ]);
-    await writeFile(path.join(agentDir, "models.json"), REFUSING_MODEL);
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      EXTENSION_DIR: root,
+      DESCENDANT_STARTED: path.join(root, "descendant-started"),
       PI_CODING_AGENT_DIR: agentDir,
       PI_SKIP_VERSION_CHECK: "1",
-      TASK_STARTED: taskStarted,
+      SUBAGENT_EXTENSION: subagentExtension,
+      TASK_STARTED: path.join(root, "task-started"),
       XDG_RUNTIME_DIR: runtime,
     };
 
@@ -112,30 +153,44 @@ suite("pi-subagent (real pi in a herdr pane)", { skip: unavailable() }, () => {
       launcher,
       [
         "--name",
-        "subagent:shutdown-hang",
+        "subagent:e2e",
         "--model",
         "refusing/refusing",
         "--session-dir",
         path.join(root, "sessions"),
         "--extension",
         subagentExtension,
-        "--extension",
-        hang,
+        ...piExtensions.flatMap((name) => ["--extension", path.join(root, `${name}.ts`)]),
       ],
-      { cwd: root, env, stdio: ["pipe", "ignore", "pipe"] },
+      { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] },
     );
 
+    const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
 
+    run.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     run.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
     run.stdin.end("Reply with OK.");
 
     const exited = new Promise<void>((resolve) => run.on("close", () => resolve()));
 
-    assert.ok(
-      await until(() => existsSync(taskStarted), 60_000),
-      `pi started the task:\n${Buffer.concat(stderr).toString()}`,
-    );
+    return {
+      root,
+      run,
+      exited,
+      taskStarted: () => existsSync(env.TASK_STARTED ?? ""),
+      hasExited: () => run.exitCode !== null || run.signalCode !== null,
+      output: () =>
+        `--- stdout ---\n${Buffer.concat(stdout).toString()}\n--- stderr ---\n${Buffer.concat(stderr).toString()}`,
+    };
+  }
+
+  test("a SIGKILL during the launcher's SIGTERM grace leaves no pi whose session_shutdown hangs", async () => {
+    const { root, run, exited, taskStarted, output } = await launch([
+      "STALLS_THEN_HANGS_ON_SHUTDOWN",
+    ]);
+
+    assert.ok(await until(taskStarted, 60_000), `pi started the task:\n${output()}`);
 
     run.kill("SIGTERM");
     await delay(Duration.toMillis(TERM_GRACE) / 2);
@@ -145,6 +200,20 @@ suite("pi-subagent (real pi in a herdr pane)", { skip: unavailable() }, () => {
     assert.ok(
       await until(() => processesUnder(root).length === 0, 10_000),
       "neither pi nor the pane child outlives the launcher",
+    );
+  });
+
+  test("a descendant Pi that reaches session_start first leaves the task to pi", async () => {
+    const { root, taskStarted, hasExited, output } = await launch([
+      "STARTS_A_DESCENDANT",
+      "TASK_MARKER",
+    ]);
+
+    assert.ok(await until(hasExited, 90_000), `the launcher exits:\n${output()}`);
+    assert.ok(taskStarted(), `pi, not the descendant, started the task:\n${output()}`);
+    assert.ok(
+      await until(() => processesUnder(root).length === 0, 10_000),
+      "the run leaves no process behind",
     );
   });
 });

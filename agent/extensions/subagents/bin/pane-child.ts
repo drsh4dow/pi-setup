@@ -1,6 +1,13 @@
 import { Cause, Console, Effect, FileSystem, Fiber, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { ChildLaunch, childEnv, type Environment, runFiles, stderrRecorder } from "../launch.ts";
+import {
+  ChildLaunch,
+  childEnv,
+  type Environment,
+  runFiles,
+  runFlag,
+  stderrRecorder,
+} from "../launch.ts";
 import { isAlive, stopProcessGroup, TERM_GRACE } from "../process-group.ts";
 
 const FORWARDED_STDERR_LIMIT_BYTES = 64 * 1024;
@@ -69,7 +76,7 @@ const runPi = Effect.fn("runPi")(function* (runDirectory: string, paneEnv: Envir
   yield* watchLauncher(launch.launcherPid, runDirectory);
 
   const handle = yield* spawner.spawn(
-    ChildProcess.make("pi", launch.args, {
+    ChildProcess.make("pi", [runFlag(runDirectory), ...launch.args], {
       cwd: launch.cwd,
       env: childEnv(launch.env, paneEnv),
       stdin: "inherit",

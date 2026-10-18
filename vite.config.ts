@@ -27,6 +27,9 @@ export default defineConfig({
         cache: false,
       },
       "verify:strict-diagnostics": "node agent/scripts/verify-strict-diagnostics.ts",
+      // File modes live in the git index, which the cache does not fingerprint, so a
+      // replayed pass could hide a script that lost its executable bit.
+      "verify:skills": { command: "node agent/scripts/verify-skills.ts", cache: false },
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
@@ -53,7 +56,13 @@ export default defineConfig({
       // The dependencies run concurrently; vp check runs once they pass.
       verify: {
         command: "vp check",
-        dependsOn: ["verify:strict-diagnostics", "test:extensions", "test:dumpfile", "test:docs"],
+        dependsOn: [
+          "verify:strict-diagnostics",
+          "verify:skills",
+          "test:extensions",
+          "test:dumpfile",
+          "test:docs",
+        ],
       },
     },
   },

@@ -417,9 +417,12 @@ Every skill whose name also appears in pstack is ported from it. See
 ## pstack
 
 The system prompt and most skills come from
-[pstack at `99743e9`](https://github.com/cursor/plugins/tree/99743e9c151c8537cbbf1f98bb38f34ef3368453/pstack),
-Lauren Tan's Cursor plugin. [`agent/SYSTEM.md`](agent/SYSTEM.md) is its
-`poteto-mode` skill rewritten as a system prompt, and
+[pstack](https://github.com/cursor/plugins/tree/main/pstack), Lauren Tan's
+Cursor plugin.
+[`agent/scripts/pstack-synced-commit.txt`](agent/scripts/pstack-synced-commit.txt)
+holds the upstream commit that this setup is synced to.
+[`agent/SYSTEM.md`](agent/SYSTEM.md) is pstack's `poteto-mode` skill rewritten
+as a system prompt, and
 [`agent/poteto/`](agent/poteto/) holds that skill's playbooks, references, and
 scripts. The scripts are vendored as-is: lint, format, and type checks skip
 them. Not ported: `setup-pstack`, `make-bot-ui`, the `poteto-agent` wrapper,
@@ -450,12 +453,24 @@ follows:
 | `.cursor/skills/`                                                      | `.agents/skills/`                                                                                                                                                                                                                                                                                   |
 | Cursor's built-in babysit, Plan Mode, and Custom Modes                 | Removed.                                                                                                                                                                                                                                                                                            |
 
-To sync, check out the synced and the new upstream commits, run
-`node agent/scripts/pstack-port.ts sync <new>/pstack <synced>/pstack`, resolve
-the reported conflicts, port new upstream text in `poteto-mode/SKILL.md` into
-`SYSTEM.md` by hand, and update the commit above. `vp run verify` runs
-`pstack-port.ts check`, which fails on Cursor-only terms that a sync brings
-back.
+The `invocations` table in `pstack-port.ts` decides who can load each skill:
+only the user with `/skill:name`, only the model, or both. Upstream marks
+almost every skill command-only, so sync stops before it writes anything when
+upstream adds a skill that the table does not classify. The error names the
+entry to add.
+
+To sync pstack:
+
+1. Run `node agent/scripts/pstack-port.ts sync [<ref>]`. The script fetches
+   upstream into a clone under `~/.cache/pi-setup/`, ports `<ref>` (default
+   `origin/main`) into `agent/`, and merges it with local edits against the
+   synced commit. Then it writes the new commit to `pstack-synced-commit.txt`.
+2. Resolve each file reported as `conflict`.
+3. Port each file reported as `changed upstream, port by hand`. Upstream
+   `skills/poteto-mode/SKILL.md` goes into `agent/SYSTEM.md`.
+4. List each skill reported as `added upstream` under Installed skills.
+5. Run `vp run verify`. It runs `pstack-port.ts check`, which fails on
+   Cursor-only terms that a sync brings back.
 
 ## Repository layout
 

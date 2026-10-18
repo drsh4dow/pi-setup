@@ -2,16 +2,15 @@
 
 // Ports pstack (github.com/cursor/plugins, directory pstack/) into this Pi setup.
 //
-//   render <pstack-dir> <out-dir>        write the mechanically ported tree to <out-dir>
-//   sync <pstack-dir> [<old-pstack-dir>] port into agent/; with the previously synced
-//                                        upstream, three-way merge so local edits survive
-//   check                                fail on Cursor-only vocabulary in the ported files
+//   sync [<ref>]  port upstream <ref> (default origin/main) into agent/, three-way merged
+//                 against the commit in pstack-synced-commit.txt so local edits survive
+//   check         fail on Cursor-only vocabulary in the ported files
 //
 // Rendering only does what is safe to do mechanically: file placement, relative links,
 // frontmatter, and skill command syntax. Everything that needs judgment (subagent calls,
 // model roles, Cursor built-ins) is a local edit that `sync` carries forward and `check`
-// keeps from regressing. README.md's "Syncing pstack" section maps each Cursor concept.
-import { spawnSync } from "node:child_process";
+// keeps from regressing. README.md's "pstack" section maps each Cursor concept.
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -21,10 +20,14 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 
 const agentDirectory = "agent";
+
+const pinFile = join(agentDirectory, "scripts", "pstack-synced-commit.txt");
+
+const upstreamRepository = "https://github.com/cursor/plugins.git";
 
 const skippedSkills = new Set([
   // A Grok Bot webhook UI generator, with no Pi counterpart.
@@ -41,28 +44,57 @@ const skippedFiles = new Set([
   "skills/poteto-mode/scripts/worktree-audit.sh",
 ]);
 
-// Skills that only run when the user types their command.
-const commandOnlySkills = new Set([
-  "bro",
-  "create-verification-skill",
-  "in-your-own-words",
-  "ketchup",
-  "maintain-verification-skill",
-  "poteto-help",
-  "teach",
-]);
+// Who can load a skill. "user": only the user's `/skill:name`. "model": only the model,
+// kept out of `/skill:` autocomplete. "both": either.
+type Invocation = "user" | "both" | "model";
 
-// Skills the model applies on its own, kept out of `/skill:` autocomplete.
-const commandHiddenSkills = new Set([
-  "benchmark-checklist",
-  "technical-writing",
-  "typescript-best-practices",
-  "unslop",
-]);
+// Every ported skill except principle-*, which are "model". Sync stops on a skill missing
+// here, because upstream marks almost every skill command-only and Pi needs a decision.
+const invocations = new Map<string, Invocation>(
+  Object.entries({
+    architect: "both",
+    arena: "both",
+    "automate-me": "both",
+    "benchmark-checklist": "model",
+    "blast-radius": "both",
+    bro: "user",
+    correct: "both",
+    "create-verification-skill": "user",
+    "figure-it-out": "both",
+    how: "both",
+    "in-your-own-words": "user",
+    interrogate: "both",
+    ketchup: "user",
+    "maintain-verification-skill": "user",
+    "no-comments": "both",
+    "poteto-help": "user",
+    recall: "both",
+    reflect: "both",
+    sharpen: "both",
+    "show-me-your-work": "both",
+    swarm: "both",
+    tdd: "both",
+    teach: "user",
+    "technical-writing": "model",
+    "typescript-best-practices": "model",
+    unslop: "model",
+    why: "both",
+  } satisfies Record<string, Invocation>),
+);
 
-function hiddenFromCommands(skill: string) {
-  return skill.startsWith("principle-") || commandHiddenSkills.has(skill);
+function skillInvocation(skill: string) {
+  if (skill.startsWith("principle-")) return "model";
+
+  return invocations.get(skill);
 }
+
+const commandOnlyLine = "disable-model-invocation: true";
+
+const invocationLines: Record<Invocation, string[]> = {
+  user: [commandOnlyLine],
+  both: [],
+  model: ["user-invokable: false"],
+};
 
 function destination(upstreamPath: string) {
   if (skippedFiles.has(upstreamPath)) return undefined;
@@ -149,27 +181,77 @@ function directoryTarget(upstreamDirectory: string, files: Map<string, string>) 
   return undefined;
 }
 
-function rewriteFrontmatter(text: string, skill: string) {
-  const frontmatter = text.match(/^---\n([\s\S]*?)\n---\n/);
+const frontmatterPattern = /^---\n([\s\S]*?)\n---\n/;
+
+function editFrontmatter(text: string, edit: (lines: string[]) => string[]) {
+  const frontmatter = text.match(frontmatterPattern);
 
   if (frontmatter === null) return text;
 
-  const lines = frontmatter[1]
-    .split("\n")
-    .filter((line) => commandOnlySkills.has(skill) || line !== "disable-model-invocation: true");
-
-  if (skill === "unslop") {
-    const description = lines.indexOf("description: Cut AI tells from any writing.");
-    lines[description] =
-      "description: Cut AI tells from any writing. Use for any prose surface, your reply to the user included.";
-  }
-
-  if (hiddenFromCommands(skill)) {
-    const description = lines.findIndex((line) => line.startsWith("description:"));
-    lines.splice(description + 1, 0, "user-invokable: false");
-  }
+  const lines = edit(frontmatter[1].split("\n"));
 
   return `---\n${lines.join("\n")}\n---\n${text.slice(frontmatter[0].length)}`;
+}
+
+// Replaces both invocation lines with the ones `invocation` names, placed after the
+// description and any indented continuation lines it has.
+function withInvocation(lines: string[], invocation: Invocation) {
+  const kept = lines.filter((line) => !/^(?:disable-model-invocation|user-invokable):/.test(line));
+  let insertAt = kept.findIndex((line) => line.startsWith("description:")) + 1;
+
+  while (insertAt > 0 && insertAt < kept.length && /^\s/.test(kept[insertAt])) insertAt += 1;
+
+  kept.splice(insertAt, 0, ...invocationLines[invocation]);
+
+  return kept;
+}
+
+// A skill the table no longer classifies can only come from the previously synced tree;
+// it keeps upstream's lines.
+function rewriteFrontmatter(text: string, skill: string) {
+  return editFrontmatter(text, (lines) => {
+    const invocation = skillInvocation(skill);
+    const rewritten = invocation === undefined ? lines : withInvocation(lines, invocation);
+
+    if (skill === "unslop") {
+      const description = rewritten.indexOf("description: Cut AI tells from any writing.");
+      rewritten[description] =
+        "description: Cut AI tells from any writing. Use for any prose surface, your reply to the user included.";
+    }
+
+    return rewritten;
+  });
+}
+
+// Parses the new upstream tree's skills into their invocations, or names each skill the
+// table is missing.
+function classifySkills(pstack: string, files: Map<string, string>) {
+  const classified = new Map<string, Invocation>();
+  const missing: string[] = [];
+
+  for (const skill of portedSkills(files)) {
+    const invocation = skillInvocation(skill);
+
+    if (invocation !== undefined) {
+      classified.set(skill, invocation);
+      continue;
+    }
+
+    const upstream = readFileSync(join(pstack, "skills", skill, "SKILL.md"), "utf8");
+    const frontmatter = upstream.match(frontmatterPattern)?.[1].split("\n") ?? [];
+
+    const upstreamChoice = frontmatter.includes(commandOnlyLine)
+      ? "Upstream makes it command-only."
+      : "Upstream lets the model load it.";
+
+    missing.push(
+      `skills/${skill}: new upstream skill. Add it to \`invocations\` in agent/scripts/pstack-port.ts as "user", "both", or "model". ${upstreamChoice}`,
+    );
+  }
+
+  if (missing.length > 0) throw new Error(missing.join("\n"));
+
+  return classified;
 }
 
 function rewriteCommands(text: string, skills: Set<string>) {
@@ -247,15 +329,123 @@ function mergeFile(localPath: string, base: string, upstream: string) {
   }
 }
 
-function sync(pstack: string, previousPstack: string | undefined) {
-  const scratch = mkdtempSync(join(tmpdir(), "pstack-render-"));
+function writeLocal(localPath: string, text: string) {
+  mkdirSync(dirname(localPath), { recursive: true });
+  writeFileSync(localPath, text);
+}
+
+// The merge keeps a local SKILL.md's invocation lines as a local edit, so a skill moved to
+// another invocation in the table only changes here.
+function applyInvocations(classified: Map<string, Invocation>) {
+  for (const [skill, invocation] of classified) {
+    const localPath = join(agentDirectory, "skills", skill, "SKILL.md");
+    const local = readIfPresent(localPath);
+
+    if (local === undefined) continue;
+
+    const rewritten = editFrontmatter(local, (lines) => withInvocation(lines, invocation));
+
+    if (rewritten !== local) writeFileSync(localPath, rewritten);
+  }
+}
+
+function updateClone() {
+  const cacheHome = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
+  const clone = join(cacheHome, "pi-setup", "cursor-plugins");
+
+  if (existsSync(clone)) {
+    try {
+      execFileSync("git", ["-C", clone, "fetch", "--quiet", "origin"], {
+        stdio: ["ignore", "ignore", "inherit"],
+      });
+    } catch (error) {
+      throw new Error(`git fetch from ${upstreamRepository} into ${clone} failed`, {
+        cause: error,
+      });
+    }
+
+    return clone;
+  }
+
+  mkdirSync(dirname(clone), { recursive: true });
+
+  try {
+    execFileSync(
+      "git",
+      ["clone", "--quiet", "--filter=blob:none", "--no-checkout", upstreamRepository, clone],
+      { stdio: ["ignore", "ignore", "inherit"] },
+    );
+  } catch (error) {
+    throw new Error(`git clone of ${upstreamRepository} into ${clone} failed`, { cause: error });
+  }
+
+  return clone;
+}
+
+function resolveCommit(clone: string, ref: string) {
+  try {
+    return execFileSync("git", ["-C", clone, "rev-parse", "--verify", `${ref}^{commit}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+    }).trim();
+  } catch (error) {
+    throw new Error(`git rev-parse could not resolve ${ref} to a commit in ${clone}`, {
+      cause: error,
+    });
+  }
+}
+
+function archivePstack(clone: string, commit: string) {
+  try {
+    return execFileSync("git", ["-C", clone, "archive", "--format=tar", commit, "pstack"], {
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+  } catch (error) {
+    throw new Error(`git archive of pstack/ at ${commit} failed`, { cause: error });
+  }
+}
+
+function extractPstack(clone: string, commit: string, directory: string) {
+  const archive = archivePstack(clone, commit);
+  mkdirSync(directory, { recursive: true });
+
+  try {
+    execFileSync("tar", ["-x", "-C", directory], {
+      input: archive,
+      stdio: ["pipe", "ignore", "inherit"],
+    });
+  } catch (error) {
+    throw new Error(`tar could not extract pstack/ at ${commit} into ${directory}`, {
+      cause: error,
+    });
+  }
+
+  return join(directory, "pstack");
+}
+
+function sync(ref: string) {
+  const pinned = readFileSync(pinFile, "utf8").trim();
+  const clone = updateClone();
+  const commit = resolveCommit(clone, ref);
+
+  if (commit === pinned) {
+    console.log(`pstack is already at ${commit}.`);
+
+    return;
+  }
+
+  const scratch = mkdtempSync(join(tmpdir(), "pstack-sync-"));
   const report: string[] = [];
 
   try {
+    const basePstack = extractPstack(clone, pinned, join(scratch, "base-source"));
+    const upstreamPstack = extractPstack(clone, commit, join(scratch, "upstream-source"));
+    const classified = classifySkills(upstreamPstack, upstreamFiles(upstreamPstack));
     const upstreamDirectory = join(scratch, "upstream");
     const baseDirectory = join(scratch, "base");
-    const targets = render(pstack, upstreamDirectory);
-    const baseTargets = previousPstack === undefined ? [] : render(previousPstack, baseDirectory);
+    const targets = render(upstreamPstack, upstreamDirectory);
+    const baseTargets = render(basePstack, baseDirectory);
 
     for (const target of targets) {
       const localPath = join(agentDirectory, target);
@@ -263,11 +453,13 @@ function sync(pstack: string, previousPstack: string | undefined) {
       const local = readIfPresent(localPath);
       const base = readIfPresent(join(baseDirectory, target));
 
-      if (local === undefined && base !== undefined) {
+      if (local === undefined && base === undefined) {
+        writeLocal(localPath, upstream);
+        report.push(`added upstream: ${localPath}`);
+      } else if (local === undefined) {
         report.push(`kept deleted: ${localPath}`);
-      } else if (previousPstack === undefined || local === undefined || local === base) {
-        mkdirSync(dirname(localPath), { recursive: true });
-        writeFileSync(localPath, upstream);
+      } else if (local === base) {
+        writeLocal(localPath, upstream);
       } else if (mergeFile(localPath, base ?? "", upstream)) {
         report.push(`conflict: ${localPath}`);
       }
@@ -283,6 +475,16 @@ function sync(pstack: string, previousPstack: string | undefined) {
         report.push(`removed upstream, edited locally: ${localPath}`);
       }
     }
+
+    for (const upstreamPath of skippedFiles) {
+      const base = readIfPresent(join(basePstack, upstreamPath));
+
+      if (base !== readIfPresent(join(upstreamPstack, upstreamPath)))
+        report.push(`changed upstream, port by hand: ${upstreamPath}`);
+    }
+
+    applyInvocations(classified);
+    writeFileSync(pinFile, `${commit}\n`);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -343,15 +545,17 @@ function check() {
 
 const [command, ...args] = process.argv.slice(2);
 
-if (command === "render" && args.length === 2) {
-  render(args[0], args[1]);
-} else if (command === "sync" && (args.length === 1 || args.length === 2)) {
-  sync(args[0], args[1]);
-} else if (command === "check" && args.length === 0) {
-  check();
-} else {
-  console.error(
-    "usage: pstack-port.ts render <pstack-dir> <out-dir> | sync <pstack-dir> [<old-pstack-dir>] | check",
-  );
-  process.exitCode = 64;
+try {
+  if (command === "sync" && args.length <= 1) {
+    const [ref = "origin/main"] = args;
+    sync(ref);
+  } else if (command === "check" && args.length === 0) {
+    check();
+  } else {
+    console.error("usage: pstack-port.ts sync [<ref>] | check");
+    process.exitCode = 64;
+  }
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
 }

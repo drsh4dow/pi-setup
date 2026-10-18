@@ -7,8 +7,8 @@ description: Model-check the pi-subagent run lifecycle with TLA+, so that no pro
 
 `pi-subagent` runs a child Pi in a herdr pane. Four processes share one run directory: the launcher (`bin/pi-subagent.ts`), the pane child (`bin/pane-child.ts`), pi, and possibly a descendant Pi that an extension starts before pi's `session_start`. [`SubagentRun.tla`](SubagentRun.tla) models every order in which their steps and the kills can happen, and TLC checks all of them.
 
-- **Properties.** Once the launcher has exited, by any path including SIGKILL, the pane child, pi, and the descendant all exit too (`NoProcessOutlivesLauncher`). Once any kill arrives, the launcher exits (`KillEndsRun`).
-- **Harm.** A subagent that outlives its launcher keeps running its task, spending tokens and editing the worktree, after its parent thinks it is dead. A launcher that a kill does not end leaves its caller waiting forever.
+- **Properties.** Once the launcher has exited, by any path including SIGKILL, the pane child, pi, and the descendant all exit too (`NoProcessOutlivesLauncher`). Once any kill arrives, the launcher exits (`KillEndsRun`). Once all of them have exited, the run directory and the pane are gone (`NoRunLeftBehind`).
+- **Harm.** A subagent that outlives its launcher keeps running its task, spending tokens and editing the worktree, after its parent thinks it is dead. A launcher that a kill does not end leaves its caller waiting forever. A run directory left behind keeps `launch.json`, which holds the launcher's environment, and a pane left behind clutters the parent's workspace.
 
 ## Run the check
 
@@ -18,7 +18,7 @@ From the checkout root:
 .agents/skills/verify-subagent-run/scripts/check
 ```
 
-It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1.7.4 to `${XDG_CACHE_HOME:-~/.cache}/pi-setup/` and checks its sha256. A run takes about 20 s. `vp run verify` does not run it.
+It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1.7.4 to `${XDG_CACHE_HOME:-~/.cache}/pi-setup/` and checks its sha256. A run takes about 25 s. `vp run verify` does not run it.
 
 The script does three things:
 
@@ -65,10 +65,11 @@ The update is done when the check exits 0, or when it fails only on a finding yo
 - **Pi's progress.** Nothing else Pi does is assumed. It can stop at a startup prompt, work forever, or crash at any step.
 - **Kills.** SIGKILL ends a process at once. Each kill arrives at most once and at any moment. The kills are SIGTERM to the launcher (SIGINT and SIGHUP behave the same), SIGKILL to the launcher, an external close of the pane, and SIGKILL to the pane child.
 - **herdr.** Every herdr call succeeds. Once told to run the pane child in an open pane, herdr eventually starts it.
+- **Sweeps.** Some later sweep runs, because each `pi-subagent` run and each Pi that starts in herdr runs one. A sweep reads the launcher's pid from the run directory's name and the pane child's pid from `started`, so its reading can be stale when it acts.
 - **Time.** The 60 s session deadline is one boolean that turns true. Grace periods, poll intervals, and bg_kill's 2 s escalation are orderings only.
 - **Scope.** One run, one descendant at most, and no pid reuse. The comment on `launcherExit` in `pane-child.ts` argues against pid reuse.
 
-`SubagentRun.cfg` explores 80,499 distinct states to depth 30. The check leaves out what the launcher reports and its exit code, stderr forwarding, the `pi --print` fallback, input locking and dialogs, the sweep of abandoned panes, and `herdr-agent-state.ts`, which only reports pane state to herdr. It also leaves out cleanup of the run directory and the pane. A SIGKILL to the launcher after `openPane` and before herdr starts the pane child leaves both behind, including `launch.json`, which holds the launcher's environment.
+`SubagentRun.cfg` explores 112,283 distinct states to depth 30. The check leaves out what the launcher reports and its exit code, stderr forwarding, the `pi --print` fallback, input locking and dialogs, and `herdr-agent-state.ts`, which only reports pane state to herdr. It models a sweep only as it acts on this run's directory and pane.
 
 ## Known findings
 

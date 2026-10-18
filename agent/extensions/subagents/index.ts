@@ -17,8 +17,16 @@ import {
   Option,
   Schema,
 } from "effect";
-import { closeAbandonedPanes, herdr, platform } from "./herdr.ts";
-import { ChildResult, herdrCaller, type RunOutcome, runFiles } from "./launch.ts";
+import os from "node:os";
+import { herdr, platform, sweepAbandonedRuns } from "./herdr.ts";
+import {
+  checkRuntimeRoot,
+  ChildResult,
+  herdrCaller,
+  type RunOutcome,
+  runFiles,
+  runtimeRoot,
+} from "./launch.ts";
 
 const READ_ONLY_NOTICE = "Read-only subagent. Steer it from its parent.";
 
@@ -62,6 +70,7 @@ const herdrSession = Config.all({
   HERDR_ENV: Config.String("HERDR_ENV").pipe(Config.withDefault("")),
   HERDR_SOCKET_PATH: Config.String("HERDR_SOCKET_PATH").pipe(Config.withDefault("")),
   HERDR_PANE_ID: Config.String("HERDR_PANE_ID").pipe(Config.withDefault("")),
+  XDG_RUNTIME_DIR: Config.String("XDG_RUNTIME_DIR").pipe(Config.withDefault("")),
 });
 
 const encodeResult = Schema.encodeEffect(Schema.fromJsonString(ChildResult));
@@ -150,13 +159,22 @@ function stopChildrenInheritingRun() {
   delete process.env.PI_SUBAGENT_RUN;
 }
 
-function sweepFinishedRunPanes(pi: ExtensionAPI) {
+function sweepFinishedRuns(pi: ExtensionAPI) {
   const session = Effect.runSync(herdrSession.parse(ConfigProvider.fromEnv()));
 
   if (Option.isNone(herdrCaller(session))) return;
 
+  const root = runtimeRoot(session, os.tmpdir());
+  const uid = process.getuid?.() ?? -1;
+
   pi.on("session_start", () => {
-    Effect.runFork(closeAbandonedPanes().pipe(Effect.ignore, Effect.provide(platform)));
+    Effect.runFork(
+      checkRuntimeRoot(root, uid).pipe(
+        Effect.flatMap((checked) => sweepAbandonedRuns(checked, uid)),
+        Effect.ignore,
+        Effect.provide(platform),
+      ),
+    );
   });
 }
 
@@ -164,7 +182,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
   // Effect's default provider keeps the environment it saw first; this reads it as it is at load.
   const run = Effect.runSync(subagentRun.parse(ConfigProvider.fromEnv()));
 
-  if (Option.isNone(run.directory)) return sweepFinishedRunPanes(pi);
+  if (Option.isNone(run.directory)) return sweepFinishedRuns(pi);
 
   const files = runFiles(run.directory.value);
   const taskStartTimeout = Duration.fromInputUnsafe(options.taskStartTimeout ?? "30 seconds");

@@ -314,6 +314,17 @@ and leaves no process behind. The differences below are known and accepted.
 - **Missing session cwd and early exit 0.** With a `--session` file whose cwd
   no longer exists, the run fails after 60 s, where `pi --print` fails at once.
   A Pi that exits 0 before it reports makes the launcher exit 1.
+- **SIGKILL before the pane child starts.** A launcher killed by SIGKILL
+  after it creates its run directory and before the pane child starts leaves
+  the directory behind, with the launcher's environment in `launch.json`. It
+  can also leave a pane with only a shell in it. The next `pi-subagent` run,
+  or the next Pi that starts in Herdr, removes the directory and closes the
+  pane.
+- **Pids in the sweep.** The sweep keeps a run directory while a process has
+  the launcher's pid or the pane child's pid. When an unrelated process reuses
+  that pid, the directory stays until that process exits. A launcher in another
+  pid namespace that shares the runtime directory has a pid that means nothing
+  here, so a sweep can remove its live run's directory.
 - **SIGINT.** The launcher exits 130 on SIGINT, where `pi --print` dies by the
   signal. A caller that inspects the wait status sees the difference.
 

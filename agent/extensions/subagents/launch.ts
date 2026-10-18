@@ -1,5 +1,5 @@
 import type { Args } from "@earendil-works/pi-coding-agent";
-import { Effect, Option, Schema } from "effect";
+import { Brand, Data, Effect, FileSystem, Option, Schema } from "effect";
 
 export const PaneId = Schema.NonEmptyString.pipe(Schema.brand("PaneId"));
 
@@ -147,14 +147,64 @@ export function runtimeRoot(env: Environment, temporaryDirectory: string): strin
   return configured;
 }
 
-export const RUN_DIRECTORY_PREFIX = "pi-subagent-";
+/** A runtime root where no other user can rename or replace this user's entries. */
+export type RuntimeRoot = Brand.Branded<string, "RuntimeRoot">;
+
+const RuntimeRoot = Brand.nominal<RuntimeRoot>();
+
+class UnsafeRuntimeRoot extends Data.TaggedError("UnsafeRuntimeRoot")<{
+  readonly root: string;
+}> {
+  override get message(): string {
+    return `${this.root} lets other users rename entries in it, so it cannot hold a run directory. Set XDG_RUNTIME_DIR.`;
+  }
+}
+
+export const checkRuntimeRoot = Effect.fn("checkRuntimeRoot")(function* (
+  root: string,
+  uid: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(root);
+  const owner = Option.getOrElse(info.uid, () => -1);
+  const othersMayWrite = (info.mode & 0o022) !== 0;
+  const sticky = (info.mode & 0o1000) !== 0;
+
+  if (info.type !== "Directory" || (owner !== uid && owner !== 0) || (othersMayWrite && !sticky)) {
+    return yield* new UnsafeRuntimeRoot({ root });
+  }
+
+  return RuntimeRoot(root);
+});
+
+export function runDirectoryPrefix(launcherPid: number): string {
+  return `pi-subagent-${launcherPid}-`;
+}
 
 // Herdr reads a live pane's cwd from /proc/<pid>/cwd, where Linux marks a removed directory.
-const RUN_DIRECTORY_NAME = /\/pi-subagent-[A-Za-z0-9]{6}( \(deleted\))?$/;
+// Herdr can restore a pane whose run directory an older launcher named without the pid.
+const RUN_DIRECTORY_NAME = /\/pi-subagent-(?:(\d+)-)?[A-Za-z0-9]{6}( \(deleted\))?$/;
 
-export function isRunDirectory(path: string): boolean {
-  return RUN_DIRECTORY_NAME.test(path);
+type RunDirectoryName = { readonly launcherPid: Option.Option<number> };
+
+export function parseRunDirectoryName(path: string): Option.Option<RunDirectoryName> {
+  const match = RUN_DIRECTORY_NAME.exec(path);
+
+  if (match === null) return Option.none();
+
+  const launcherPid =
+    match[1] === undefined ? Option.none<number>() : Option.some(Number(match[1]));
+
+  return Option.some({ launcherPid });
 }
+
+const Integer = Schema.NumberFromString.check(Schema.isInt());
+
+export const readInteger = Effect.fn("readInteger")(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+
+  return yield* fs.readFileString(path).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Integer)));
+});
 
 function utf8SequenceLength(leadByte: number): number {
   if (leadByte >= 0xf0) return 4;

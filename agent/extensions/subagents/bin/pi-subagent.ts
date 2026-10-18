@@ -16,10 +16,11 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { CommandInput } from "effect/process/ChildProcess";
-import { closeAbandonedPanes, herdr, platform } from "../herdr.ts";
+import { herdr, platform, sweepAbandonedRuns } from "../herdr.ts";
 import { isAlive, stopProcessGroup } from "../process-group.ts";
 import { runPaneChild } from "./pane-child.ts";
 import {
+  checkRuntimeRoot,
   ChildLaunch,
   ChildResult,
   type Environment,
@@ -32,9 +33,11 @@ import {
   type Placement,
   placementFor,
   printOnlyReason,
-  RUN_DIRECTORY_PREFIX,
+  readInteger,
+  runDirectoryPrefix,
   type RunOutcome,
   runFiles,
+  type RuntimeRoot,
   runtimeRoot,
   subagentName,
   TabId,
@@ -62,12 +65,6 @@ interface Invocation {
 
 class UsageError extends Data.TaggedError("UsageError")<{ readonly message: string }> {}
 
-class UnsafeRuntimeRoot extends Data.TaggedError("UnsafeRuntimeRoot")<{ readonly root: string }> {
-  override get message(): string {
-    return `${this.root} lets other users rename entries in it, so it cannot hold a run directory. Set XDG_RUNTIME_DIR.`;
-  }
-}
-
 class StdioError extends Data.TaggedError("StdioError")<{ readonly cause: Error }> {
   override get message(): string {
     return `could not write the report: ${this.cause.message}`;
@@ -86,8 +83,6 @@ const TabCreateResponse = Schema.Struct({
 const PaneSplitResponse = Schema.Struct({
   result: Schema.Struct({ pane: Schema.Struct({ pane_id: PaneId }) }),
 });
-
-const Integer = Schema.NumberFromString.check(Schema.isInt());
 
 const decodeJson = <S extends Schema.Decoder<unknown>>(schema: S) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(schema));
@@ -145,12 +140,17 @@ const closePanesOpenedIn = Effect.fn("closePanesOpenedIn")(
   Effect.catch((error) => log(`could not look for stray panes: ${error.message}`)),
 );
 
-const closePanesOfFinishedRuns = closeAbandonedPanes().pipe(
-  Effect.flatMap((closed) =>
-    Effect.forEach(closed, (pane) => log(`closed pane ${pane}, left by a finished run`)),
-  ),
-  Effect.catch((error) => log(`could not look for panes of finished runs: ${error.message}`)),
-);
+const sweepFinishedRuns = (root: RuntimeRoot, uid: number) =>
+  sweepAbandonedRuns(root, uid).pipe(
+    Effect.flatMap(({ removed, failed, closed }) =>
+      Effect.all([
+        Effect.forEach(removed, (run) => log(`removed ${run}, left by a killed launcher`)),
+        Effect.forEach(failed, (error) => log(error.message)),
+        Effect.forEach(closed, (pane) => log(`closed pane ${pane}, left by a finished run`)),
+      ]),
+    ),
+    Effect.catch((error) => log(`could not look for finished runs: ${error.message}`)),
+  );
 
 const createTab = Effect.fn("createTab")(function* (
   workspace: WorkspaceId,
@@ -222,12 +222,6 @@ const labelPane = Effect.fn("labelPane")(function* (pane: PaneId, label: string)
   ]).pipe(Effect.catch((error) => log(`could not label pane ${pane}: ${error.message}`)));
 });
 
-const readInteger = Effect.fn("readInteger")(function* (path: string) {
-  const fs = yield* FileSystem.FileSystem;
-
-  return yield* fs.readFileString(path).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Integer)));
-});
-
 const stopPiGroup = Effect.fn("stopPiGroup")(
   function* (files: RunFiles) {
     const fs = yield* FileSystem.FileSystem;
@@ -260,20 +254,6 @@ const closePane = Effect.fn("closePane")(function* (child: ChildPane) {
     ),
     Effect.catch((error) => log(`could not close ${described}: ${error.message}`)),
   );
-});
-
-const checkRuntimeRoot = Effect.fn("checkRuntimeRoot")(function* (root: string, uid: number) {
-  const fs = yield* FileSystem.FileSystem;
-  const info = yield* fs.stat(root);
-  const owner = Option.getOrElse(info.uid, () => -1);
-  const othersMayWrite = (info.mode & 0o022) !== 0;
-  const sticky = (info.mode & 0o1000) !== 0;
-
-  if (info.type !== "Directory" || (owner !== uid && owner !== 0) || (othersMayWrite && !sticky)) {
-    return yield* new UnsafeRuntimeRoot({ root });
-  }
-
-  return root;
 });
 
 const observeChild = Effect.fn("observeChild")(function* (files: RunFiles, deadline: number) {
@@ -392,8 +372,9 @@ const runInPane = Effect.fn("runInPane")(function* (
   task: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const root = yield* checkRuntimeRoot(invocation.runtimeRoot, invocation.uid);
 
-  yield* closePanesOfFinishedRuns;
+  yield* sweepFinishedRuns(root, invocation.uid);
 
   const caller = yield* herdr(["pane", "get", mode.pane]).pipe(
     Effect.flatMap(decodeJson(PaneGetResponse)),
@@ -407,11 +388,9 @@ const runInPane = Effect.fn("runInPane")(function* (
     depth: mode.depth,
   });
 
-  const root = yield* checkRuntimeRoot(invocation.runtimeRoot, invocation.uid);
-
   const runDirectory = yield* fs.makeTempDirectory({
     directory: root,
-    prefix: RUN_DIRECTORY_PREFIX,
+    prefix: runDirectoryPrefix(invocation.pid),
   });
 
   const files = runFiles(runDirectory);

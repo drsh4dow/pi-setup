@@ -518,10 +518,18 @@ diagnostic-enforcement, and behavioral checks. Its tasks live in
 provider credentials and run separately with `vp run test:e2e`.
 
 `agent/scripts/verify-skills.ts` checks the skill packages under
-`agent/skills/` and `.agents/skills/`. It fails when a file under a skill's
-`scripts/` directory starts with `#!` but is not executable, either in the git
-index or on disk, and names the `chmod +x <path> && git add <path>` command that
-fixes it.
+`agent/skills/` and `.agents/skills/`. It loads them with Pi's own
+`DefaultResourceLoader`, the loader a session in this checkout uses, so it sees
+the same skills, including untracked and nested ones and each tree's layout
+rules. It fails on every diagnostic Pi reports, for example frontmatter that is
+not valid YAML, an empty description, or two skills with the same name. It also
+fails when a skill's `name` differs from its directory name, and when Pi loads
+no skill at all. For every skill Pi loads, it fails when a file under the
+skill's `scripts/` directory starts with `#!` but is not executable, either in
+the git index or on disk, and names the `chmod +x <path> && git add <path>`
+command that fixes it. The check ignores settings, including the packages that
+settings install, so the untracked `agent/settings.json` cannot change its
+result. It also ignores `~/.agents/skills/` and does not load extensions.
 
 `.agents/skills/verify-subagent-run/scripts/check` model-checks the subagent
 run lifecycle with TLA+. It needs Java 11 or newer and downloads TLC once, so

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, suite, test } from "node:test";
@@ -17,7 +17,10 @@ printf '%s\\n' "$*" >> "$FAKE_ROOT/herdr.log"
 case "$1 $2" in
   "pane get") echo '{"result":{"pane":{"pane_id":"w1:p1","workspace_id":"w1"}}}' ;;
   "pane list") cat "$FAKE_ROOT/panes.json" 2>/dev/null || echo '{"result":{"panes":[]}}' ;;
-  "pane close"|"pane report-metadata") echo '{"result":{}}' ;;
+  "pane close") echo '{"result":{}}' ;;
+  "pane report-metadata")
+    if [ -n "$FAKE_KILL_ON_LABEL" ]; then kill -KILL "$PPID"; fi
+    echo '{"result":{}}' ;;
   "tab create") echo '{"result":{"tab":{"tab_id":"w1:t9"},"root_pane":{"pane_id":"w1:p9"}}}' ;;
   "pane run")
     setsid bash -c "$4; exec sleep 600" </dev/null >/dev/null 2>&1 &
@@ -477,7 +480,7 @@ suite("pi-subagent launcher", () => {
 
   test("closes panes that herdr restored for finished runs, and only those", async () => {
     const herdr = await fakeHerdr("report");
-    const live = await mkdtemp(path.join(herdr.runtime, "pi-subagent-"));
+    const live = await mkdtemp(path.join(herdr.runtime, `pi-subagent-${process.pid}-`));
 
     await herdr.writeOutcome({ kind: "completed", report: "" });
     await writeFile(
@@ -485,9 +488,10 @@ suite("pi-subagent launcher", () => {
       JSON.stringify({
         result: {
           panes: [
-            { pane_id: "w1:p5", cwd: path.join(herdr.runtime, "pi-subagent-Ab12Cd") },
+            { pane_id: "w1:p5", cwd: path.join(herdr.runtime, "pi-subagent-1-Ab12Cd") },
             { pane_id: "w1:p6", cwd: live },
             { pane_id: "w1:p7", cwd: herdr.root },
+            { pane_id: "w1:p4", cwd: path.join(herdr.runtime, "pi-subagent-Xy34Zw") },
           ],
         },
       }),
@@ -498,8 +502,75 @@ suite("pi-subagent launcher", () => {
 
     assert.equal(code, 0, stderr.toString());
     assert.ok(calls.includes("pane close w1:p5"), "the finished run's pane is closed");
+    assert.ok(calls.includes("pane close w1:p4"), "an old-format run's pane is closed");
     assert.ok(!calls.includes("pane close w1:p6"), "a live run's pane stays");
     assert.ok(!calls.includes("pane close w1:p7"), "other panes stay");
+  });
+
+  test("the next run removes what a launcher killed before its pane child started left behind", async () => {
+    const herdr = await fakeHerdr("report");
+
+    await herdr.writeOutcome({ kind: "completed", report: "" });
+    await herdr.launch({ env: { FAKE_KILL_ON_LABEL: "1" } }).result();
+
+    const [orphaned] = await readdir(herdr.runtime);
+
+    assert.ok(orphaned !== undefined, "the killed launcher left its run directory");
+    await writeFile(
+      path.join(herdr.root, "panes.json"),
+      JSON.stringify({
+        result: { panes: [{ pane_id: "w1:p9", cwd: path.join(herdr.runtime, orphaned) }] },
+      }),
+    );
+
+    const { code, stderr } = await herdr.launch().result();
+
+    assert.equal(code, 0, stderr.toString());
+    assert.deepEqual(await readdir(herdr.runtime), [], "the run directory is removed");
+    assert.ok((await herdr.herdrCalls()).includes("pane close w1:p9"), "the pane is closed");
+  });
+
+  test("the sweep removes only private directories of this user, and reports what it could not remove", async (t) => {
+    const herdr = await fakeHerdr("report");
+    const deadLauncher = spawnSync("true").pid;
+
+    const run = (suffix: string) =>
+      path.join(herdr.runtime, `pi-subagent-${deadLauncher}-${suffix}`);
+
+    const target = path.join(herdr.root, "target");
+    const locked = path.join(run("Fail12"), "locked");
+
+    await Promise.all([
+      mkdir(target),
+      mkdir(run("Open12"), { mode: 0o755 }),
+      mkdir(locked, { recursive: true, mode: 0o700 }),
+    ]);
+    await Promise.all([symlink(target, run("Link12")), writeFile(path.join(locked, "file"), "")]);
+    await chmod(locked, 0o500);
+    t.after(() => chmod(locked, 0o700));
+    await herdr.writeOutcome({ kind: "completed", report: "" });
+
+    const { code, stderr } = await herdr.launch().result();
+
+    assert.equal(code, 0, stderr.toString());
+    assert.ok(existsSync(run("Open12")), "a directory others can read stays");
+    assert.ok(existsSync(run("Link12")), "a symlink stays");
+    assert.ok(existsSync(target), "a symlink's target stays");
+    assert.match(stderr.toString(), new RegExp(`could not remove ${run("Fail12")}`));
+  });
+
+  test("an unsafe runtime root fails the run before any sweep", async () => {
+    const herdr = await fakeHerdr("report");
+    const abandoned = path.join(herdr.runtime, `pi-subagent-${spawnSync("true").pid}-Ab12Cd`);
+
+    await mkdir(abandoned, { mode: 0o700 });
+    await chmod(herdr.runtime, 0o777);
+
+    const { code, stderr } = await herdr.launch().result();
+
+    assert.notEqual(code, 0);
+    assert.match(stderr.toString(), /lets other users rename entries in it/);
+    assert.ok(existsSync(abandoned), "the sweep did not run");
   });
 
   test("closes a live pane whose run directory was removed", async () => {
@@ -513,7 +584,7 @@ suite("pi-subagent launcher", () => {
           panes: [
             {
               pane_id: "w1:p8",
-              cwd: `${path.join(herdr.runtime, "pi-subagent-Ef56Gh")} (deleted)`,
+              cwd: `${path.join(herdr.runtime, "pi-subagent-1-Ef56Gh")} (deleted)`,
             },
           ],
         },

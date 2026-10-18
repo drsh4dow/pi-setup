@@ -1,13 +1,11 @@
-import { Console, Effect, FileSystem, Fiber, Schema, Stream } from "effect";
+import { Cause, Console, Effect, FileSystem, Fiber, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { ChildLaunch, childEnv, type Environment, runFiles, stderrRecorder } from "../launch.ts";
-import { isAlive, stopProcessGroup } from "../process-group.ts";
+import { isAlive, stopProcessGroup, TERM_GRACE } from "../process-group.ts";
 
 const FORWARDED_STDERR_LIMIT_BYTES = 64 * 1024;
 
 const LAUNCHER_POLL_INTERVAL = "200 millis";
-
-type PiEnd = { readonly kind: "exited"; readonly exitCode: number } | { readonly kind: "orphaned" };
 
 const decodeLaunch = Schema.decodeUnknownEffect(Schema.fromJsonString(ChildLaunch));
 
@@ -47,6 +45,19 @@ const abandonRun = Effect.fn("abandonRun")(function* (runDirectory: string) {
   );
 }, Effect.uninterruptible);
 
+/**
+ * A signal interrupts runPi, and its release of pi waits for pi's graceful shutdown. Forked before pi
+ * spawns, the watch is interrupted only after that release. It then looks at the launcher once more,
+ * because a descendant left in the group gets only the kernel's SIGHUP once this process exits.
+ */
+const watchLauncher = (launcherPid: number, runDirectory: string) =>
+  launcherExit(launcherPid).pipe(
+    Effect.andThen(abandonRun(runDirectory)),
+    Effect.onInterrupt(() => (isAlive(launcherPid) ? Effect.void : abandonRun(runDirectory))),
+    Effect.catchCause((cause) => Console.error(`pi-subagent: ${Cause.pretty(cause)}`)),
+    Effect.forkScoped,
+  );
+
 const runPi = Effect.fn("runPi")(function* (runDirectory: string, paneEnv: Environment) {
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -55,6 +66,7 @@ const runPi = Effect.fn("runPi")(function* (runDirectory: string, paneEnv: Envir
   const launch = yield* fs.readFileString(files.launch).pipe(Effect.flatMap(decodeLaunch));
 
   yield* fs.remove(files.launch);
+  yield* watchLauncher(launch.launcherPid, runDirectory);
 
   const handle = yield* spawner.spawn(
     ChildProcess.make("pi", launch.args, {
@@ -65,6 +77,9 @@ const runPi = Effect.fn("runPi")(function* (runDirectory: string, paneEnv: Envir
       stderr: "pipe",
       // The TUI must stay in the pane's foreground process group to read the terminal.
       detached: false,
+      // After herdr closes the pane the launcher only waits on this process, so a pi whose
+      // shutdown hangs needs this SIGKILL.
+      forceKillAfter: TERM_GRACE,
     }),
   );
 
@@ -81,17 +96,12 @@ const runPi = Effect.fn("runPi")(function* (runDirectory: string, paneEnv: Envir
     Effect.forkScoped,
   );
 
-  const end = yield* Effect.raceFirst(
-    handle.exitCode.pipe(Effect.map((exitCode): PiEnd => ({ kind: "exited", exitCode }))),
-    launcherExit(launch.launcherPid).pipe(Effect.as<PiEnd>({ kind: "orphaned" })),
-  );
-
-  if (end.kind === "orphaned") return yield* abandonRun(runDirectory);
+  const exitCode = yield* handle.exitCode;
 
   // A process pi left behind can hold the stderr pipe open.
   yield* Fiber.join(copying).pipe(Effect.timeout("1 second"), Effect.ignore);
 
-  return end.exitCode;
+  return exitCode;
 }, Effect.scoped);
 
 export const runPaneChild = Effect.fn("runPaneChild")(function* (

@@ -7,8 +7,8 @@ description: Model-check the pi-subagent run lifecycle with TLA+, so that no pro
 
 `pi-subagent` runs a child Pi in a herdr pane. Four processes share one run directory: the launcher (`bin/pi-subagent.ts`), the pane child (`bin/pane-child.ts`), pi, and possibly a descendant Pi that an extension starts before pi's `session_start`. [`SubagentRun.tla`](SubagentRun.tla) models every order in which their steps and the kills can happen, and TLC checks all of them.
 
-- **Property.** Once the launcher has exited, by any path including SIGKILL, the pane child, pi, and the descendant all exit too.
-- **Harm.** A subagent that outlives its launcher keeps running its task, spending tokens and editing the worktree, after its parent thinks it is dead.
+- **Properties.** Once the launcher has exited, by any path including SIGKILL, the pane child, pi, and the descendant all exit too (`NoProcessOutlivesLauncher`). Once any kill arrives, the launcher exits (`KillEndsRun`).
+- **Harm.** A subagent that outlives its launcher keeps running its task, spending tokens and editing the worktree, after its parent thinks it is dead. A launcher that a kill does not end leaves its caller waiting forever.
 
 ## Run the check
 
@@ -18,13 +18,13 @@ From the checkout root:
 .agents/skills/verify-subagent-run/scripts/check
 ```
 
-It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1.7.4 to `${XDG_CACHE_HOME:-~/.cache}/pi-setup/` and checks its sha256. A run takes about 6 s. `vp run verify` does not run it.
+It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1.7.4 to `${XDG_CACHE_HOME:-~/.cache}/pi-setup/` and checks its sha256. A run takes about 20 s. `vp run verify` does not run it.
 
 The script does three things:
 
 1. It checks that every `\* code:` citation in the spec still matches its file. A citation names a file, a function, and a line copied from the code.
-2. It runs [`SubagentRun.cfg`](SubagentRun.cfg), the main model, which must hold.
-3. It runs [`ShutdownHangs.cfg`](ShutdownHangs.cfg), which reproduces a known finding and must be violated. See [Known findings](#known-findings).
+2. It runs [`SubagentRun.cfg`](SubagentRun.cfg), the main model, and [`ShutdownHangs.cfg`](ShutdownHangs.cfg), which lets pi's graceful shutdown hang. Both must hold.
+3. It runs [`DescendantShutdownHangs.cfg`](DescendantShutdownHangs.cfg), which reproduces a known finding and must be violated. See [Known findings](#known-findings).
 
 Exit 0 means every citation is current and each model matched the `\* expect:` line at the top of its config. For a violated model, the script prints the counterexample as numbered steps. Each step names the action, the file and function it models, and the variables that changed. The full TLC output is in `${TMPDIR:-/tmp}/verify-subagent-run/`.
 
@@ -51,33 +51,34 @@ The update is done when the check exits 0, or when it fails only on a finding yo
 - **`stale citation`.** The cited line changed. Open the action above the citation and compare it with the new code. If the behavior is the same, copy the new line into the citation. If the behavior changed, update the action first.
 - **`model error (TypeOK)`.** The spec gives a variable a value outside its type. Fix the spec.
 - **`TLC error`.** TLC could not parse or evaluate the spec. The script prints the error lines.
-- **`SubagentRun.cfg: violated`.** Walk the counterexample and open the cited code for each step. Then classify it:
+- **`SubagentRun.cfg: violated` or `ShutdownHangs.cfg: violated`.** Walk the counterexample and open the cited code for each step. Then classify it:
   - **Modeling error.** A step does something the code cannot do, such as reading a file the code reads later. Fix that action to match the code.
   - **Timing artifact.** The model has no clock, so a trace can need a step to finish faster than the code can. An example is pi registering its signal handlers microseconds after it spawns. Report the durations involved instead of calling it a bug.
   - **Real bug.** Every step is possible in the code, in that order. Report it as steps in the code's terms, such as "the launcher reads no `started`, then the pane child writes `started`".
-- **`ShutdownHangs.cfg: holds`.** The known finding no longer reproduces. Confirm which change fixed it, then update [Known findings](#known-findings) and the config's `\* expect:` line.
+- **`DescendantShutdownHangs.cfg: holds`.** The known finding no longer reproduces. Confirm which change fixed it, then update [Known findings](#known-findings) and the config's `\* expect:` line.
 
 ## What the model assumes
 
 - **Process group.** Pi and the descendant stay in the pane child's process group, the group whose id is in `started`. A process that leaves it, such as a background terminal's job, is outside the model.
 - **Hangups.** The pane child is the controlling process of the pane's terminal. Closing the pane sends it SIGHUP. When it exits, the kernel sends SIGHUP to the group and herdr removes the pane.
-- **Pi's signals.** Before `InteractiveMode.init` registers its handlers, SIGTERM or SIGHUP ends Pi. After that, either signal starts a graceful shutdown. `SubagentRun.cfg` assumes every graceful shutdown finishes. `ShutdownHangs.cfg` lets one never finish.
+- **Pi's signals.** Before `InteractiveMode.init` registers its handlers, SIGTERM or SIGHUP ends Pi. After that, either signal starts a graceful shutdown. `SubagentRun.cfg` assumes every graceful shutdown finishes. `ShutdownHangs.cfg` and `DescendantShutdownHangs.cfg` let one never finish.
 - **Pi's progress.** Nothing else Pi does is assumed. It can stop at a startup prompt, work forever, or crash at any step.
 - **Kills.** SIGKILL ends a process at once. Each kill arrives at most once and at any moment. The kills are SIGTERM to the launcher (SIGINT and SIGHUP behave the same), SIGKILL to the launcher, an external close of the pane, and SIGKILL to the pane child.
 - **herdr.** Every herdr call succeeds. Once told to run the pane child in an open pane, herdr eventually starts it.
 - **Time.** The 60 s session deadline is one boolean that turns true. Grace periods, poll intervals, and bg_kill's 2 s escalation are orderings only.
 - **Scope.** One run, one descendant at most, and no pid reuse. The comment on `launcherExit` in `pane-child.ts` argues against pid reuse.
 
-`SubagentRun.cfg` explores 62,310 distinct states to depth 29. The check leaves out what the launcher reports and its exit code, stderr forwarding, the `pi --print` fallback, input locking and dialogs, the sweep of abandoned panes, and `herdr-agent-state.ts`, which only reports pane state to herdr. It also leaves out cleanup of the run directory and the pane. A SIGKILL to the launcher after `openPane` and before herdr starts the pane child leaves both behind, including `launch.json`, which holds the launcher's environment.
+`SubagentRun.cfg` explores 80,499 distinct states to depth 30. The check leaves out what the launcher reports and its exit code, stderr forwarding, the `pi --print` fallback, input locking and dialogs, the sweep of abandoned panes, and `herdr-agent-state.ts`, which only reports pane state to herdr. It also leaves out cleanup of the run directory and the pane. A SIGKILL to the launcher after `openPane` and before herdr starts the pane child leaves both behind, including `launch.json`, which holds the launcher's environment.
 
 ## Known findings
 
-`ShutdownHangs.cfg` shows pi outliving the launcher when pi's graceful shutdown never ends. A `session_shutdown` handler that never returns makes that happen, because Pi awaits `runtimeHost.dispose()` with no timeout. The script prints this trace:
+`DescendantShutdownHangs.cfg` shows a descendant outliving the launcher when the descendant's graceful shutdown never ends. A `session_shutdown` handler that never returns makes that happen, because Pi awaits `runtimeHost.dispose()` with no timeout. The script prints one trace. Every trace has these steps:
 
-1. The launcher gets SIGTERM. Its release finds `started` and sends SIGTERM to pi's process group.
-2. Pi starts a graceful shutdown that never ends. The pane child's SIGTERM handler interrupts `runPi`, which stops the race with `launcherExit`.
-3. The interrupted scope releases pi. Effect's spawner sends SIGTERM to pi alone and then waits for pi to exit, without a SIGKILL, because the spawn sets no `forceKillAfter`.
-4. The launcher gets SIGKILL during its 1.5 s `TERM_GRACE`, before it sends SIGKILL to the group.
-5. Nothing is left to send SIGKILL. Pi and the pane child run on, and the run directory and the pane stay.
+1. The pane child leaves `runPi`, because pi exited or a signal interrupted it. That ends `watchLauncher`, the fiber that polls the launcher's pid, and its last look finds the launcher alive.
+2. The launcher exits without stopping pi's process group. SIGKILL ends it, or its release ran before the pane child wrote `started`.
+3. The pane child exits. The kernel sends SIGHUP to the group, and the descendant starts a graceful shutdown that never ends.
+4. Nothing is left to send SIGKILL, so the descendant runs on.
 
-bg_kill sends SIGKILL 2 s after SIGTERM, so step 4 needs the launcher to take more than 0.5 s to reach its group SIGTERM. A shorter escalation, such as `timeout -k 1`, makes it likelier. With `DescendantStarts = TRUE`, the same hang has a second path. When pi exits while the launcher is already dead, the pane child exits without stopping the group, and a descendant gets only the kernel's SIGHUP.
+The launcher's release waits `EXITED_PI_GROUP_GRACE` (1 s) and then `TERM_GRACE` (1.5 s) before its SIGKILL, so bg_kill's SIGKILL 2 s after SIGTERM can land in step 2. Closing the gap would need the pane child to outlive every other process in its group. `kill(-group, 0)` cannot show whether the group holds any other process, because the pane child is in it.
+
+`ShutdownHangs.cfg` was violated until `watchLauncher` outlasted the release of pi and the spawn of pi set `forceKillAfter`. Before that, a SIGTERM to the launcher reached the pane child through the group and interrupted `runPi`, which also ended the watch. The release then waited for pi without a limit, so a SIGKILL to the launcher during its `TERM_GRACE` left pi and the pane child running. When herdr closed the pane while pi's shutdown hung, the pane child waited for pi and the launcher polled forever. `KillEndsRun` catches that path.

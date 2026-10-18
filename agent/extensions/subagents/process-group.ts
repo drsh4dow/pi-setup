@@ -1,6 +1,6 @@
 import { Data, type Duration, Effect, Option } from "effect";
 
-const TERM_GRACE = "1500 millis";
+export const TERM_GRACE = "1500 millis";
 
 const KILL_GRACE = "250 millis";
 

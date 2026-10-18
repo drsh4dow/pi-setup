@@ -54,6 +54,10 @@ case "$FAKE_PI" in
     trap '' TERM HUP
     touch "$PI_SUBAGENT_RUN/claim"
     exec sleep 60 ;;
+  hangsOnShutdown)
+    trap 'touch "$FAKE_ROOT/shutting-down"' TERM HUP
+    touch "$PI_SUBAGENT_RUN/claim"
+    while :; do sleep 0.05; done ;;
   orphan) kill -KILL "$PPID"; exec sleep 60 ;;
   noisy)
     for i in $(seq 1 4000); do printf 'ünïcødé line %05d ✓✓✓\\n' "$i"; done >&2
@@ -69,6 +73,7 @@ type FakePi =
   | "report"
   | "hang"
   | "stubborn"
+  | "hangsOnShutdown"
   | "orphan"
   | "noisy"
   | "failsAfterReport"
@@ -316,6 +321,51 @@ suite("pi-subagent launcher", () => {
       "the run directory is removed",
     );
     assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
+  });
+
+  test("a SIGKILL to the launcher during its SIGTERM grace stops a pi whose shutdown hangs", async () => {
+    const herdr = await fakeHerdr("hangsOnShutdown");
+    const run = herdr.launch();
+
+    await herdr.waitForHangingPi();
+
+    const [pi, pane] = await Promise.all([herdr.piPid(), herdr.panePid()]);
+
+    run.child.kill("SIGTERM");
+    assert.ok(
+      await until(() => existsSync(path.join(herdr.root, "shutting-down")), 2000),
+      "pi got SIGTERM",
+    );
+    run.child.kill("SIGKILL");
+    await run.result();
+
+    assert.ok(await until(() => !isAlive(pi), 5000), "pi is stopped");
+    assert.ok(
+      await until(async () => (await readdir(herdr.runtime)).length === 0, 5000),
+      "the run directory is removed",
+    );
+    assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
+  });
+
+  test("closing the pane stops a pi whose shutdown hangs, and the launcher exits", async () => {
+    const herdr = await fakeHerdr("hangsOnShutdown");
+    const run = herdr.launch();
+
+    await herdr.waitForHangingPi();
+
+    const [pi, pane] = await Promise.all([herdr.piPid(), herdr.panePid()]);
+
+    process.kill(pane, "SIGHUP");
+
+    const ended = await Promise.race([
+      run.result().then(() => true),
+      delay(10_000).then(() => false),
+    ]);
+
+    if (!ended) run.child.kill("SIGKILL");
+
+    assert.ok(ended, "the launcher exits");
+    assert.equal(isAlive(pi), false, "pi is stopped");
   });
 
   test("a SIGKILL to the launcher's group stops a pi that ignores SIGTERM, and removes the run directory", async () => {

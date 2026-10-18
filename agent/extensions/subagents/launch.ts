@@ -177,6 +177,12 @@ export const checkRuntimeRoot = Effect.fn("checkRuntimeRoot")(function* (
   return RuntimeRoot(root);
 });
 
+export const RUN_FLAG = "subagent-run";
+
+export function runFlag(runDirectory: string): string {
+  return `--${RUN_FLAG}=${runDirectory}`;
+}
+
 export function runDirectoryPrefix(launcherPid: number): string {
   return `pi-subagent-${launcherPid}-`;
 }

@@ -16,7 +16,7 @@ import type {
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import { Schema } from "effect";
 import extension, { type SubagentChildOptions } from "../index.ts";
-import { ChildResult } from "../launch.ts";
+import { ChildResult, runFlag } from "../launch.ts";
 import { extensionTestAdapter, unsafeFixture } from "../../test/adapter.ts";
 
 type AgentMessage = AgentEndEvent["messages"][number];
@@ -58,7 +58,7 @@ interface ChildFixture {
   readonly withoutModel?: boolean;
   readonly withoutAuth?: boolean;
   readonly uncataloguedModel?: boolean;
-  readonly claimedElsewhere?: boolean;
+  readonly descendant?: boolean;
 }
 
 const baseProvider = unsafeFixture<AutocompleteProvider>({});
@@ -69,7 +69,7 @@ async function startChild({
   withoutModel = false,
   withoutAuth = false,
   uncataloguedModel = false,
-  claimedElsewhere = false,
+  descendant = false,
 }: ChildFixture = {}) {
   const runDirectory = await mkdtemp(path.join(os.tmpdir(), "pi-subagent-test-"));
   const outcomeFile = path.join(runDirectory, "outcome.json");
@@ -77,7 +77,7 @@ async function startChild({
   runDirectories.push(runDirectory);
   await writeFile(path.join(runDirectory, "task.md"), task);
 
-  if (claimedElsewhere) await writeFile(path.join(runDirectory, "claim"), "1");
+  const argv = descendant ? ["node", "pi"] : ["node", "pi", runFlag(runDirectory)];
 
   Object.assign(process.env, {
     PI_SUBAGENT_RUN: runDirectory,
@@ -96,6 +96,7 @@ async function startChild({
   extension(
     {
       ...adapter.api,
+      registerFlag() {},
       sendUserMessage(content) {
         sent.push(decodeText(content));
       },
@@ -119,7 +120,7 @@ async function startChild({
         }),
       ],
     },
-    options,
+    { ...options, argv },
   );
 
   const rebuildAutocomplete = () => {
@@ -378,9 +379,9 @@ suite("subagent child", () => {
 
     assert.deepEqual(await claimed.emit("project_trust", event, claimed.ctx), { trusted: "no" });
 
-    const elsewhere = await startChild({ claimedElsewhere: true });
+    const descendant = await startChild({ descendant: true });
 
-    assert.deepEqual(await elsewhere.emit("project_trust", event, elsewhere.ctx), {
+    assert.deepEqual(await descendant.emit("project_trust", event, descendant.ctx), {
       trusted: "undecided",
     });
   });
@@ -418,8 +419,8 @@ suite("subagent child", () => {
     assert.equal(process.env.PI_SUBAGENT_DEPTH, "1");
   });
 
-  test("a nested Pi that inherited the run leaves it to the Pi that claimed it", async () => {
-    const child = await startChild({ claimedElsewhere: true });
+  test("a descendant Pi that inherited the run leaves it to pi", async () => {
+    const child = await startChild({ descendant: true });
 
     await child.start();
     await child.emit("agent_settled", { type: "agent_settled", aborted: false }, child.ctx);

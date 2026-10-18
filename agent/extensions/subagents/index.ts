@@ -23,8 +23,10 @@ import {
   checkRuntimeRoot,
   ChildResult,
   herdrCaller,
+  RUN_FLAG,
   type RunOutcome,
   runFiles,
+  runFlag,
   runtimeRoot,
 } from "./launch.ts";
 
@@ -48,7 +50,7 @@ type AssistantReply = Extract<AgentMessage, { role: "assistant" }>;
 
 type Phase =
   | { readonly kind: "starting" }
-  | { readonly kind: "claimedElsewhere" }
+  | { readonly kind: "inherited" }
   | { readonly kind: "claimFailed" }
   | { readonly kind: "awaitingDelivery" }
   | { readonly kind: "awaitingStart" }
@@ -59,6 +61,7 @@ type Phase =
 export interface SubagentChildOptions {
   readonly taskStartTimeout?: Duration.Input;
   readonly dialogCancelTimeout?: Duration.Input;
+  readonly argv?: readonly string[];
 }
 
 const subagentRun = Config.all({
@@ -194,7 +197,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
   let inputLocked = false;
 
   const governs = () =>
-    phase.kind !== "claimedElsewhere" && phase.kind !== "claimFailed" && phase.kind !== "settled";
+    phase.kind !== "inherited" && phase.kind !== "claimFailed" && phase.kind !== "settled";
 
   const finish = Effect.fn("subagent.finish")(function* (
     ctx: ExtensionContext,
@@ -213,7 +216,19 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
     yield* Effect.sync(() => ctx.shutdown());
   });
 
+  // Pi rejects an unregistered flag, and fills in a registered one only by session_start.
+  pi.registerFlag(RUN_FLAG, {
+    type: "string",
+    description: "Set by pi-subagent on the Pi that runs its task",
+  });
+
+  // A Pi that an extension starts inherits the run's environment but not pi's arguments, which a
+  // wrapper that forks Pi, such as a Volta shim, passes on.
+  const carriesRunFlag = (options.argv ?? process.argv).includes(runFlag(run.directory.value));
+
   const claimRun = Effect.gen(function* () {
+    if (!carriesRunFlag) return false;
+
     const fs = yield* FileSystem.FileSystem;
 
     return yield* fs.writeFileString(files.claim, String(process.pid), { flag: "wx" }).pipe(
@@ -228,7 +243,7 @@ export default function subagentChild(pi: ExtensionAPI, options: SubagentChildOp
 
     return claimRun.pipe(
       Effect.map((claimed) => {
-        phase = claimed ? { kind: "awaitingDelivery" } : { kind: "claimedElsewhere" };
+        phase = claimed ? { kind: "awaitingDelivery" } : { kind: "inherited" };
       }),
       Effect.tapError(() =>
         Effect.sync(() => {

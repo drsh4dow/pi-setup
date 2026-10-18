@@ -304,10 +304,16 @@ and leaves no process behind. The differences below are known and accepted.
   that adds an autocomplete provider, or discovery that takes over 10 s, lets
   the task arrive before discovered skills and prompts are installed. The
   extensions in this repository add none during discovery.
-- **A descendant that starts first.** If an extension starts another Pi
-  process before the child's own `session_start` handler runs, and that process
-  reaches `session_start` first, it claims the run and receives the task
-  instead of the child.
+- **A descendant that starts first.** A Pi that an extension starts before the
+  child's own `session_start` handler runs inherits the run's environment. It
+  leaves the run to the child, because only the child has the run's
+  `--subagent-run` argument. A wrapper that forks Pi, such as a Volta shim,
+  passes the argument on. An extension that starts Pi with the child's own
+  arguments starts a Pi that can claim the run before the child does.
+- **A shutdown that hangs after SIGKILL.** When a `session_shutdown` handler
+  never returns, a descendant Pi can outlive a launcher that is killed by
+  SIGKILL during its release. So can the child itself when the `pi` command
+  forks Pi, as a Volta shim does.
 - **Rebound dialog cancel key.** The child cancels an extension dialog by
   sending Escape. If `tui.select.cancel` is rebound away from Escape, every
   dialog stays open and fails the run after 5 s.

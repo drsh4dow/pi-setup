@@ -517,6 +517,11 @@ diagnostic-enforcement, and behavioral checks. Its tasks live in
 `vp run --no-cache verify` reruns everything. Live Pi integration tests need
 provider credentials and run separately with `vp run test:e2e`.
 
+`.agents/skills/verify-subagent-run/scripts/check` model-checks the subagent
+run lifecycle with TLA+. It needs Java 11 or newer and downloads TLC once, so
+`verify` leaves it out. Run it after changing `agent/extensions/subagents/` or
+upgrading Pi or Effect.
+
 Vite+ supplies the only linter and formatter, Oxlint and Oxfmt, and
 `vite.config.ts` owns their policy. Type-aware rules, Effect diagnostics, and
 the vendored [anti-slop plugins](oxlint/anti-slop/UPSTREAM.md) fail on

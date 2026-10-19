@@ -91,7 +91,6 @@ const excerpt = (value: string): string =>
 
 function memberLedger(ledger: Ledger, number: T.PrNumber): PrLedger {
   const found = ledger.prs.find((pr) => pr.number === number);
-  // parseLedger and every scope change keep a ledger entry per scope member.
   if (found === undefined) throw new Error(`no ledger entry for #${number}`);
   return found;
 }
@@ -241,8 +240,7 @@ function revisions(snapshot: FeedbackSnapshot): readonly Revision[] {
   return all;
 }
 
-/** Only `<!-- pi-event:<id> -->` lines at the very end of the body count, so a quoted marker claims nothing. */
-function replyMarkers(body: string): readonly AttentionId[] {
+function trailingReplyMarkers(body: string): readonly AttentionId[] {
   const lines = body
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -265,7 +263,7 @@ function observeFeedback(
   const seen = new Set(step.pr.seenRevisions);
   for (const revision of revisions(snapshot)) {
     if (revision.authorLogin === snapshot.viewerLogin) {
-      const markers = replyMarkers(revision.body);
+      const markers = trailingReplyMarkers(revision.body);
       if (markers.length > 0) {
         for (const id of markers)
           if (deliveredFeedback.has(id)) step.acknowledged.add(id);
@@ -333,7 +331,6 @@ function blockerFacts(blocker: ConditionBlocker): readonly string[] {
   }
 }
 
-/** An active condition keeps its generation, so an acknowledged condition with the same head and facts keeps its ID. */
 function setCondition(
   step: PrStep,
   environment: Environment,
@@ -428,7 +425,6 @@ function observeLifecycle(
   );
 }
 
-/** readSnapshot's `pendingHistory: "include"` CI classification, minus its own pull-request and review-thread reads. */
 async function readCi(
   reader: T.GitHubReader,
   facts: T.PullRequestFacts
@@ -516,7 +512,6 @@ function mergeReadyProof(
   if (ci.kind !== "ci-clean" || mergeability(facts) !== "mergeable")
     return null;
   if (feedback.threads.some((thread) => !thread.isResolved)) return null;
-  // Clean CI has no pending check, so no review automation is running.
   const ready = readyContribution(
     {
       kind: "open",
@@ -571,7 +566,6 @@ function acknowledge(
 type ScopeStatus =
   | { readonly kind: "finished"; readonly result: FinishedResult }
   | { readonly kind: "open"; readonly frontier: T.PrContext };
-/** A member recorded closed counts as closed only when this poll read it, because a closed PR can reopen. */
 function scopeStatus(
   ledger: Ledger,
   readThisPoll: ReadonlySet<T.PrNumber>

@@ -68,7 +68,6 @@ export interface StoredItem {
   readonly acknowledged: boolean;
   readonly observedAt: string;
   readonly excerpt: string;
-  /** The watcher never reads this back. It only copies it into batch files for the agent. */
   readonly detail: unknown;
 }
 export interface ScopeRevision {
@@ -326,8 +325,7 @@ function publishLock(lock: StateLock): boolean {
   }
 }
 
-/** Renaming first means a lock that a live watcher published after `stale` was read is moved, never deleted, and can be put back. */
-function setAsideStaleLock(path: string, stale: string): void {
+function setAsideStaleLock(path: string, staleContents: string): void {
   const aside = `${path}.stale.${randomUUID()}`;
   try {
     renameSync(path, aside);
@@ -335,7 +333,7 @@ function setAsideStaleLock(path: string, stale: string): void {
     if (hasErrorCode(error, "ENOENT")) return;
     throw error;
   }
-  if (readFileSync(aside, "utf8") !== stale)
+  if (readFileSync(aside, "utf8") !== staleContents)
     try {
       linkSync(aside, path);
     } catch (error) {
@@ -444,7 +442,6 @@ export function saveLedger(directory: string, ledger: Ledger): void {
   }
 }
 
-/** Batch files are content-addressed, so a rewrite after a crash cannot alter a delivered batch. */
 export function writeBatch(
   directory: string,
   batch: {

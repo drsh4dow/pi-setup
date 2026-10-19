@@ -39,7 +39,6 @@ interface Envelope {
   readonly observedAt: string;
   readonly mode: T.WatchMode;
 }
-/** RETRY and the exit-7 BLOCKER keep the legacy watcher's payloads, so callers parse one vocabulary. */
 export type MonitorVerdict =
   | Extract<T.ProgressVerdict, { readonly kind: "RETRY" }>
   | Extract<T.BlockerVerdict, { readonly exitCode: 7 }>

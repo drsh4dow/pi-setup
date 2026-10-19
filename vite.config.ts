@@ -30,6 +30,10 @@ export default defineConfig({
       // File modes live in the git index, which the cache does not fingerprint, so a
       // replayed pass could hide a script that lost its executable bit.
       "verify:skills": { command: "node agent/scripts/verify-skills.ts", cache: false },
+      "verify:terminal-delivery-citations": {
+        command: ".agents/skills/verify-terminal-delivery/scripts/check --citations",
+        cache: false,
+      },
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
@@ -59,6 +63,7 @@ export default defineConfig({
         dependsOn: [
           "verify:strict-diagnostics",
           "verify:skills",
+          "verify:terminal-delivery-citations",
           "test:extensions",
           "test:dumpfile",
           "test:docs",

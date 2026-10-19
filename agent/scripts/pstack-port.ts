@@ -12,12 +12,14 @@
 // keeps from regressing. README.md's "pstack" section maps each Cursor concept.
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -254,12 +256,26 @@ function rewriteCommands(text: string, skills: Set<string>) {
   );
 }
 
+function permissions(path: string) {
+  try {
+    return statSync(path).mode & 0o777;
+  } catch (error) {
+    throw new Error(`could not read the file mode of ${path}`, { cause: error });
+  }
+}
+
+function isExecutable(mode: number) {
+  return (mode & 0o100) !== 0;
+}
+
 function render(pstack: string, out: string) {
   const files = upstreamFiles(pstack);
   const skills = portedSkills(files);
+  const executableTargets = new Map<string, boolean>();
 
   for (const [upstreamPath, target] of files) {
-    let text = readFileSync(join(pstack, upstreamPath), "utf8");
+    const source = join(pstack, upstreamPath);
+    let text = readFileSync(source, "utf8");
 
     if (upstreamPath.endsWith(".md")) {
       const skill = target.match(/^skills\/([^/]+)\/SKILL\.md$/)?.[1];
@@ -274,9 +290,10 @@ function render(pstack: string, out: string) {
     const outputPath = join(out, target);
     mkdirSync(dirname(outputPath), { recursive: true });
     writeFileSync(outputPath, text);
+    executableTargets.set(target, isExecutable(permissions(source)));
   }
 
-  return [...files.values()];
+  return executableTargets;
 }
 
 function readIfPresent(path: string) {
@@ -321,9 +338,33 @@ function mergeFile(localPath: string, base: string, upstream: string) {
   }
 }
 
-function writeLocal(localPath: string, text: string) {
+// Node applies the mode only when it creates the file; matchExecutableBit fixes existing ones.
+function writeLocal(localPath: string, text: string, executable: boolean) {
   mkdirSync(dirname(localPath), { recursive: true });
-  writeFileSync(localPath, text);
+  writeFileSync(localPath, text, { mode: executable ? 0o777 : 0o666 });
+}
+
+function matchExecutableBit(localPath: string, executable: boolean) {
+  const mode = permissions(localPath);
+
+  if (isExecutable(mode) === executable) return undefined;
+
+  const executeBits = 0o111;
+  let next = mode & ~executeBits;
+  let change = "made non-executable";
+
+  if (executable) {
+    next = mode | executeBits;
+    change = "made executable";
+  }
+
+  try {
+    chmodSync(localPath, next);
+  } catch (error) {
+    throw new Error(`could not chmod ${next.toString(8)} ${localPath}`, { cause: error });
+  }
+
+  return `${change}: ${localPath}`;
 }
 
 function overrideMergedInvocations(classified: Map<string, Invocation>) {
@@ -418,13 +459,6 @@ function sync(ref: string) {
   const pinned = readFileSync(pinFile, "utf8").trim();
   const clone = updateClone();
   const commit = resolveCommit(clone, ref);
-
-  if (commit === pinned) {
-    console.log(`pstack is already at ${commit}.`);
-
-    return;
-  }
-
   const scratch = mkdtempSync(join(tmpdir(), "pstack-sync-"));
   const report: string[] = [];
 
@@ -437,25 +471,35 @@ function sync(ref: string) {
     const targets = render(upstreamPstack, upstreamDirectory);
     const baseTargets = render(basePstack, baseDirectory);
 
-    for (const target of targets) {
+    for (const [target, executable] of targets) {
       const localPath = join(agentDirectory, target);
       const upstream = readFileSync(join(upstreamDirectory, target), "utf8");
       const local = readIfPresent(localPath);
       const base = readIfPresent(join(baseDirectory, target));
 
-      if (local === undefined && base === undefined) {
-        writeLocal(localPath, upstream);
-        report.push(`added upstream: ${localPath}`);
-      } else if (local === undefined) {
+      if (local === undefined && base !== undefined) {
         report.push(`kept deleted: ${localPath}`);
-      } else if (local === base) {
-        writeLocal(localPath, upstream);
+        continue;
+      }
+
+      if (local === undefined) {
+        writeLocal(localPath, upstream, executable);
+        report.push(`added upstream: ${localPath}`);
+        continue;
+      }
+
+      if (local === base) {
+        writeLocal(localPath, upstream, executable);
       } else if (mergeFile(localPath, base ?? "", upstream)) {
         report.push(`conflict: ${localPath}`);
       }
+
+      const modeChange = matchExecutableBit(localPath, executable);
+
+      if (modeChange !== undefined) report.push(modeChange);
     }
 
-    for (const target of baseTargets.filter((path) => !targets.includes(path))) {
+    for (const target of [...baseTargets.keys()].filter((path) => !targets.has(path))) {
       const localPath = join(agentDirectory, target);
 
       if (readIfPresent(localPath) === readFileSync(join(baseDirectory, target), "utf8")) {

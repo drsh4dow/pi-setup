@@ -409,6 +409,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `why`
 - `wizard`
 - `writing-for-agents`
+- `writing-good-prs`
 - `writing-good-tickets`
 
 ### Installed prompts

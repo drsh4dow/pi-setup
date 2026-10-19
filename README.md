@@ -484,7 +484,10 @@ To sync pstack:
 1. Run `node agent/scripts/pstack-port.ts sync [<ref>]`. The script fetches
    upstream into a clone under `~/.cache/pi-setup/`, ports `<ref>` (default
    `origin/main`) into `agent/`, and merges it with local edits against the
-   synced commit. Then it writes the new commit to `pstack-synced-commit.txt`.
+   synced commit. Each ported file takes the upstream file's executable bit,
+   and the report names every existing file whose mode changed. Then it writes
+   the new commit to `pstack-synced-commit.txt`. A sync at the synced commit
+   changes no content and repairs only file modes.
 2. Resolve each file reported as `conflict`.
 3. Port each file reported as `changed upstream, port by hand`. Upstream
    `skills/poteto-mode/SKILL.md` goes into `agent/SYSTEM.md`.
@@ -543,10 +546,10 @@ the same skills, including untracked and nested ones and each tree's layout
 rules. It fails on every diagnostic Pi reports, for example frontmatter that is
 not valid YAML, an empty description, or two skills with the same name. It also
 fails when a skill's `name` differs from its directory name, and when Pi loads
-no skill at all. For every skill Pi loads, it fails when a file under the
-skill's `scripts/` directory starts with `#!` but is not executable, either in
-the git index or on disk, and names the `chmod +x <path> && git add <path>`
-command that fixes it. The check ignores settings, including the packages that
+no skill at all. It fails when a file under the `scripts/` directory of a skill
+that Pi loads, or under `agent/poteto/scripts/`, starts with `#!` but is not
+executable, either in the git index or on disk, and names the
+`chmod +x <path> && git add <path>` command that fixes it. The check ignores settings, including the packages that
 settings install, so the untracked `agent/settings.json` cannot change its
 result. It also ignores `~/.agents/skills/` and does not load extensions.
 

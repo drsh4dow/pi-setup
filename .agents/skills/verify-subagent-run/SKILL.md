@@ -10,6 +10,25 @@ description: Model-check the pi-subagent run lifecycle with TLA+, so that no pro
 - **Properties.** Once the launcher has exited, by any path including SIGKILL, the pane child, pi, and the descendant all exit too (`NoProcessOutlivesLauncher`). Once any kill arrives, the launcher exits (`KillEndsRun`). Once all of them have exited, the run directory and the pane are gone (`NoRunLeftBehind`). Pi never leaves the run to another Pi, and the descendant never claims it (`OnlyPiTakesTheTask`).
 - **Harm.** A subagent that outlives its launcher keeps running its task, spending tokens and editing the worktree, after its parent thinks it is dead. A launcher that a kill does not end leaves its caller waiting forever. A run directory left behind keeps `launch.json`, which holds the launcher's environment, and a pane left behind clutters the parent's workspace. A descendant that takes the task runs it without the launcher's arguments, such as its model, and pi never ends the run. A pi that leaves the run to another Pi fails it after 60 s.
 
+## What the check covers
+
+Run the check after any change to these files, or to the Pi or Effect version in `bun.lock`. Each `\* code:` citation in the spec names one of these functions. Every model config runs the same spec, so they all cover the same code.
+
+| File under `agent/extensions/subagents/` | Functions                                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `bin/pi-subagent.ts`                     | `main`, `runInPane`, `observeChild`, `addObserver`, `awaitChild`, `stopPiGroup`, `closePane`, `SIGNAL_EXIT_CODES`                     |
+| `bin/pane-child.ts`                      | `runPaneChild`, `runPi`, `watchLauncher`, `launcherExit`, `abandonRun`                                                                |
+| `process-group.ts`                       | `stopProcessGroup`                                                                                                                    |
+| `herdr.ts`                               | `sweepAbandonedRuns`, `removeAbandonedRun`, `runOwnerAlive`                                                                           |
+| `index.ts`                               | `claimRun`, `deliverTask`, `finish`, `stopChildrenInheritingRun`                                                                      |
+| `launch.ts`                              | `runFiles`, `runDirectoryPrefix`, `parseRunDirectoryName`, `runFlag`, modeled as the run directory's files and name, with no citation |
+
+The spec also cites Pi's `interactive-mode.js` (`init`, `shutdown`, `uncaughtCrash`) and Effect's `NodeChildProcessSpawner.ts` (`terminateProcessGroup`) under `node_modules/`, as installed from `bun.lock`. The sync commit below has `@earendil-works/pi-coding-agent` 1.2.0 and `effect` 4.0.4.
+
+In sync at `5e34079ec0fd2fa4976b249a81866e3533bf50d7`. Move this commit forward only after you confirm that the model describes the code above at the new commit.
+
+A change needs a model update when it adds, removes, or reorders a step that touches shared state. Shared state is the run directory and its files (`started`, `launch.json`, `claim`, `exit`), the pane, a signal, or whether a process is alive. A change to logging, report text, or stdout touches none of it.
+
 ## Run the check
 
 From the checkout root:
@@ -28,20 +47,11 @@ The script does three things:
 
 Exit 0 means every citation is current and each model matched the `\* expect:` line at the top of its config. For a violated model, the script prints the counterexample as numbered steps. Each step names the action, the file and function it models, and the variables that changed. The full TLC output is in `${TMPDIR:-/tmp}/verify-subagent-run/`.
 
-## When a change needs the check
-
-Run it after any change to these files:
-
-- `agent/extensions/subagents/bin/pi-subagent.ts`, `bin/pane-child.ts`, `process-group.ts`, `herdr.ts`, `index.ts`, and `launch.ts`.
-- A Pi or Effect upgrade. The spec cites Pi's `interactive-mode.js` and Effect's `NodeChildProcessSpawner.ts` under `node_modules/`.
-
-The change needs a model update when it adds, removes, or reorders a step that touches shared state. Shared state is the run directory and its files (`started`, `launch.json`, `claim`, `exit`), the pane, a signal, or whether a process is alive. A change to logging, report text, or stdout touches none of it.
-
 ## Update the model for an intended change
 
-1. List the changed hunks with `git diff` on the files above.
+1. List the changed hunks with `git diff` from the sync commit on the files in [What the check covers](#what-the-check-covers).
 2. For each hunk, find the actions whose citation sits in it, or whose behavior it changes. Search the spec for the function name.
-3. Edit each action to do what the new code does. Keep one action per step that another process can observe, and fold purely local work into the neighboring step. Name a new action after the code, prefix it with `L` (launcher), `C` (pane child), or `P` (Pi), add it to `LauncherStep`, `ChildStep`, or `PiStep`, and put a `\* code:` citation above it.
+3. Edit each action to do what the new code does. Keep one action per step that another process can observe, and fold purely local work into the neighboring step. Name a new action after the code, prefix it with `L` (launcher), `C` (pane child), or `P` (Pi), add it to `LauncherStep`, `ChildStep`, or `PiStep`, and put a `\* code:` citation above it. Add a newly cited function to the table in [What the check covers](#what-the-check-covers).
 4. Run the check.
 
 The update is done when the check exits 0, or when it fails only on a finding you report. If the property fails after a faithful update, the change broke it. Report the counterexample. The properties, the fairness conditions, and `EnabledKills` stay as they are.

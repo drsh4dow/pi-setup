@@ -99,7 +99,7 @@ Not in pstack:
 
 Playbooks are step lists in `~/.pi/agent/poteto/playbooks/`, not skills, so they have no slash command. Describing the task picks one, and these phrases name one directly:
 
-- "babysit this pr" or "check on pr 123" runs Babysit. It drives the PR to merge-ready and stops there. It doesn't merge unless the user asks to merge, land, or ship.
+- "babysit this pr" runs Babysit and watches the PR until it merges, closes, or you say stop. The agent wakes on each new review, comment, or CI change. "get it green" stops at merge-ready, and "check on pr 123" makes one status pass. Babysitting doesn't merge unless you ask to merge, land, or ship.
 - "land the stack" runs Shipping.
 - "take over this branch" runs Session pickup.
 - "pause safely" runs Pause safely.

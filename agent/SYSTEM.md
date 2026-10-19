@@ -61,7 +61,8 @@ Remaining triggers:
   comments", and most often "check on PR X" or "anything outstanding on X") →
   the **Babysit** playbook (`playbooks/babysit.md`). Never triggered by merely
   opening a PR. Declare its mode before polling. The playbook's step 1 owns the
-  request-to-mode mapping.
+  request-to-mode mapping, and "babysit this" watches until the PR merges or
+  closes.
 - Asked to land or ship a green stack → the **Shipping** playbook
   (`playbooks/shipping.md`). Green is not safe. Nothing gets armed before an
   independent per-PR verdict, and only the contiguous verified run from the
@@ -262,8 +263,9 @@ bespoke run, orchestrate runs the program.
   `playbooks/authoring-a-skill.md`.
 - **Eval.** Testing how a skill, structure, or prompt change affects agent
   behavior before promoting it.
-- **Babysit.** Driving a PR or a stack to merge-ready, covering conflicts,
-  review threads, and CI.
+- **Babysit.** Watching a PR or a stack until it merges or closes, or driving
+  it to merge-ready on request, covering review feedback, conflicts, and CI.
+  It never merges.
 - **Shipping.** The half after Babysit. Independently verifying a green stack,
   then landing the contiguous verified run bottom-up through `gh` by default
   or Origin when its CLI is available.

@@ -47,8 +47,11 @@ esac
 
 const FAKE_PI = `#!/usr/bin/env bash
 echo $$ > "$FAKE_ROOT/pi.pid"
+printf '%s\\n' "$@" > "$FAKE_ROOT/pi.args"
 case "$FAKE_PI" in
-  report) cp "$FAKE_ROOT/outcome.json" "$PI_SUBAGENT_RUN/outcome.json" ;;
+  report)
+    cp "$PI_SUBAGENT_RUN/task.md" "$FAKE_ROOT/task.md"
+    cp "$FAKE_ROOT/outcome.json" "$PI_SUBAGENT_RUN/outcome.json" ;;
   hang)
     echo "pi was here" >&2
     touch "$PI_SUBAGENT_RUN/claim"
@@ -87,6 +90,7 @@ interface Launch {
   readonly closeStdout?: boolean;
   readonly env?: NodeJS.ProcessEnv;
   readonly ownGroup?: boolean;
+  readonly stdin?: string;
 }
 
 const ASSIGNMENT = "Reply with the report.";
@@ -166,7 +170,13 @@ async function fakeHerdr(behavior: FakePi) {
     async waitForHangingPi() {
       assert.ok(await until(piClaimed), "pi claimed the run");
     },
-    launch({ args = [], closeStdout = false, env = {}, ownGroup = false }: Launch = {}) {
+    launch({
+      args = [],
+      closeStdout = false,
+      env = {},
+      ownGroup = false,
+      stdin = ASSIGNMENT,
+    }: Launch = {}) {
       const child = spawn(launcher, ["--name", "subagent:alpha", ...args], {
         env: { ...baseEnv, ...env },
         detached: ownGroup,
@@ -178,7 +188,7 @@ async function fakeHerdr(behavior: FakePi) {
       if (closeStdout) child.stdout.destroy();
       else child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-      child.stdin.end(ASSIGNMENT);
+      child.stdin.end(stdin);
 
       const exit = new Promise<number | null>((resolve) => {
         child.on("close", (code) => resolve(code));
@@ -463,6 +473,27 @@ suite("pi-subagent launcher", () => {
     assert.equal(code, 0, stderr.toString());
     assert.equal(stdout, ASSIGNMENT);
     assert.match(stderr.toString(), /running pi --print, because the test asks for it/);
+  });
+
+  test("an assignment given as an argument runs in a pane, and pi does not get it again", async () => {
+    const herdr = await fakeHerdr("report");
+
+    await herdr.writeOutcome({ kind: "completed", report: "REPORT\n" });
+
+    const { code, stdout, stderr } = await herdr
+      .launch({ args: [ASSIGNMENT, "--thinking", "high"], stdin: "" })
+      .result();
+
+    const piArgs = (await readFile(path.join(herdr.root, "pi.args"), "utf8")).split("\n");
+
+    assert.equal(code, 0, stderr.toString());
+    assert.equal(stdout, "REPORT\n");
+    assert.ok(
+      (await herdr.herdrCalls()).some((call) => call.startsWith("tab create")),
+      "the child got a tab",
+    );
+    assert.equal(await readFile(path.join(herdr.root, "task.md"), "utf8"), ASSIGNMENT);
+    assert.deepEqual(piArgs.slice(1), ["--name", "subagent:alpha", "--thinking", "high", ""]);
   });
 
   test("an option value that reads --print is not the print flag", async () => {

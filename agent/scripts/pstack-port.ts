@@ -63,6 +63,7 @@ const invocations = new Map<string, Invocation>(
     "in-your-own-words": "user-only",
     interrogate: "both",
     ketchup: "user-only",
+    "maintain-formal-verification-skill": "both",
     "maintain-verification-skill": "user-only",
     "no-comments": "both",
     "poteto-help": "user-only",

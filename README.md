@@ -366,6 +366,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `interrogate`
 - `ketchup`
 - `mailbox`
+- `maintain-formal-verification-skill`
 - `maintain-verification-skill`
 - `no-comments`
 - `pi-harness`

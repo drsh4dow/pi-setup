@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 
 const checker = new URL("../../skills/writing-good-prs/scripts/check-body.ts", import.meta.url)
+  .pathname;
+
+const issueTemplate = new URL("../../../.github/ISSUE_TEMPLATE/ticket.md", import.meta.url)
   .pathname;
 
 function check(t: TestContext, body: string, args: string[]) {
@@ -68,4 +71,34 @@ test("flags Evidence that names no artifact and Merge danger that names no door"
     '17: "## Merge danger" does not say "one-way door" or "two-way door"',
     '17: "## Merge danger" does not name the blast radius',
   ]);
+});
+
+test("takes the shape from the issue template, and flags the template left unfilled", (t) => {
+  const filled = `## Problem
+
+\`pi-subagent\` leaks a background job after SIGHUP.
+
+## Done when
+
+- [ ] A \`bg_start\` job that traps SIGTERM exits with its subagent.
+
+## Out of scope
+
+- Volta shims.
+`;
+
+  const filledResult = check(t, filled, ["ticket", "--template", issueTemplate]);
+
+  assert.deepEqual(filledResult.lines, []);
+
+  const unfilled = readFileSync(issueTemplate, "utf8");
+  const unfilledResult = check(t, unfilled, ["ticket", "--template", issueTemplate]);
+
+  assert.equal(unfilledResult.status, 1);
+  assert.ok(
+    unfilledResult.lines.some((line) =>
+      line.endsWith("template comment left in, replace or delete it"),
+    ),
+    unfilledResult.lines.join("\n"),
+  );
 });

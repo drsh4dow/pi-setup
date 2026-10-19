@@ -20,6 +20,7 @@ import { herdr, platform, sweepAbandonedRuns } from "../herdr.ts";
 import { isAlive, stopProcessGroup } from "../process-group.ts";
 import { runPaneChild } from "./pane-child.ts";
 import {
+  argsWithoutMessage,
   checkRuntimeRoot,
   ChildLaunch,
   ChildResult,
@@ -368,6 +369,7 @@ const runPrint = Effect.fn("runPrint")(function* (args: readonly string[], stdin
 const runInPane = Effect.fn("runInPane")(function* (
   mode: Extract<Mode, { kind: "herdr" }>,
   invocation: Invocation,
+  childArgs: readonly string[],
   name: string,
   task: string,
 ) {
@@ -406,7 +408,7 @@ const runInPane = Effect.fn("runInPane")(function* (
 
   const launch = yield* encodeLaunch({
     launcherPid: invocation.pid,
-    args: invocation.args,
+    args: childArgs,
     cwd: invocation.cwd,
     env: {
       ...invocation.env,
@@ -464,6 +466,7 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
   mode: Extract<Mode, { kind: "herdr" }>,
   invocation: Invocation,
   parsed: Args,
+  parse: (args: string[]) => Args,
 ) {
   const unsupported = printOnlyReason(parsed);
 
@@ -473,17 +476,20 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
     return yield* runPrint(invocation.args, "inherit");
   }
 
+  const [message] = parsed.messages;
+
   // `pi --print` reads no assignment from a terminal.
-  if (process.stdin.isTTY) {
+  if (message === undefined && process.stdin.isTTY) {
     yield* log("running pi --print, because stdin is a terminal");
 
     return yield* runPrint(invocation.args, "inherit");
   }
 
-  const assignment = yield* Effect.promise(() => Bun.stdin.text());
+  const piped = process.stdin.isTTY ? "" : yield* Effect.promise(() => Bun.stdin.text());
 
-  // `pi --print` trims stdin and prompts nothing when it is empty.
-  const task = assignment.trim();
+  // `pi --print` prompts with stdin followed by the first message, trimmed, and prompts nothing
+  // when that is empty.
+  const task = `${piped}${message ?? ""}`.trim();
 
   if (task === "") {
     yield* log("running pi --print, because stdin held no assignment");
@@ -491,13 +497,27 @@ const runInHerdr = Effect.fn("runInHerdr")(function* (
     return yield* runPrint(invocation.args, "ignore");
   }
 
-  const run = yield* runInPane(mode, invocation, subagentName(parsed.name), task);
+  let childArgs = invocation.args;
+
+  if (message !== undefined) {
+    const withoutMessage = argsWithoutMessage(invocation.args, parse);
+
+    if (Option.isNone(withoutMessage)) {
+      yield* log("running pi --print, because no argument is the message alone");
+
+      return yield* runPrint(invocation.args, Stream.make(new TextEncoder().encode(piped)));
+    }
+
+    childArgs = withoutMessage.value;
+  }
+
+  const run = yield* runInPane(mode, invocation, childArgs, subagentName(parsed.name), task);
 
   if (run.kind === "reported") return run.exitCode;
 
   yield* log(`running pi --print, because ${run.reason}`);
 
-  return yield* runPrint(invocation.args, Stream.make(new TextEncoder().encode(assignment)));
+  return yield* runPrint(invocation.args, Stream.make(new TextEncoder().encode(piped)));
 });
 
 const main = Effect.fn("main")(function* (invocation: Invocation) {
@@ -520,7 +540,7 @@ const main = Effect.fn("main")(function* (invocation: Invocation) {
 
   if (mode.kind === "print") return yield* runPrint(invocation.args, "inherit");
 
-  return yield* runInHerdr(mode, invocation, parsed);
+  return yield* runInHerdr(mode, invocation, parsed, parseArgs);
 });
 
 const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as const;

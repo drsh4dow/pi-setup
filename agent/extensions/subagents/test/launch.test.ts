@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { suite, test } from "node:test";
-import { Effect, Schema } from "effect";
+import { parseArgs } from "@earendil-works/pi-coding-agent";
+import { Effect, Option, Schema } from "effect";
 import {
+  argsWithoutMessage,
   childEnv,
   type Lineage,
   modeFrom,
@@ -89,6 +91,23 @@ suite("treeLabel", () => {
   test("starts with a visible character at every depth", () => {
     assert.equal(treeLabel(1, "alpha"), "└─ alpha");
     assert.equal(treeLabel(3, "alpha"), "│  │  └─ alpha");
+  });
+});
+
+suite("argsWithoutMessage", () => {
+  test("removes the message, not a flag value that reads the same", () => {
+    assert.deepEqual(
+      argsWithoutMessage(["--system-prompt", "go", "--thinking", "high", "go"], parseArgs),
+      Option.some(["--system-prompt", "go", "--thinking", "high"]),
+    );
+    assert.deepEqual(
+      argsWithoutMessage(["go", "--name", "go"], parseArgs),
+      Option.some(["--name", "go"]),
+    );
+    assert.deepEqual(
+      argsWithoutMessage(["--name", "x", "--", "- go"], parseArgs),
+      Option.some(["--name", "x", "--"]),
+    );
   });
 });
 

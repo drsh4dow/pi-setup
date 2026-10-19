@@ -96,7 +96,8 @@ export function printOnlyReason(args: Args): string | undefined {
     return "pi rejects these arguments";
   }
 
-  if (args.messages.length > 0) return "the arguments hold messages";
+  // `pi --print` sends every message after the first as a later turn.
+  if (args.messages.length > 1) return "the arguments hold more than one message";
 
   if (args.fileArgs.length > 0) return "the arguments attach @file inputs";
 
@@ -111,6 +112,25 @@ export function printOnlyReason(args: Args): string | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Returns the arguments without their one message, for the pane's pi, which takes the assignment
+ * from the run directory instead. Pi's parser reads left to right and a value only consumes what
+ * follows its flag, so an argument after the message that equals it is a flag value whose removal
+ * leaves the message in place. The first removal from the end that leaves no message is the message.
+ */
+export function argsWithoutMessage(
+  args: readonly string[],
+  parse: (args: string[]) => Args,
+): Option.Option<readonly string[]> {
+  for (let index = args.length - 1; index >= 0; index -= 1) {
+    const rest = args.toSpliced(index, 1);
+
+    if (parse(rest).messages.length === 0) return Option.some(rest);
+  }
+
+  return Option.none();
 }
 
 export const RunOutcome = Schema.Union([

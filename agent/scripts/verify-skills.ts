@@ -45,7 +45,7 @@ function startsWithShebang(path: string) {
   return head.toString("latin1") === "#!";
 }
 
-function skillScriptErrors(entries: readonly IndexEntry[]) {
+function shebangScriptErrors(entries: readonly IndexEntry[]) {
   const errors: string[] = [];
 
   for (const { mode, path } of entries) {
@@ -125,14 +125,19 @@ const diagnostics = session.diagnostics.filter(
   ({ path }) => path === undefined || isInCheckout(path),
 );
 
-const scriptDirectories = skills.map(({ baseDir }) => `${relative(root, baseDir)}/scripts/`);
+const POTETO_SCRIPTS = "agent/poteto/scripts/";
 
-const skillScripts = index.filter(({ path }) =>
+const scriptDirectories = [
+  ...skills.map(({ baseDir }) => `${relative(root, baseDir)}/scripts/`),
+  POTETO_SCRIPTS,
+];
+
+const checkedScripts = index.filter(({ path }) =>
   scriptDirectories.some((directory) => path.startsWith(directory)),
 );
 
 const errors = [
-  ...skillScriptErrors(skillScripts),
+  ...shebangScriptErrors(checkedScripts),
   ...diagnostics.map(diagnosticError),
   ...nameDirectoryMismatches(skills),
 ];
@@ -145,5 +150,5 @@ if (errors.length > 0) {
   console.error(errors.join("\n"));
   process.exitCode = 1;
 } else {
-  console.log(`Skills verified (${skills.length} skills, ${skillScripts.length} script files).`);
+  console.log(`Skills verified (${skills.length} skills, ${checkedScripts.length} script files).`);
 }

@@ -1,38 +1,59 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "./cli.ts";
+import type {
+  FeedbackComment,
+  FeedbackReader,
+  FeedbackSnapshot,
+  FeedbackThread,
+  SubmittedReview,
+  SubmittedReviewState,
+} from "./feedback.ts";
 import { WatcherQueryError } from "./github.ts";
 import {
-  emptyFeedback,
   failedCheck,
   fakeReader,
   passingCheck,
   pendingCheck,
-  type FeedbackFrame,
 } from "./fakes.test-helper.ts";
 import type {
   ChecksFastPath,
-  FeedbackComment,
-  FeedbackSnapshot,
-  FeedbackThread,
   GitHubReader,
   OpenPullRequest,
   PrContext,
   PullRequestFacts,
   QueryFailure,
-  SubmittedReview,
-  SubmittedReviewState,
 } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
+
+type FeedbackFrame =
+  | { readonly kind: "snapshot"; readonly snapshot: FeedbackSnapshot }
+  | { readonly kind: "failure"; readonly failure: QueryFailure };
+const emptyFeedback: FeedbackSnapshot = {
+  viewerLogin: "viewer",
+  reviews: [],
+  comments: [],
+  threads: [],
+};
 
 interface World {
   readonly facts: Map<number, Partial<Omit<PullRequestFacts, "context">>>;
   readonly checks: Map<number, ChecksFastPath>;
   readonly feedback: Map<number, FeedbackFrame>;
+  readonly feedbackReads: number[];
   readonly open: OpenPullRequest[];
   onSleep: (now: number) => void;
+  beforePullRequest: () => Promise<void>;
 }
 interface BatchItem {
   readonly id: string;
@@ -79,8 +100,10 @@ function world(): World {
     facts: new Map(),
     checks: new Map(),
     feedback: new Map(),
+    feedbackReads: [],
     open: [],
     onSleep: () => {},
+    beforePullRequest: async () => {},
   };
 }
 function readerFor(scene: World): GitHubReader {
@@ -88,13 +111,22 @@ function readerFor(scene: World): GitHubReader {
   return {
     ...base,
     async pullRequest(context: PrContext) {
+      await scene.beforePullRequest();
       const facts = await base.pullRequest(context);
       return { ...facts, ...scene.facts.get(context.number), context };
     },
     async checksFastPath(context: PrContext) {
       return scene.checks.get(context.number) ?? pending;
     },
-    async feedback(context: PrContext) {
+    async reviewThreadPage() {
+      throw new Error("the monitor reads threads through the feedback reader");
+    },
+  };
+}
+function feedbackFor(scene: World): FeedbackReader {
+  return {
+    async feedback(context) {
+      scene.feedbackReads.push(context.number);
       const frame = scene.feedback.get(context.number);
       if (frame === undefined) return emptyFeedback;
       if (frame.kind === "failure") throw new WatcherQueryError(frame.failure);
@@ -146,7 +178,8 @@ async function watch(scene: World, args: readonly string[] = []): Promise<Watch>
       },
       stdout: (value) => stdout.push(value),
       stderr: (value) => stderr.push(value),
-    }
+    },
+    feedbackFor(scene)
   );
   const records: Record<string, unknown>[] = stdout
     .join("")
@@ -203,6 +236,9 @@ function feedback(parts: Partial<FeedbackSnapshot>): FeedbackFrame {
   };
 }
 const marker = (id: string): string => `<!-- pi-event:${id} -->`;
+const lockPath = (): string => join(state, "watcher.lock");
+const kinds = (items: readonly BatchItem[]) =>
+  items.map((item) => [item.pr, item.kind, item.excerpt.split(":")[0]]);
 
 describe("merge-ready is attention, not an exit", () => {
   it("wakes once per head for a green unreviewed PR, then waits", async () => {
@@ -574,11 +610,13 @@ describe("state safety", () => {
     expect(result.code).toBe(73);
     expect(result.stderr).toContain(path);
     expect(readFileSync(path, "utf8")).toBe("{not json");
+    expect(existsSync(lockPath())).toBe(false);
   });
 
-  it("rejects an acknowledgement for an item it never delivered", async () => {
+  it("warns about and ignores an acknowledgement for an item it never delivered", async () => {
     const result = await watch(world(), ["--ack", "a".repeat(64)]);
-    expect(result.code).toBe(73);
+    expect(result.code).toBe(5);
+    expect(result.stderr).toContain(`ignoring --ack ${"a".repeat(64)}`);
   });
 
   it("refuses a state directory that watches a different PR", async () => {
@@ -586,5 +624,197 @@ describe("state safety", () => {
     await watch(scene);
     const other = await watch(scene, ["--pr", "2"]);
     expect(other.code).toBe(73);
+  });
+});
+
+describe("one watcher per state directory", () => {
+  it("refuses a second watcher while the first holds the state, then releases it", async () => {
+    const scene = world();
+    let entered = (): void => {};
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    scene.beforePullRequest = async () => {
+      entered();
+      await held;
+    };
+    const first = watch(scene);
+    await reading;
+    scene.beforePullRequest = async () => {};
+    const second = await watch(scene, ["--ack", "a".repeat(64)]);
+    expect(second.code).toBe(73);
+    expect(second.stderr).toContain(
+      `another watcher owns ${state} (pid ${process.pid})`
+    );
+    release();
+    expect((await first).code).toBe(5);
+    expect(existsSync(lockPath())).toBe(false);
+  });
+
+  it("reclaims a lock whose watcher died", async () => {
+    const dead = spawnSync("true").pid;
+    writeFileSync(lockPath(), `${dead} stale-token\n`);
+    const result = await watch(world());
+    expect(result.code).toBe(5);
+    expect(readdirSync(state).filter((name) => name.includes("lock"))).toEqual(
+      []
+    );
+  });
+});
+
+describe("delivery before finishing", () => {
+  it("delivers unacknowledged feedback after the PR merges, then finishes", async () => {
+    const scene = world();
+    scene.checks.set(1, passing);
+    scene.facts.set(1, { reviewDecision: "REVIEW_REQUIRED" });
+    scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "fix X first")] }));
+    const first = await watch(scene);
+    expect(first.items.map((item) => item.kind)).toEqual(["feedback", "merge-ready"]);
+    scene.facts.set(1, { state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" });
+    const merged = await watch(
+      scene,
+      acks(first.items.filter((item) => item.kind === "merge-ready"))
+    );
+    expect(merged.code).toBe(8);
+    expect(merged.items.map((item) => item.detail.body)).toEqual(["fix X first"]);
+    const done = await watch(scene, acks(merged.items));
+    expect(done.code).toBe(0);
+    expect(done.records.at(-1)).toMatchObject({ kind: "FINISHED" });
+  });
+
+  it("delivers feedback for open members read in the poll where another member closed", async () => {
+    const scene = world();
+    scene.facts.set(2, { state: "CLOSED" });
+    scene.feedback.set(3, feedback({ comments: [comment("u1", "alice", "upstack")] }));
+    const result = await watch(scene, ["--queued-stack", "--stack-prs", "1,2,3"]);
+    expect(result.code).toBe(8);
+    expect(kinds(result.items)).toEqual([[3, "feedback", "comment by alice"]]);
+    const done = await watch(scene, [
+      "--queued-stack",
+      "--stack-prs",
+      "1,2,3",
+      ...acks(result.items),
+    ]);
+    expect(done.records.at(-1)).toMatchObject({
+      kind: "FINISHED",
+      result: { kind: "closed", closed: [{ number: 2 }] },
+    });
+  });
+
+  it("watches a reopened PR again instead of finishing as closed", async () => {
+    const scene = world();
+    scene.facts.set(1, { state: "CLOSED" });
+    expect((await watch(scene)).records.at(-1)).toMatchObject({
+      kind: "FINISHED",
+      result: { kind: "closed" },
+    });
+    scene.facts.set(1, { state: "OPEN", reviewDecision: "CHANGES_REQUESTED" });
+    const reopened = await watch(scene);
+    expect(reopened.code).toBe(8);
+    expect(kinds(reopened.items)).toEqual([[1, "merge-blocker", "merge-gate on #1"]]);
+  });
+
+  it("does not finish on a closed PR whose lifecycle read failed this poll", async () => {
+    const scene = world();
+    scene.facts.set(1, { state: "CLOSED" });
+    expect((await watch(scene)).code).toBe(0);
+    scene.beforePullRequest = async () => {
+      throw new WatcherQueryError(outage);
+    };
+    const unread = await watch(scene, ["--max-query-errors", "2", "--timeout", "600"]);
+    expect(unread.records[0]).toMatchObject({ kind: "RETRY" });
+    expect(unread.code).toBe(8);
+    expect(kinds(unread.items)).toEqual([
+      [1, "status-unavailable", "lifecycle reads for #1 keep failing"],
+    ]);
+  });
+
+  it("keeps queued items when the batch file cannot be written, and redelivers them", async () => {
+    const scene = world();
+    scene.feedback.set(
+      1,
+      feedback({ threads: [thread("t1", false, [comment("o1", "bob", "bug here")])] })
+    );
+    writeFileSync(join(state, "batches"), "");
+    const failed = await watch(scene);
+    expect(failed.code).toBe(73);
+    expect(failed.stderr).toContain("cannot write attention batch");
+    rmSync(join(state, "batches"));
+    scene.feedback.set(
+      1,
+      feedback({ threads: [thread("t1", true, [comment("o1", "bob", "bug here")])] })
+    );
+    const retried = await watch(scene);
+    expect(retried.code).toBe(8);
+    expect(retried.items.map((item) => item.detail.body)).toEqual(["bug here"]);
+  });
+});
+
+describe("blockers come from the lane that read them", () => {
+  it("reports a conflict and a draft gate while CI reads are down", async () => {
+    const scene = world();
+    scene.checks.set(1, unavailable);
+    const down = await watch(scene, ["--max-query-errors", "1"]);
+    expect(kinds(down.items)).toEqual([[1, "status-unavailable", "ci reads for #1 keep failing"]]);
+    scene.facts.set(1, { mergeable: "CONFLICTING", mergeStateStatus: "DIRTY", isDraft: true });
+    const blocked = await watch(scene, ["--max-query-errors", "1", ...acks(down.items)]);
+    expect(blocked.code).toBe(8);
+    expect(kinds(blocked.items)).toEqual([
+      [1, "merge-blocker", "merge-conflicts on #1"],
+      [1, "merge-blocker", "merge-gate on #1"],
+    ]);
+  });
+
+  it("sees an upstack conflict on the next poll, before the sweep", async () => {
+    const scene = world();
+    scene.onSleep = (now) => {
+      if (now >= 20) scene.facts.set(2, { mergeable: "CONFLICTING" });
+    };
+    const result = await watch(scene, ["--queued-stack", "--stack-prs", "1,2"]);
+    expect(result.code).toBe(8);
+    expect(kinds(result.items)).toEqual([[2, "merge-blocker", "merge-conflicts on #2"]]);
+  });
+
+  it("reads upstack feedback at the sweep interval and the frontier's every poll", async () => {
+    const scene = world();
+    await watch(scene, ["--queued-stack", "--stack-prs", "1,2", "--sweep-interval", "30"]);
+    const reads = (pr: number) => scene.feedbackReads.filter((read) => read === pr).length;
+    expect([reads(1), reads(2)]).toEqual([7, 3]);
+  });
+});
+
+describe("non-observations do not flap", () => {
+  it("wakes once while GitHub alternates CONFLICTING and UNKNOWN on one head", async () => {
+    const scene = world();
+    scene.checks.set(1, passing);
+    const conflicting = { mergeable: "CONFLICTING", mergeStateStatus: "DIRTY" } as const;
+    const unknown = { mergeable: "UNKNOWN", mergeStateStatus: "UNKNOWN" } as const;
+    const wakes: string[][] = [];
+    let ack: string[] = [];
+    for (const facts of [conflicting, unknown, conflicting, unknown, conflicting]) {
+      scene.facts.set(1, facts);
+      const result = await watch(scene, ack);
+      wakes.push(result.items.map((item) => item.excerpt));
+      ack = acks(result.items);
+    }
+    expect(wakes).toEqual([["merge-conflicts on #1: CONFLICTING; DIRTY"], [], [], [], []]);
+  });
+
+  it("wakes once for a draft whose CI reruns on the same head", async () => {
+    const scene = world();
+    scene.checks.set(1, passing);
+    scene.facts.set(1, { isDraft: true });
+    const first = await watch(scene);
+    expect(kinds(first.items)).toEqual([[1, "merge-blocker", "merge-gate on #1"]]);
+    scene.onSleep = (now) => {
+      if (now === 10) scene.checks.set(1, pending);
+      if (now === 20) scene.checks.set(1, passing);
+    };
+    const rerun = await watch(scene, acks(first.items));
+    expect(rerun.code).toBe(5);
   });
 });

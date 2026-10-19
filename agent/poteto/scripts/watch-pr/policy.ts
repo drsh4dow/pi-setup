@@ -30,7 +30,7 @@ export function assessGitHubMerge(args: {
     headRollupState: args.headRollupState,
   };
 }
-async function mergeAssessment(
+export async function mergeAssessment(
   reader: T.GitHubReader,
   facts: T.PullRequestFacts
 ) {
@@ -138,7 +138,7 @@ export async function readSnapshot(args: {
     ),
   };
 }
-export const conflictBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
+const conflictBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
   row.kind === "open" &&
   (row.facts.mergeable === "CONFLICTING" ||
     row.facts.mergeStateStatus === "DIRTY" ||
@@ -152,7 +152,7 @@ function threadBlocker(row: T.PrSnapshot): T.MergeBlocker | null {
     ? null
     : { kind: "review-threads", pr: row.context, threads };
 }
-export const ciBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
+const ciBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
   row.kind === "open" &&
   (row.ci.kind === "ci-failing" || row.ci.kind === "ci-github-rejected")
     ? { kind: "failing-checks", pr: row.context, ci: row.ci }
@@ -168,7 +168,7 @@ function gateReason(
     ? "changes-requested"
     : null;
 }
-export function gateBlocker(
+function gateBlocker(
   row: T.PrSnapshot,
   allowDraft: boolean
 ): T.MergeBlocker | null {

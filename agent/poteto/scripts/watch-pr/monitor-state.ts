@@ -2,15 +2,32 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type * as T from "./types.ts";
-import { isAttentionId, nonEmpty, parsePrNumber } from "./types.ts";
+import { nonEmpty, parsePrNumber } from "./types.ts";
+
+declare const attentionIdBrand: unique symbol;
+export type AttentionId = string & {
+  readonly [attentionIdBrand]: "AttentionId";
+};
+export function isAttentionId(value: string): value is AttentionId {
+  return /^[0-9a-f]{64}$/.test(value);
+}
+export type AttentionKind =
+  | "feedback"
+  | "merge-blocker"
+  | "merge-ready"
+  | "status-unavailable"
+  | "status-recovered"
+  | "ci-recovered";
 
 export class MonitorStateError extends Error {
   readonly path: string;
@@ -45,9 +62,9 @@ export interface PrLedger {
   readonly ciRecoveryOwed: boolean;
 }
 export interface StoredItem {
-  readonly id: T.AttentionId;
+  readonly id: AttentionId;
   readonly pr: T.PrNumber;
-  readonly kind: T.AttentionKind;
+  readonly kind: AttentionKind;
   readonly acknowledged: boolean;
   readonly observedAt: string;
   readonly excerpt: string;
@@ -86,7 +103,7 @@ const ATTENTION_KINDS = [
   "status-unavailable",
   "status-recovered",
   "ci-recovered",
-] as const satisfies readonly T.AttentionKind[];
+] as const satisfies readonly AttentionKind[];
 const MODES = [
   "single",
   "stack",
@@ -262,14 +279,124 @@ export function parseLedger(value: unknown): Ledger {
 export const statePath = (directory: string): string =>
   join(directory, "state.json");
 
+const hasErrorCode = (error: unknown, code: string): boolean =>
+  error instanceof Error && "code" in error && error.code === code;
+
+export interface StateLock {
+  readonly path: string;
+  readonly contents: string;
+}
+
+function readLock(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    throw error;
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return hasErrorCode(error, "EPERM");
+  }
+}
+
+/** Linking a fully written file is an exclusive create, like O_EXCL, without a window where the lock exists but is still empty. */
+function publishLock(lock: StateLock): boolean {
+  const staged = `${lock.path}.${randomUUID()}.tmp`;
+  const file = openSync(staged, "wx");
+  try {
+    writeSync(file, lock.contents);
+    fsyncSync(file);
+  } finally {
+    closeSync(file);
+  }
+  try {
+    linkSync(staged, lock.path);
+    return true;
+  } catch (error) {
+    if (hasErrorCode(error, "EEXIST")) return false;
+    throw error;
+  } finally {
+    unlinkSync(staged);
+  }
+}
+
+/** Renaming first means a lock that a live watcher published after `stale` was read is moved, never deleted, and can be put back. */
+function setAsideStaleLock(path: string, stale: string): void {
+  const aside = `${path}.stale.${randomUUID()}`;
+  try {
+    renameSync(path, aside);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return;
+    throw error;
+  }
+  if (readFileSync(aside, "utf8") !== stale)
+    try {
+      linkSync(aside, path);
+    } catch (error) {
+      if (!hasErrorCode(error, "EEXIST")) throw error;
+    }
+  unlinkSync(aside);
+}
+
+const RECLAIM_ATTEMPTS = 3;
+
+export function lockState(directory: string): StateLock {
+  const path = join(directory, "watcher.lock");
+  const lock = { path, contents: `${process.pid} ${randomUUID()}\n` };
+  try {
+    mkdirSync(directory, { recursive: true });
+    for (let attempt = 0; attempt < RECLAIM_ATTEMPTS; attempt += 1) {
+      if (publishLock(lock)) return lock;
+      const held = readLock(path);
+      if (held === null) continue;
+      const pid = Number(/^(\d+) /.exec(held)?.[1]);
+      if (!Number.isSafeInteger(pid) || pid <= 0)
+        throw new MonitorStateError(
+          path,
+          `the watcher lock on ${directory} is unreadable: ${JSON.stringify(held)}`
+        );
+      if (processAlive(pid))
+        throw new MonitorStateError(
+          path,
+          `another watcher owns ${directory} (pid ${pid})`
+        );
+      setAsideStaleLock(path, held);
+    }
+  } catch (error) {
+    if (error instanceof MonitorStateError) throw error;
+    throw new MonitorStateError(path, "cannot take the watcher lock", {
+      cause: error,
+    });
+  }
+  throw new MonitorStateError(
+    path,
+    `the watcher lock on ${directory} changed hands ${RECLAIM_ATTEMPTS} times while being reclaimed`
+  );
+}
+
+export function unlockState(lock: StateLock): void {
+  try {
+    if (readLock(lock.path) === lock.contents) unlinkSync(lock.path);
+  } catch (error) {
+    throw new MonitorStateError(lock.path, "cannot release the watcher lock", {
+      cause: error,
+    });
+  }
+}
+
 export function loadLedger(directory: string): Ledger | null {
   const path = statePath(directory);
   let contents: string;
   try {
     contents = readFileSync(path, "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT")
-      return null;
+    if (hasErrorCode(error, "ENOENT")) return null;
     throw new MonitorStateError(path, "cannot read monitor state", {
       cause: error,
     });

@@ -300,8 +300,7 @@ export type ProgressVerdict =
       readonly failure: QueryFailure;
       readonly consecutiveFailures: number;
       readonly retryInSeconds: number;
-    })
-  | MonitorProgressVerdict;
+    });
 export type BlockerVerdict =
   | (Terminal<"BLOCKER", 2> & {
       readonly blocker: Extract<
@@ -362,8 +361,7 @@ export type TerminalVerdict =
       readonly merged: NonEmpty<MergedPr>;
     })
   | BlockerVerdict
-  | TimeoutVerdict
-  | MonitorTerminalVerdict;
+  | TimeoutVerdict;
 export type WatcherVerdict = ProgressVerdict | TerminalVerdict;
 export type ExitCode = TerminalVerdict["exitCode"];
 export type QueueTerminalVerdict =
@@ -405,7 +403,6 @@ export interface GitHubReader {
     after: string | null
   ): Promise<ReviewThreadPage>;
   commitRollups(context: PrContext): Promise<readonly CommitRollup[]>;
-  feedback(context: PrContext): Promise<FeedbackSnapshot>;
 }
 export interface PollingOptions {
   readonly interval: number;
@@ -414,98 +411,3 @@ export interface PollingOptions {
   readonly maxQueryErrors: number;
   readonly allowDraft: boolean;
 }
-export interface FeedbackComment {
-  readonly id: string;
-  readonly authorLogin: string | null;
-  readonly body: string;
-  readonly url: string;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
-export type SubmittedReviewState =
-  | "APPROVED"
-  | "CHANGES_REQUESTED"
-  | "COMMENTED"
-  | "DISMISSED";
-export interface SubmittedReview {
-  readonly id: string;
-  readonly authorLogin: string | null;
-  readonly body: string;
-  readonly url: string;
-  readonly state: SubmittedReviewState;
-  readonly submittedAt: string;
-  readonly updatedAt: string;
-}
-export interface ThreadComment extends FeedbackComment {
-  readonly path: string | null;
-  readonly line: number | null;
-}
-export interface FeedbackThread {
-  readonly id: string;
-  readonly isResolved: boolean;
-  readonly comments: readonly ThreadComment[];
-}
-export interface FeedbackSnapshot {
-  readonly viewerLogin: string;
-  readonly reviews: readonly SubmittedReview[];
-  readonly comments: readonly FeedbackComment[];
-  readonly threads: readonly FeedbackThread[];
-}
-declare const attentionIdBrand: unique symbol;
-export type AttentionId = string & {
-  readonly [attentionIdBrand]: "AttentionId";
-};
-export function isAttentionId(value: string): value is AttentionId {
-  return /^[0-9a-f]{64}$/.test(value);
-}
-export type AttentionKind =
-  | "feedback"
-  | "merge-blocker"
-  | "merge-ready"
-  | "status-unavailable"
-  | "status-recovered"
-  | "ci-recovered";
-export interface AttentionPreview {
-  readonly id: AttentionId;
-  readonly pr: PrNumber;
-  readonly kind: AttentionKind;
-  readonly excerpt: string;
-}
-export interface AttentionBatchRef {
-  readonly path: string;
-  readonly sha256: string;
-  readonly count: number;
-  readonly preview: readonly AttentionPreview[];
-}
-export type MonitorCondition =
-  | "pending-checks"
-  | "merge-ready"
-  | "blocked"
-  | "awaiting-human"
-  | "status-unavailable";
-export type MonitorProgressVerdict = Progress<"MONITORING"> & {
-  readonly frontier: PrContext;
-  readonly condition: MonitorCondition;
-  readonly pendingAttentionCount: number;
-};
-export type MonitorTerminalVerdict =
-  | (Terminal<"MONITOR_TIMEOUT", 5> & {
-      readonly scope: NonEmpty<PrContext>;
-      readonly frontier: PrContext | null;
-    })
-  | (Terminal<"ATTENTION", 8> & {
-      readonly batch: AttentionBatchRef;
-    })
-  | (Terminal<"FINISHED", 0> & {
-      readonly result:
-        | {
-            readonly kind: "all-merged";
-            readonly merged: NonEmpty<MergedPr>;
-          }
-        | {
-            readonly kind: "closed";
-            readonly closed: NonEmpty<PrContext>;
-            readonly merged: readonly MergedPr[];
-            readonly stillOpen: readonly PrContext[];
-          };
-    });

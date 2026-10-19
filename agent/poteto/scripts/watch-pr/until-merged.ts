@@ -1,59 +1,61 @@
+import { InvalidArgumentError } from "commander";
 import { createHash } from "node:crypto";
 import type { CliRuntime } from "./cli.ts";
-import { WatcherQueryError, discoverStack, resolveContext } from "./github.ts";
+import type {
+  FeedbackReader,
+  FeedbackSnapshot,
+  SubmittedReviewState,
+} from "./feedback.ts";
 import {
+  WatcherQueryError,
+  discoverStack,
+  resolveChecks,
+  resolveContext,
+} from "./github.ts";
+import {
+  type AttentionId,
   CONDITION_KINDS,
+  type ConditionKind,
   LANES,
   type Ledger,
   MonitorStateError,
   type MonitorLane,
   type PrLedger,
+  type StateLock,
   type StoredItem,
+  isAttentionId,
   loadLedger,
+  lockState,
   newPrLedger,
   saveLedger,
   statePath,
+  unlockState,
   writeBatch,
 } from "./monitor-state.ts";
 import {
-  ciBlocker,
-  conflictBlocker,
-  gateBlocker,
+  type FinishedResult,
+  type MonitorCondition,
+  type MonitorStamp,
+  type MonitorTerminalVerdict,
+  type MonitorVerdict,
+  monitorStamp,
+  renderMonitor,
+} from "./monitor-verdict.ts";
+import {
+  mergeAssessment,
   queryBackoffSeconds,
-  readSnapshot,
   readyContribution,
-  statusQueryVerdict,
-  verdictFactory,
-  type RunDependencies,
+  type WatchClock,
 } from "./policy.ts";
 import type * as T from "./types.ts";
-import { isAttentionId, nonEmpty } from "./types.ts";
+import { nonEmpty } from "./types.ts";
 
 const PROTOCOL_VERSION = 1;
 const PREVIEW_LIMIT = 20;
 const EXCERPT_LIMIT = 200;
 const REPLY_MARKER = /^<!-- pi-event:([0-9a-f]{64}) -->$/;
 
-type OpenSnapshot = Extract<T.PrSnapshot, { readonly kind: "open" }>;
-type Observation =
-  | { readonly kind: "lifecycle"; readonly facts: T.PullRequestFacts }
-  | {
-      readonly kind: "feedback";
-      readonly pr: T.PrNumber;
-      readonly snapshot: T.FeedbackSnapshot;
-    }
-  | {
-      readonly kind: "ci";
-      readonly snapshot: OpenSnapshot;
-      readonly frontier: boolean;
-    }
-  | {
-      readonly kind: "lane-unavailable";
-      readonly pr: T.PrNumber;
-      readonly lane: MonitorLane;
-      readonly failure: T.QueryFailure;
-    };
-interface ReduceEnvironment {
+interface Environment {
   readonly repository: T.Repository;
   readonly observedAt: string;
   readonly allowDraft: boolean;
@@ -61,15 +63,19 @@ interface ReduceEnvironment {
 interface PrStep {
   pr: PrLedger;
   readonly queued: StoredItem[];
-  readonly acknowledged: Set<T.AttentionId>;
+  readonly acknowledged: Set<AttentionId>;
 }
+type ConditionBlocker = Extract<
+  T.MergeBlocker,
+  { readonly kind: ConditionKind }
+>;
 
 const sha256 = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
 function attentionId(
   repository: T.Repository,
   parts: readonly (string | number | boolean | null)[]
-): T.AttentionId {
+): AttentionId {
   const id = sha256(
     JSON.stringify([
       PROTOCOL_VERSION,
@@ -90,9 +96,36 @@ function memberLedger(ledger: Ledger, number: T.PrNumber): PrLedger {
   return found;
 }
 
+function updateMember(
+  ledger: Ledger,
+  number: T.PrNumber,
+  change: (step: PrStep) => void
+): Ledger {
+  const step: PrStep = {
+    pr: memberLedger(ledger, number),
+    queued: [],
+    acknowledged: new Set(),
+  };
+  change(step);
+  const known = new Set(ledger.items.map((item) => item.id));
+  const items = ledger.items.map((item) =>
+    step.acknowledged.has(item.id) ? { ...item, acknowledged: true } : item
+  );
+  for (const item of step.queued)
+    if (!known.has(item.id)) {
+      known.add(item.id);
+      items.push(item);
+    }
+  return {
+    ...ledger,
+    prs: ledger.prs.map((pr) => (pr.number === number ? step.pr : pr)),
+    items,
+  };
+}
+
 function queue(
   step: PrStep,
-  environment: ReduceEnvironment,
+  environment: Environment,
   item: Pick<StoredItem, "id" | "kind" | "excerpt" | "detail">
 ): void {
   step.queued.push({
@@ -107,7 +140,7 @@ function queue(
 function recoverLane(
   step: PrStep,
   lane: MonitorLane,
-  environment: ReduceEnvironment
+  environment: Environment
 ): void {
   const outage = step.pr.outages[lane];
   if (!outage.active) return;
@@ -132,7 +165,7 @@ function markLaneUnavailable(
   step: PrStep,
   lane: MonitorLane,
   failure: T.QueryFailure,
-  environment: ReduceEnvironment
+  environment: Environment
 ): void {
   const outage = step.pr.outages[lane];
   if (outage.active) return;
@@ -160,11 +193,11 @@ interface Revision {
   readonly authorLogin: string | null;
   readonly body: string;
   readonly updatedAt: string;
-  readonly reviewState: T.SubmittedReviewState | null;
+  readonly reviewState: SubmittedReviewState | null;
   readonly inResolvedThread: boolean;
   readonly detail: Record<string, unknown>;
 }
-function revisions(snapshot: T.FeedbackSnapshot): readonly Revision[] {
+function revisions(snapshot: FeedbackSnapshot): readonly Revision[] {
   const all: Revision[] = [];
   for (const review of snapshot.reviews)
     all.push({
@@ -209,12 +242,12 @@ function revisions(snapshot: T.FeedbackSnapshot): readonly Revision[] {
 }
 
 /** Only `<!-- pi-event:<id> -->` lines at the very end of the body count, so a quoted marker claims nothing. */
-function replyMarkers(body: string): readonly T.AttentionId[] {
+function replyMarkers(body: string): readonly AttentionId[] {
   const lines = body
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== "");
-  const ids: T.AttentionId[] = [];
+  const ids: AttentionId[] = [];
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const id = REPLY_MARKER.exec(lines[index] ?? "")?.[1];
     if (id === undefined || !isAttentionId(id)) break;
@@ -225,9 +258,9 @@ function replyMarkers(body: string): readonly T.AttentionId[] {
 
 function observeFeedback(
   step: PrStep,
-  snapshot: T.FeedbackSnapshot,
-  deliveredFeedback: ReadonlySet<T.AttentionId>,
-  environment: ReduceEnvironment
+  snapshot: FeedbackSnapshot,
+  deliveredFeedback: ReadonlySet<AttentionId>,
+  environment: Environment
 ): void {
   const seen = new Set(step.pr.seenRevisions);
   for (const revision of revisions(snapshot)) {
@@ -264,7 +297,20 @@ function observeFeedback(
   step.pr = { ...step.pr, feedbackBaselined: true, seenRevisions: [...seen] };
 }
 
-function blockerFacts(blocker: T.MergeBlocker): readonly string[] {
+function deliveredFeedback(
+  ledger: Ledger,
+  number: T.PrNumber
+): ReadonlySet<AttentionId> {
+  return new Set(
+    ledger.items.flatMap((item) =>
+      item.pr === number && item.kind === "feedback" && !item.acknowledged
+        ? [item.id]
+        : []
+    )
+  );
+}
+
+function blockerFacts(blocker: ConditionBlocker): readonly string[] {
   switch (blocker.kind) {
     case "merge-conflicts":
       return [blocker.facts.mergeable, blocker.facts.mergeStateStatus];
@@ -280,8 +326,6 @@ function blockerFacts(blocker: T.MergeBlocker): readonly string[] {
         .sort();
     case "merge-gate":
       return [blocker.reason];
-    case "review-threads":
-      return blocker.threads.map((thread) => thread.id).sort();
     default: {
       const exhaustive: never = blocker;
       return exhaustive;
@@ -289,75 +333,65 @@ function blockerFacts(blocker: T.MergeBlocker): readonly string[] {
   }
 }
 
-function observeChecks(
+/** An active condition keeps its generation, so an acknowledged condition with the same head and facts keeps its ID. */
+function setCondition(
   step: PrStep,
-  snapshot: OpenSnapshot,
-  frontier: boolean,
-  environment: ReduceEnvironment
+  environment: Environment,
+  kind: ConditionKind,
+  head: string | null,
+  blocker: ConditionBlocker | null
 ): void {
-  const head = snapshot.facts.headRefOid;
-  const blockers = {
-    "merge-conflicts": conflictBlocker(snapshot),
-    "failing-checks": ciBlocker(snapshot),
-    "merge-gate": gateBlocker(snapshot, environment.allowDraft),
-  };
-  const conditions = { ...step.pr.conditions };
-  for (const kind of CONDITION_KINDS) {
-    const blocker = blockers[kind];
-    const previous = conditions[kind];
-    if (blocker === null) {
-      conditions[kind] = { ...previous, active: false };
-      continue;
-    }
-    const generation = previous.active
+  const previous = step.pr.conditions[kind];
+  const generation =
+    blocker === null || previous.active
       ? previous.generation
       : previous.generation + 1;
-    conditions[kind] = { active: true, generation };
-    const facts = blockerFacts(blocker);
-    queue(step, environment, {
-      id: attentionId(environment.repository, [
-        step.pr.number,
-        "merge-blocker",
-        kind,
-        generation,
-        head,
-        ...facts,
-      ]),
-      kind: "merge-blocker",
-      excerpt: `${kind} on #${step.pr.number}: ${facts.map((fact) => fact.split("\u0000").join(" ")).join("; ")}`,
-      detail: { head, blocker },
-    });
-  }
-  let ciRecoveryOwed = step.pr.ciRecoveryOwed;
-  if (snapshot.ci.kind === "ci-clean" && ciRecoveryOwed) {
-    queue(step, environment, {
-      id: attentionId(environment.repository, [
-        step.pr.number,
-        "ci-recovered",
-        conditions["failing-checks"].generation,
-      ]),
-      kind: "ci-recovered",
-      excerpt: `CI on #${step.pr.number} is clean again at ${head ?? "unknown head"}`,
-      detail: { head, checks: snapshot.ci.all },
-    });
-    ciRecoveryOwed = false;
-  }
-  if (blockers["failing-checks"] !== null) ciRecoveryOwed = true;
-  step.pr = { ...step.pr, conditions, ciRecoveryOwed };
-  const ready = frontier
-    ? readyContribution(snapshot, environment.allowDraft)
-    : null;
-  if (ready?.kind === "ready-pr")
-    queue(step, environment, {
-      id: attentionId(environment.repository, [
-        step.pr.number,
-        "merge-ready",
-        head,
-      ]),
-      kind: "merge-ready",
-      excerpt: `#${step.pr.number} is merge-ready at ${head ?? "unknown head"} (reviewDecision=${ready.proof.gate.reviewDecision ?? "none"}); merging stays with the operator`,
-      detail: { head, proof: ready.proof },
-    });
+  step.pr = {
+    ...step.pr,
+    conditions: {
+      ...step.pr.conditions,
+      [kind]: { active: blocker !== null, generation },
+    },
+  };
+  if (blocker === null) return;
+  const facts = blockerFacts(blocker);
+  queue(step, environment, {
+    id: attentionId(environment.repository, [
+      step.pr.number,
+      "merge-blocker",
+      kind,
+      generation,
+      head,
+      ...facts,
+    ]),
+    kind: "merge-blocker",
+    excerpt: `${kind} on #${step.pr.number}: ${facts.map((fact) => fact.split("\u0000").join(" ")).join("; ")}`,
+    detail: { head, blocker },
+  });
+}
+
+/** GitHub reports UNKNOWN while it recomputes mergeability, which is no evidence either way. */
+function mergeability(
+  facts: T.PullRequestFacts
+): "conflicting" | "mergeable" | "unknown" {
+  if (facts.mergeable === "UNKNOWN" || facts.mergeStateStatus === "UNKNOWN")
+    return "unknown";
+  if (
+    facts.mergeable === "CONFLICTING" ||
+    facts.mergeStateStatus === "DIRTY" ||
+    facts.mergeStateStatus === "CONFLICTING"
+  )
+    return "conflicting";
+  return "mergeable";
+}
+
+function gateReason(
+  facts: T.PullRequestFacts,
+  allowDraft: boolean
+): T.MergeGateReason | null {
+  if (facts.isDraft && !allowDraft) return "draft-pr";
+  if (facts.reviewDecision === "CHANGES_REQUESTED") return "changes-requested";
+  return null;
 }
 
 function lifecycleOf(facts: T.PullRequestFacts): PrLedger["lifecycle"] {
@@ -366,111 +400,182 @@ function lifecycleOf(facts: T.PullRequestFacts): PrLedger["lifecycle"] {
   if (facts.state === "CLOSED") return { kind: "closed" };
   return { kind: "open" };
 }
-function observedPr(observation: Observation): T.PrNumber {
-  switch (observation.kind) {
-    case "lifecycle":
-      return observation.facts.context.number;
-    case "ci":
-      return observation.snapshot.context.number;
-    case "feedback":
-    case "lane-unavailable":
-      return observation.pr;
-    default: {
-      const exhaustive: never = observation;
-      return exhaustive;
-    }
-  }
+
+function observeLifecycle(
+  step: PrStep,
+  facts: T.PullRequestFacts,
+  environment: Environment
+): void {
+  step.pr = { ...step.pr, lifecycle: lifecycleOf(facts) };
+  if (step.pr.lifecycle.kind !== "open") return;
+  const head = facts.headRefOid;
+  const merge = mergeability(facts);
+  if (merge === "conflicting")
+    setCondition(step, environment, "merge-conflicts", head, {
+      kind: "merge-conflicts",
+      pr: facts.context,
+      facts,
+    });
+  else if (merge === "mergeable")
+    setCondition(step, environment, "merge-conflicts", head, null);
+  const reason = gateReason(facts, environment.allowDraft);
+  setCondition(
+    step,
+    environment,
+    "merge-gate",
+    head,
+    reason === null ? null : { kind: "merge-gate", pr: facts.context, reason }
+  );
 }
 
-function reduce(
-  ledger: Ledger,
-  observation: Observation,
-  environment: ReduceEnvironment
-): Ledger {
-  const number = observedPr(observation);
-  const step: PrStep = {
-    pr: memberLedger(ledger, number),
-    queued: [],
-    acknowledged: new Set(),
-  };
-  switch (observation.kind) {
-    case "lifecycle":
-      recoverLane(step, "lifecycle", environment);
-      step.pr = { ...step.pr, lifecycle: lifecycleOf(observation.facts) };
-      break;
-    case "feedback": {
-      recoverLane(step, "feedback", environment);
-      const delivered = new Set(
-        ledger.items.flatMap((item) =>
-          item.pr === number && item.kind === "feedback" && !item.acknowledged
-            ? [item.id]
-            : []
-        )
-      );
-      observeFeedback(step, observation.snapshot, delivered, environment);
-      break;
-    }
-    case "ci":
-      recoverLane(step, "ci", environment);
-      observeChecks(step, observation.snapshot, observation.frontier, environment);
-      break;
-    case "lane-unavailable":
-      markLaneUnavailable(step, observation.lane, observation.failure, environment);
-      break;
-    default: {
-      const exhaustive: never = observation;
-      return exhaustive;
-    }
-  }
-  const known = new Set(ledger.items.map((item) => item.id));
-  const items = ledger.items.map((item) =>
-    step.acknowledged.has(item.id) ? { ...item, acknowledged: true } : item
+/** readSnapshot's `pendingHistory: "include"` CI classification, minus its own pull-request and review-thread reads. */
+async function readCi(
+  reader: T.GitHubReader,
+  facts: T.PullRequestFacts
+): Promise<T.CiState> {
+  const checks = await resolveChecks(reader, facts.context);
+  const merge = await mergeAssessment(reader, facts);
+  const failed = nonEmpty(
+    checks.checks.filter(
+      (check): check is T.FailedCheck => check.kind === "failed"
+    )
   );
-  for (const item of step.queued)
-    if (!known.has(item.id)) {
-      known.add(item.id);
-      items.push(item);
-    }
-  return {
-    ...ledger,
-    prs: ledger.prs.map((pr) => (pr.number === number ? step.pr : pr)),
-    items,
+  const pending = nonEmpty(
+    checks.checks.filter(
+      (check): check is T.PendingCheck => check.kind === "pending"
+    )
+  );
+  const base = {
+    source: checks.source,
+    all: checks.checks,
+    hadPreviousPassingCi: merge.hadPreviousPassingCi,
   };
+  if (failed !== null)
+    return {
+      ...base,
+      kind: "ci-failing",
+      failed,
+      pending: pending ?? [],
+      github: merge.github,
+    };
+  if (merge.github.kind === "refused")
+    return {
+      ...base,
+      kind: "ci-github-rejected",
+      failed: [],
+      pending: pending ?? [],
+      github: merge.github,
+    };
+  if (pending !== null) return { ...base, kind: "ci-pending", failed: [], pending };
+  return {
+    ...base,
+    kind: "ci-clean",
+    failed: [],
+    pending: [],
+    github: merge.github,
+  };
+}
+
+function observeCi(
+  step: PrStep,
+  ci: T.CiState,
+  facts: T.PullRequestFacts,
+  environment: Environment
+): void {
+  const head = facts.headRefOid;
+  if (ci.kind === "ci-failing" || ci.kind === "ci-github-rejected")
+    setCondition(step, environment, "failing-checks", head, {
+      kind: "failing-checks",
+      pr: facts.context,
+      ci,
+    });
+  else setCondition(step, environment, "failing-checks", head, null);
+  if (ci.kind === "ci-clean" && step.pr.ciRecoveryOwed) {
+    queue(step, environment, {
+      id: attentionId(environment.repository, [
+        step.pr.number,
+        "ci-recovered",
+        step.pr.conditions["failing-checks"].generation,
+      ]),
+      kind: "ci-recovered",
+      excerpt: `CI on #${step.pr.number} is clean again at ${head ?? "unknown head"}`,
+      detail: { head, checks: ci.all },
+    });
+    step.pr = { ...step.pr, ciRecoveryOwed: false };
+  }
+  if (step.pr.conditions["failing-checks"].active)
+    step.pr = { ...step.pr, ciRecoveryOwed: true };
+}
+
+function mergeReadyProof(
+  facts: T.PullRequestFacts,
+  ci: T.CiState,
+  feedback: FeedbackSnapshot,
+  allowDraft: boolean
+): T.ReadyPr | null {
+  if (ci.kind !== "ci-clean" || mergeability(facts) !== "mergeable")
+    return null;
+  if (feedback.threads.some((thread) => !thread.isResolved)) return null;
+  // Clean CI has no pending check, so no review automation is running.
+  const ready = readyContribution(
+    {
+      kind: "open",
+      context: facts.context,
+      facts,
+      threads: [],
+      ci,
+      reviewAutomationRunning: false,
+    },
+    allowDraft
+  );
+  return ready?.kind === "ready-pr" ? ready : null;
+}
+
+function queueMergeReady(
+  step: PrStep,
+  environment: Environment,
+  head: string | null,
+  ready: T.ReadyPr
+): void {
+  queue(step, environment, {
+    id: attentionId(environment.repository, [
+      step.pr.number,
+      "merge-ready",
+      head,
+    ]),
+    kind: "merge-ready",
+    excerpt: `#${step.pr.number} is merge-ready at ${head ?? "unknown head"} (reviewDecision=${ready.proof.gate.reviewDecision ?? "none"}); merging stays with the operator`,
+    detail: { head, proof: ready.proof },
+  });
 }
 
 function acknowledge(
   ledger: Ledger,
-  ids: readonly T.AttentionId[],
-  path: string
-): Ledger {
+  ids: readonly AttentionId[]
+): { readonly ledger: Ledger; readonly unknown: readonly AttentionId[] } {
   const known = new Set(ledger.items.map((item) => item.id));
-  for (const id of ids)
-    if (!known.has(id))
-      throw new MonitorStateError(
-        path,
-        `--ack ${id} names no attention item this state delivered`
-      );
   const acked = new Set(ids);
   return {
-    ...ledger,
-    items: ledger.items.map((item) =>
-      acked.has(item.id) && !item.acknowledged
-        ? { ...item, acknowledged: true }
-        : item
-    ),
+    ledger: {
+      ...ledger,
+      items: ledger.items.map((item) =>
+        acked.has(item.id) && !item.acknowledged
+          ? { ...item, acknowledged: true }
+          : item
+      ),
+    },
+    unknown: ids.filter((id) => !known.has(id)),
   };
 }
 
 type ScopeStatus =
-  | {
-      readonly kind: "finished";
-      readonly result: Extract<
-        T.MonitorTerminalVerdict,
-        { readonly kind: "FINISHED" }
-      >["result"];
-    }
+  | { readonly kind: "finished"; readonly result: FinishedResult }
   | { readonly kind: "open"; readonly frontier: T.PrContext };
-function scopeStatus(ledger: Ledger): ScopeStatus {
+/** A member recorded closed counts as closed only when this poll read it, because a closed PR can reopen. */
+function scopeStatus(
+  ledger: Ledger,
+  readThisPoll: ReadonlySet<T.PrNumber>
+): ScopeStatus {
   const merged: T.MergedPr[] = [];
   const closed: T.PrContext[] = [];
   const stillOpen: T.PrContext[] = [];
@@ -479,7 +584,8 @@ function scopeStatus(ledger: Ledger): ScopeStatus {
     const lifecycle = memberLedger(ledger, number).lifecycle;
     if (lifecycle.kind === "merged")
       merged.push({ kind: "merged-pr", context, mergedAt: lifecycle.mergedAt });
-    else if (lifecycle.kind === "closed") closed.push(context);
+    else if (lifecycle.kind === "closed" && readThisPoll.has(number))
+      closed.push(context);
     else stillOpen.push(context);
   }
   const closedMembers = nonEmpty(closed);
@@ -495,53 +601,58 @@ function scopeStatus(ledger: Ledger): ScopeStatus {
   return { kind: "finished", result: { kind: "all-merged", merged: allMerged } };
 }
 
-const isLive = (pr: PrLedger): boolean =>
-  pr.lifecycle.kind === "open" || pr.lifecycle.kind === "unknown";
-function outstanding(ledger: Ledger): readonly StoredItem[] {
-  const live = new Set(
-    ledger.scope.filter((number) => isLive(memberLedger(ledger, number)))
-  );
-  return ledger.items.filter((item) => !item.acknowledged && live.has(item.pr));
+interface FrontierView {
+  readonly ci: T.CiState;
+  readonly ready: boolean;
 }
-
 function frontierCondition(
-  ledger: Ledger,
-  frontier: T.PrNumber,
-  snapshot: OpenSnapshot | undefined,
-  allowDraft: boolean
-): T.MonitorCondition {
-  const pr = memberLedger(ledger, frontier);
-  if (snapshot === undefined || LANES.some((lane) => pr.outages[lane].active))
+  pr: PrLedger,
+  view: FrontierView | null
+): MonitorCondition {
+  if (view === null || LANES.some((lane) => pr.outages[lane].active))
     return "status-unavailable";
   if (CONDITION_KINDS.some((kind) => pr.conditions[kind].active))
     return "blocked";
-  if (snapshot.ci.kind === "ci-pending") return "pending-checks";
-  if (readyContribution(snapshot, allowDraft)?.kind === "ready-pr")
-    return "merge-ready";
+  if (view.ci.kind === "ci-pending") return "pending-checks";
+  if (view.ready) return "merge-ready";
   return "awaiting-human";
 }
 
+function scopeContexts(ledger: Ledger): T.NonEmpty<T.PrContext> {
+  const [first, ...rest] = ledger.scope;
+  return [
+    { ...ledger.repository, number: first },
+    ...rest.map((number) => ({ ...ledger.repository, number })),
+  ];
+}
+
+interface MonitorDependencies {
+  readonly reader: T.GitHubReader;
+  readonly feedback: FeedbackReader;
+  readonly clock: WatchClock;
+  readonly stamp: MonitorStamp;
+  readonly emit: (verdict: MonitorVerdict) => void;
+}
+
 async function monitor(args: {
-  readonly dependencies: RunDependencies;
+  readonly dependencies: MonitorDependencies;
   readonly stateDirectory: string;
   readonly ledger: Ledger;
   readonly options: T.PollingOptions;
-}): Promise<T.MonitorTerminalVerdict> {
-  const { reader, clock, emit } = args.dependencies;
+}): Promise<MonitorTerminalVerdict> {
+  const { reader, feedback, clock, stamp, emit } = args.dependencies;
   const { options, stateDirectory } = args;
   let ledger = args.ledger;
   const repository = ledger.repository;
-  const stamp = verdictFactory(clock, ledger.mode);
   const started = clock.now();
   let nextSweepAt = started;
   let lastProgress: string | null = null;
   const failures = new Map<string, number>();
-  const snapshots = new Map<T.PrNumber, OpenSnapshot>();
   while (true) {
     const now = clock.now();
     const sweep = now >= nextSweepAt;
     if (sweep) nextSweepAt = now + options.sweepInterval;
-    const environment = {
+    const environment: Environment = {
       repository,
       observedAt: clock.observedAt(),
       allowDraft: options.allowDraft,
@@ -558,6 +669,10 @@ async function monitor(args: {
       try {
         const value = await read();
         failures.delete(key);
+        if (memberLedger(ledger, pr).outages[lane].active)
+          ledger = updateMember(ledger, pr, (step) =>
+            recoverLane(step, lane, environment)
+          );
         return value;
       } catch (error) {
         if (!(error instanceof WatcherQueryError)) throw error;
@@ -566,70 +681,66 @@ async function monitor(args: {
         if (poll.worst === null || count > poll.worst.count)
           poll.worst = { failure: error.failure, count };
         if (!error.failure.retryable || count >= options.maxQueryErrors)
-          ledger = reduce(
-            ledger,
-            { kind: "lane-unavailable", pr, lane, failure: error.failure },
-            environment
+          ledger = updateMember(ledger, pr, (step) =>
+            markLaneUnavailable(step, lane, error.failure, environment)
           );
         return null;
       }
     };
+    const readThisPoll = new Set<T.PrNumber>();
     let frontier: T.PrNumber | null = null;
+    let frontierView: FrontierView | null = null;
     for (const number of ledger.scope) {
-      if (!isLive(memberLedger(ledger, number))) continue;
+      if (memberLedger(ledger, number).lifecycle.kind === "merged") continue;
       const context = { ...repository, number };
       const facts = await attempt(number, "lifecycle", () =>
         reader.pullRequest(context)
       );
       if (facts !== null) {
-        ledger = reduce(ledger, { kind: "lifecycle", facts }, environment);
-        if (!isLive(memberLedger(ledger, number))) continue;
-      }
-      frontier ??= number;
-      const feedback = await attempt(number, "feedback", () =>
-        reader.feedback(context)
-      );
-      if (feedback !== null)
-        ledger = reduce(
-          ledger,
-          { kind: "feedback", pr: number, snapshot: feedback },
-          environment
+        readThisPoll.add(number);
+        ledger = updateMember(ledger, number, (step) =>
+          observeLifecycle(step, facts, environment)
         );
-      if (frontier !== number && !sweep) continue;
-      const snapshot = await attempt(number, "ci", () =>
-        readSnapshot({
-          reader,
-          context,
-          pendingHistory: "include",
-          allowDraft: options.allowDraft,
-        })
+      }
+      const lifecycle = memberLedger(ledger, number).lifecycle.kind;
+      if (lifecycle === "merged" || lifecycle === "closed") continue;
+      frontier ??= number;
+      const isFrontier = frontier === number;
+      if (!isFrontier && !sweep) continue;
+      const snapshot = await attempt(number, "feedback", () =>
+        feedback.feedback(context)
       );
-      if (snapshot?.kind !== "open") continue;
-      snapshots.set(number, snapshot);
-      ledger = reduce(
-        ledger,
-        { kind: "ci", snapshot, frontier: frontier === number },
-        environment
+      if (snapshot !== null) {
+        const delivered = deliveredFeedback(ledger, number);
+        ledger = updateMember(ledger, number, (step) =>
+          observeFeedback(step, snapshot, delivered, environment)
+        );
+      }
+      if (facts === null) continue;
+      const ci = await attempt(number, "ci", () => readCi(reader, facts));
+      if (ci === null) continue;
+      ledger = updateMember(ledger, number, (step) =>
+        observeCi(step, ci, facts, environment)
       );
+      if (!isFrontier) continue;
+      const ready =
+        snapshot === null
+          ? null
+          : mergeReadyProof(facts, ci, snapshot, options.allowDraft);
+      if (ready !== null)
+        ledger = updateMember(ledger, number, (step) =>
+          queueMergeReady(step, environment, facts.headRefOid, ready)
+        );
+      frontierView = { ci, ready: ready !== null };
     }
-    const status = scopeStatus(ledger);
-    if (status.kind === "finished") {
-      saveLedger(stateDirectory, ledger);
-      return stamp({
-        kind: "FINISHED",
-        terminal: true,
-        exitCode: 0,
-        result: status.result,
-      });
-    }
-    const attention = outstanding(ledger);
+    saveLedger(stateDirectory, ledger);
+    const attention = ledger.items.filter((item) => !item.acknowledged);
     if (attention.length > 0) {
       const batch = writeBatch(stateDirectory, {
         repository,
         createdAt: environment.observedAt,
         items: attention,
       });
-      saveLedger(stateDirectory, ledger);
       return stamp({
         kind: "ATTENTION",
         terminal: true,
@@ -646,7 +757,14 @@ async function monitor(args: {
         },
       });
     }
-    saveLedger(stateDirectory, ledger);
+    const status = scopeStatus(ledger, readThisPoll);
+    if (status.kind === "finished")
+      return stamp({
+        kind: "FINISHED",
+        terminal: true,
+        exitCode: 0,
+        result: status.result,
+      });
     if (options.timeout > 0 && clock.now() - started >= options.timeout)
       return stamp({
         kind: "MONITOR_TIMEOUT",
@@ -674,15 +792,10 @@ async function monitor(args: {
       continue;
     }
     const condition = frontierCondition(
-      ledger,
-      status.frontier.number,
-      snapshots.get(status.frontier.number),
-      options.allowDraft
+      memberLedger(ledger, status.frontier.number),
+      frontierView
     );
-    const pendingAttentionCount = ledger.items.filter(
-      (item) => !item.acknowledged
-    ).length;
-    const progress = `${status.frontier.number}:${condition}:${pendingAttentionCount}`;
+    const progress = `${status.frontier.number}:${condition}`;
     if (progress !== lastProgress)
       emit(
         stamp({
@@ -690,20 +803,11 @@ async function monitor(args: {
           terminal: false,
           frontier: status.frontier,
           condition,
-          pendingAttentionCount,
         })
       );
     lastProgress = progress;
     await clock.sleep(options.interval);
   }
-}
-
-function scopeContexts(ledger: Ledger): T.NonEmpty<T.PrContext> {
-  const [first, ...rest] = ledger.scope;
-  return [
-    { ...ledger.repository, number: first },
-    ...rest.map((number) => ({ ...ledger.repository, number })),
-  ];
 }
 
 const sameList = (
@@ -756,9 +860,26 @@ async function reviseQueuedScope(args: {
   };
 }
 
+export type Lifetime =
+  | { readonly kind: "existing" }
+  | {
+      readonly kind: "until-merged";
+      readonly stateDirectory: string;
+      readonly acknowledge: readonly AttentionId[];
+    };
+export function collectAck(
+  value: string,
+  previous: readonly AttentionId[]
+): readonly AttentionId[] {
+  if (!isAttentionId(value))
+    throw new InvalidArgumentError("must be a 64-character attention id");
+  return [...previous, value];
+}
+
 export interface UntilMergedCommand {
   readonly runtime: CliRuntime;
-  readonly render: (verdict: T.WatcherVerdict) => string;
+  readonly feedback: FeedbackReader;
+  readonly pretty: boolean;
   readonly owner: string | null;
   readonly repo: string | null;
   readonly pr: T.PrNumber | null;
@@ -766,7 +887,7 @@ export interface UntilMergedCommand {
   readonly stackPrs: readonly T.PrNumber[];
   readonly polling: T.PollingOptions;
   readonly stateDirectory: string;
-  readonly acknowledge: readonly T.AttentionId[];
+  readonly acknowledge: readonly AttentionId[];
 }
 
 async function openLedger(command: UntilMergedCommand): Promise<Ledger> {
@@ -825,45 +946,76 @@ async function openLedger(command: UntilMergedCommand): Promise<Ledger> {
   return saved;
 }
 
+async function watchLocked(
+  command: UntilMergedCommand,
+  stamp: MonitorStamp,
+  print: (verdict: MonitorVerdict) => void
+): Promise<number> {
+  const { runtime, stateDirectory } = command;
+  let opened: Ledger;
+  try {
+    opened = await openLedger(command);
+  } catch (error) {
+    if (!(error instanceof WatcherQueryError)) throw error;
+    const verdict = stamp({
+      kind: "BLOCKER",
+      terminal: true,
+      exitCode: 7,
+      blocker: { kind: "status-query", failures: 1, failure: error.failure },
+    });
+    print(verdict);
+    return verdict.exitCode;
+  }
+  const { ledger, unknown } = acknowledge(opened, command.acknowledge);
+  for (const id of unknown)
+    runtime.stderr(
+      `watch-pr: ignoring --ack ${id}: this state never delivered it (state: ${statePath(stateDirectory)})\n`
+    );
+  saveLedger(stateDirectory, ledger);
+  const verdict = await monitor({
+    dependencies: {
+      reader: runtime.reader,
+      feedback: command.feedback,
+      clock: runtime.clock,
+      stamp,
+      emit: print,
+    },
+    stateDirectory,
+    ledger,
+    options: command.polling,
+  });
+  print(verdict);
+  return verdict.exitCode;
+}
+
 export async function runUntilMerged(
   command: UntilMergedCommand
 ): Promise<number> {
-  const { runtime, render } = command;
-  try {
-    let ledger: Ledger;
-    try {
-      ledger = await openLedger(command);
-    } catch (error) {
-      if (!(error instanceof WatcherQueryError)) throw error;
-      const verdict = statusQueryVerdict(
-        verdictFactory(runtime.clock, command.mode),
-        1,
-        error.failure
-      );
-      runtime.stdout(render(verdict));
-      return verdict.exitCode;
-    }
-    ledger = acknowledge(
-      ledger,
-      command.acknowledge,
-      statePath(command.stateDirectory)
-    );
-    saveLedger(command.stateDirectory, ledger);
-    const verdict = await monitor({
-      dependencies: {
-        reader: runtime.reader,
-        clock: runtime.clock,
-        emit: (progress) => runtime.stdout(render(progress)),
-      },
-      stateDirectory: command.stateDirectory,
-      ledger,
-      options: command.polling,
-    });
-    runtime.stdout(render(verdict));
-    return verdict.exitCode;
-  } catch (error) {
+  const { runtime } = command;
+  const reportStateError = (error: unknown): number => {
     if (!(error instanceof MonitorStateError)) throw error;
     runtime.stderr(`watch-pr: ${error.message}\n`);
     return 73;
+  };
+  let lock: StateLock;
+  try {
+    lock = lockState(command.stateDirectory);
+  } catch (error) {
+    return reportStateError(error);
+  }
+  try {
+    return await watchLocked(
+      command,
+      monitorStamp(runtime.clock, command.mode),
+      (verdict) => runtime.stdout(renderMonitor(verdict, command.pretty))
+    );
+  } catch (error) {
+    return reportStateError(error);
+  } finally {
+    try {
+      unlockState(lock);
+    } catch (error) {
+      reportStateError(error);
+    }
   }
 }

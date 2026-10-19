@@ -21,15 +21,10 @@ import {
 } from "./policy.ts";
 import { renderJson, renderPretty } from "./render.ts";
 import type * as T from "./types.ts";
-import { isAttentionId, nonEmpty, parsePrNumber } from "./types.ts";
-import { runUntilMerged } from "./until-merged.ts";
-export type Lifetime =
-  | { readonly kind: "existing" }
-  | {
-      readonly kind: "until-merged";
-      readonly stateDirectory: string;
-      readonly acknowledge: readonly T.AttentionId[];
-    };
+import { nonEmpty, parsePrNumber } from "./types.ts";
+import { type FeedbackReader, ghFeedbackReader } from "./feedback.ts";
+import type { AttentionId } from "./monitor-state.ts";
+import { type Lifetime, collectAck, runUntilMerged } from "./until-merged.ts";
 export interface CliOptions {
   readonly owner: string | null;
   readonly repo: string | null;
@@ -74,14 +69,6 @@ function stackPrList(value: string): T.NonEmpty<T.PrNumber> {
   if (parsed === null) throw new InvalidArgumentError("cannot be empty");
   return parsed;
 }
-function collectAck(
-  value: string,
-  previous: readonly T.AttentionId[]
-): readonly T.AttentionId[] {
-  if (!isAttentionId(value))
-    throw new InvalidArgumentError("must be a 64-character attention id");
-  return [...previous, value];
-}
 interface RawOptions {
   readonly owner?: string;
   readonly repo?: string;
@@ -98,7 +85,7 @@ interface RawOptions {
   readonly pretty: boolean;
   readonly untilMerged: boolean;
   readonly state?: string;
-  readonly ack: readonly T.AttentionId[];
+  readonly ack: readonly AttentionId[];
 }
 export function parseArgs(
   argv: readonly string[],
@@ -166,20 +153,19 @@ export function parseArgs(
   const raw = program.opts<RawOptions>();
   if (raw.stackPrs !== undefined && !raw.queuedStack)
     program.error("error: --stack-prs requires --queued-stack");
-  if (!raw.untilMerged && (raw.state !== undefined || raw.ack.length > 0))
+  let lifetime: Lifetime = { kind: "existing" };
+  if (raw.untilMerged) {
+    if (raw.state === undefined)
+      return program.error("error: --until-merged requires --state <directory>");
+    if (raw.statusOnly)
+      program.error("error: --until-merged cannot be combined with --status-only");
+    lifetime = {
+      kind: "until-merged",
+      stateDirectory: resolve(raw.state),
+      acknowledge: raw.ack,
+    };
+  } else if (raw.state !== undefined || raw.ack.length > 0)
     program.error("error: --state and --ack require --until-merged");
-  if (raw.untilMerged && raw.state === undefined)
-    program.error("error: --until-merged requires --state <directory>");
-  if (raw.untilMerged && raw.statusOnly)
-    program.error("error: --until-merged cannot be combined with --status-only");
-  const lifetime: Lifetime =
-    raw.untilMerged && raw.state !== undefined
-      ? {
-          kind: "until-merged",
-          stateDirectory: resolve(raw.state),
-          acknowledge: raw.ack,
-        }
-      : { kind: "existing" };
   return {
     owner: raw.owner ?? null,
     repo: raw.repo ?? null,
@@ -220,7 +206,8 @@ function realRuntime(): CliRuntime {
 }
 export async function main(
   argv: readonly string[],
-  runtime: CliRuntime = realRuntime()
+  runtime: CliRuntime = realRuntime(),
+  feedback: FeedbackReader = ghFeedbackReader
 ): Promise<number> {
   let options: CliOptions;
   try {
@@ -233,7 +220,8 @@ export async function main(
   if (options.lifetime.kind === "until-merged")
     return runUntilMerged({
       runtime,
-      render,
+      feedback,
+      pretty: options.pretty,
       owner: options.owner,
       repo: options.repo,
       pr: options.pr,

@@ -235,7 +235,12 @@ describe("main", () => {
     const harness = testRuntime(reader);
     const code = await main(
       ["--owner", "owner", "--repo", "repo", "--pr", "1"],
-      harness.runtime
+      harness.runtime,
+      {
+        feedback: () => {
+          throw new Error("the legacy watcher read feedback");
+        },
+      }
     );
     expect(code).toBe(0);
     expect(JSON.parse(harness.stdout[0] ?? "")).toMatchObject({
@@ -246,7 +251,6 @@ describe("main", () => {
         pr: { kind: "ready-pr", proof: { gate: { reviewDecision: "REVIEW_REQUIRED" } } },
       },
     });
-    expect(reader.calls).not.toContain("feedback");
   });
 
   it("shows help without touching the reader", async () => {

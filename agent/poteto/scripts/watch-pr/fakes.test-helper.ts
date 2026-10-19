@@ -2,12 +2,10 @@ import type {
   Check,
   ChecksFastPath,
   CommitRollup,
-  FeedbackSnapshot,
   GitHubReader,
   OpenPullRequest,
   PrContext,
   PullRequestFacts,
-  QueryFailure,
   Repository,
   RawReviewThread,
   ReviewThread,
@@ -15,18 +13,6 @@ import type {
   RollupPage,
 } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
-import { WatcherQueryError } from "./github.ts";
-
-export type FeedbackFrame =
-  | { readonly kind: "snapshot"; readonly snapshot: FeedbackSnapshot }
-  | { readonly kind: "failure"; readonly failure: QueryFailure };
-
-export const emptyFeedback: FeedbackSnapshot = {
-  viewerLogin: "viewer",
-  reviews: [],
-  comments: [],
-  threads: [],
-};
 
 export interface FakeReaderOptions {
   readonly facts?: Partial<Omit<PullRequestFacts, "context">>;
@@ -38,8 +24,6 @@ export interface FakeReaderOptions {
   readonly openPullRequests?: readonly OpenPullRequest[];
   readonly origin?: Repository | null;
   readonly current?: PrContext;
-  /** Per PR number. Each `feedback` call takes the next frame; the last one repeats. */
-  readonly feedbackFrames?: ReadonlyMap<number, readonly FeedbackFrame[]>;
 }
 
 function toRawThread(thread: ReviewThread): RawReviewThread {
@@ -102,7 +86,6 @@ export function fakeReader(
   };
   let page = 0;
   let threadPage = 0;
-  const feedbackReads = new Map<number, number>();
   return {
     calls,
     async originRepo() {
@@ -141,16 +124,6 @@ export function fakeReader(
     async commitRollups() {
       calls.push("commitRollups");
       return options.commitRollups ?? [{ oid: "head", state: "SUCCESS" }];
-    },
-    async feedback(requested) {
-      calls.push("feedback");
-      const frames = options.feedbackFrames?.get(requested.number) ?? [];
-      const index = feedbackReads.get(requested.number) ?? 0;
-      feedbackReads.set(requested.number, index + 1);
-      const frame = frames[Math.min(index, frames.length - 1)];
-      if (frame === undefined) return emptyFeedback;
-      if (frame.kind === "failure") throw new WatcherQueryError(frame.failure);
-      return frame.snapshot;
     },
   };
 }

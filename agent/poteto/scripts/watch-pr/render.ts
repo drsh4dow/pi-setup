@@ -130,6 +130,24 @@ function renderBlocker(blocker: T.MergeBlocker | StatusQueryBlocker): string {
     }
   }
 }
+function prList(prs: readonly T.PrContext[]): string {
+  return prs.length === 0
+    ? "none"
+    : prs.map((pr) => `#${pr.number}`).join(",");
+}
+function renderAttention(batch: T.AttentionBatchRef): string {
+  const lines = [
+    `ATTENTION: ${batch.count} item${batch.count === 1 ? "" : "s"} need action`,
+    `batch=${batch.path}`,
+    `sha256=${batch.sha256}`,
+    ...batch.preview.map(
+      (item) => `${item.id} #${item.pr} ${item.kind} ${item.excerpt}`
+    ),
+  ];
+  if (batch.count > batch.preview.length)
+    lines.push(`(${batch.count - batch.preview.length} more in the batch file)`);
+  return `${lines.join("\n")}\n`;
+}
 export function renderPretty(verdict: T.WatcherVerdict): string {
   switch (verdict.kind) {
     case "QUEUE":
@@ -161,6 +179,16 @@ export function renderPretty(verdict: T.WatcherVerdict): string {
       if (verdict.reason.kind === "status-unavailable")
         return "TIMEOUT: GitHub status remained unavailable\n";
       return `TIMEOUT: queued stack still has ${verdict.reason.unmergedCount} PR${verdict.reason.unmergedCount === 1 ? "" : "s"} unmerged; frontier=#${verdict.reason.frontier.number}\n`;
+    case "MONITORING":
+      return `MONITORING: frontier=#${verdict.frontier.number}; condition=${verdict.condition}; unacknowledged=${verdict.pendingAttentionCount}\n`;
+    case "ATTENTION":
+      return renderAttention(verdict.batch);
+    case "FINISHED":
+      return verdict.result.kind === "all-merged"
+        ? `FINISHED: all merged (${verdict.result.merged.map((pr) => `#${pr.context.number}`).join(",")})\n`
+        : `FINISHED: closed without merge ${prList(verdict.result.closed)}; merged ${prList(verdict.result.merged.map((pr) => pr.context))}; still open ${prList(verdict.result.stillOpen)}\n`;
+    case "MONITOR_TIMEOUT":
+      return `MONITOR_TIMEOUT: still monitoring${verdict.frontier === null ? "" : ` frontier=#${verdict.frontier.number}`}; rearm with the same --state\n`;
     default: {
       const exhaustive: never = verdict;
       return exhaustive;

@@ -138,7 +138,7 @@ export async function readSnapshot(args: {
     ),
   };
 }
-const conflictBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
+export const conflictBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
   row.kind === "open" &&
   (row.facts.mergeable === "CONFLICTING" ||
     row.facts.mergeStateStatus === "DIRTY" ||
@@ -152,7 +152,7 @@ function threadBlocker(row: T.PrSnapshot): T.MergeBlocker | null {
     ? null
     : { kind: "review-threads", pr: row.context, threads };
 }
-const ciBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
+export const ciBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
   row.kind === "open" &&
   (row.ci.kind === "ci-failing" || row.ci.kind === "ci-github-rejected")
     ? { kind: "failing-checks", pr: row.context, ci: row.ci }
@@ -168,7 +168,7 @@ function gateReason(
     ? "changes-requested"
     : null;
 }
-function gateBlocker(
+export function gateBlocker(
   row: T.PrSnapshot,
   allowDraft: boolean
 ): T.MergeBlocker | null {
@@ -180,7 +180,7 @@ function gateBlocker(
     ? null
     : { kind: "merge-gate", pr: row.context, reason };
 }
-function readyContribution(
+export function readyContribution(
   row: T.PrSnapshot,
   allowDraft: boolean
 ): T.ReadyPr | T.MergedPr | null {

@@ -103,6 +103,22 @@ describe("parseArgs", () => {
   });
 });
 
+it("rejects monitor flags outside --until-merged and status-only monitoring as usage", async () => {
+  const invalid = [
+    ["--state", "/tmp/x"],
+    ["--ack", "a".repeat(64)],
+    ["--until-merged"],
+    ["--until-merged", "--state", "/tmp/x", "--status-only"],
+    ["--until-merged", "--state", "/tmp/x", "--ack", "not-an-id"],
+  ];
+  for (const argv of invalid) {
+    const harness = testRuntime(fakeReader());
+    expect(await main(argv, harness.runtime)).toBe(64);
+    expect(harness.stdout).toEqual([]);
+    expect(harness.stderr.join("")).toContain("error:");
+  }
+});
+
 describe("rendering", () => {
   const context = {
     owner: "owner",
@@ -212,6 +228,25 @@ describe("main", () => {
         ci: { kind: "ci-github-rejected" },
       },
     });
+  });
+
+  it("still returns READY for a green unreviewed PR without --until-merged", async () => {
+    const reader = fakeReader({ facts: { reviewDecision: "REVIEW_REQUIRED" } });
+    const harness = testRuntime(reader);
+    const code = await main(
+      ["--owner", "owner", "--repo", "repo", "--pr", "1"],
+      harness.runtime
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(harness.stdout[0] ?? "")).toMatchObject({
+      kind: "READY",
+      exitCode: 0,
+      scope: {
+        kind: "single",
+        pr: { kind: "ready-pr", proof: { gate: { reviewDecision: "REVIEW_REQUIRED" } } },
+      },
+    });
+    expect(reader.calls).not.toContain("feedback");
   });
 
   it("shows help without touching the reader", async () => {

@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   Command,
@@ -20,7 +21,15 @@ import {
 } from "./policy.ts";
 import { renderJson, renderPretty } from "./render.ts";
 import type * as T from "./types.ts";
-import { nonEmpty, parsePrNumber } from "./types.ts";
+import { isAttentionId, nonEmpty, parsePrNumber } from "./types.ts";
+import { runUntilMerged } from "./until-merged.ts";
+export type Lifetime =
+  | { readonly kind: "existing" }
+  | {
+      readonly kind: "until-merged";
+      readonly stateDirectory: string;
+      readonly acknowledge: readonly T.AttentionId[];
+    };
 export interface CliOptions {
   readonly owner: string | null;
   readonly repo: string | null;
@@ -30,6 +39,7 @@ export interface CliOptions {
   readonly statusOnly: boolean;
   readonly pretty: boolean;
   readonly polling: T.PollingOptions;
+  readonly lifetime: Lifetime;
 }
 function positiveNumber(value: string): number {
   const parsed = Number(value);
@@ -64,6 +74,14 @@ function stackPrList(value: string): T.NonEmpty<T.PrNumber> {
   if (parsed === null) throw new InvalidArgumentError("cannot be empty");
   return parsed;
 }
+function collectAck(
+  value: string,
+  previous: readonly T.AttentionId[]
+): readonly T.AttentionId[] {
+  if (!isAttentionId(value))
+    throw new InvalidArgumentError("must be a 64-character attention id");
+  return [...previous, value];
+}
 interface RawOptions {
   readonly owner?: string;
   readonly repo?: string;
@@ -78,6 +96,9 @@ interface RawOptions {
   readonly statusOnly: boolean;
   readonly allowDraft: boolean;
   readonly pretty: boolean;
+  readonly untilMerged: boolean;
+  readonly state?: string;
+  readonly ack: readonly T.AttentionId[];
 }
 export function parseArgs(
   argv: readonly string[],
@@ -128,11 +149,37 @@ export function parseArgs(
     )
     .option("--status-only", "print one status table and exit 0", false)
     .option("--allow-draft", "do not treat a draft as a merge gate", false)
-    .option("--pretty", "render human text instead of JSON", false);
+    .option("--pretty", "render human text instead of JSON", false)
+    .option(
+      "--until-merged",
+      "keep watching past merge-ready; exit 8 on new attention, 0 once merged or closed",
+      false
+    )
+    .option("--state <directory>", "durable monitor state (--until-merged only)")
+    .option(
+      "--ack <id>",
+      "acknowledge a delivered attention item (repeatable, --until-merged only)",
+      collectAck,
+      []
+    );
   program.parse(argv, { from: "user" });
   const raw = program.opts<RawOptions>();
   if (raw.stackPrs !== undefined && !raw.queuedStack)
     program.error("error: --stack-prs requires --queued-stack");
+  if (!raw.untilMerged && (raw.state !== undefined || raw.ack.length > 0))
+    program.error("error: --state and --ack require --until-merged");
+  if (raw.untilMerged && raw.state === undefined)
+    program.error("error: --until-merged requires --state <directory>");
+  if (raw.untilMerged && raw.statusOnly)
+    program.error("error: --until-merged cannot be combined with --status-only");
+  const lifetime: Lifetime =
+    raw.untilMerged && raw.state !== undefined
+      ? {
+          kind: "until-merged",
+          stateDirectory: resolve(raw.state),
+          acknowledge: raw.ack,
+        }
+      : { kind: "existing" };
   return {
     owner: raw.owner ?? null,
     repo: raw.repo ?? null,
@@ -148,6 +195,7 @@ export function parseArgs(
       maxQueryErrors: raw.maxQueryErrors,
       allowDraft: raw.allowDraft,
     },
+    lifetime,
   };
 }
 export interface CliRuntime {
@@ -182,6 +230,19 @@ export async function main(
     return error.exitCode === 0 ? 0 : 64;
   }
   const render = options.pretty ? renderPretty : renderJson;
+  if (options.lifetime.kind === "until-merged")
+    return runUntilMerged({
+      runtime,
+      render,
+      owner: options.owner,
+      repo: options.repo,
+      pr: options.pr,
+      mode: options.mode,
+      stackPrs: options.stackPrs,
+      polling: options.polling,
+      stateDirectory: options.lifetime.stateDirectory,
+      acknowledge: options.lifetime.acknowledge,
+    });
   const emit = (verdict: T.ProgressVerdict): void =>
     runtime.stdout(render(verdict));
   let contexts: T.NonEmpty<T.PrContext>;

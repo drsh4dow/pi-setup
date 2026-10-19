@@ -553,6 +553,12 @@ run lifecycle with TLA+. It needs Java 11 or newer and downloads TLC once, so
 `verify` leaves it out. Run it after changing `agent/extensions/subagents/` or
 upgrading Pi or Effect.
 
+`.agents/skills/verify-terminal-delivery/scripts/check` model-checks how a
+background terminal's completion and notifications reach the agent. Run it after
+changing `agent/extensions/background-terminals/` or upgrading Pi. `verify`
+runs only its citation step, which fails when a line that the model cites
+changes.
+
 Vite+ supplies the only linter and formatter, Oxlint and Oxfmt, and
 `vite.config.ts` owns their policy. Type-aware rules, Effect diagnostics, and
 the vendored [anti-slop plugins](oxlint/anti-slop/UPSTREAM.md) fail on

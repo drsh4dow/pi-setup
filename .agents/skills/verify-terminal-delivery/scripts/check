@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SKILL=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+CHECKOUT=$(cd "$SKILL/../../.." && pwd)
+SPEC=$SKILL/TerminalDelivery.tla
+TLA_VERSION=1.7.4
+TLA_SHA256=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+TLA_URL=https://github.com/tlaplus/tlaplus/releases/download/v$TLA_VERSION/tla2tools.jar
+CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/pi-setup
+JAR=$CACHE/tla2tools-$TLA_VERSION.jar
+LOGS=${TMPDIR:-/tmp}/verify-terminal-delivery
+JAVA=${JAVA:-java}
+
+die() {
+  echo "check: $*" >&2
+  exit 2
+}
+
+definition_body() {
+  awk -v name="$2" '
+    function indent(text) {
+      match(text, /^[ \t]*/)
+      return RLENGTH
+    }
+    function closes_definition(text) {
+      if (text !~ /^[ \t]*[})\]]/ || text ~ /[{(\[][ \t]*$/) return 0
+      if (tool_entry) return indent(text) < start_indent
+      return indent(text) <= start_indent
+    }
+    BEGIN {
+      declaration = "^[ \t]*((export|private|async|get|static|readonly|const|let|function)[ \t]+)*" name "[ \t]*[(=:<]"
+      tool = "^[ \t]*name: \"" name "\""
+      handler = "^[ \t]*pi\\.on\\(\"" name "\""
+    }
+    !inside && ($0 ~ declaration || $0 ~ tool || $0 ~ handler) {
+      inside = 1
+      start_indent = indent($0)
+      tool_entry = $0 ~ tool
+      print
+      next
+    }
+    inside && closes_definition($0) {
+      inside = 0
+      print
+      next
+    }
+    inside { print }
+  ' "$1"
+}
+
+check_citations() {
+  local line path function snippet body stale=0
+  local pattern='^\\\* code: ([^ ]+) ([^ ]+) "(.*)"$'
+
+  while IFS= read -r line; do
+    [[ $line =~ $pattern ]] || continue
+    path=${BASH_REMATCH[1]}
+    function=${BASH_REMATCH[2]}
+    snippet=${BASH_REMATCH[3]//\\\"/\"}
+
+    if [[ ! -f $CHECKOUT/$path ]]; then
+      echo "stale citation: $path does not exist"
+      stale=1
+    else
+      body=$(definition_body "$CHECKOUT/$path" "$function")
+
+      if [[ -z $body ]]; then
+        echo "stale citation: $path has no definition of $function"
+        stale=1
+      elif ! grep -qF -- "$snippet" <<<"$body"; then
+        echo "stale citation: $path $function no longer contains: $snippet"
+        stale=1
+      fi
+    fi
+  done <"$SPEC"
+
+  return "$stale"
+}
+
+fetch_tlc() {
+  local partial
+
+  if [[ -f $JAR ]] && sha256sum --status -c <<<"$TLA_SHA256  $JAR"; then
+    return
+  fi
+
+  mkdir -p "$CACHE"
+  partial=$(mktemp "$CACHE/tla2tools.XXXXXX")
+  curl -fsSL -o "$partial" "$TLA_URL" || {
+    rm -f "$partial"
+    die "could not download $TLA_URL"
+  }
+
+  if ! sha256sum --status -c <<<"$TLA_SHA256  $partial"; then
+    rm -f "$partial"
+    die "$TLA_URL does not match sha256 $TLA_SHA256"
+  fi
+
+  mv "$partial" "$JAR"
+}
+
+print_trace() {
+  local log=$1
+
+  awk -v spec="$SPEC" '
+    function step(field) {
+      sub(/:$/, ".", field)
+      return field
+    }
+    BEGIN {
+      while ((getline line < spec) > 0) {
+        if (match(line, /^\\\* code: [^ ]+ [^ ]+ /)) {
+          split(line, words, " ")
+          pending = words[3] " " words[4]
+        } else if (pending != "" && match(line, /^[A-Za-z]+(\([a-z]+\))? ==/)) {
+          name = line
+          sub(/(\([a-z]+\))? ==.*/, "", name)
+          cited[name] = pending
+          pending = ""
+        }
+      }
+    }
+    /^Error: (Invariant [A-Za-z]+ is violated|Temporal properties were violated)/ {
+      sub(/^Error: /, "")
+      print "  " $0
+      next
+    }
+    /^Error: (The following behavior constitutes a counter-example|The behavior up to this point is):/ { tracing = 1; next }
+    !tracing { next }
+    /^State [0-9]+: <Initial predicate>/ { print "  1. initial state"; next }
+    /^State [0-9]+: Stuttering/ { print "  " step($2) " nothing else ever happens"; exit }
+    /^Back to state [0-9]+/ { print "  then the steps from state " $4 " repeat forever"; exit }
+    /^State [0-9]+: </ {
+      action = $3
+      sub(/^</, "", action)
+      sub(/\(.*$/, "", action)
+      print "  " step($2) " " action "  (" cited[action] ")"
+      next
+    }
+    /^\/\\ / { sub(/^\/\\ /, ""); print "       " $0; next }
+    /^[0-9]+ states generated/ { exit }
+  ' "$log"
+}
+
+run_model() {
+  local cfg=$1 expect result log metadir status
+
+  expect=$(sed -n 's/^\\\* expect: //p' "$SKILL/$cfg")
+  [[ $expect == holds || $expect == violated ]] || die "$cfg has no '\\* expect: holds|violated' line"
+
+  log=$LOGS/${cfg%.cfg}.log
+  metadir=$(mktemp -d "$LOGS/states.XXXXXX")
+  status=0
+  (cd "$SKILL" && "$JAVA" -cp "$JAR" tlc2.TLC \
+    -deadlock -difftrace -workers 1 -fp 0 -seed 1 -metadir "$metadir" -config "$cfg" TerminalDelivery.tla) \
+    >"$log" 2>&1 || status=$?
+  rm -rf "$metadir"
+
+  case $status in
+    0) result=holds ;;
+    12 | 13)
+      if grep -q '^Error: Invariant TypeOK is violated' "$log"; then
+        result="model error (TypeOK)"
+      else
+        result=violated
+      fi
+      ;;
+    *) result="TLC error (exit $status)" ;;
+  esac
+
+  echo "$cfg: $result, expected $expect. Full TLC output: $log"
+  [[ $result == violated || $result == "model error (TypeOK)" ]] && print_trace "$log"
+  [[ $result == "TLC error (exit $status)" ]] && grep -E '^(Error|Encountered|Parse|\*\*\*)' "$log" | head -n 20
+
+  [[ $result == "$expect" ]]
+}
+
+if [[ ${1:-} == --citations ]]; then
+  check_citations && exit 0
+  echo "check: code that TerminalDelivery.tla models changed. Run .agents/skills/verify-terminal-delivery/scripts/check and follow its SKILL.md."
+  exit 1
+fi
+
+command -v "$JAVA" >/dev/null || die "java is not on PATH; set JAVA to a Java 11 or newer binary"
+mkdir -p "$LOGS"
+
+if ! check_citations; then
+  echo "check: FAILED before model checking, because the models no longer match the code. See SKILL.md, Read a failure."
+  exit 1
+fi
+
+failed=0
+fetch_tlc
+
+for cfg in Session.cfg SessionNotifications.cfg Aborts.cfg UnattendedRun.cfg UnattendedCompletion.cfg \
+  CompactionHoldsNotification.cfg AbortedKillIsSilent.cfg UnattendedRunHoldsNotification.cfg \
+  CompletionDeferredBehindRun.cfg; do
+  run_model "$cfg" || failed=1
+done
+
+if ((failed)); then
+  echo "check: FAILED. See SKILL.md, Read a failure."
+  exit 1
+fi
+
+echo "check: every citation is current and every model matches its expected result."

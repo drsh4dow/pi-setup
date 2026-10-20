@@ -27,11 +27,6 @@ Write `area: symptom or outcome`, with no trailing period, such as `subagents: a
 
 ## Pointers
 
-## Out of scope
-
-## Blocked by
-
-Filed by <model> in <harness>.
 ```
 
 `## Problem` and `## Done when` are required. Drop any other section with nothing to say.
@@ -62,14 +57,6 @@ An unknown that running something can settle is not an open question. Write it a
 Name the symbols, commands, and config keys the implementer starts from. Pin each file path and line to a permalink with a commit SHA, so a stale pointer is visible. Label each cause guess as a hypothesis. Give pointers without prescribing obvious code. Include a diagram or a prototype snippet only when it states a decision more clearly than prose.
 
 Link authoritative context instead of copying it. When essential requirements live in another issue, say that the implementer must read it.
-
-### Out of scope
-
-List the adjacent work that an implementer would otherwise take on.
-
-### Blocked by
-
-List the tickets that must land first. Use the tracker's native sub-issues or blocked-by links when it has them.
 
 ## Size
 

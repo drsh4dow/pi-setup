@@ -16,12 +16,15 @@ function settle(count: number) {
  * Delivers one message.
  */
 export function deliver(message: string) {
+  // Sends the message once.
   send(message);
 }
 
 // A comment that a blank line separates from its declaration.
 
 export function report() {
+  /* Logs
+     the report. */
   log("report");
 }
 
@@ -90,8 +93,6 @@ test("accepts a citation of any line in the cited definition's scope", (t) => {
     'deliver "send(message);"',
     'turn_end "reset();"',
     'bg_example "return run();"',
-    'deliver " * Delivers one message."',
-    'addObserver "// Wires the fiber\'s exit."',
     'LIMIT "const LIMIT = 3;"',
     'addObserver "process.exit(exit);"',
   ]);
@@ -122,6 +123,28 @@ test("reports a citation of a line just outside the cited definition's scope", (
       "stale citation: src/example.ts LIMIT no longer contains: return count > LIMIT;",
       'stale citation: src/example.ts addObserver no longer contains: process.on("SIGTERM", () => interrupt(fiber));',
       "stale citation: src/example.ts has no definition of missing",
+      "check: code that Example.tla models changed. Run .agents/skills/verify-example/scripts/check and follow its SKILL.md.",
+      "",
+    ].join("\n"),
+  );
+});
+
+test("reports a snippet that only a comment above or inside the definition contains", (t) => {
+  const result = runCheck(t, [
+    'deliver " * Delivers one message."',
+    'deliver "// Sends the message once."',
+    'report "the report. */"',
+    'addObserver "// Wires the fiber\'s exit."',
+  ]);
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(
+    result.stdout,
+    [
+      "stale citation: src/example.ts deliver no longer contains:  * Delivers one message.",
+      "stale citation: src/example.ts deliver no longer contains: // Sends the message once.",
+      "stale citation: src/example.ts report no longer contains: the report. */",
+      "stale citation: src/example.ts addObserver no longer contains: // Wires the fiber's exit.",
       "check: code that Example.tla models changed. Run .agents/skills/verify-example/scripts/check and follow its SKILL.md.",
       "",
     ].join("\n"),

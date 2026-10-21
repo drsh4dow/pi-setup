@@ -212,7 +212,7 @@ export class BackgroundTerminalDelivery {
   // Items evicted from a full queue, kept so bg_list can report what was never delivered.
   private readonly failed = new Map<string, Pick<DeliveryItem, "kind" | "terminalId">>();
   private flushState: "idle" | "flushing" = "idle";
-  private completionWaiter?: () => void;
+  private settleWaiter?: () => void;
   private readonly pi: Pick<ExtensionAPI, "sendMessage">;
   private readonly reportError: (message: string) => void;
   constructor(
@@ -257,8 +257,8 @@ export class BackgroundTerminalDelivery {
 
     this.pending.set(item.id, item);
 
-    if (item.kind === "completion" && this.completionWaiter) {
-      this.completionWaiter();
+    if (this.settleWaiter) {
+      this.settleWaiter();
 
       return;
     }
@@ -301,44 +301,45 @@ export class BackgroundTerminalDelivery {
       }
     }
   }
-  // Completes when a completion is queued, when signal aborts, or after
-  // timeoutMs. While it runs, completions wait for takeCompletions() instead of
-  // steering: the settle boundary appends them itself.
-  waitForCompletion(timeoutMs: number, signal: AbortSignal | undefined): Effect.Effect<void> {
-    return Effect.callback<void>((resume) => {
-      const done = () => {
-        signal?.removeEventListener("abort", done);
-        resume(Effect.void);
-      };
+  waitForDelivery(timeoutMs: number, signal: AbortSignal | undefined): Effect.Effect<void> {
+    return Effect.suspend(() => {
+      if (this.pending.size > 0) return Effect.void;
 
-      this.completionWaiter = done;
-      signal?.addEventListener("abort", done, { once: true });
+      return Effect.callback<void>((resume) => {
+        const done = () => {
+          signal?.removeEventListener("abort", done);
+          resume(Effect.void);
+        };
 
-      // Runs when the timeout interrupts the wait.
-      return Effect.sync(() => signal?.removeEventListener("abort", done));
-    }).pipe(
-      Effect.timeoutOption(timeoutMs),
-      Effect.ensuring(
-        Effect.sync(() => {
-          this.completionWaiter = undefined;
-        }),
-      ),
-      Effect.asVoid,
-    );
+        this.settleWaiter = done;
+        signal?.addEventListener("abort", done, { once: true });
+
+        return Effect.sync(() => signal?.removeEventListener("abort", done));
+      }).pipe(
+        Effect.timeoutOption(timeoutMs),
+        Effect.ensuring(
+          Effect.sync(() => {
+            this.settleWaiter = undefined;
+          }),
+        ),
+        Effect.asVoid,
+      );
+    });
   }
-  takeCompletions(): CustomMessageEntryDraft | undefined {
-    const batch = this.batch("completion");
+  takePending(): CustomMessageEntryDraft[] {
+    const entries: CustomMessageEntryDraft[] = [];
 
-    if (!batch) return undefined;
-    this.consume(batch.details.ids);
+    this.drain((batch) => {
+      entries.push({
+        type: "custom_message",
+        customType: batch.customType,
+        content: batch.content,
+        display: true,
+        details: batch.details,
+      });
+    });
 
-    return {
-      type: "custom_message",
-      customType: batch.customType,
-      content: batch.content,
-      display: true,
-      details: batch.details,
-    };
+    return entries;
   }
   consume(ids: readonly string[]) {
     for (const id of ids) {
@@ -398,15 +399,21 @@ export class BackgroundTerminalDelivery {
       details: { ids, notifications },
     };
   }
+  private drain(deliver: (batch: DeliveryBatch) => void) {
+    for (let sent = 0; sent < MAX_QUEUED_PER_KIND * 2; sent++) {
+      const batch = this.batch("notification") ?? this.batch("completion");
+
+      if (!batch) return;
+      deliver(batch);
+      this.consume(batch.details.ids);
+    }
+  }
   flush = Effect.sync(() => {
     if (this.flushState === "flushing" || !this.context) return;
     this.flushState = "flushing";
 
     try {
-      for (let sent = 0; sent < MAX_QUEUED_PER_KIND * 2; sent++) {
-        const batch = this.batch("notification") ?? this.batch("completion");
-
-        if (!batch) return;
+      this.drain((batch) => {
         // Pi queues the message and reports asynchronous delivery failures itself. A
         // synchronous failure propagates and leaves the batch pending for the next flush.
         this.pi.sendMessage(
@@ -421,8 +428,7 @@ export class BackgroundTerminalDelivery {
             triggerTurn: true,
           },
         );
-        this.consume(batch.details.ids);
-      }
+      });
     } finally {
       this.flushState = "idle";
     }

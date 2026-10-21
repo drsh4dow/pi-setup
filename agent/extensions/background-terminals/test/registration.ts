@@ -104,13 +104,14 @@ type RegisteredTool = Pick<ToolDefinition, "name" | "executionMode"> & {
 export function registeredExtension(
   sendMessage: (message: DeliveryMessage, options: DeliveryOptions) => void = () => {},
   extensionOptions: BackgroundTerminalOptions = {},
+  emit: ExtensionAPI["events"]["emit"] = () => {},
 ) {
   const definitions: RegisteredTool[] = [];
   const handlers: Handlers = {};
   extension(
     unsafeFixture<ExtensionAPI>({
       events: {
-        emit() {},
+        emit,
         on() {
           return () => {};
         },

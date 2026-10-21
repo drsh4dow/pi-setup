@@ -12,19 +12,22 @@ report.
 
 ## Kinds
 
-Every subagent is a delegate, except an Orchestrate sub-coordinator, which is
-an owner. The launch names the kind, and the `delegate-guard` extension blocks
-any spawn the kind does not allow.
+Every subagent is a delegate, except one a playbook hands a whole unit, which
+is an owner. The launch names the kind, and the `delegate-guard` extension
+blocks any spawn the kind does not allow.
 
 - **Delegate.** Does one piece of its parent's step: code for a written scope,
   an exploration, a review, a swarm lane, an arena or architect candidate, or
   Comment Sicko. It is a leaf. Its parent owns the playbook, the todolist, the
   review of its output, and every spawn.
-- **Owner.** An Orchestrate sub-coordinator. It runs its track the way a
+- **Owner.** Carries one unit a playbook hands it: a PR under Autopilot-full,
+  Autopilot-stack, or a multi-phase plan, code-coupled Feature work, a Visual
+  parity component, or an Orchestrate track. It runs its unit the way a
   top-level session would, keeps the todolist, and launches each of its
-  workers and verifiers as a delegate. Every other playbook keeps its units,
-  PRs and plan steps included, in the session that runs it, which spawns
-  delegates directly.
+  workers and verifiers as a delegate. An owner is a background terminal of
+  its parent, so it ends with its parent, and its children are absent from the
+  parent's `bg_list`. Record each owner's children in the agent store so the
+  root can probe them.
 
 ## Models
 
@@ -54,16 +57,12 @@ A reviewer or verifier that must run on a different model family from the
 work's author takes the `cross-family reviewer` role. When the author ran on
 `openai/gpt-6.1-sol`, run it on `anthropic/claude-opus-5-5` at `high` instead.
 
-The hardest changes, such as cross-cutting design, concurrency, or subtle
-algorithms, take the `hardest tasks` role. `high` is the thinking ceiling for
-every model. Haiku runs at `medium`. Opus stays between `medium` and `high`.
-Lower a `high` Opus role to `medium` for routine, precisely specified work such
-as mechanical renames, applying a written diff, or one edit repeated across
-files. Keep the role's model so a
-panel stays diverse. When a Haiku report fails a spot check, such as a wrong
-reference or a missed file, rerun that slice on Opus at `medium`. If a model
-fails to launch, rerun that seat on `anthropic/claude-opus-5-5` at `high` and
-say so in your report.
+The system prompt's Subagents section says how to move a role's thinking level
+for the job. `high` is the ceiling for every model. Haiku runs at `medium`.
+Opus stays between `medium` and `high`. When a Haiku report fails a spot
+check, such as a wrong reference or a missed file, rerun that slice on Opus at
+`medium`. If a model fails to launch, rerun that seat on
+`anthropic/claude-opus-5-5` at `high` and say so in your report.
 
 ## Prepare
 

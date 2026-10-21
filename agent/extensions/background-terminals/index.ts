@@ -423,12 +423,16 @@ export default function backgroundTerminals(
         ),
         { signal },
       ).catch((error) => {
+        terminalSession.abandonKill(ids);
+
         // An abort only interrupts the wait. A failure of the kill itself
         // must surface even when the signal is also aborted.
         if (killError) throw killError;
 
         if (signal?.aborted) {
-          throw new Error("Kill wait aborted; termination continues in the background.");
+          throw new Error(
+            "Kill wait aborted; termination continues in the background, and its end will wake you.",
+          );
         }
 
         throw sanitizeErrorForDisplay(error instanceof Error ? error : String(error));

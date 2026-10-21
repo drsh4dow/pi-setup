@@ -52,6 +52,7 @@ Phases == RunPhases \cup {"settling", "settlingFlushed", "idle", "ended"}
 VARIABLES
     term,         \* each terminal's manager entry: running covers executing, draining, reaping
     howSettled,   \* what onSettled did when the terminal settled
+    killWait,     \* session.ts killWaits: a bg_kill call waits on the terminal, and holds its end once settled
     noted,        \* terminals that have sent their notification
     pendingCompletions,  \* completions in delivery.pending
     pendingNotifications, \* notifications in delivery.pending
@@ -69,7 +70,7 @@ VARIABLES
     compacting,   \* Pi's isCompacting
     aborted       \* Pi's _agentRunAbortRequested for the current run
 
-vars == <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, phase, call,
+vars == <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, phase, call,
           madeCalls, steer, deferred, ctx, known, sentCompletions, sentNotifications, idleWaits,
           compacting, aborted>>
 
@@ -78,6 +79,7 @@ piVars == <<phase, steer, deferred, ctx, aborted>>
 TypeOK ==
     /\ term \in [Terminals -> {"unstarted", "running", "killing", "settled"}]
     /\ howSettled \in [Terminals -> {"none", "enqueued", "consumed", "unreported"}]
+    /\ killWait \in [Terminals -> {"none", "waiting", "settled"}]
     /\ noted \subseteq Terminals
     /\ pendingCompletions \subseteq Terminals
     /\ pendingNotifications \subseteq Terminals
@@ -155,31 +157,33 @@ Hold(pe, pn) ==
 -----------------------------------------------------------------------------
 
 \* code: agent/extensions/background-terminals/session.ts join "client.delivery.terminalSettled(snapshot.id);"
-\* code: agent/extensions/background-terminals/session.ts join "client.delivery.consume([snapshot.id]);"
+\* code: agent/extensions/background-terminals/session.ts join "killWaits.set(snapshot.id, { kind: \"settled\", snapshot });"
 \* code: agent/extensions/background-terminals/session.ts join "client.delivery.enqueue(snapshot);"
 \* code: agent/extensions/background-terminals/delivery.ts queue "this.pending.set(item.id, item);"
 \* code: agent/extensions/background-terminals/delivery.ts queue "if (this.settleWaiter) {"
 \* code: agent/extensions/background-terminals/delivery.ts queue "if (item.kind === \"completion\" || this.context.isIdle())"
-\* code: agent/extensions/background-terminals/manager.ts settle "if (this.lifecycle.kind === \"running\")"
-\* code: agent/extensions/background-terminals/manager.ts settle "this.onSettled?.(snapshot, entry.kind === \"terminating\" && entry.intent === \"kill\");"
+\* code: agent/extensions/background-terminals/manager.ts settle "if (this.lifecycle.kind === \"running\") this.onSettled?.(snapshot);"
 TEnd(t) ==
     /\ Active(t)
     /\ term' = [term EXCEPT ![t] = "settled"]
     /\ IF phase = "ended" THEN
          /\ howSettled' = [howSettled EXCEPT ![t] = "unreported"]
-         /\ UNCHANGED <<pendingCompletions, pendingNotifications, waiter, piVars, sentCompletions, sentNotifications>>
-       ELSE IF term[t] = "killing" THEN
+         /\ UNCHANGED <<killWait, pendingCompletions, pendingNotifications, waiter, piVars, sentCompletions,
+                        sentNotifications>>
+       ELSE IF killWait[t] = "waiting" THEN
          /\ howSettled' = [howSettled EXCEPT ![t] = "consumed"]
-         /\ Hold(pendingCompletions \ {t}, pendingNotifications \ {t})
+         /\ killWait' = [killWait EXCEPT ![t] = "settled"]
+         /\ Hold(pendingCompletions, pendingNotifications \ {t})
          /\ UNCHANGED waiter
        ELSE IF waiter # "none" THEN
          /\ howSettled' = [howSettled EXCEPT ![t] = "enqueued"]
          /\ waiter' = "woken"
          /\ Hold(pendingCompletions \cup {t}, pendingNotifications \ {t})
+         /\ UNCHANGED killWait
        ELSE
          /\ howSettled' = [howSettled EXCEPT ![t] = "enqueued"]
          /\ Flush(pendingCompletions \cup {t}, pendingNotifications \ {t})
-         /\ UNCHANGED waiter
+         /\ UNCHANGED <<killWait, waiter>>
     /\ UNCHANGED <<noted, call, madeCalls, known, idleWaits, compacting>>
 
 \* code: agent/extensions/background-terminals/delivery.ts queue "this.settleWaiter();"
@@ -200,7 +204,7 @@ TNotify(t) ==
        ELSE
          /\ Hold(pendingCompletions, pendingNotifications \cup {t})
          /\ UNCHANGED waiter
-    /\ UNCHANGED <<term, howSettled, call, madeCalls, known, idleWaits, compacting>>
+    /\ UNCHANGED <<term, howSettled, killWait, call, madeCalls, known, idleWaits, compacting>>
 
 -----------------------------------------------------------------------------
 
@@ -217,7 +221,7 @@ PRequest ==
     /\ ctx' = NoMessage
     /\ \/ \E c \in Callable : call' = c /\ phase' = "tools" /\ madeCalls' = TRUE
        \/ call' = NoCall /\ phase' = "turnEnd" /\ madeCalls' = FALSE
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, steer, deferred,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, steer, deferred,
                    sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
 \* An aborted response ends the loop, and _handlePostAgentRun skips agent_before_settle.
@@ -226,7 +230,7 @@ PRequestAborted ==
     /\ phase = "request"
     /\ aborted
     /\ phase' = "settling"
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, call, madeCalls,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, call, madeCalls,
                    steer, deferred, ctx, known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
 EndCall ==
@@ -239,7 +243,7 @@ ToolStart ==
     /\ call.tool = "bg_start"
     /\ term' = [term EXCEPT ![call.t] = "running"]
     /\ EndCall
-    /\ UNCHANGED <<howSettled, noted, pendingCompletions, pendingNotifications, waiter, madeCalls, steer, deferred,
+    /\ UNCHANGED <<howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, madeCalls, steer, deferred,
                    ctx, known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
 \* code: agent/extensions/background-terminals/index.ts bg_status "if (snapshot.state !== \"running\") terminalSession.consume([snapshot.id]);"
@@ -251,18 +255,25 @@ ToolStatus ==
               /\ ctx' = [ctx EXCEPT !.completions = @ \cup {call.t}]
          ELSE UNCHANGED <<pendingCompletions, ctx>>
     /\ EndCall
-    /\ UNCHANGED <<term, howSettled, noted, pendingNotifications, waiter, madeCalls, steer, deferred,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingNotifications, waiter, madeCalls, steer, deferred,
                    known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
+\* The call registers its kill wait before termination starts, so a settle during the
+\* wait is held for the tool result.
+\* code: agent/extensions/background-terminals/session.ts join "if (!killWaits.has(id)) killWaits.set(id, { kind: \"waiting\" });"
 \* code: agent/extensions/background-terminals/manager.ts terminate "yield* this.signalTree(id, false);"
 ToolKillSignal ==
     /\ phase = "tools"
     /\ call.tool = "bg_kill"
     /\ term' = IF term[call.t] = "running" THEN [term EXCEPT ![call.t] = "killing"] ELSE term
+    /\ killWait' = IF killWait[call.t] = "none" THEN [killWait EXCEPT ![call.t] = "waiting"] ELSE killWait
     /\ call' = [call EXCEPT !.tool = "bg_kill_wait"]
     /\ UNCHANGED <<howSettled, noted, pendingCompletions, pendingNotifications, waiter, phase, madeCalls, steer,
                    deferred, ctx, known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
+\* The result carries the end of a terminal that settled during the wait, so it counts as
+\* a message for NoDoubleWake.
+\* code: agent/extensions/background-terminals/session.ts join "for (const id of ids) killWaits.delete(id);"
 \* code: agent/extensions/background-terminals/index.ts bg_kill "terminalSession.consume(ids);"
 ToolKillDone ==
     /\ phase = "tools"
@@ -270,18 +281,30 @@ ToolKillDone ==
     /\ term[call.t] = "settled"
     /\ pendingCompletions' = pendingCompletions \ {call.t}
     /\ ctx' = [ctx EXCEPT !.completions = @ \cup {call.t}]
+    /\ sentCompletions' = IF killWait[call.t] = "settled" THEN Count(sentCompletions, {call.t}) ELSE sentCompletions
+    /\ killWait' = [killWait EXCEPT ![call.t] = "none"]
     /\ EndCall
     /\ UNCHANGED <<term, howSettled, noted, pendingNotifications, waiter, madeCalls, steer, deferred,
-                   known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
+                   known, sentNotifications, idleWaits, compacting, aborted>>
 
-\* code: agent/extensions/background-terminals/index.ts bg_kill "throw new Error(\"Kill wait aborted; termination continues in the background.\");"
+\* The call ends without a result, so it hands an end that settled during the wait to
+\* delivery. The completion steers, because the run is active. No settle wait runs during a
+\* tool call, so the completion waiter is unset.
+\* code: agent/extensions/background-terminals/index.ts bg_kill "terminalSession.abandonKill(ids);"
+\* code: agent/extensions/background-terminals/session.ts join "if (wait?.kind === \"settled\") client.delivery.enqueue(wait.snapshot);"
+\* code: agent/extensions/background-terminals/index.ts bg_kill "\"Kill wait aborted; termination continues in the background, and its end will wake you.\","
 ToolKillAborted ==
     /\ phase = "tools"
     /\ call.tool = "bg_kill_wait"
     /\ aborted
-    /\ EndCall
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, madeCalls, steer,
-                   deferred, ctx, known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
+    /\ call' = NoCall
+    /\ killWait' = [killWait EXCEPT ![call.t] = "none"]
+    /\ IF killWait[call.t] = "settled"
+         THEN FlushFrom([PiState EXCEPT !.phase = "turnEnd"], pendingCompletions \cup {call.t}, pendingNotifications)
+         ELSE /\ phase' = "turnEnd"
+              /\ UNCHANGED <<pendingCompletions, pendingNotifications, steer, deferred, ctx, aborted,
+                             sentCompletions, sentNotifications>>
+    /\ UNCHANGED <<term, howSettled, noted, waiter, madeCalls, known, idleWaits, compacting>>
 
 \* After turn_end the loop polls one steering message.
 \* code: agent/extensions/background-terminals/index.ts turn_end "idleSettleWaits = 0;"
@@ -297,7 +320,7 @@ PTurnEnd ==
               /\ phase' = IF aborted THEN "settling"
                            ELSE IF madeCalls THEN "request"
                            ELSE "agentEnd"
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, call, madeCalls,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, call, madeCalls,
                    deferred, known, sentCompletions, sentNotifications, compacting, aborted>>
 
 \* _handlePostAgentRun continues the run when a steering message arrived after the poll.
@@ -314,7 +337,7 @@ PAgentEnd ==
        ELSE
          /\ phase' = "beforeSettle"
          /\ UNCHANGED <<ctx, steer>>
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, call, madeCalls,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, call, madeCalls,
                    deferred, known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
 \* code: node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js _runBeforeSettleBoundary "const shouldContinue = result.continue || this.agent.hasQueuedMessages();"
@@ -341,7 +364,7 @@ BSStart ==
               /\ UNCHANGED <<ctx, steer>>
          ELSE /\ UNCHANGED waiter
               /\ Decide(FALSE, ctx)
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, call, madeCalls, deferred,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, call, madeCalls, deferred,
                    known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
 \* The wait ends when an item was pending or queued, or SETTLE_WAIT_MS passed.
@@ -361,7 +384,7 @@ BSWake ==
     /\ sentNotifications' = Count(sentNotifications, pendingNotifications)
     /\ idleWaits' = IF hasItems THEN 0 ELSE Min(idleWaits + 1, MaxIdleSettleWaits + 1)
     /\ Decide(hasItems \/ idleWaits + 1 <= MaxIdleSettleWaits, Merge(ctx, delivered))
-    /\ UNCHANGED <<term, howSettled, noted, call, madeCalls, deferred, known, compacting, aborted>>
+    /\ UNCHANGED <<term, howSettled, killWait, noted, call, madeCalls, deferred, known, compacting, aborted>>
 
 \* Pi clears _isAgentRunActive and emits agent_settled. Other extensions' handlers await I/O,
 \* so other callbacks can run before and after this extension's handler.
@@ -370,7 +393,7 @@ BSWake ==
 PSettledHandler ==
     /\ phase = "settling"
     /\ FlushFrom([PiState EXCEPT !.phase = "settlingFlushed"], pendingCompletions, pendingNotifications)
-    /\ UNCHANGED <<term, howSettled, noted, waiter, call, madeCalls, known, idleWaits, compacting>>
+    /\ UNCHANGED <<term, howSettled, killWait, noted, waiter, call, madeCalls, known, idleWaits, compacting>>
 
 \* code: agent/extensions/background-terminals/session.ts leave "for (const [joined] of clients) joined.delivery.clear();"
 \* code: node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js _emitAgentSettled "const deferred = this._deferredSettledActions.splice(0);"
@@ -383,7 +406,7 @@ PSettleDone ==
               /\ pendingCompletions' = IF WaitsAtSettle THEN {} ELSE pendingCompletions
               /\ pendingNotifications' = IF WaitsAtSettle THEN {} ELSE pendingNotifications
               /\ UNCHANGED <<steer, deferred, ctx, aborted>>
-    /\ UNCHANGED <<term, howSettled, noted, waiter, call, madeCalls, known, sentCompletions, sentNotifications,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, waiter, call, madeCalls, known, sentCompletions, sentNotifications,
                    idleWaits, compacting>>
 
 -----------------------------------------------------------------------------
@@ -392,7 +415,7 @@ UserPrompt ==
     /\ ~WaitsAtSettle
     /\ phase = "idle"
     /\ ApplyPi(StartRun(PiState, NoMessage))
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, call, madeCalls,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, call, madeCalls,
                    known, sentCompletions, sentNotifications, idleWaits, compacting>>
 
 \* code: node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js isCompacting "this._compactionAbortController !== undefined ||"
@@ -401,7 +424,7 @@ UserCompact ==
     /\ phase = "idle"
     /\ ~compacting
     /\ compacting' = TRUE
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, phase, call,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, phase, call,
                    madeCalls, steer, deferred, ctx, known, sentCompletions, sentNotifications, idleWaits, aborted>>
 
 \* Compaction emits session_compact and compaction_end, and no agent_settled.
@@ -409,7 +432,7 @@ UserCompact ==
 CompactDone ==
     /\ compacting
     /\ compacting' = FALSE
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, phase, call,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, phase, call,
                    madeCalls, steer, deferred, ctx, known, sentCompletions, sentNotifications, idleWaits, aborted>>
 
 \* code: node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js abort "this._agentRunAbortRequested = true;"
@@ -418,7 +441,7 @@ Abort ==
     /\ phase \in RunPhases
     /\ ~aborted
     /\ aborted' = TRUE
-    /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, waiter, phase, call,
+    /\ UNCHANGED <<term, howSettled, killWait, noted, pendingCompletions, pendingNotifications, waiter, phase, call,
                    madeCalls, steer, deferred, ctx, known, sentCompletions, sentNotifications, idleWaits, compacting>>
 
 -----------------------------------------------------------------------------
@@ -426,6 +449,7 @@ Abort ==
 Init ==
     /\ term = [t \in Terminals |-> "unstarted"]
     /\ howSettled = [t \in Terminals |-> "none"]
+    /\ killWait = [t \in Terminals |-> "none"]
     /\ noted = {}
     /\ pendingCompletions = {}
     /\ pendingNotifications = {}
@@ -475,6 +499,19 @@ CompletionWakesAgent ==
 \* A terminal that bg_kill ended reaches the model with its final state.
 KillReachesAgent ==
     \A t \in Terminals : howSettled[t] = "consumed" ~> t \in known.completions
+
+\* The model reads t's end on its next request: it read it already, the next request adds it,
+\* or Pi holds it in a queue for a later run.
+ReachesPi(t) ==
+    \/ t \in known.completions
+    \/ t \in ctx.completions
+    \/ \E i \in 1..Len(steer) : t \in steer[i].completions
+    \/ \E m \in deferred : t \in m.completions
+
+\* After an abort, Pi keeps queued messages and the transcript for the user's next prompt,
+\* so a terminal's end, including one bg_kill ended, only has to reach Pi.
+EndReachesPi ==
+    \A t \in Terminals : howSettled[t] \in {"enqueued", "consumed"} ~> ReachesPi(t)
 
 \* A notification reaches the model, unless its terminal settles first, whose completion
 \* carries the same output, or the session ends.

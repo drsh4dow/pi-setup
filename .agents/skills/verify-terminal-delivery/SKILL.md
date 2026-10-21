@@ -18,7 +18,7 @@ Run the check after any change to these files, or to the Pi version in `bun.lock
 
 | File under `agent/extensions/background-terminals/` | Functions                                                                                                                      |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `delivery.ts`                                       | `queue`, `flush`, `drain`, `enqueueNotification`, `takePending`, `waitForDelivery`                                             |
+| `delivery.ts`                                       | `queue`, `flushWhenIdle`, `flush`, `drain`, `enqueueNotification`, `takePending`, `waitForDelivery`                            |
 | `index.ts`                                          | tools `bg_start`, `bg_status`, `bg_kill`; handlers `agent_before_settle`, `agent_settled`, `turn_end`; `MAX_IDLE_SETTLE_WAITS` |
 | `manager.ts`                                        | `settle`, `terminate`, `appendNotification`                                                                                    |
 | `session.ts`                                        | `join` (with its `kill`, `consume`, and `abandonKill`), `leave`                                                                |
@@ -42,8 +42,8 @@ It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1
 The script does three things:
 
 1. It checks that every `\* code:` citation in the spec still matches the code. If one does not, it stops before any model runs, because a model that no longer matches the code proves nothing. A citation names a file, a function, and a line copied from that function's body. For a tool, the function is its `name`. For an event handler, it is the event. `vp run verify` runs this step alone, as `scripts/check --citations`.
-2. It runs seven models that must hold. `Session.cfg` is a TUI session where the user can compact. `SessionNotifications.cfg` is a TUI session without compaction. `Aborts.cfg` adds user aborts. `UnattendedRun.cfg`, `UnattendedCompletion.cfg`, and `UnattendedRunHoldsNotification.cfg` are unattended runs. `AbortedKillIsSilent.cfg` is a TUI session with one terminal and user aborts, and checks `EndReachesPi`.
-3. It runs two models that reproduce known findings and must be violated. See [Known findings](#known-findings).
+2. It runs eight models that must hold. `Session.cfg` is a TUI session where the user can compact. `SessionNotifications.cfg` is a TUI session without compaction. `CompactionHoldsNotification.cfg` is a TUI session with one terminal whose notification can arrive while the user compacts. `Aborts.cfg` adds user aborts. `UnattendedRun.cfg`, `UnattendedCompletion.cfg`, and `UnattendedRunHoldsNotification.cfg` are unattended runs. `AbortedKillIsSilent.cfg` is a TUI session with one terminal and user aborts, and checks `EndReachesPi`.
+3. It runs one model that reproduces a known finding and must be violated. See [Known findings](#known-findings).
 
 Exit 0 means every citation is current and each model matched the `\* expect:` line at the top of its config. For a violated model, the script prints the broken property, such as `Invariant NoDoubleWake is violated` or `Temporal properties were violated`, then the counterexample as numbered steps. Each step names the action, the file and function it models, and the variables that changed. The full TLC output is in `${TMPDIR:-/tmp}/verify-terminal-delivery/`.
 
@@ -73,7 +73,7 @@ The update is done when the check exits 0, or when it fails only on a finding yo
 - **The model.** It calls at most one tool per answer, and now and then it answers without one. `NotificationReachesAgent` needs that, because a notification waits for the run to settle by design.
 - **Terminals.** A terminal may run forever and may send one notification. Exit, pipe close, and the process-group poll are one step, and so is the automatic termination after the pipe grace. A kill always ends the terminal, because `terminate` escalates to SIGKILL and then settles it.
 - **Pi.** `pi.sendMessage` steers while a run is active, defers while `agent_settled` handlers run, and starts a run while idle. Steering drains one message per poll. `ctx.signal` is undefined during `agent_before_settle`, so an abort does not end the settle wait.
-- **The user.** A TUI user may prompt, compact, or abort at any time, or never act again. Unattended runs have no user.
+- **The user.** A TUI user may prompt, compact, or abort at any time, or never act again. The user takes longer than the idle watch's 100 ms check to compact again, so the watch sees each idle interval. Unattended runs have no user.
 - **Aborts.** After an abort, a completion that was steered into the aborted run waits in Pi's queue or the transcript for the user's next prompt. That is Pi's design for queued messages, so `Aborts.cfg` checks only `NoDoubleWake`, and `AbortedKillIsSilent.cfg` checks that each end reaches Pi rather than the model (`EndReachesPi`).
 - **Left out.** The 32-item queue eviction and `bg_list`'s `deliveryProblem`, the 256 KiB batch limit, the `agent_before_settle` error outcome, several clients that share one session, several `bg_kill` calls that wait on one terminal at once, session switches, and rendering.
 - **Bounds.** Two terminals, except one in `UnattendedCompletion.cfg`, where two terminals reproduce [Completion deferred behind a run](#completion-deferred-behind-a-run). With three terminals, every model that must hold still held, in 13 minutes. Raise `Terminals` in a config to rerun that bound.
@@ -81,10 +81,6 @@ The update is done when the check exits 0, or when it fails only on a finding yo
 ## Known findings
 
 Each finding is a config that must be violated. The script prints one trace for each.
-
-### Compaction holds notification
-
-`CompactionHoldsNotification.cfg`. In a TUI session, a notification that arrives during `/compact`, or `/tree` with a summary, waits for the next completion, prompt, or settle. `queue` holds it because Pi is compacting, and compaction does not emit `agent_settled`.
 
 ### Completion deferred behind a run
 

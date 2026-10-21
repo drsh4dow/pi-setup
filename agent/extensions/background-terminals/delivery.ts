@@ -37,6 +37,8 @@ const COMPLETION_OUTPUT_BYTES = 24 * 1024;
 
 const COMPLETION_BATCH_BYTES = 256 * 1024;
 
+const IDLE_CHECK_MS = 100;
+
 const logError = (message: string) => Effect.runSync(Effect.logError(message));
 
 export function sanitizeErrorForDisplay(error: Error | string): Error {
@@ -212,6 +214,7 @@ export class BackgroundTerminalDelivery {
   // Items evicted from a full queue, kept so bg_list can report what was never delivered.
   private readonly failed = new Map<string, Pick<DeliveryItem, "kind" | "terminalId">>();
   private flushState: "idle" | "flushing" = "idle";
+  private watchingForIdle = false;
   private settleWaiter?: () => void;
   private readonly pi: Pick<ExtensionAPI, "sendMessage">;
   private readonly reportError: (message: string) => void;
@@ -266,17 +269,37 @@ export class BackgroundTerminalDelivery {
     // Results steer into a running agent right after the current tool
     // batch; notifications wait for idle so settled terminals can drop
     // their pending notifications first.
-    if (item.kind === "completion" || this.context.isIdle())
-      // The forked flush has no caller to receive its failure, so it reports here.
-      Effect.runFork(
-        this.flush.pipe(
-          Effect.catchCause((cause) =>
-            Effect.sync(() =>
-              this.reportError(`[background-terminals] delivery failed: ${Cause.pretty(cause)}`),
-            ),
+    if (item.kind === "completion" || this.context.isIdle()) this.forkReportingFailure(this.flush);
+    else this.flushWhenIdle();
+  }
+  // Compaction and tree navigation hold notifications and end without agent_settled,
+  // and Pi emits no extension event once it is idle again.
+  private flushWhenIdle() {
+    if (this.watchingForIdle) return;
+    this.watchingForIdle = true;
+
+    this.forkReportingFailure(
+      Effect.sleep(IDLE_CHECK_MS).pipe(
+        Effect.repeat({ until: () => !this.context || this.context.isIdle() }),
+        Effect.andThen(this.flush),
+        Effect.ensuring(
+          Effect.sync(() => {
+            this.watchingForIdle = false;
+          }),
+        ),
+      ),
+    );
+  }
+  private forkReportingFailure(effect: Effect.Effect<void>) {
+    Effect.runFork(
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.sync(() =>
+            this.reportError(`[background-terminals] delivery failed: ${Cause.pretty(cause)}`),
           ),
         ),
-      );
+      ),
+    );
   }
   enqueue(snapshot: SettledTerminalSnapshot) {
     this.queue({

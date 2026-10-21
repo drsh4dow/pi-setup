@@ -69,7 +69,14 @@ check_citations() {
   local pattern='^\\\* code: ([^ ]+) ([^ ]+) "(.*)"$'
 
   while IFS= read -r line; do
-    [[ $line =~ $pattern ]] || continue
+    [[ $line == '\* code:'* ]] || continue
+
+    if [[ ! $line =~ $pattern ]]; then
+      echo "stale citation: malformed line, expected \\* code: <file> <function> \"<snippet>\": $line"
+      stale=1
+      continue
+    fi
+
     path=${BASH_REMATCH[1]}
     function=${BASH_REMATCH[2]}
     snippet=${BASH_REMATCH[3]//\\\"/\"}
@@ -136,7 +143,7 @@ print_trace() {
         }
       }
     }
-    /^Error: (Invariant [A-Za-z]+ is violated|Temporal properties were violated)/ {
+    /^Error: (Invariant [A-Za-z0-9_]+ is violated|Temporal properties were violated)/ {
       sub(/^Error: /, "")
       print "  " $0
       next

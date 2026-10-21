@@ -128,6 +128,20 @@ test("reports a citation of a line just outside the cited definition's scope", (
   );
 });
 
+test("reports a malformed citation line", (t) => {
+  const result = runCheck(t, ['deliver "send(message);"', 'deliver "send(message);']);
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(
+    result.stdout,
+    [
+      'stale citation: malformed line, expected \\* code: <file> <function> "<snippet>": \\* code: src/example.ts deliver "send(message);',
+      "check: code that Example.tla models changed. Run .agents/skills/verify-example/scripts/check and follow its SKILL.md.",
+      "",
+    ].join("\n"),
+  );
+});
+
 test("stops the full check at a stale citation before fetching TLC", (t) => {
   const cache = tempDir(t);
 

@@ -535,7 +535,7 @@ SigtermLauncher ==
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, launcher, sawPaneDead, child, childInterrupted, phase, trapsSignals>>
 
 \* An OOM kill, timeout -s KILL, or bg_kill's escalation.
-\* code: agent/extensions/subagents/bin/pane-child.ts launcherExit "A launcher killed by SIGKILL cleans up nothing, so the pane child watches it."
+\* code: agent/extensions/subagents/bin/pane-child.ts launcherExit "Effect.sleep(LAUNCHER_POLL_INTERVAL).pipe(Effect.repeat({ until: () => !isAlive(launcherPid) }));"
 SigkillLauncher ==
     /\ "launcherKill" \in EnabledKills
     /\ launcher /= "gone"
@@ -544,7 +544,7 @@ SigkillLauncher ==
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, interrupted, sawPaneDead, child, childInterrupted, phase, trapsSignals>>
 
 \* The user closes the tab, or herdr stops its session.
-\* code: agent/extensions/subagents/herdr.ts sweepAbandonedRuns "Herdr also saves a session"
+\* code: agent/extensions/subagents/bin/pi-subagent.ts SIGNAL_EXIT_CODES "const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as const;"
 ClosePaneExternally ==
     /\ "paneClose" \in EnabledKills \ kills
     /\ pane = "open"

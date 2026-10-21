@@ -22,6 +22,9 @@ definition_body() {
     function is_comment(text) {
       return text ~ /^[ \t]*(\/\/|\/\*|\*)/
     }
+    function opens_block_comment(text) {
+      return text ~ /^[ \t]*\/\*/ && text !~ /\*\//
+    }
     function is_declaration(text) {
       return text ~ declaration || text ~ tool || text ~ handler
     }
@@ -43,6 +46,12 @@ definition_body() {
       declaration_keyword = "^(export|import|const|let|var|function|async|class|type|interface|enum|declare)([^A-Za-z0-9_$]|$)"
       whole_name = "(^|[^A-Za-z0-9_$])" name "([^A-Za-z0-9_$]|$)"
     }
+    in_block_comment {
+      if ($0 ~ /\*\//) in_block_comment = 0
+      next
+    }
+    opens_block_comment($0) { in_block_comment = 1; next }
+    is_comment($0) { next }
     inside && closes_definition($0) {
       inside = 0
       print
@@ -50,8 +59,6 @@ definition_body() {
     }
     inside { print; next }
     is_declaration($0) || is_statement($0) {
-      printf "%s", comment_above
-      comment_above = ""
       print
       if (is_one_line($0)) next
       inside = 1
@@ -59,8 +66,6 @@ definition_body() {
       tool_entry = $0 ~ tool
       next
     }
-    is_comment($0) { comment_above = comment_above $0 "\n"; next }
-    { comment_above = "" }
   ' "$1"
 }
 

@@ -80,6 +80,7 @@ TypeOK ==
     /\ term \in [Terminals -> {"unstarted", "running", "killing", "settled"}]
     /\ howSettled \in [Terminals -> {"none", "enqueued", "held", "unreported"}]
     /\ killWait \in [Terminals -> {"none", "waiting", "settled"}]
+    /\ call.tool # "bg_kill_wait" => killWait = [t \in Terminals |-> "none"]
     /\ noted \subseteq Terminals
     /\ pendingCompletions \subseteq Terminals
     /\ pendingNotifications \subseteq Terminals
@@ -267,7 +268,7 @@ ToolKillSignal ==
     /\ phase = "tools"
     /\ call.tool = "bg_kill"
     /\ term' = IF term[call.t] = "running" THEN [term EXCEPT ![call.t] = "killing"] ELSE term
-    /\ killWait' = IF killWait[call.t] = "none" THEN [killWait EXCEPT ![call.t] = "waiting"] ELSE killWait
+    /\ killWait' = [killWait EXCEPT ![call.t] = "waiting"]
     /\ call' = [call EXCEPT !.tool = "bg_kill_wait"]
     /\ UNCHANGED <<howSettled, noted, pendingCompletions, pendingNotifications, waiter, phase, madeCalls, steer,
                    deferred, ctx, known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>

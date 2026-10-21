@@ -6,7 +6,7 @@ user-invokable: false
 
 # Writing good PRs
 
-A PR body is a one-minute briefing for a reviewer who has the diff open. It becomes the squash commit body, so it is also what a maintainer reads in `git log` months later. It shows the change, proves the change works with a before and an after, and says how risky the merge is.
+A PR body is a one-minute briefing for a reviewer who has the diff open. It becomes the squash commit body, so it is also what a maintainer reads in `git log` months later. It says what changes for whom and why, proves it with a before and an after that the reviewer can inspect in the PR itself, and says how risky the merge is. A body that lists what you did, and with which tools, makes the reviewer rebuild the outcome from the diff.
 
 When the repository has a PR template, fill the template's sections, and apply the rules below to the section that plays each role. Otherwise use the shape below.
 
@@ -16,8 +16,7 @@ Write the prose with the **technical-writing** skill (every layer except Diátax
 
 Use Conventional Commits, `type(scope): subject`, with no trailing period. The scope is the area, such as `subagents` or `web`.
 
-- For `feat` and `fix`, the subject is the outcome a user sees, in plain words: `fix(web): new threads no longer spike CPU`.
-- For `refactor`, `chore`, `test`, `docs`, and `perf`, the subject names the symbol or file that carries the change: `refactor(pstack-port): name each invocation for who can load the skill`.
+The subject is the outcome that someone notices after the merge, in plain words, for every type. Name who notices when it is not the end user: `fix(web): new threads no longer spike CPU`, `refactor(pstack-port): a new upstream skill fails sync until someone classifies it`. A subject that starts with the work, such as `add`, `update`, or `refactor`, describes the diff instead, and the check flags it.
 
 ## Body
 
@@ -41,7 +40,7 @@ Drop `## Shape` and `## Tradeoffs` when they have nothing to say. Start at `## W
 
 ### Why
 
-Give the problem and the approach in 1 to 3 sentences. Link the ticket with `Closes #N`. Leave out SHAs, rebase history, and "based on main" notes.
+Give the problem, who has it, and what is true for them after the merge, in 1 to 3 sentences. The approach belongs in Shape. Link the ticket with `Closes #N`. Leave out SHAs, rebase history, and "based on main" notes.
 
 ### Shape
 
@@ -65,10 +64,10 @@ Keep only the calls, files, and boundaries the reviewer needs. Name both sides o
 
 ### Evidence
 
-Prove the change works on the real surface, as a before and an after, in 1 to 3 items, or one item for each `## Done when` item of the ticket it closes. Strongest first:
+Prove the change works on the real surface, as a before and an after, in 1 to 3 items, or one item for each `## Done when` item of the ticket it closes. The reviewer must be able to trust each item without cloning the branch, so each one is in the PR: embedded media, output pasted in a fenced block, or a link to a CI run or hosted artifact. A command for the reviewer to run is not evidence. Strongest first:
 
 1. Media from the running product, captured through the repository's `verify-*` skill. Use a screenshot for a static state and a recording for motion, timing, or interaction. Add a half-speed copy when timing is the point. For a TUI or CLI, the captured pane or output text in a fenced block is the media.
-2. A test that fails on the base and passes on the head, named by file and case. A mutation check is stronger, because it shows the test fails again when the fix is removed.
+2. A test that fails on the base and passes on the head, with the failing and the passing output pasted or linked. A mutation check is stronger, because it shows the test fails again when the fix is removed.
 3. Command output that changed, before and after.
 
 "Tests pass" and "typecheck passes" are claims, so they count only as context next to one of these. Capture the before on the base branch. Put image pairs side by side in a `| Before | After |` table. Give each media item a caption or alt text that says what to look at. When the PR closes a ticket, prove each of its `## Done when` items. List what you could not check, and why.
@@ -95,7 +94,7 @@ Give 1 to 3 items on what the PR covers and what it deliberately leaves out, suc
 
 ### Tradeoffs
 
-Name only the rejected alternatives a reviewer would otherwise ask about.
+Name the rejected alternatives a reviewer would otherwise ask about, and each call you made that the ticket or the agreed design did not settle, so the reviewer can veto it.
 
 ### Attribution
 

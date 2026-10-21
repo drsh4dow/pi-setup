@@ -217,12 +217,12 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
   }
 
   const evidence = sectionNamed(body, ["evidence", "verification"]);
-  const artifact = /https?:\/\/|`[^`]+`|^\s*(```|~~~)|^\s*\|/;
+  const artifact = /https?:\/\/|!\[|^\s*(```|~~~)|^\s*\|/;
 
   if (evidence !== undefined && !evidence.lines.some((line) => artifact.test(line.text))) {
     findings.push({
       where: evidence.line,
-      message: `"## ${evidence.heading}" names no artifact, add the test, command, output, or media link that shows before and after`,
+      message: `"## ${evidence.heading}" shows nothing the reviewer can inspect without cloning, paste the before and after output in a fenced block or link the media or CI run`,
     });
   }
 
@@ -290,6 +290,19 @@ function titleFindings(kind: Kind, title: string): Finding[] {
   ) {
     return [
       { where: "title", message: 'title is not Conventional Commits "type(scope): subject"' },
+    ];
+  }
+
+  const work = title.match(
+    /^[^:]+: (add|update|implement|refactor|change|use|move|rename|bump|improve|tweak|introduce|create|extract|rewrite|migrate|wire|switch)\b/i,
+  );
+
+  if (kind === "pr" && work !== null) {
+    return [
+      {
+        where: "title",
+        message: `subject starts with the work "${work[1]}", state the outcome someone notices after the merge`,
+      },
     ];
   }
 

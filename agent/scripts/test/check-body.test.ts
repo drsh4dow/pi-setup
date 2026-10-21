@@ -38,7 +38,7 @@ Agents wrote PR bodies in three shapes. Closes #47.
 
 ## Evidence
 
-- \`node --test agent/scripts/test/check-body.test.ts\` fails on the base and passes on the head.
+- The check test fails on the base and passes on the head: https://github.com/drsh4dow/pi-setup/actions/runs/1
 
 ## Merge danger
 
@@ -52,24 +52,37 @@ Made by Claude Opus 5.5 in Pi.
 `;
 
 test("passes a PR body in the default shape, ignoring headings inside fenced blocks", (t) => {
-  const result = check(t, goodPr, ["pr", "--title", "feat(skills): add writing-good-prs"]);
+  const result = check(t, goodPr, [
+    "pr",
+    "--title",
+    "feat(skills): every PR body passes one structure check",
+  ]);
 
   assert.deepEqual(result.lines, []);
   assert.equal(result.status, 0);
 });
 
-test("flags Evidence that names no artifact and Merge danger that names no door", (t) => {
+test("flags Evidence the reviewer must clone to check, and Merge danger that names no door", (t) => {
   const body = goodPr
-    .replace(/- `node --test.*\n/, "Tests pass.\n")
+    .replace(/- The check test.*\n/, "- `node --test check-body.test.ts` passes.\n")
     .replace("Two-way door. Blast radius: agents that write PR bodies.", "Low risk.");
 
   const result = check(t, body, ["pr"]);
 
   assert.equal(result.status, 1);
   assert.deepEqual(result.lines, [
-    '13: "## Evidence" names no artifact, add the test, command, output, or media link that shows before and after',
+    '13: "## Evidence" shows nothing the reviewer can inspect without cloning, paste the before and after output in a fenced block or link the media or CI run',
     '17: "## Merge danger" does not say "one-way door" or "two-way door"',
     '17: "## Merge danger" does not name the blast radius',
+  ]);
+});
+
+test("flags a title whose subject names the work instead of the outcome", (t) => {
+  const result = check(t, goodPr, ["pr", "--title", "feat(skills): add writing-good-prs"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    'title: subject starts with the work "add", state the outcome someone notices after the merge',
   ]);
 });
 

@@ -92,6 +92,55 @@ test("splits queued completions into bounded batches without losing results", ()
   }
 });
 
+test("a completion too large to carry its notifications sends them first and keeps its output", () => {
+  const messages: DeliveryMessage[] = [];
+
+  const delivery = new BackgroundTerminalDelivery({
+    sendMessage(message) {
+      messages.push(decodeMessage(message));
+    },
+  });
+
+  // Each control character renders as a 3-byte replacement, so the notifications
+  // outgrow one batch together but each fits alone.
+  const notificationIds = Array.from(
+    { length: MAX_QUEUED_PER_KIND },
+    (_, index) => `bt-1:notification-${index}`,
+  );
+
+  try {
+    delivery.setContext(testContext({ isIdle: () => false }));
+
+    for (const id of notificationIds)
+      delivery.enqueueNotification({
+        id,
+        terminalId: "bt-1",
+        title: "repository scout",
+        message: "\x01".repeat(4_000),
+      });
+
+    delivery.enqueue(snapshot("scout report"));
+
+    const results = messages.filter(
+      (message) => message.customType === "background-terminal-results",
+    );
+
+    assert.equal(results.length, 1);
+    assert.match(results[0].content, /scout report/);
+    assert.equal(
+      messages.at(-1)?.customType,
+      "background-terminal-results",
+      "every notification message comes before the results",
+    );
+    assert.deepEqual(
+      messages.flatMap((message) => message.details.ids).toSorted(),
+      [...notificationIds, "bt-1"].toSorted(),
+    );
+  } finally {
+    delivery.clear();
+  }
+});
+
 test("completion preserves a report beyond the old byte and line limits without repeating the command", () => {
   const report = Array.from(
     { length: 120 },

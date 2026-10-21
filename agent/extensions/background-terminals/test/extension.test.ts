@@ -417,6 +417,36 @@ test("an aborted bg_kill says when another result or an earlier end reports the 
   assert.equal(messages.length, 0);
 });
 
+test("two bg_kill calls on one terminal aborted together both say its end is delivered", async (t) => {
+  const controller = new AbortController();
+  const messages: DeliveryMessage[] = [];
+  const { 0: start, 3: kill } = await registeredTools(t, (message) => messages.push(message));
+
+  const started = await start.execute("1", { command: "trap '' TERM; sleep 30", title: "both" });
+  const id = started.details.id;
+  await sleep(100);
+
+  const calls = [
+    kill.execute("2", { ids: [id] }, controller.signal),
+    kill.execute("3", { ids: [id] }, controller.signal),
+  ];
+
+  await sleep(50);
+  controller.abort();
+
+  for (const result of await Promise.allSettled(calls)) {
+    assert.ok(result.status === "rejected", "no bg_kill result reports the end");
+    assert.match(String(result.reason), /delivered to you/);
+  }
+
+  await eventually(() => messages.length > 0);
+  await sleep(100);
+  assert.deepEqual(
+    messages.map((message) => message.details.ids),
+    [[id]],
+  );
+});
+
 test("a bg_kill result reports the end and nothing steers it again", async (t) => {
   const messages: DeliveryMessage[] = [];
   const { 0: start, 3: kill } = await registeredTools(t, (message) => messages.push(message));

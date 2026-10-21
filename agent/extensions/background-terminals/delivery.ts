@@ -227,7 +227,7 @@ export class BackgroundTerminalDelivery {
   private context?: ExtensionContext;
   private readonly pending = new Map<string, DeliveryItem>();
   // Items evicted from a full queue, kept so bg_list can report what was never delivered.
-  private readonly failed = new Map<string, Pick<DeliveryItem, "kind" | "terminalId">>();
+  private readonly failed = new Map<string, DeliveryItem["terminalId"]>();
   private flushState: "idle" | "flushing" = "idle";
   private settleWaiter?: () => void;
   private readonly pi: Pick<ExtensionAPI, "sendMessage">;
@@ -242,17 +242,20 @@ export class BackgroundTerminalDelivery {
   get problem(): string | undefined {
     if (this.failed.size === 0) return undefined;
 
-    return `Automatic background-terminal delivery dropped ${[...this.failed.keys()].join(", ")} from a full queue. Use bg_status to inspect terminal state.`;
+    const terminals = new Set(this.failed.values());
+
+    return `Automatic background-terminal delivery dropped ${[...this.failed.keys()].join(", ")} from a full queue. Inspect ${[...terminals].join(", ")} with bg_status, which clears this notice.`;
+  }
+  clearDropped(terminalId: string) {
+    for (const [id, droppedTerminalId] of this.failed)
+      if (droppedTerminalId === terminalId) this.failed.delete(id);
   }
   setContext(context: ExtensionContext) {
     this.context = context;
   }
   private markFailed(item: DeliveryItem) {
     this.pending.delete(item.id);
-    this.failed.set(item.id, {
-      kind: item.kind,
-      terminalId: item.terminalId,
-    });
+    this.failed.set(item.id, item.terminalId);
 
     if (this.failed.size <= MAX_QUEUED_PER_KIND) return;
     const oldest = this.failed.keys().next();
@@ -374,10 +377,7 @@ export class BackgroundTerminalDelivery {
     return entries;
   }
   consume(ids: readonly string[]) {
-    for (const id of ids) {
-      this.pending.delete(id);
-      this.failed.delete(id);
-    }
+    for (const id of ids) this.pending.delete(id);
   }
   private batch(kind: DeliveryItem["kind"]): DeliveryBatch | undefined {
     const ids: string[] = [];

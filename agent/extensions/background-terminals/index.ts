@@ -317,6 +317,7 @@ export default function backgroundTerminals(
           if (!snapshot) throw new Error(`Unknown terminal id "${sanitizeInline(params.id)}".`);
 
           if (snapshot.state !== "running") terminalSession.consume([snapshot.id]);
+          delivery.clearDropped(snapshot.id);
 
           const metadata = terminalMetadata(snapshot);
 

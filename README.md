@@ -225,6 +225,8 @@ tracked and untracked, non-ignored files.
 
 - `background-terminals`: `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for
   session-owned processes, plus `emit-to-pi` notifications
+- `build-bin-path`: puts `.build/bin` (`pi-subagent`, `emit-to-pi`, `dumpfile`)
+  on the PATH of every command Pi runs, the `bash` tool included
 - `delegate-guard`: keeps subagents two tiers deep. A subagent launched without
   `subagents/owner.md` is a delegate and may run no `pi --print` or `pi -p`
   launch. An owner, an Orchestrate sub-coordinator, may launch only delegates.
@@ -577,8 +579,9 @@ Keep these versions aligned when upgrading:
   `vp toolchain` reports.
 - Vite+ and `@effect/tsgo` move together.
 
-`vp run build:cli` compiles `emit-to-pi` and `dumpfile` with Bun.
-Background terminals put `.build/bin` on their command search path.
+`vp run build:cli` compiles `pi-subagent`, `emit-to-pi`, and `dumpfile` with
+Bun. The `build-bin-path` extension puts `.build/bin` on the search path of
+every command Pi runs.
 
 ## License
 

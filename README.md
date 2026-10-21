@@ -6,8 +6,10 @@ extensions, skills, prompts, themes, and model defaults. Pi discovers everything
 under `~/.pi/agent` on its own, so nothing here is installed as a package.
 
 [`agent/SYSTEM.md`](agent/SYSTEM.md) replaces Pi's system prompt for every
-model. It sets the agent's behavior. The skills hold the procedures for
-specific kinds of work, and `engineering-standards` holds the code standards.
+model. It routes each request to one of eight modes and lets code change only
+after I agree to a design with a checkable end state. The skills hold the
+procedures for specific kinds of work, and `engineering-standards` holds the
+code standards.
 
 ## How I work
 
@@ -441,15 +443,16 @@ Every skill whose name also appears in pstack is ported from it. See
 
 ## pstack
 
-The system prompt and most skills come from
+Most skills and every playbook come from
 [pstack](https://github.com/cursor/plugins/tree/main/pstack), Lauren Tan's
 Cursor plugin.
 [`agent/scripts/pstack-synced-commit.txt`](agent/scripts/pstack-synced-commit.txt)
 holds the upstream commit that this setup is synced to.
-[`agent/SYSTEM.md`](agent/SYSTEM.md) is pstack's `poteto-mode` skill rewritten
-as a system prompt, and
-[`agent/poteto/`](agent/poteto/) holds that skill's playbooks, references, and
-scripts. The scripts are vendored as-is: lint, format, and type checks skip
+[`agent/SYSTEM.md`](agent/SYSTEM.md) started as pstack's `poteto-mode` skill
+and is now my own mode router. It keeps the sections that the ported
+playbooks and skills refer to, such as Subagents, Principles, Tools, and
+Comments. [`agent/poteto/`](agent/poteto/) holds `poteto-mode`'s playbooks,
+references, and scripts. The scripts are vendored as-is: lint, format, and type checks skip
 them. Not ported: `setup-pstack`, the `poteto-agent` wrapper, the simulator
 and Cursor cache steps of the worktree-cleanup playbook, and the Benny
 automations.
@@ -475,7 +478,7 @@ follows:
 | `create-skill`                                                         | The `writing-for-agents` skill.                                                                                                                                                                                                                                                                                                            |
 | `/deslop`                                                              | The [`deslop`](agent/prompts/deslop.md) prompt, read and applied by the agent.                                                                                                                                                                                                                                                             |
 | `agent-transcripts/`                                                   | Pi session files: `$PI_SESSION_FILE` and the other sessions in its directory.                                                                                                                                                                                                                                                              |
-| `/poteto-mode` and the `poteto-mode` skill                             | `agent/SYSTEM.md`, loaded for every session.                                                                                                                                                                                                                                                                                               |
+| `/poteto-mode` and the `poteto-mode` skill                             | `agent/SYSTEM.md`, my own mode router, loaded for every session. Upstream changes are ported by hand.                                                                                                                                                                                                                                      |
 | `.cursor/skills/`                                                      | `.agents/skills/`                                                                                                                                                                                                                                                                                                                          |
 | Cursor's built-in babysit, Plan Mode, and Custom Modes                 | Removed.                                                                                                                                                                                                                                                                                                                                   |
 
@@ -514,7 +517,7 @@ as `kept deleted`, so it never adds a newly unskipped file on its own.
 
 ```text
 agent/
-├── SYSTEM.md          # system prompt, ported from pstack's poteto-mode
+├── SYSTEM.md          # system prompt, the mode router
 ├── poteto/            # pstack playbooks, references, and scripts
 ├── default.settings.json  # models, thinking level, compaction, and theme
 ├── keybindings.json

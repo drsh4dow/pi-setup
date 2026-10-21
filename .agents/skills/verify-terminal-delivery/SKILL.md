@@ -54,7 +54,7 @@ Exit 0 means every citation is current and each model matched the `\* expect:` l
 3. Edit each action to do what the new code does. One action is one callback that runs to completion, or the part of an async function between two awaits that another callback can observe. Name a new action after the code. Prefix it with `T` for the terminal, `Tool` for a tool call, `BS` for the `agent_before_settle` handler, `P` for Pi, or `User`. Add it to `PiStep` or `Next`, and put a `\* code:` citation above it. The last citation above an action labels it in traces. Add a newly cited function to the table in [What the check covers](#what-the-check-covers).
 4. Run the check.
 
-The update is done when the check exits 0, or when it fails only on a finding you report. If a property fails after a faithful update, the change broke it. Report the counterexample. The properties and `Fairness` stay as they are.
+The update is done when the check exits 0, or when it fails only on a finding you report. If a property fails after a faithful update, the change broke it. Report the counterexample. The properties and the existing `Fairness` clauses stay as they are. A new action that the code is sure to take, such as a timer that fires, needs its own clause in `Fairness`, or TLC lets it never run. Say in the comment above `Fairness` which code makes it sure, and add any timing assumption the clause relies on to [What the model assumes](#what-the-model-assumes).
 
 ## Read a failure
 

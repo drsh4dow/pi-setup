@@ -174,14 +174,14 @@ export default function backgroundTerminals(
 
         if (runningTerminals(terminals).length === 0) return undefined;
 
-        yield* delivery.waitForCompletion(options.settleWaitMs ?? SETTLE_WAIT_MS, ctx.signal);
+        yield* delivery.waitForDelivery(options.settleWaitMs ?? SETTLE_WAIT_MS, ctx.signal);
 
-        const results = delivery.takeCompletions();
+        const entries = delivery.takePending();
 
-        if (results) {
+        if (entries.length > 0) {
           idleSettleWaits = 0;
 
-          return { entries: [results], continue: true };
+          return { entries, continue: true };
         }
 
         idleSettleWaits++;

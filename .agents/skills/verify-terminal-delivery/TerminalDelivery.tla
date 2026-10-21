@@ -55,7 +55,7 @@ VARIABLES
     noted,        \* terminals that have sent their notification
     pendingCompletions,  \* completions in delivery.pending
     pendingNotifications, \* notifications in delivery.pending
-    waiter,       \* delivery.completionWaiter: "none", "waiting", or "woken"
+    waiter,       \* delivery.settleWaiter: "none", "waiting", or "woken"
     phase,        \* where Pi's run loop is
     call,         \* the tool call of the current assistant message, or NoCall
     madeCalls,    \* the current assistant message has a tool call
@@ -131,8 +131,9 @@ SendToPi(s, msg) ==
       [] s.phase \in {"settling", "settlingFlushed"} -> [s EXCEPT !.deferred = @ \cup {msg}]
       [] s.phase = "idle" -> StartRun(s, msg)
 
-\* code: agent/extensions/background-terminals/delivery.ts flush "const batch = this.batch(\"notification\") ?? this.batch(\"completion\");"
-\* code: agent/extensions/background-terminals/delivery.ts flush "this.consume(batch.details.ids);"
+\* code: agent/extensions/background-terminals/delivery.ts flush "deliverAs: \"steer\","
+\* code: agent/extensions/background-terminals/delivery.ts drain "const batch = this.batch(\"notification\") ?? this.batch(\"completion\");"
+\* code: agent/extensions/background-terminals/delivery.ts drain "this.consume(batch.details.ids);"
 Sent(s, pe, pn) ==
     LET s1 == IF pn = {} THEN s ELSE SendToPi(s, [completions |-> {}, notifications |-> pn])
     IN IF pe = {} THEN s1 ELSE SendToPi(s1, [completions |-> pe, notifications |-> {}])
@@ -157,7 +158,7 @@ Hold(pe, pn) ==
 \* code: agent/extensions/background-terminals/session.ts join "client.delivery.consume([snapshot.id]);"
 \* code: agent/extensions/background-terminals/session.ts join "client.delivery.enqueue(snapshot);"
 \* code: agent/extensions/background-terminals/delivery.ts queue "this.pending.set(item.id, item);"
-\* code: agent/extensions/background-terminals/delivery.ts queue "if (item.kind === \"completion\" && this.completionWaiter) {"
+\* code: agent/extensions/background-terminals/delivery.ts queue "if (this.settleWaiter) {"
 \* code: agent/extensions/background-terminals/delivery.ts queue "if (item.kind === \"completion\" || this.context.isIdle())"
 \* code: agent/extensions/background-terminals/manager.ts settle "if (this.lifecycle.kind === \"running\")"
 \* code: agent/extensions/background-terminals/manager.ts settle "this.onSettled?.(snapshot, entry.kind === \"terminating\" && entry.intent === \"kill\");"
@@ -181,6 +182,7 @@ TEnd(t) ==
          /\ UNCHANGED waiter
     /\ UNCHANGED <<noted, call, madeCalls, known, idleWaits, compacting>>
 
+\* code: agent/extensions/background-terminals/delivery.ts queue "this.settleWaiter();"
 \* code: agent/extensions/background-terminals/delivery.ts enqueueNotification "kind: \"notification\","
 \* code: agent/extensions/background-terminals/manager.ts appendNotification "this.onNotification?.({"
 TNotify(t) ==
@@ -189,10 +191,16 @@ TNotify(t) ==
     /\ Active(t)
     /\ phase # "ended"
     /\ noted' = noted \cup {t}
-    /\ IF IsIdle
-         THEN Flush(pendingCompletions, pendingNotifications \cup {t})
-         ELSE Hold(pendingCompletions, pendingNotifications \cup {t})
-    /\ UNCHANGED <<term, howSettled, waiter, call, madeCalls, known, idleWaits, compacting>>
+    /\ IF waiter # "none" THEN
+         /\ waiter' = "woken"
+         /\ Hold(pendingCompletions, pendingNotifications \cup {t})
+       ELSE IF IsIdle THEN
+         /\ Flush(pendingCompletions, pendingNotifications \cup {t})
+         /\ UNCHANGED waiter
+       ELSE
+         /\ Hold(pendingCompletions, pendingNotifications \cup {t})
+         /\ UNCHANGED waiter
+    /\ UNCHANGED <<term, howSettled, call, madeCalls, known, idleWaits, compacting>>
 
 -----------------------------------------------------------------------------
 
@@ -322,12 +330,13 @@ Decide(cont, c) ==
 \* The settle wait takes no abort, because ctx.signal is Pi's agent.signal, which is
 \* undefined once the loop has ended.
 \* code: agent/extensions/background-terminals/index.ts agent_before_settle "if (runningTerminals(terminals).length === 0) return undefined;"
-\* code: agent/extensions/background-terminals/delivery.ts waitForCompletion "this.completionWaiter = done;"
-\* code: agent/extensions/background-terminals/index.ts agent_before_settle "yield* delivery.waitForCompletion(options.settleWaitMs ?? SETTLE_WAIT_MS, ctx.signal);"
+\* code: agent/extensions/background-terminals/delivery.ts waitForDelivery "if (this.pending.size > 0) return Effect.void;"
+\* code: agent/extensions/background-terminals/delivery.ts waitForDelivery "this.settleWaiter = done;"
+\* code: agent/extensions/background-terminals/index.ts agent_before_settle "yield* delivery.waitForDelivery(options.settleWaitMs ?? SETTLE_WAIT_MS, ctx.signal);"
 BSStart ==
     /\ phase = "beforeSettle"
     /\ IF WaitsAtSettle /\ \E t \in Terminals : Active(t)
-         THEN /\ waiter' = "waiting"
+         THEN /\ waiter' = IF pendingCompletions \cup pendingNotifications = {} THEN "waiting" ELSE "woken"
               /\ phase' = "settleWait"
               /\ UNCHANGED <<ctx, steer>>
          ELSE /\ UNCHANGED waiter
@@ -335,20 +344,24 @@ BSStart ==
     /\ UNCHANGED <<term, howSettled, noted, pendingCompletions, pendingNotifications, call, madeCalls, deferred,
                    known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
-\* The wait ends when a completion woke it or SETTLE_WAIT_MS passed.
-\* code: agent/extensions/background-terminals/delivery.ts takeCompletions "this.consume(batch.details.ids);"
-\* code: agent/extensions/background-terminals/index.ts agent_before_settle "const results = delivery.takeCompletions();"
+\* The wait ends when an item was pending or queued, or SETTLE_WAIT_MS passed.
+\* code: agent/extensions/background-terminals/delivery.ts takePending "this.drain((batch) => {"
+\* code: agent/extensions/background-terminals/delivery.ts drain "this.consume(batch.details.ids);"
+\* code: agent/extensions/background-terminals/index.ts agent_before_settle "const entries = delivery.takePending();"
 \* code: agent/extensions/background-terminals/index.ts agent_before_settle "if (idleSettleWaits > MAX_IDLE_SETTLE_WAITS) return undefined;"
 BSWake ==
+    LET delivered == [completions |-> pendingCompletions, notifications |-> pendingNotifications]
+        hasItems == pendingCompletions \cup pendingNotifications # {}
+    IN
     /\ phase = "settleWait"
     /\ waiter' = "none"
     /\ pendingCompletions' = {}
+    /\ pendingNotifications' = {}
     /\ sentCompletions' = Count(sentCompletions, pendingCompletions)
-    /\ idleWaits' = IF pendingCompletions # {} THEN 0 ELSE Min(idleWaits + 1, MaxIdleSettleWaits + 1)
-    /\ Decide(pendingCompletions # {} \/ idleWaits + 1 <= MaxIdleSettleWaits,
-              [ctx EXCEPT !.completions = @ \cup pendingCompletions])
-    /\ UNCHANGED <<term, howSettled, noted, pendingNotifications, call, madeCalls, deferred, known,
-                   sentNotifications, compacting, aborted>>
+    /\ sentNotifications' = Count(sentNotifications, pendingNotifications)
+    /\ idleWaits' = IF hasItems THEN 0 ELSE Min(idleWaits + 1, MaxIdleSettleWaits + 1)
+    /\ Decide(hasItems \/ idleWaits + 1 <= MaxIdleSettleWaits, Merge(ctx, delivered))
+    /\ UNCHANGED <<term, howSettled, noted, call, madeCalls, deferred, known, compacting, aborted>>
 
 \* Pi clears _isAgentRunActive and emits agent_settled. Other extensions' handlers await I/O,
 \* so other callbacks can run before and after this extension's handler.

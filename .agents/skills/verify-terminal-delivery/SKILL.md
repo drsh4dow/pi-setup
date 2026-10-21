@@ -18,7 +18,7 @@ Run the check after any change to these files, or to the Pi version in `bun.lock
 
 | File under `agent/extensions/background-terminals/` | Functions                                                                                                                      |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `delivery.ts`                                       | `queue`, `flush`, `enqueueNotification`, `takeCompletions`, `waitForCompletion`                                                |
+| `delivery.ts`                                       | `queue`, `flush`, `drain`, `enqueueNotification`, `takePending`, `waitForDelivery`                                             |
 | `index.ts`                                          | tools `bg_start`, `bg_status`, `bg_kill`; handlers `agent_before_settle`, `agent_settled`, `turn_end`; `MAX_IDLE_SETTLE_WAITS` |
 | `manager.ts`                                        | `settle`, `terminate`, `appendNotification`                                                                                    |
 | `session.ts`                                        | `join`, `leave`                                                                                                                |
@@ -27,7 +27,7 @@ The spec also cites Pi under `node_modules/`, as installed from `bun.lock`. In `
 
 In sync at `5e34079ec0fd2fa4976b249a81866e3533bf50d7`. Move this commit forward only after you confirm that the model describes the code above at the new commit.
 
-A change needs a model update when it adds, removes, or reorders a step that touches shared state. Shared state is `delivery.pending`, the completion waiter, a terminal's entry in the manager, Pi's steering queue and deferred actions, and whether Pi is running, settling, idle, or compacting. A change to rendering, output tails, or message text touches none of it.
+A change needs a model update when it adds, removes, or reorders a step that touches shared state. Shared state is `delivery.pending`, the settle waiter, a terminal's entry in the manager, Pi's steering queue and deferred actions, and whether Pi is running, settling, idle, or compacting. A change to rendering, output tails, or message text touches none of it.
 
 ## Run the check
 
@@ -42,15 +42,15 @@ It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1
 The script does three things:
 
 1. It checks that every `\* code:` citation in the spec still matches the code. If one does not, it stops before any model runs, because a model that no longer matches the code proves nothing. A citation names a file, a function, and a line copied from that function's body. For a tool, the function is its `name`. For an event handler, it is the event. `vp run verify` runs this step alone, as `scripts/check --citations`.
-2. It runs five models that must hold. `Session.cfg` is a TUI session where the user can compact. `SessionNotifications.cfg` is a TUI session without compaction. `Aborts.cfg` adds user aborts. `UnattendedRun.cfg` and `UnattendedCompletion.cfg` are unattended runs.
-3. It runs four models that reproduce known findings and must be violated. See [Known findings](#known-findings).
+2. It runs six models that must hold. `Session.cfg` is a TUI session where the user can compact. `SessionNotifications.cfg` is a TUI session without compaction. `Aborts.cfg` adds user aborts. `UnattendedRun.cfg`, `UnattendedCompletion.cfg`, and `UnattendedRunHoldsNotification.cfg` are unattended runs.
+3. It runs three models that reproduce known findings and must be violated. See [Known findings](#known-findings).
 
 Exit 0 means every citation is current and each model matched the `\* expect:` line at the top of its config. For a violated model, the script prints the broken property, such as `Invariant NoDoubleWake is violated` or `Temporal properties were violated`, then the counterexample as numbered steps. Each step names the action, the file and function it models, and the variables that changed. The full TLC output is in `${TMPDIR:-/tmp}/verify-terminal-delivery/`.
 
 ## Update the model for an intended change
 
 1. List the changed hunks with `git diff` from the sync commit on the files in [What the check covers](#what-the-check-covers).
-2. For each hunk, find the actions whose citation sits in it, or whose behavior it changes. Search the spec for the function name. Then read the changed function's callers, because the effect of a change often shows only at the call site. For example, whether `takeCompletions` consumes its batch decides what the `agent_before_settle` handler delivers.
+2. For each hunk, find the actions whose citation sits in it, or whose behavior it changes. Search the spec for the function name. Then read the changed function's callers, because the effect of a change often shows only at the call site. For example, whether `takePending` consumes its batches decides what the `agent_before_settle` handler delivers.
 3. Edit each action to do what the new code does. One action is one callback that runs to completion, or the part of an async function between two awaits that another callback can observe. Name a new action after the code. Prefix it with `T` for the terminal, `Tool` for a tool call, `BS` for the `agent_before_settle` handler, `P` for Pi, or `User`. Add it to `PiStep` or `Next`, and put a `\* code:` citation above it. The last citation above an action labels it in traces. Add a newly cited function to the table in [What the check covers](#what-the-check-covers).
 4. Run the check.
 
@@ -81,17 +81,6 @@ The update is done when the check exits 0, or when it fails only on a finding yo
 ## Known findings
 
 Each finding is a config that must be violated. The script prints one trace for each.
-
-### Unattended run holds notification
-
-`UnattendedRunHoldsNotification.cfg`. In an unattended run, a notification sent while the run is active can wait forever:
-
-1. A watcher's `emit-to-pi` frame arrives while the run is active. `queue` holds it, because Pi is not idle.
-2. The model ends its turn. The settle wait starts, and only a completion wakes it.
-3. After `SETTLE_WAIT_MS` (10 minutes), the handler appends the still-running notice and the run continues.
-4. The model calls `bg_status`, which says "an emit-to-pi event will wake you; do not poll", and `turn_end` resets `idleSettleWaits`. Steps 2 to 4 repeat.
-
-Only `agent_settled` or a completion flushes the notification, and the run does not settle while the loop repeats.
 
 ### Compaction holds notification
 

@@ -55,13 +55,13 @@ const decodeSettleResult = Schema.decodeUnknownSync(
   Schema.UndefinedOr(
     Schema.Struct({
       continue: Schema.Literal(true),
-      entries: Schema.Tuple([
+      entries: Schema.NonEmptyArray(
         Schema.Struct({
           type: Schema.Literal("custom_message"),
           customType: Schema.String,
           content: Schema.String,
         }),
-      ]),
+      ),
     }),
   ),
 );

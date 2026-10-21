@@ -181,6 +181,77 @@ test("scopes top-level to module-level statements outside every definition", (t)
   );
 });
 
+test("ends a body at the first code line at or left of the definition's indent", (t) => {
+  const code = `const LIMIT = 3; // max
+function settle(count: number) {
+  return count > LIMIT;
+}
+
+const launcherExit = (launcherPid: number) =>
+  Effect.sleep(INTERVAL).pipe(Effect.repeat({ until: () => !isAlive(launcherPid) }));
+
+const abandonRun = Effect.fn("abandonRun")(function* (runDirectory: string) {
+  yield* fs.remove(runDirectory);
+});
+
+const watchLauncher = (launcherPid: number, runDirectory: string) =>
+  launcherExit(launcherPid).pipe(
+    Effect.andThen(abandonRun(runDirectory)),
+  );
+
+const usage = \`
+help: prints this text
+\`;
+
+export function note() {
+// A column-0 comment inside the body.
+  remember();
+}
+
+if (interactive) {
+  prompt();
+} else {
+  exit();
+}
+`;
+
+  const current = runCheck(
+    t,
+    [
+      'launcherExit "Effect.sleep(INTERVAL).pipe(Effect.repeat({ until: () => !isAlive(launcherPid) }));"',
+      'note "remember();"',
+      'top-level "exit();"',
+    ],
+    { code },
+  );
+
+  assert.equal(current.status, 0, current.stdout + current.stderr);
+
+  const stale = runCheck(
+    t,
+    [
+      'launcherExit "yield* fs.remove(runDirectory);"',
+      'launcherExit "Effect.andThen(abandonRun(runDirectory)),"',
+      'LIMIT "return count > LIMIT;"',
+      'help "prints this text"',
+    ],
+    { code },
+  );
+
+  assert.equal(stale.status, 1, stale.stderr);
+  assert.equal(
+    stale.stdout,
+    [
+      "stale citation: src/example.ts launcherExit no longer contains: yield* fs.remove(runDirectory);",
+      "stale citation: src/example.ts launcherExit no longer contains: Effect.andThen(abandonRun(runDirectory)),",
+      "stale citation: src/example.ts LIMIT no longer contains: return count > LIMIT;",
+      "stale citation: src/example.ts has no definition of help",
+      "check: code that Example.tla models changed. Run .agents/skills/verify-example/scripts/check and follow its SKILL.md.",
+      "",
+    ].join("\n"),
+  );
+});
+
 test("reports a malformed citation line", (t) => {
   const result = runCheck(t, ['deliver "send(message);"', 'deliver "send(message);']);
 

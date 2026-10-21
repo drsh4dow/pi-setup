@@ -448,8 +448,9 @@ holds the upstream commit that this setup is synced to.
 as a system prompt, and
 [`agent/poteto/`](agent/poteto/) holds that skill's playbooks, references, and
 scripts. The scripts are vendored as-is: lint, format, and type checks skip
-them. Not ported: `setup-pstack`, the `poteto-agent` wrapper,
-the worktree-cleanup playbook, and the Benny automations.
+them. Not ported: `setup-pstack`, the `poteto-agent` wrapper, the simulator
+and Cursor cache steps of the worktree-cleanup playbook, and the Benny
+automations.
 
 [`agent/scripts/pstack-port.ts`](agent/scripts/pstack-port.ts) does the
 mechanical part of the port: file placement, relative links, frontmatter, and

@@ -39,9 +39,6 @@ const skippedSkills = new Set([
 const skippedFiles = new Set([
   // Becomes agent/SYSTEM.md, which is maintained by hand.
   "skills/poteto-mode/SKILL.md",
-  // Cleans macOS simulators and Cursor's chat stores.
-  "skills/poteto-mode/playbooks/worktree-cleanup.md",
-  "skills/poteto-mode/scripts/worktree-audit.sh",
 ]);
 
 type Invocation = "user-only" | "both" | "model-only";

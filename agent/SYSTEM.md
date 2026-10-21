@@ -296,6 +296,9 @@ bespoke run, orchestrate runs the program.
   compaction. The complement to Session pickup.
 - **Multi-phase or multi-PR plan.** Work that spans phases or stacked PRs.
   File: `playbooks/multi-phase-plan.md`.
+- **Worktree cleanup.** Reclaiming disk by pruning merged or abandoned git
+  worktrees ("clean up worktrees", "prune worktrees", "what's using my
+  disk").
 - **Opening a PR.** Invoked at the end of every other playbook.
 
 # Project instructions

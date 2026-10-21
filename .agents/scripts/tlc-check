@@ -206,19 +206,15 @@ run_model() {
   [[ $result == "$expect" ]]
 }
 
-citations_only=0
-unknown_option=
+user_args=()
 
-while [[ ${1:-} == -* ]]; do
-  if [[ $1 == --citations ]]; then
-    citations_only=1
-  else
-    unknown_option=$1
-  fi
+while (($#)) && [[ $1 != -- ]]; do
+  user_args+=("$1")
   shift
 done
 
-(($# >= 3)) && [[ -f $1/$2 ]] || die "usage: tlc-check [--citations] <skill-dir> <spec.tla> <config.cfg>..."
+(($# >= 4)) && [[ -f $2/$3 ]] || die "usage: tlc-check [--citations] -- <skill-dir> <spec.tla> <config.cfg>..."
+shift
 
 SKILL=$(cd "$1" && pwd)
 SPEC=$2
@@ -228,7 +224,12 @@ CHECKOUT=$(cd "$SKILL/../../.." && pwd)
 CHECK=${SKILL#"$CHECKOUT"/}/scripts/check
 LOGS=${TMPDIR:-/tmp}/$(basename "$SKILL")
 
-[[ -z $unknown_option ]] || die "unknown option $unknown_option. usage: $CHECK [--citations]"
+citations_only=0
+
+for arg in "${user_args[@]}"; do
+  [[ $arg == --citations ]] || die "unknown argument $arg. usage: $CHECK [--citations]"
+  citations_only=1
+done
 
 if ((citations_only)); then
   check_citations && exit 0

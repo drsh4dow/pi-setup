@@ -3,5 +3,5 @@ set -euo pipefail
 
 SKILL=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-exec "$SKILL/../../scripts/tlc-check" "$@" "$SKILL" SubagentRun.tla \
+exec "$SKILL/../../scripts/tlc-check" "$@" -- "$SKILL" SubagentRun.tla \
   SubagentRun.cfg ShutdownHangs.cfg ForkingPi.cfg DescendantShutdownHangs.cfg ForkingPiShutdownHangs.cfg

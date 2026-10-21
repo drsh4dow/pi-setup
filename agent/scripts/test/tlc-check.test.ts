@@ -85,7 +85,7 @@ function runCheck(
     citations.map((citation) => `\\* code: src/example.ts ${citation}\n`).join(""),
   );
 
-  return spawnSync(runner, [...flags, skill, "Example.tla", "Example.cfg"], {
+  return spawnSync(runner, [...flags, "--", skill, "Example.tla", "Example.cfg"], {
     encoding: "utf8",
     env,
   });

@@ -3,7 +3,7 @@ set -euo pipefail
 
 SKILL=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-exec "$SKILL/../../scripts/tlc-check" "$@" "$SKILL" TerminalDelivery.tla \
+exec "$SKILL/../../scripts/tlc-check" "$@" -- "$SKILL" TerminalDelivery.tla \
   Session.cfg SessionNotifications.cfg Aborts.cfg UnattendedRun.cfg UnattendedCompletion.cfg \
   UnattendedRunHoldsNotification.cfg AbortedKillIsSilent.cfg CompactionHoldsNotification.cfg \
   CompletionDeferredBehindRun.cfg

@@ -281,14 +281,14 @@ LClosePane ==
     /\ launcher' = "exit"
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, paneRun, deadline, interrupted, sawPaneDead, child, phase, trapsSignals, kills>>
 
-\* code: agent/extensions/subagents/bin/pi-subagent.ts addObserver "process.exit(Exit.isSuccess(exit) ? exit.value : 1);"
+\* code: agent/extensions/subagents/bin/pi-subagent.ts top-level "process.exit(Exit.isSuccess(exit) ? exit.value : 1);"
 LExit ==
     /\ launcher = "exit"
     /\ launcher' = "gone"
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, interrupted, sawPaneDead, child, childInterrupted, phase, trapsSignals, kills>>
 
 \* Before the pane opens, only the finalizer that removes the run directory is registered.
-\* code: agent/extensions/subagents/bin/pi-subagent.ts SIGNAL_EXIT_CODES "Effect.runFork(Fiber.interrupt(fiber));"
+\* code: agent/extensions/subagents/bin/pi-subagent.ts top-level "Effect.runFork(Fiber.interrupt(fiber));"
 LInterrupt ==
     /\ interrupted
     /\ launcher \in LauncherInterruptible
@@ -432,14 +432,14 @@ CAbandonKill ==
     /\ pane' = IF pane = "open" THEN "closed" ELSE pane
     /\ UNCHANGED <<sweep, launcherWatch, files, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, trapsSignals, kills>>
 
-\* code: agent/extensions/subagents/bin/pi-subagent.ts addObserver "process.exit(Exit.isSuccess(exit) ? exit.value : 1);"
+\* code: agent/extensions/subagents/bin/pi-subagent.ts top-level "process.exit(Exit.isSuccess(exit) ? exit.value : 1);"
 CExit ==
     /\ child = "exiting"
     /\ ChildDies
     /\ UNCHANGED <<sweep, launcherWatch, files, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, trapsSignals, kills>>
 
 \* An interrupt before pi spawns ends the pane child. After, the scope release stops pi first.
-\* code: agent/extensions/subagents/bin/pi-subagent.ts SIGNAL_EXIT_CODES "Effect.runFork(Fiber.interrupt(fiber));"
+\* code: agent/extensions/subagents/bin/pi-subagent.ts top-level "Effect.runFork(Fiber.interrupt(fiber));"
 CInterrupt ==
     /\ childInterrupted
     /\ child \in ChildInterruptible

@@ -132,7 +132,7 @@ test("reports a snippet that only a comment above or inside the definition conta
     'deliver " * Delivers one message."',
     'deliver "// Sends the message once."',
     'report "the report. */"',
-    'addObserver "// Wires the fiber\'s exit."',
+    'top-level "// Wires the fiber\'s exit."',
   ]);
 
   assert.equal(result.status, 1, result.stderr);
@@ -142,7 +142,7 @@ test("reports a snippet that only a comment above or inside the definition conta
       "stale citation: src/example.ts deliver no longer contains:  * Delivers one message.",
       "stale citation: src/example.ts deliver no longer contains: // Sends the message once.",
       "stale citation: src/example.ts report no longer contains: the report. */",
-      "stale citation: src/example.ts addObserver no longer contains: // Wires the fiber's exit.",
+      "stale citation: src/example.ts top-level no longer contains: // Wires the fiber's exit.",
       "check: code that Example.tla models changed. Run .agents/skills/verify-example/scripts/check and follow its SKILL.md.",
       "",
     ].join("\n"),

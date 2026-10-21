@@ -25,11 +25,9 @@ definition_body() {
     function opens_block_comment(text) {
       return text ~ /^[ \t]*\/\*/ && text !~ /\*\//
     }
-    function is_declaration(text) {
-      return text ~ declaration || text ~ tool || text ~ handler
-    }
-    function is_statement(text) {
-      return text ~ /^[A-Za-z_$]/ && text !~ declaration_keyword && text ~ whole_name
+    function opens_body(text) {
+      if (name == "top-level") return text ~ /^[^ \t})\]]/ && text !~ declaration_keyword
+      return text ~ keyword_declaration || text ~ member_declaration || text ~ tool || text ~ handler
     }
     function is_one_line(text) {
       return text ~ /;[ \t]*$/
@@ -40,11 +38,14 @@ definition_body() {
       return indent(text) <= start_indent
     }
     BEGIN {
-      declaration = "^[ \t]*((export|private|async|get|static|readonly|const|let|function)[ \t]+)*" name "[ \t]*[(=:<]"
+      word_end = "([^A-Za-z0-9_$]|$)"
+      keyword_declaration = "^[ \t]*((export|default|declare|async)[ \t]+)*(const|let|var|class|function)[ \t*]+" name word_end
+      modifiers = "((private|protected|public|static|readonly|async|get|set|override|abstract)[ \t]+)*"
+      parameters_then_brace = "(<.*>)?[(].*[)]([ \t]*:[^=]*)?[ \t]*[{][ \t]*$"
+      member_declaration = "^[ \t]*" modifiers name "[ \t]*(=([^=>]|$)|:|" parameters_then_brace ")"
       tool = "^[ \t]*name: \"" name "\""
       handler = "^[ \t]*pi\\.on\\(\"" name "\""
-      declaration_keyword = "^(export|import|const|let|var|function|async|class|type|interface|enum|declare)([^A-Za-z0-9_$]|$)"
-      whole_name = "(^|[^A-Za-z0-9_$])" name "([^A-Za-z0-9_$]|$)"
+      declaration_keyword = "^(export|import|const|let|var|function|async|class|type|interface|enum|declare)" word_end
     }
     in_block_comment {
       if ($0 ~ /\*\//) in_block_comment = 0
@@ -58,7 +59,7 @@ definition_body() {
       next
     }
     inside { print; next }
-    is_declaration($0) || is_statement($0) {
+    opens_body($0) {
       print
       if (is_one_line($0)) next
       inside = 1

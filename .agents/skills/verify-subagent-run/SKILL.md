@@ -16,7 +16,7 @@ Run the check after any change to these files, or to the Pi or Effect version in
 
 | File under `agent/extensions/subagents/` | Functions                                                                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `bin/pi-subagent.ts`                     | `main`, `runInPane`, `observeChild`, `addObserver`, `awaitChild`, `stopPiGroup`, `closePane`, `SIGNAL_EXIT_CODES`                     |
+| `bin/pi-subagent.ts`                     | `main`, `runInPane`, `observeChild`, `awaitChild`, `stopPiGroup`, `closePane`, `SIGNAL_EXIT_CODES`, `top-level`                       |
 | `bin/pane-child.ts`                      | `runPaneChild`, `runPi`, `watchLauncher`, `launcherExit`, `abandonRun`                                                                |
 | `process-group.ts`                       | `stopProcessGroup`                                                                                                                    |
 | `herdr.ts`                               | `sweepAbandonedRuns`, `removeAbandonedRun`, `runOwnerAlive`                                                                           |

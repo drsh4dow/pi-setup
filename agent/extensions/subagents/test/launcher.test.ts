@@ -173,7 +173,7 @@ suite("pi-subagent launcher", () => {
     assert.ok(await until(() => !isAlive(-group)), "nothing in the launcher's group survives");
   });
 
-  test("a SIGKILL to the launcher stops pi, removes the run directory, and ends the pane", async () => {
+  test("a SIGKILL to the launcher stops pi, removes the run directory, and ends the pane before TERM_GRACE", async () => {
     const herdr = await fakeHerdr("hang");
     const run = herdr.launch();
 
@@ -184,14 +184,16 @@ suite("pi-subagent launcher", () => {
     run.child.kill("SIGKILL");
     await run.result();
 
+    const paneEnded = until(() => !isAlive(-pane), Duration.toMillis(TERM_GRACE) - 1000);
+
     assert.ok(await until(() => !isAlive(pi), STOPPED_WITHIN_MS), "pi is stopped");
     assert.ok(
       await until(async () => (await readdir(herdr.runtime)).length === 0, STOPPED_WITHIN_MS),
       "the run directory is removed",
     );
     assert.ok(
-      await until(() => !isAlive(-pane), STOPPED_WITHIN_MS),
-      "nothing in the pane survives",
+      await paneEnded,
+      "nothing in the pane survives TERM_GRACE less 1 s from the launcher's exit",
     );
   });
 

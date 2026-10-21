@@ -63,6 +63,16 @@ case "$FAKE_PI" in
     trap 'touch "$FAKE_ROOT/shutting-down"' TERM HUP
     touch "$PI_SUBAGENT_RUN/claim"
     while :; do sleep 0.05; done ;;
+  forksThenHangsOnShutdown) FAKE_PI=hangsOnShutdown bash "$0" "$@" & wait ;;
+  leavesDescendant)
+    (
+      trap 'touch "$FAKE_ROOT/descendant-shutting-down"' TERM HUP
+      echo "$BASHPID" > "$FAKE_ROOT/descendant.pid"
+      while :; do sleep 0.05; done
+    ) 2>/dev/null &
+    until [ -s "$FAKE_ROOT/descendant.pid" ]; do sleep 0.01; done
+    touch "$PI_SUBAGENT_RUN/claim"
+    cp "$FAKE_ROOT/outcome.json" "$PI_SUBAGENT_RUN/outcome.json" ;;
   orphan) kill -KILL "$PPID"; exec sleep 60 ;;
   noisy)
     for i in $(seq 1 4000); do printf 'ünïcødé line %05d ✓✓✓\\n' "$i"; done >&2
@@ -79,6 +89,8 @@ type FakePi =
   | "hang"
   | "stubborn"
   | "hangsOnShutdown"
+  | "forksThenHangsOnShutdown"
+  | "leavesDescendant"
   | "orphan"
   | "noisy"
   | "failsAfterReport"
@@ -160,6 +172,7 @@ export async function fakeHerdr(behavior: FakePi) {
     runtime,
     herdrCalls: async () => (await readFile(path.join(root, "herdr.log"), "utf8")).split("\n"),
     piPid: async () => Number(await readFile(path.join(root, "pi.pid"), "utf8")),
+    descendantPid: async () => Number(await readFile(path.join(root, "descendant.pid"), "utf8")),
     async panePid() {
       const file = path.join(root, "pane.pid");
 

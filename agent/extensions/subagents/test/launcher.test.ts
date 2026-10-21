@@ -178,6 +178,53 @@ suite("pi-subagent launcher", () => {
     assert.equal(isAlive(pi), false, "pi is stopped");
   });
 
+  test("a SIGKILL to the launcher after pi exits stops a descendant whose shutdown hangs", async (t) => {
+    const herdr = await fakeHerdr("leavesDescendant");
+
+    await herdr.writeOutcome({ kind: "completed", report: "REPORT\n" });
+
+    const run = herdr.launch();
+
+    const piExited = async () => {
+      const [runDirectory] = await readdir(herdr.runtime);
+
+      return runDirectory !== undefined && existsSync(path.join(herdr.runtime, runDirectory, "exit"));
+    };
+
+    assert.ok(await until(piExited), "the pane child recorded pi's exit");
+    run.child.kill("SIGKILL");
+    await run.result();
+
+    const [descendant, pane] = await Promise.all([herdr.descendantPid(), herdr.panePid()]);
+
+    t.after(() => {
+      if (isAlive(-pane)) process.kill(-pane, "SIGKILL");
+    });
+
+    assert.ok(await until(() => !isAlive(descendant), 5000), "the descendant is stopped");
+    assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
+  });
+
+  test("a SIGKILL to the launcher after the pane closes stops a forked pi whose shutdown hangs", async (t) => {
+    const herdr = await fakeHerdr("forksThenHangsOnShutdown");
+    const run = herdr.launch();
+
+    await herdr.waitForHangingPi();
+
+    const [pi, pane] = await Promise.all([herdr.piPid(), herdr.panePid()]);
+
+    t.after(() => {
+      if (isAlive(-pane)) process.kill(-pane, "SIGKILL");
+    });
+
+    process.kill(pane, "SIGHUP");
+    assert.ok(await until(() => !isAlive(pane)), "the pane child exits");
+    run.child.kill("SIGKILL");
+    await run.result();
+
+    assert.ok(await until(() => !isAlive(pi), 5000), "the forked pi is stopped");
+  });
+
   test("a SIGKILL to the launcher's group stops a pi that ignores SIGTERM, and removes the run directory", async () => {
     const herdr = await fakeHerdr("stubborn");
     const run = herdr.launch({ ownGroup: true });

@@ -15,6 +15,7 @@ import {
 } from "../process-status/status.ts";
 import {
   BackgroundTerminalDelivery,
+  formatEndedTerminalNotifications,
   formatTerminalReport,
   NOTIFICATION_MESSAGE,
   RESULTS_MESSAGE,
@@ -25,6 +26,7 @@ import {
   terminalStateSchema,
 } from "./delivery.ts";
 import {
+  notificationView,
   renderKillCall,
   renderKillResult,
   renderNotificationMessage,
@@ -69,6 +71,7 @@ const killOutputSchema = Type.Object({
       state: terminalStateSchema,
       wasRunning: Type.Boolean(),
       killed: Type.Boolean(),
+      notifications: Type.Array(Type.String()),
     }),
   ),
 });
@@ -414,31 +417,40 @@ export default function backgroundTerminals(
       return Effect.runPromise(
         Effect.promise(() => work).pipe(
           Effect.map((results) => {
+            const reports = results.map((result) => ({
+              ...result,
+              notifications: delivery.takeNotifications(result.id),
+            }));
+
             const outcome = {
-              results: results.map(({ id, wasRunning, killed, snapshot }) => ({
+              results: reports.map(({ id, wasRunning, killed, snapshot, notifications }) => ({
                 id,
                 title: sanitizeInline(snapshot.title),
                 state: snapshot.state,
                 wasRunning,
                 killed,
+                notifications: notifications.map(
+                  (notification) => notificationView(notification).message,
+                ),
               })),
             };
 
+            const text = reports.map(({ id, killed, snapshot, notifications }) => {
+              const line = `${id} [${snapshot.state}] ${sanitizeInline(snapshot.title)}${killed ? " · killed" : " · already settled"}`;
+
+              if (notifications.length === 0) return line;
+
+              return `${line}\n${formatEndedTerminalNotifications(notifications)}`;
+            });
+
             return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: outcome.results
-                    .map(
-                      (result) =>
-                        `${result.id} [${result.state}] ${result.title}${result.killed ? " · killed" : " · already settled"}`,
-                    )
-                    .join("\n"),
-                },
-              ],
+              content: [{ type: "text" as const, text: text.join("\n") }],
               details: {
                 ...outcome,
                 terminals: results.map(({ snapshot }) => terminalView(snapshot)),
+                notifications: reports.flatMap(({ notifications }) =>
+                  notifications.map((notification) => notificationView(notification)),
+                ),
               },
               structuredContent: outcome satisfies Static<typeof killOutputSchema>,
             };

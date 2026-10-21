@@ -170,9 +170,21 @@ export function formatTerminalReport(snapshot: TerminalSnapshot): string {
   return `${summary(snapshot)}\n${formatTerminalDetails(snapshot)}`;
 }
 
-function formatTerminalCompletion(snapshot: SettledTerminalSnapshot): string {
+export function formatEndedTerminalNotifications(
+  notifications: readonly RunningTerminalNotification[],
+): string {
+  return `notifications sent before it ended:\n${notifications.map((notification) => tail(notification.message)).join("\n---\n")}`;
+}
+
+function formatTerminalCompletion(
+  snapshot: SettledTerminalSnapshot,
+  notifications: readonly RunningTerminalNotification[],
+): string {
   const output = formatTerminalOutput(snapshot, COMPLETION_OUTPUT_BYTES);
-  const sections = [summary(snapshot), output.text];
+  const sections = [summary(snapshot)];
+
+  if (notifications.length) sections.push(formatEndedTerminalNotifications(notifications));
+  sections.push(output.text);
 
   if (output.abbreviated)
     sections.push(`\nUse bg_status ${sanitizeInline(snapshot.id)} for more retained output.`);
@@ -202,7 +214,7 @@ interface DeliveryBatch {
   customType: string;
   content: string;
   details:
-    | { ids: string[]; terminals: TerminalView[] }
+    | { ids: string[]; terminals: TerminalView[]; notifications: NotificationView[] }
     | { ids: string[]; notifications: NotificationView[] };
 }
 
@@ -257,15 +269,13 @@ export class BackgroundTerminalDelivery {
 
     this.pending.set(item.id, item);
 
+    // The settle wait returns pending items as its own entries, so steering them too would deliver them twice.
     if (this.settleWaiter) {
       this.settleWaiter();
 
       return;
     }
 
-    // Results steer into a running agent right after the current tool
-    // batch; notifications wait for idle so settled terminals can drop
-    // their pending notifications first.
     if (item.kind === "completion" || this.context.isIdle())
       // The forked flush has no caller to receive its failure, so it reports here.
       Effect.runFork(
@@ -294,12 +304,17 @@ export class BackgroundTerminalDelivery {
       notification,
     });
   }
-  terminalSettled(terminalId: string) {
-    for (const queue of [this.pending, this.failed]) {
-      for (const [id, item] of queue) {
-        if (item.kind === "notification" && item.terminalId === terminalId) queue.delete(id);
-      }
-    }
+  private pendingNotifications(terminalId: string): RunningTerminalNotification[] {
+    return [...this.pending.values()].flatMap((item) =>
+      item.kind === "notification" && item.terminalId === terminalId ? [item.notification] : [],
+    );
+  }
+  takeNotifications(terminalId: string): RunningTerminalNotification[] {
+    const notifications = this.pendingNotifications(terminalId);
+
+    for (const notification of notifications) this.pending.delete(notification.id);
+
+    return notifications;
   }
   waitForDelivery(timeoutMs: number, signal: AbortSignal | undefined): Effect.Effect<void> {
     return Effect.suspend(() => {
@@ -360,13 +375,23 @@ export class BackgroundTerminalDelivery {
 
     let bytes = Buffer.byteLength(parts[0]);
 
+    const endingTerminals = new Set(
+      [...this.pending.values()].flatMap((item) =>
+        item.kind === "completion" ? [item.terminalId] : [],
+      ),
+    );
+
     for (const item of this.pending.values()) {
       if (item.kind !== kind) continue;
+
+      if (item.kind === "notification" && endingTerminals.has(item.terminalId)) continue;
+
+      let carried = item.kind === "completion" ? this.pendingNotifications(item.terminalId) : [];
 
       let rendered =
         item.kind === "notification"
           ? formatTerminalNotification(item.notification)
-          : formatTerminalCompletion(item.snapshot);
+          : formatTerminalCompletion(item.snapshot, carried);
 
       const separator = ids.length ? "\n\n---\n\n" : "";
 
@@ -377,11 +402,13 @@ export class BackgroundTerminalDelivery {
       if (item.kind === "completion" && bytes + addedBytes > COMPLETION_BATCH_BYTES) {
         rendered = `${summary(item.snapshot)}\nCompletion detail exceeded the delivery limit; use bg_status ${item.id}.`;
         addedBytes = Buffer.byteLength(rendered);
+        carried = [];
       }
 
       parts.push(separator, rendered);
       bytes += addedBytes;
-      ids.push(item.id);
+      ids.push(item.id, ...carried.map((notification) => notification.id));
+      notifications.push(...carried.map((notification) => notificationView(notification)));
 
       if (item.kind === "completion") terminals.push(terminalView(item.snapshot));
       else notifications.push(notificationView(item.notification));
@@ -391,7 +418,11 @@ export class BackgroundTerminalDelivery {
     const content = parts.join("");
 
     if (kind === "completion")
-      return { customType: RESULTS_MESSAGE, content, details: { ids, terminals } };
+      return {
+        customType: RESULTS_MESSAGE,
+        content,
+        details: { ids, terminals, notifications },
+      };
 
     return {
       customType: NOTIFICATION_MESSAGE,

@@ -37,7 +37,14 @@ const listResult = Schema.Struct({
   details: Schema.Struct({ terminals: Schema.Array(metadata) }),
 });
 
-const killResult = Schema.Struct({ content: textContent });
+const killResult = Schema.Struct({
+  content: textContent,
+  structuredContent: Schema.Struct({
+    results: Schema.Array(
+      Schema.Struct({ id: Schema.String, notifications: Schema.Array(Schema.String) }),
+    ),
+  }),
+});
 
 export const decodeMessage = Schema.decodeUnknownSync(
   Schema.Struct({

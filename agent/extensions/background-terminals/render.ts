@@ -47,7 +47,12 @@ const NotificationView = Schema.Struct({
 
 export type NotificationView = typeof NotificationView.Type;
 
-const TerminalList = Schema.Struct({ terminals: Schema.Array(TerminalView) });
+const TerminalList = Schema.Struct({
+  terminals: Schema.Array(TerminalView),
+  notifications: Schema.Array(NotificationView).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
+});
 
 const decodeTerminalList = Schema.decodeUnknownOption(TerminalList);
 
@@ -191,6 +196,39 @@ function terminalBlocks(views: readonly TerminalView[], expanded: boolean, theme
   return blocks;
 }
 
+function notificationRows(
+  notifications: readonly NotificationView[],
+  expanded: boolean,
+  theme: Theme,
+): Component {
+  const rows = new Container();
+
+  for (const notification of notifications) {
+    const label = theme.fg("accent", `◆ ${theme.bold(notification.terminalId)}`);
+    rows.addChild(
+      new WrappedRows(`${label} ${notification.message}`, expanded ? undefined : 1, theme),
+    );
+  }
+
+  return rows;
+}
+
+function withNotifications(
+  blocks: Component,
+  notifications: readonly NotificationView[],
+  expanded: boolean,
+  theme: Theme,
+): Component {
+  if (notifications.length === 0) return blocks;
+
+  const report = new Container();
+  report.addChild(blocks);
+  report.addChild(new Spacer(1));
+  report.addChild(notificationRows(notifications, expanded, theme));
+
+  return report;
+}
+
 function toolHeading(name: string, subject: string, theme: Theme): string {
   return `${theme.fg("toolTitle", theme.bold(name))} ${theme.fg("accent", subject)}`;
 }
@@ -299,7 +337,13 @@ export function renderKillResult(
     context,
     theme,
     decodeTerminalList(result.details),
-    ({ terminals }) => terminalBlocks(terminals, context.expanded, theme),
+    ({ terminals, notifications }) =>
+      withNotifications(
+        terminalBlocks(terminals, context.expanded, theme),
+        notifications,
+        context.expanded,
+        theme,
+      ),
   );
 }
 
@@ -313,7 +357,14 @@ export const renderResultsMessage: MessageRenderer = (message, { expanded, outpu
   const background = succeeded ? "toolSuccessBg" : "toolErrorBg";
   const box = new Box(outputPad, 1, (text) => theme.bg(background, text));
 
-  box.addChild(terminalBlocks(details.terminals, expanded, theme));
+  box.addChild(
+    withNotifications(
+      terminalBlocks(details.terminals, expanded, theme),
+      details.notifications,
+      expanded,
+      theme,
+    ),
+  );
 
   if (expanded) {
     box.addChild(new Spacer(1));
@@ -333,12 +384,7 @@ export const renderNotificationMessage: MessageRenderer = (
   if (Option.isNone(details)) return undefined;
   const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
 
-  for (const notification of details.value.notifications) {
-    const label = theme.fg("accent", `◆ ${theme.bold(notification.terminalId)}`);
-    box.addChild(
-      new WrappedRows(`${label} ${notification.message}`, expanded ? undefined : 1, theme),
-    );
-  }
+  box.addChild(notificationRows(details.value.notifications, expanded, theme));
 
   return box;
 };

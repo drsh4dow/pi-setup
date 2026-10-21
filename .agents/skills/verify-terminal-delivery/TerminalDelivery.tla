@@ -138,9 +138,13 @@ SendToPi(s, msg) ==
 \* code: agent/extensions/background-terminals/delivery.ts flush "deliverAs: \"steer\","
 \* code: agent/extensions/background-terminals/delivery.ts drain "const batch = this.batch(\"notification\") ?? this.batch(\"completion\");"
 \* code: agent/extensions/background-terminals/delivery.ts drain "this.consume(batch.details.ids);"
+\* code: agent/extensions/background-terminals/delivery.ts batch "if (item.kind === \"notification\" && endingTerminals.has(item.terminalId)) continue;"
+\* code: agent/extensions/background-terminals/delivery.ts batch "let carried = item.kind === \"completion\" ? this.pendingNotifications(item.terminalId) : [];"
+\* code: agent/extensions/background-terminals/delivery.ts batch "ids.push(item.id, ...carried.map((notification) => notification.id));"
 Sent(s, pe, pn) ==
-    LET s1 == IF pn = {} THEN s ELSE SendToPi(s, [completions |-> {}, notifications |-> pn])
-    IN IF pe = {} THEN s1 ELSE SendToPi(s1, [completions |-> pe, notifications |-> {}])
+    LET alone == pn \ pe
+        s1 == IF alone = {} THEN s ELSE SendToPi(s, [completions |-> {}, notifications |-> alone])
+    IN IF pe = {} THEN s1 ELSE SendToPi(s1, [completions |-> pe, notifications |-> pn \cap pe])
 
 FlushFrom(s, pe, pn) ==
     /\ ApplyPi(Sent(s, pe, pn))
@@ -158,7 +162,6 @@ Hold(pe, pn) ==
 
 -----------------------------------------------------------------------------
 
-\* code: agent/extensions/background-terminals/session.ts join "client.delivery.terminalSettled(snapshot.id);"
 \* code: agent/extensions/background-terminals/session.ts join "wait.snapshot = snapshot;"
 \* code: agent/extensions/background-terminals/session.ts join "client.delivery.enqueue(snapshot);"
 \* code: agent/extensions/background-terminals/delivery.ts queue "this.pending.set(item.id, item);"
@@ -175,16 +178,16 @@ TEnd(t) ==
        ELSE IF killWait[t] = "waiting" THEN
          /\ howSettled' = [howSettled EXCEPT ![t] = "held"]
          /\ killWait' = [killWait EXCEPT ![t] = "settled"]
-         /\ Hold(pendingCompletions, pendingNotifications \ {t})
+         /\ Hold(pendingCompletions, pendingNotifications)
          /\ UNCHANGED waiter
        ELSE IF waiter # "none" THEN
          /\ howSettled' = [howSettled EXCEPT ![t] = "enqueued"]
          /\ waiter' = "woken"
-         /\ Hold(pendingCompletions \cup {t}, pendingNotifications \ {t})
+         /\ Hold(pendingCompletions \cup {t}, pendingNotifications)
          /\ UNCHANGED killWait
        ELSE
          /\ howSettled' = [howSettled EXCEPT ![t] = "enqueued"]
-         /\ Flush(pendingCompletions \cup {t}, pendingNotifications \ {t})
+         /\ Flush(pendingCompletions \cup {t}, pendingNotifications)
          /\ UNCHANGED <<killWait, waiter>>
     /\ UNCHANGED <<noted, call, madeCalls, known, idleWaits, compacting>>
 
@@ -273,21 +276,26 @@ ToolKillSignal ==
     /\ UNCHANGED <<howSettled, noted, pendingCompletions, pendingNotifications, waiter, phase, madeCalls, steer,
                    deferred, ctx, known, sentCompletions, sentNotifications, idleWaits, compacting, aborted>>
 
-\* The result carries the end of a terminal that settled during the wait, so it counts as
-\* a message for NoDoubleWake.
+\* The result carries the end of a terminal that settled during the wait, and the
+\* terminal's unread notification, so it counts as a message for NoDoubleWake.
+\* code: agent/extensions/background-terminals/index.ts bg_kill "notifications: delivery.takeNotifications(result.id),"
 \* code: agent/extensions/background-terminals/session.ts join "for (const id of ids) pendingKillResults.delete(id);"
 \* code: agent/extensions/background-terminals/index.ts bg_kill "if (Exit.isSuccess(exit)) terminalSession.consume(ids);"
 ToolKillDone ==
+    LET taken == pendingNotifications \cap {call.t}
+    IN
     /\ phase = "tools"
     /\ call.tool = "bg_kill_wait"
     /\ term[call.t] = "settled"
     /\ pendingCompletions' = pendingCompletions \ {call.t}
-    /\ ctx' = [ctx EXCEPT !.completions = @ \cup {call.t}]
+    /\ pendingNotifications' = pendingNotifications \ taken
+    /\ ctx' = [completions |-> ctx.completions \cup {call.t}, notifications |-> ctx.notifications \cup taken]
     /\ sentCompletions' = IF killWait[call.t] = "settled" THEN Count(sentCompletions, {call.t}) ELSE sentCompletions
+    /\ sentNotifications' = Count(sentNotifications, taken)
     /\ killWait' = [killWait EXCEPT ![call.t] = "none"]
     /\ EndCall
-    /\ UNCHANGED <<term, howSettled, noted, pendingNotifications, waiter, madeCalls, steer, deferred,
-                   known, sentNotifications, idleWaits, compacting, aborted>>
+    /\ UNCHANGED <<term, howSettled, noted, waiter, madeCalls, steer, deferred,
+                   known, idleWaits, compacting, aborted>>
 
 \* The call ends without a result, so it hands an end that settled during the wait to
 \* delivery.
@@ -512,11 +520,11 @@ ReachesPi(t) ==
 EndReachesPi ==
     \A t \in Terminals : howSettled[t] \in {"enqueued", "held"} ~> ReachesPi(t)
 
-\* A notification reaches the model, unless its terminal settles first, whose completion
-\* carries the same output, or the session ends.
+\* A notification reaches the model, on its own or with the report of its terminal's end,
+\* unless the session ends first.
 NotificationReachesAgent ==
     \A t \in Terminals :
-        t \in noted ~> (t \in known.notifications \/ term[t] = "settled" \/ phase = "ended")
+        t \in noted ~> (t \in known.notifications \/ phase = "ended")
 
 \* No end and no notification reaches the model in two messages.
 NoDoubleWake ==

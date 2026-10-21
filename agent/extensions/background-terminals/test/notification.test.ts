@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
-import { BackgroundTerminalDelivery, MAX_QUEUED_PER_KIND } from "../delivery.ts";
+import { BackgroundTerminalDelivery } from "../delivery.ts";
 import { NotificationFrames } from "../notifications.ts";
+import { Tail } from "../terminal.ts";
 import {
   type DeliveryMessage,
   type DeliveryOptions,
@@ -21,9 +22,10 @@ const context = testContext({
   ui: { setStatus() {} },
 });
 
-async function eventually(condition: () => boolean) {
+async function eventually(condition: () => boolean | Promise<boolean>) {
   for (let attempt = 0; attempt < 200; attempt++) {
-    if (condition()) return;
+    // oxlint-disable-next-line no-await-in-loop -- Each check must finish before the next attempt.
+    if (await condition()) return;
     // oxlint-disable-next-line no-await-in-loop -- Drive the shared fixture and observe each result before the next step.
     await Effect.runPromise(Effect.sleep(25));
   }
@@ -121,8 +123,8 @@ test("concurrent emitters preserve every frame", async () => {
   }
 });
 
-test("queued delivery keeps live notifications and drops settled ones", async () => {
-  const messages: Array<{ content: string }> = [];
+test("a completion carries its terminal's held notifications, and other notifications go alone", () => {
+  const messages: DeliveryMessage[] = [];
 
   const delivery = new BackgroundTerminalDelivery({
     sendMessage(message) {
@@ -130,53 +132,84 @@ test("queued delivery keeps live notifications and drops settled ones", async ()
     },
   });
 
-  delivery.setContext({ ...context, isIdle: () => false });
-  delivery.enqueueNotification({
-    id: "bt-1:notification-1",
-    terminalId: "bt-1",
-    title: "finished watcher",
-    message: "stale",
-  });
-  delivery.enqueueNotification({
-    id: "bt-2:notification-1",
-    terminalId: "bt-2",
-    title: "running watcher",
-    message: "current",
-  });
-  assert.equal(messages.length, 0);
-  delivery.terminalSettled("bt-1");
-  await Effect.runPromise(delivery.flush);
-  assert.equal(messages.length, 1);
-  assert.doesNotMatch(messages[0].content, /stale/);
-  assert.match(messages[0].content, /current/);
-  delivery.clear();
-});
-
-test("settlement clears notifications evicted from a full queue", () => {
-  const diagnostics: string[] = [];
-
-  const delivery = new BackgroundTerminalDelivery({ sendMessage() {} }, (message) =>
-    diagnostics.push(message),
-  );
-
   try {
-    // A busy session holds notifications, so the queue fills.
     delivery.setContext({ ...context, isIdle: () => false });
+    delivery.enqueueNotification({
+      id: "bt-1:notification-1",
+      terminalId: "bt-1",
+      title: "finished watcher",
+      message: "sent before the end",
+    });
+    delivery.enqueueNotification({
+      id: "bt-2:notification-2",
+      terminalId: "bt-2",
+      title: "running watcher",
+      message: "still running",
+    });
+    assert.equal(messages.length, 0);
 
-    for (let index = 0; index <= MAX_QUEUED_PER_KIND; index++)
-      delivery.enqueueNotification({
-        id: `bt-1:notification-${index}`,
-        terminalId: "bt-1",
-        title: "watcher",
-        message: "feedback",
-      });
+    delivery.enqueue({
+      id: "bt-1",
+      title: "finished watcher",
+      command: "watch",
+      cwd: "/project",
+      state: "done",
+      createdAt: 0,
+      settledAt: 1_000,
+      result: { kind: "success" },
+      stdout: new Tail().view(),
+      stderr: new Tail().view(),
+    });
 
-    assert.match(delivery.problem ?? "", /bt-1:notification-0 from a full queue/);
-    assert.equal(diagnostics.length, 1);
-    delivery.terminalSettled("bt-1");
-    assert.equal(delivery.problem, undefined);
+    const notification = messages.find(
+      (message) => message.customType === "background-terminal-notification",
+    );
+
+    const results = messages.find(
+      (message) => message.customType === "background-terminal-results",
+    );
+
+    assert.equal(messages.length, 2);
+    assert.match(
+      results?.content ?? "",
+      /bt-1 \[done\] finished watcher .*\nnotifications sent before it ended:\nsent before the end/,
+    );
+    assert.doesNotMatch(results?.content ?? "", /still running/);
+    assert.match(notification?.content ?? "", /bt-2 \[running\] running watcher\nstill running/);
+    assert.doesNotMatch(notification?.content ?? "", /sent before the end/);
   } finally {
     delivery.clear();
+  }
+});
+
+test("a bg_kill result gives codemode the killed terminal's unread notification", async () => {
+  const registration = registeredExtension();
+  const busy = { ...context, isIdle: () => false };
+  await registration.handlers.get("session_start")?.({}, busy);
+  const [start, status, , kill] = registration.tools;
+
+  try {
+    const started = await start.execute(
+      "watch",
+      { command: "emit-to-pi 'server ready'; echo emitted; sleep 30", title: "watcher" },
+      undefined,
+      undefined,
+      busy,
+    );
+
+    const emitToPiReturned = async () => {
+      const running = await status.execute("status", { id: started.details.id });
+
+      return running.details.stdoutBytes > 0;
+    };
+
+    await eventually(emitToPiReturned);
+
+    const killed = await kill.execute("kill", { ids: [started.details.id] });
+    assert.deepEqual(killed.structuredContent.results[0].notifications, ["server ready"]);
+    assert.match(killed.content[0].text, /notifications sent before it ended:\nserver ready/);
+  } finally {
+    await registration.handlers.get("session_shutdown")?.({}, context);
   }
 });
 

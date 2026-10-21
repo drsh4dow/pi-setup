@@ -47,8 +47,6 @@ class SharedBackgroundTerminalSession {
 
     const manager = new BackgroundTerminalManager(
       (snapshot) => {
-        client.delivery.terminalSettled(snapshot.id);
-
         const wait = pendingKillResults.get(snapshot.id);
 
         if (wait) wait.snapshot = snapshot;

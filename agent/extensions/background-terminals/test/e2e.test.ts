@@ -21,6 +21,9 @@ const PROMPT =
 const NOTIFICATION_PROMPT =
   'Use bg_start to run `sleep 5; emit-to-pi "$PI_E2E_MARKER"; sleep 600`. Then reply with only a one-line status saying the watcher is running, and do not call any other tool. When a background terminal notification arrives, call bg_kill on that terminal, then reply with only the notification text.';
 
+const KILLED_WATCHER_PROMPT =
+  'Use bg_start to run `sleep 5; emit-to-pi "a-$PI_E2E_MARKER"; emit-to-pi "b-$PI_E2E_MARKER"; sleep 600`. Then reply with only a one-line status saying the watcher is running, and do not call any other tool. When a background terminal notification arrives, call bg_kill on that terminal, then reply with only the notification texts.';
+
 const printRun = Effect.fn("printRun")(function* (marker: string, prompt: string) {
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -69,5 +72,16 @@ describe("background-terminals (real pi --print)", { skip: e2eUnavailable() }, (
     const marker = `ready-${crypto.randomUUID().slice(0, 8)}`;
     const stdout = yield* printRun(marker, NOTIFICATION_PROMPT);
     assert.ok(stdout.includes(marker), `final report lacks the notification ${marker}:\n${stdout}`);
+  });
+
+  testEffect("a print run reads every notification of a watcher it kills", function* () {
+    const marker = crypto.randomUUID().slice(0, 8);
+    const stdout = yield* printRun(marker, KILLED_WATCHER_PROMPT);
+
+    for (const notification of [`a-${marker}`, `b-${marker}`])
+      assert.ok(
+        stdout.includes(notification),
+        `final report lacks the notification ${notification}:\n${stdout}`,
+      );
   });
 });

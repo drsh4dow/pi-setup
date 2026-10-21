@@ -6,7 +6,7 @@ Swap in the real paths, skills, and done checks. Informal wording works.
 
 - `read <thread>. restate the underlying issue in your own words, in plain english.`
 - `/skill:in-your-own-words <long or messy ask>`
-- `/skill:sharpen <your task>`
+- `/skill:sharpen <the prompt you're about to send>`
 - `investigate why <symptom>. give me what we know, what data you used, and your best hypotheses. don't change any code yet.`
 - `use /skill:how to understand <subsystem>. then use /skill:why to find out why it broke recently.`
 - `/skill:recall my work on <topic> from last week, then read <issue>.`

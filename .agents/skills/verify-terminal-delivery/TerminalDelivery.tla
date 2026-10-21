@@ -542,6 +542,15 @@ NotificationReachesAgent ==
     \A t \in Terminals :
         t \in noted ~> (t \in known.notifications \/ term[t] = "settled" \/ phase = "ended")
 
+\* A notification leaves the queue only while Pi is idle, so it never steers into a run or
+\* starts one while Pi compacts. A completion's flush carries held notifications along. A run's
+\* settle boundary, the settle wait or the agent_settled handler, delivers them as that run
+\* ends, even when a completion started the run during compaction.
+NotificationWaitsForIdle ==
+    [][(\E t \in Terminals : sentNotifications'[t] > sentNotifications[t])
+       /\ sentCompletions' = sentCompletions
+       => IsIdle \/ BSWake \/ PSettledHandler]_vars
+
 \* No end and no notification reaches the model in two messages.
 NoDoubleWake ==
     \A t \in Terminals : sentCompletions[t] <= 1 /\ sentNotifications[t] <= 1

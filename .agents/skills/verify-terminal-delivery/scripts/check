@@ -121,7 +121,7 @@ print_trace() {
         }
       }
     }
-    /^Error: (Invariant [A-Za-z]+ is violated|Temporal properties were violated)/ {
+    /^Error: ((Invariant|Action property) [A-Za-z]+ is violated|Temporal properties were violated)/ {
       sub(/^Error: /, "")
       print "  " $0
       next

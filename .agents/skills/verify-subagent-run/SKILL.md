@@ -1,6 +1,6 @@
 ---
 name: verify-subagent-run
-description: Model-check the pi-subagent run lifecycle with TLA+, so that no process of a run outlives its launcher under any order of kills. Use after changing agent/extensions/subagents/ or upgrading Pi or Effect, before reporting the change as working, and when `scripts/check` fails.
+description: Model-check the pi-subagent run lifecycle with TLA+, so that no process of a run outlives its launcher under any order of kills. Use after changing agent/extensions/subagents/ or upgrading Pi or Effect, before reporting the change as working, and when `scripts/check` fails or `vp run verify` fails on `verify:subagent-run-citations`.
 ---
 
 # Verify the subagent run lifecycle
@@ -37,11 +37,11 @@ From the checkout root:
 .agents/skills/verify-subagent-run/scripts/check
 ```
 
-It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1.7.4 to `${XDG_CACHE_HOME:-~/.cache}/pi-setup/` and checks its sha256. A run takes about 50 s. `vp run verify` does not run it.
+It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1.7.4 to `${XDG_CACHE_HOME:-~/.cache}/pi-setup/` and checks its sha256. A run takes about 50 s.
 
 The script does three things:
 
-1. It checks that every `\* code:` citation in the spec still matches the code. If one does not, it stops before any model runs, because a model that no longer matches the code proves nothing. A citation names a file, a function, and a line copied from that function's body. The body includes the comment block directly above the definition. A definition whose first line ends in `;` is that one line, and a top-level statement whose first line names the function, such as `fiber.addObserver((exit) => {`, is part of its body through the line that closes it.
+1. It checks that every `\* code:` citation in the spec still matches the code. If one does not, it stops before any model runs, because a model that no longer matches the code proves nothing. A citation names a file, a function, and a line copied from that function's body. The body includes the comment block directly above the definition. A definition whose first line ends in `;` is that one line, and a top-level statement whose first line names the function, such as `fiber.addObserver((exit) => {`, is part of its body through the line that closes it. `vp run verify` runs this step alone, as `scripts/check --citations`.
 2. It runs three models that must hold. [`SubagentRun.cfg`](SubagentRun.cfg) is the main model. [`ShutdownHangs.cfg`](ShutdownHangs.cfg) lets pi's graceful shutdown hang. [`ForkingPi.cfg`](ForkingPi.cfg) is the main model with a `pi` command that forks Pi.
 3. It runs [`DescendantShutdownHangs.cfg`](DescendantShutdownHangs.cfg) and [`ForkingPiShutdownHangs.cfg`](ForkingPiShutdownHangs.cfg), which reproduce known findings and must be violated. See [Known findings](#known-findings).
 

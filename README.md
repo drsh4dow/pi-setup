@@ -572,9 +572,10 @@ settings install, so the untracked `agent/settings.json` cannot change its
 result. It also ignores `~/.agents/skills/` and does not load extensions.
 
 `.agents/skills/verify-subagent-run/scripts/check` model-checks the subagent
-run lifecycle with TLA+. It needs Java 11 or newer and downloads TLC once, so
-`verify` leaves it out. Run it after changing `agent/extensions/subagents/` or
-upgrading Pi or Effect.
+run lifecycle with TLA+. It needs Java 11 or newer and downloads TLC once. Run
+it after changing `agent/extensions/subagents/` or upgrading Pi or Effect.
+`verify` runs only its citation step, which fails when a line that the model
+cites changes.
 
 `.agents/skills/verify-terminal-delivery/scripts/check` model-checks how a
 background terminal's completion and notifications reach the agent. Run it after

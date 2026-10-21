@@ -78,7 +78,7 @@ piVars == <<phase, steer, deferred, ctx, aborted>>
 
 TypeOK ==
     /\ term \in [Terminals -> {"unstarted", "running", "killing", "settled"}]
-    /\ howSettled \in [Terminals -> {"none", "enqueued", "consumed", "unreported"}]
+    /\ howSettled \in [Terminals -> {"none", "enqueued", "held", "unreported"}]
     /\ killWait \in [Terminals -> {"none", "waiting", "settled"}]
     /\ noted \subseteq Terminals
     /\ pendingCompletions \subseteq Terminals
@@ -172,7 +172,7 @@ TEnd(t) ==
          /\ UNCHANGED <<killWait, pendingCompletions, pendingNotifications, waiter, piVars, sentCompletions,
                         sentNotifications>>
        ELSE IF killWait[t] = "waiting" THEN
-         /\ howSettled' = [howSettled EXCEPT ![t] = "consumed"]
+         /\ howSettled' = [howSettled EXCEPT ![t] = "held"]
          /\ killWait' = [killWait EXCEPT ![t] = "settled"]
          /\ Hold(pendingCompletions, pendingNotifications \ {t})
          /\ UNCHANGED waiter
@@ -275,7 +275,7 @@ ToolKillSignal ==
 \* The result carries the end of a terminal that settled during the wait, so it counts as
 \* a message for NoDoubleWake.
 \* code: agent/extensions/background-terminals/session.ts join "for (const id of ids) pendingKillResults.delete(id);"
-\* code: agent/extensions/background-terminals/index.ts bg_kill "terminalSession.consume(ids);"
+\* code: agent/extensions/background-terminals/index.ts bg_kill "if (Exit.isSuccess(exit)) terminalSession.consume(ids);"
 ToolKillDone ==
     /\ phase = "tools"
     /\ call.tool = "bg_kill_wait"
@@ -290,9 +290,9 @@ ToolKillDone ==
 
 \* The call ends without a result, so it hands an end that settled during the wait to
 \* delivery.
-\* code: agent/extensions/background-terminals/index.ts bg_kill "terminalSession.abandonKill(ids);"
+\* code: agent/extensions/background-terminals/index.ts bg_kill "else terminalSession.abandonKill(ids);"
 \* code: agent/extensions/background-terminals/session.ts join "if (wait.snapshot) client.delivery.enqueue(wait.snapshot);"
-\* code: agent/extensions/background-terminals/index.ts bg_kill "\"Kill wait aborted; termination continues in the background, and its end will wake you.\","
+\* code: agent/extensions/background-terminals/index.ts bg_kill "\"Kill wait aborted; termination continues in the background, and its end will be delivered to you.\","
 ToolKillAborted ==
     /\ phase = "tools"
     /\ call.tool = "bg_kill_wait"
@@ -498,7 +498,7 @@ CompletionWakesAgent ==
 
 \* A terminal that bg_kill ended reaches the model with its final state.
 KillReachesAgent ==
-    \A t \in Terminals : howSettled[t] = "consumed" ~> t \in known.completions
+    \A t \in Terminals : howSettled[t] = "held" ~> t \in known.completions
 
 ReachesPi(t) ==
     \/ t \in known.completions
@@ -509,7 +509,7 @@ ReachesPi(t) ==
 \* After an abort, Pi keeps queued messages and the transcript for the user's next prompt,
 \* so a terminal's end, including one bg_kill ended, only has to reach Pi.
 EndReachesPi ==
-    \A t \in Terminals : howSettled[t] \in {"enqueued", "consumed"} ~> ReachesPi(t)
+    \A t \in Terminals : howSettled[t] \in {"enqueued", "held"} ~> ReachesPi(t)
 
 \* A notification reaches the model, unless its terminal settles first, whose completion
 \* carries the same output, or the session ends.

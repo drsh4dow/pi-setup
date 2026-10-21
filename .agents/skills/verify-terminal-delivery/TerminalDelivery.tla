@@ -14,7 +14,7 @@
 (*   \* code: <file> <function> "<snippet>"                                *)
 (* scripts/check fails when a cited snippet is no longer in its file.      *)
 (***************************************************************************)
-EXTENDS Naturals, Sequences
+EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANT Terminals
 
@@ -109,6 +109,15 @@ Min(a, b) == IF a < b THEN a ELSE b
 Count(sent, items) ==
     [t \in Terminals |-> IF t \in items /\ sent[t] < 2 THEN sent[t] + 1 ELSE sent[t]]
 
+\* Counts every message that carries a terminal's item, so one flush that sends an item in
+\* two messages counts it twice.
+CountMessages(sent, msgs, field) ==
+    [t \in Terminals |-> Min(2, sent[t] + Cardinality({i \in 1..Len(msgs) : t \in msgs[i][field]}))]
+
+MergeAll(msgs) ==
+    [completions |-> UNION {msgs[i].completions : i \in 1..Len(msgs)},
+     notifications |-> UNION {msgs[i].notifications : i \in 1..Len(msgs)}]
+
 PiState == [phase |-> phase, steer |-> steer, deferred |-> deferred, ctx |-> ctx, aborted |-> aborted]
 
 ApplyPi(s) ==
@@ -135,23 +144,31 @@ SendToPi(s, msg) ==
       [] s.phase \in {"settling", "settlingFlushed"} -> [s EXCEPT !.deferred = @ \cup {msg}]
       [] s.phase = "idle" -> StartRun(s, msg)
 
-\* code: agent/extensions/background-terminals/delivery.ts flush "deliverAs: \"steer\","
+\* The messages drain builds from the pending ends pe and notifications pn, in order: the
+\* notifications of terminals without a pending end, then the ends with their terminals'
+\* notifications.
 \* code: agent/extensions/background-terminals/delivery.ts drain "const batch = this.batch(\"notification\") ?? this.batch(\"completion\");"
 \* code: agent/extensions/background-terminals/delivery.ts drain "this.consume(batch.details.ids);"
 \* code: agent/extensions/background-terminals/delivery.ts batch "if (item.kind === \"notification\" && endingTerminals.has(item.terminalId)) continue;"
 \* code: agent/extensions/background-terminals/delivery.ts batch "let carried = item.kind === \"completion\" ? this.pendingNotifications(item.terminalId) : [];"
 \* code: agent/extensions/background-terminals/delivery.ts batch "ids.push(item.id, ...carried.map((notification) => notification.id));"
-Sent(s, pe, pn) ==
-    LET alone == pn \ pe
-        s1 == IF alone = {} THEN s ELSE SendToPi(s, [completions |-> {}, notifications |-> alone])
-    IN IF pe = {} THEN s1 ELSE SendToPi(s1, [completions |-> pe, notifications |-> pn \cap pe])
+Batches(pe, pn) ==
+    SelectSeq(<<[completions |-> {}, notifications |-> pn \ pe],
+                [completions |-> pe, notifications |-> pn \cap pe]>>,
+              LAMBDA m : m # NoMessage)
+
+\* code: agent/extensions/background-terminals/delivery.ts flush "deliverAs: \"steer\","
+RECURSIVE SendAll(_, _)
+SendAll(s, msgs) == IF msgs = <<>> THEN s ELSE SendAll(SendToPi(s, Head(msgs)), Tail(msgs))
 
 FlushFrom(s, pe, pn) ==
-    /\ ApplyPi(Sent(s, pe, pn))
+    LET msgs == Batches(pe, pn)
+    IN
+    /\ ApplyPi(SendAll(s, msgs))
     /\ pendingCompletions' = {}
     /\ pendingNotifications' = {}
-    /\ sentCompletions' = Count(sentCompletions, pe)
-    /\ sentNotifications' = Count(sentNotifications, pn)
+    /\ sentCompletions' = CountMessages(sentCompletions, msgs, "completions")
+    /\ sentNotifications' = CountMessages(sentNotifications, msgs, "notifications")
 
 Flush(pe, pn) == FlushFrom(PiState, pe, pn)
 
@@ -382,17 +399,17 @@ BSStart ==
 \* code: agent/extensions/background-terminals/index.ts agent_before_settle "const entries = delivery.takePending();"
 \* code: agent/extensions/background-terminals/index.ts agent_before_settle "if (idleSettleWaits > MAX_IDLE_SETTLE_WAITS) return undefined;"
 BSWake ==
-    LET delivered == [completions |-> pendingCompletions, notifications |-> pendingNotifications]
-        hasItems == pendingCompletions \cup pendingNotifications # {}
+    LET msgs == Batches(pendingCompletions, pendingNotifications)
+        hasItems == msgs # <<>>
     IN
     /\ phase = "settleWait"
     /\ waiter' = "none"
     /\ pendingCompletions' = {}
     /\ pendingNotifications' = {}
-    /\ sentCompletions' = Count(sentCompletions, pendingCompletions)
-    /\ sentNotifications' = Count(sentNotifications, pendingNotifications)
+    /\ sentCompletions' = CountMessages(sentCompletions, msgs, "completions")
+    /\ sentNotifications' = CountMessages(sentNotifications, msgs, "notifications")
     /\ idleWaits' = IF hasItems THEN 0 ELSE Min(idleWaits + 1, MaxIdleSettleWaits + 1)
-    /\ Decide(hasItems \/ idleWaits + 1 <= MaxIdleSettleWaits, Merge(ctx, delivered))
+    /\ Decide(hasItems \/ idleWaits + 1 <= MaxIdleSettleWaits, Merge(ctx, MergeAll(msgs)))
     /\ UNCHANGED <<term, howSettled, killWait, noted, call, madeCalls, deferred, known, compacting, aborted>>
 
 \* Pi clears _isAgentRunActive and emits agent_settled. Other extensions' handlers await I/O,

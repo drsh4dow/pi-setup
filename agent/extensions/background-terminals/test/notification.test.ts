@@ -121,6 +121,55 @@ test("concurrent emitters preserve every frame", async () => {
   }
 });
 
+test("a notification held while Pi compacts arrives once Pi is idle", async () => {
+  let idle = false;
+  let idleChecks = 0;
+
+  const compacting = testContext({
+    cwd: process.cwd(),
+    hasUI: true,
+    isIdle: () => {
+      idleChecks++;
+
+      return idle;
+    },
+    ui: { setStatus() {} },
+  });
+
+  const messages: Array<DeliveryMessage & { options: DeliveryOptions }> = [];
+
+  const registration = registeredExtension((message, options) =>
+    messages.push({ ...message, options }),
+  );
+
+  await registration.handlers.get("session_start")?.({}, compacting);
+  const [start] = registration.tools;
+
+  try {
+    await start.execute(
+      "compact",
+      { command: "emit-to-pi 'PR 42 has new feedback'; sleep 30", title: "PR watcher" },
+      undefined,
+      undefined,
+      compacting,
+    );
+
+    await eventually(() => idleChecks > 0);
+    await Effect.runPromise(Effect.sleep(300));
+    assert.equal(messages.length, 0);
+
+    idle = true;
+    await eventually(() => messages.length > 0);
+    await Effect.runPromise(Effect.sleep(300));
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].customType, "background-terminal-notification");
+    assert.match(messages[0].content, /PR 42 has new feedback/);
+    assert.deepEqual(messages[0].options, { deliverAs: "steer", triggerTurn: true });
+  } finally {
+    await registration.handlers.get("session_shutdown")?.({}, compacting);
+  }
+});
+
 test("queued delivery keeps live notifications and drops settled ones", async () => {
   const messages: Array<{ content: string }> = [];
 

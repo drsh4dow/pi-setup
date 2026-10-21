@@ -18,7 +18,10 @@ const services = BunChildProcessSpawner.layer.pipe(
 const PROMPT =
   'Use bg_start to run `sleep 15; echo "$PI_E2E_MARKER"`. Then reply with only a one-line status saying the job is running, and do not call any other tool.';
 
-const printRun = Effect.fn("printRun")(function* (marker: string) {
+const NOTIFICATION_PROMPT =
+  'Use bg_start to run `sleep 5; emit-to-pi "$PI_E2E_MARKER"; sleep 600`. Then reply with only a one-line status saying the watcher is running, and do not call any other tool. When a background terminal notification arrives, call bg_kill on that terminal, then reply with only the notification text.';
+
+const printRun = Effect.fn("printRun")(function* (marker: string, prompt: string) {
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { root, cwd, agentDir } = yield* makePiRoot();
@@ -33,7 +36,7 @@ const printRun = Effect.fn("printRun")(function* (marker: string) {
       "--no-context-files",
       "--extension",
       repositoryExtension("background-terminals"),
-      PROMPT,
+      prompt,
     ],
     {
       cwd,
@@ -58,7 +61,13 @@ const printRun = Effect.fn("printRun")(function* (marker: string) {
 describe("background-terminals (real pi --print)", { skip: e2eUnavailable() }, () => {
   testEffect("a print run waits for its background job and reports its output", function* () {
     const marker = `finished-${crypto.randomUUID().slice(0, 8)}`;
-    const stdout = yield* printRun(marker);
+    const stdout = yield* printRun(marker, PROMPT);
     assert.ok(stdout.includes(marker), `final report lacks the job output ${marker}:\n${stdout}`);
+  });
+
+  testEffect("a print run reads a running watcher's notification before it ends", function* () {
+    const marker = `ready-${crypto.randomUUID().slice(0, 8)}`;
+    const stdout = yield* printRun(marker, NOTIFICATION_PROMPT);
+    assert.ok(stdout.includes(marker), `final report lacks the notification ${marker}:\n${stdout}`);
   });
 });

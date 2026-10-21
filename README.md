@@ -545,8 +545,11 @@ vp run verify
 `verify`, like CI, runs credential-free formatting, lint, type,
 diagnostic-enforcement, and behavioral checks. Its tasks live in
 `vite.config.ts`. Suites replay from cache when their inputs are unchanged, and
-`vp run --no-cache verify` reruns everything. Live Pi integration tests need
-provider credentials and run separately with `vp run test:e2e`.
+`vp run --no-cache verify` reruns everything. `verify:poteto-scripts`
+type-checks the vendored Bun scripts under `agent/poteto/scripts/` against
+their own `tsconfig.json` and locked dependencies. Live Pi integration tests
+need provider credentials and run separately with `vp run test:e2e`. Run them
+after you upgrade Pi.
 
 `agent/scripts/verify-skills.ts` checks the skill packages under
 `agent/skills/` and `.agents/skills/`. It loads them with Pi's own

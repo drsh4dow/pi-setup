@@ -17,8 +17,8 @@ Run the check after any change to these files, or to the Pi or Effect version in
 | File under `agent/extensions/subagents/` | Functions                                                                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `bin/pi-subagent.ts`                     | `main`, `runInPane`, `observeChild`, `addObserver`, `awaitChild`, `stopPiGroup`, `closePane`, `SIGNAL_EXIT_CODES`                     |
-| `bin/pane-child.ts`                      | `runPaneChild`, `endGroup`, `runPi`, `watchLauncher`, `launcherExit`, `abandonRun`                                                    |
-| `process-group.ts`                       | `stopProcessGroup`, `stopRestOfGroup`, `stopGroup`                                                                                    |
+| `bin/pane-child.ts`                      | `runPaneChild`, `stopWhatPiLeft`, `runPi`, `watchLauncher`, `launcherExit`, `abandonRun`                                              |
+| `process-group.ts`                       | `stopProcessGroup`, `stopOwnGroup`, `stopGroup`                                                                                       |
 | `herdr.ts`                               | `sweepAbandonedRuns`, `removeAbandonedRun`, `runOwnerAlive`                                                                           |
 | `index.ts`                               | `claimRun`, `deliverTask`, `finish`, `stopChildrenInheritingRun`                                                                      |
 | `launch.ts`                              | `runFiles`, `runDirectoryPrefix`, `parseRunDirectoryName`, `runFlag`, modeled as the run directory's files and name, with no citation |
@@ -93,7 +93,7 @@ No config reproduces a known finding now.
 3. The pane child exits. The kernel sends SIGHUP to the group, and a descendant, or a Pi that the wrapper forked, starts a graceful shutdown that never ends.
 4. Nothing is left to send SIGKILL, so that Pi runs on.
 
-When the `pi` command forks Pi, the release's SIGTERM and its `forceKillAfter` SIGKILL reach only the wrapper, so the forked Pi stays in the group as a descendant does. `kill(-group, 0)` cannot show whether the group holds any process but the pane child, because the pane child is in it. So `endGroup` lists the group with `ps`, which starts one process at the end of every run. A variant in which the pane child only waits for the rest of its group, without signaling it, fails `NoProcessOutlivesLauncher`: after a SIGKILL to the launcher, nothing signals a descendant that never exits on its own.
+When the `pi` command forks Pi, the release's SIGTERM and its `forceKillAfter` SIGKILL reach only the wrapper, so the forked Pi stays in the group as a descendant does. `kill(-group, 0)` cannot show whether the group holds any process but the pane child, because the pane child is in it. So `stopWhatPiLeft` lists the group with `ps`, which starts one process at the end of every run. A variant in which the pane child only waits for the rest of its group, without signaling it, fails `NoProcessOutlivesLauncher`: after a SIGKILL to the launcher, nothing signals a descendant that never exits on its own.
 
 No config lets a shutdown hang together with a SIGKILL to the pane child. When both the launcher and the pane child get SIGKILL, nothing is left to stop a Pi whose shutdown hangs.
 

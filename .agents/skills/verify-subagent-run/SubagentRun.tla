@@ -437,8 +437,8 @@ CAbandonKill ==
 
 \* runPaneChild's finalizer stops the rest of the group on every way out, and an interrupt cannot
 \* stop a finalizer. One ps listing decides whether another process is in the group.
-\* code: agent/extensions/subagents/bin/pane-child.ts runPaneChild "}, Effect.ensuring(endGroup));"
-\* code: agent/extensions/subagents/bin/pane-child.ts endGroup "const endGroup = stopRestOfGroup().pipe("
+\* code: agent/extensions/subagents/bin/pane-child.ts runPaneChild "}, Effect.ensuring(stopWhatPiLeft));"
+\* code: agent/extensions/subagents/bin/pane-child.ts stopWhatPiLeft "const stopWhatPiLeft = stopOwnGroup().pipe("
 \* code: agent/extensions/subagents/process-group.ts stopGroup "if (!(yield* alive) || (yield* awaitGroupExit(alive, exitGrace))) return "exited" as const;"
 CEndGroup ==
     /\ child = "endGroup"
@@ -446,7 +446,7 @@ CEndGroup ==
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
 
 \* The group's SIGTERM reaches the pane child too, and the finalizer holds off its interrupt.
-\* code: agent/extensions/subagents/process-group.ts stopRestOfGroup "return yield* stopGroup(process.pid, "0 millis", othersInGroup);"
+\* code: agent/extensions/subagents/process-group.ts stopOwnGroup "return yield* stopGroup(process.pid, "0 millis", othersInGroup);"
 \* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGTERM");"
 CEndGroupTerm ==
     /\ child = "endGroupTerm"

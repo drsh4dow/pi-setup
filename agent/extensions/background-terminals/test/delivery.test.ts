@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Effect } from "effect";
 import {
   BackgroundTerminalDelivery,
   formatTerminalReport,
@@ -135,6 +136,51 @@ test("a completion too large to carry its notifications sends them first and kee
     assert.deepEqual(
       messages.flatMap((message) => message.details.ids).toSorted(),
       [...notificationIds, "bt-1"].toSorted(),
+    );
+
+    for (const message of messages.slice(0, -1))
+      assert.match(message.content, /^\[Background terminal notifications\]\n\nbt-1 \[done\] /);
+  } finally {
+    delivery.clear();
+  }
+});
+
+test("a notification left behind when bg_status takes its terminal's completion names the end state", () => {
+  const messages: DeliveryMessage[] = [];
+  const errors: string[] = [];
+  let sendFails = false;
+
+  const delivery = new BackgroundTerminalDelivery(
+    {
+      sendMessage(message) {
+        if (sendFails) throw new Error("send failed");
+        messages.push(decodeMessage(message));
+      },
+    },
+    (error) => errors.push(error),
+  );
+
+  try {
+    delivery.setContext(testContext({ isIdle: () => false }));
+    delivery.enqueueNotification({
+      id: "bt-1:notification-1",
+      terminalId: "bt-1",
+      title: "repository scout",
+      message: "halfway",
+    });
+
+    sendFails = true;
+    delivery.enqueue(snapshot("scout report"));
+    assert.equal(errors.length, 1, "the failed send leaves the batch pending");
+
+    delivery.consume(["bt-1"]);
+    sendFails = false;
+    Effect.runSync(delivery.flush);
+
+    assert.equal(messages.length, 1);
+    assert.equal(
+      messages[0].content,
+      "[Background terminal notifications]\n\nbt-1 [done] repository scout\nhalfway",
     );
   } finally {
     delivery.clear();

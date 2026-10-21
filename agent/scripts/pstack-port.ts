@@ -36,10 +36,7 @@ const skippedSkills = new Set([
   "setup-pstack",
 ]);
 
-const skippedFiles = new Set([
-  // Becomes agent/SYSTEM.md, which is maintained by hand.
-  "skills/poteto-mode/SKILL.md",
-]);
+const skippedFiles = new Map([["skills/poteto-mode/SKILL.md", "SYSTEM.md"]]);
 
 type Invocation = "user-only" | "both" | "model-only";
 
@@ -451,7 +448,8 @@ function upstreamWordDiff(
   clone: string,
   { oldCommit, newCommit, upstreamPath }: SkippedFileChange,
 ) {
-  const args = ["diff", "--word-diff=plain", oldCommit, newCommit, "--", `pstack/${upstreamPath}`];
+  const flags = ["--no-color", "--no-ext-diff", "--word-diff=plain"];
+  const args = ["diff", ...flags, oldCommit, newCommit, "--", `pstack/${upstreamPath}`];
 
   return gitOutput(clone, args).toString("utf8").trimEnd();
 }
@@ -511,10 +509,14 @@ function sync(ref: string) {
       }
     }
 
-    for (const upstreamPath of skippedFiles) {
+    for (const [upstreamPath, localTarget] of skippedFiles) {
+      const localPath = join(agentDirectory, localTarget);
       const diff = upstreamWordDiff(clone, { oldCommit: pinned, newCommit: commit, upstreamPath });
 
-      if (diff !== "") report.push(`changed upstream, port by hand: ${upstreamPath}\n${diff}`);
+      if (diff === "") continue;
+
+      console.log(diff);
+      report.push(`changed upstream, port by hand into ${localPath}: ${upstreamPath}`);
     }
 
     overrideMergedInvocations(classified);

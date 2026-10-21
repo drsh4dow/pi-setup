@@ -13,6 +13,8 @@ interface PendingKillResult {
   snapshot: SettledTerminalSnapshot | undefined;
 }
 
+export type AbandonedKillOutcome = "delivered" | "awaited" | "ended" | "closed";
+
 interface TerminalClient {
   delivery: BackgroundTerminalDelivery;
   updateStatus: () => void;
@@ -24,7 +26,7 @@ export interface BackgroundTerminalSession {
   get(id: string): TerminalSnapshot | undefined;
   kill(ids: readonly string[]): ReturnType<BackgroundTerminalManager["kill"]>;
   consume(ids: readonly string[]): void;
-  abandonKill(ids: readonly string[]): void;
+  abandonKill(ids: readonly string[]): ReadonlyMap<string, AbandonedKillOutcome>;
   readonly leave: Effect.Effect<void>;
 }
 
@@ -101,20 +103,36 @@ class SharedBackgroundTerminalSession {
         client.delivery.consume(ids);
       },
       abandonKill: (ids) => {
-        if (!this.clients.has(client)) return;
+        const terminals = this.clients.get(client);
+
+        if (!terminals) return new Map(ids.map((id) => [id, "closed"]));
+
+        const outcomes = new Map<string, AbandonedKillOutcome>();
 
         for (const id of new Set(ids)) {
           const wait = pendingKillResults.get(id);
 
-          if (!wait) continue;
+          if (!wait) {
+            outcomes.set(id, "awaited");
+            continue;
+          }
+
           wait.calls -= 1;
 
-          if (wait.calls > 0) continue;
+          if (wait.calls > 0) {
+            outcomes.set(id, "awaited");
+            continue;
+          }
 
           pendingKillResults.delete(id);
 
           if (wait.snapshot) client.delivery.enqueue(wait.snapshot);
+
+          const settlesLater = terminals.get(id)?.state === "running";
+          outcomes.set(id, wait.snapshot || settlesLater ? "delivered" : "ended");
         }
+
+        return outcomes;
       },
       leave: Effect.suspend(() => this.leave(client)),
     };

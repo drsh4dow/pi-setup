@@ -291,9 +291,9 @@ ToolKillDone ==
 
 \* The call ends without a result, so it hands an end that settled during the wait to
 \* delivery.
-\* code: agent/extensions/background-terminals/index.ts bg_kill "else terminalSession.abandonKill(ids);"
+\* code: agent/extensions/background-terminals/index.ts bg_kill "else abandoned = terminalSession.abandonKill(ids);"
 \* code: agent/extensions/background-terminals/session.ts join "if (wait.snapshot) client.delivery.enqueue(wait.snapshot);"
-\* code: agent/extensions/background-terminals/index.ts bg_kill "\"Kill wait aborted; termination continues in the background, and its end will be delivered to you.\","
+\* code: agent/extensions/background-terminals/index.ts abortedKillReasons "delivered: \"termination is not cancelled, and its end will be delivered to you\","
 ToolKillAborted ==
     /\ phase = "tools"
     /\ call.tool = "bg_kill_wait"

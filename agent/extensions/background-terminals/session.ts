@@ -81,18 +81,19 @@ class SharedBackgroundTerminalSession {
       },
       list: () => this.clients.get(client)?.list() ?? [],
       get: (id) => this.clients.get(client)?.get(id),
-      kill: (ids) => {
-        const terminals = current();
+      kill: (ids) =>
+        Effect.suspend(() => {
+          const terminals = current();
 
-        for (const id of new Set(ids)) {
-          const wait = pendingKillResults.get(id);
+          for (const id of new Set(ids)) {
+            const wait = pendingKillResults.get(id);
 
-          if (wait) wait.calls++;
-          else pendingKillResults.set(id, { calls: 1, snapshot: undefined });
-        }
+            if (wait) wait.calls++;
+            else pendingKillResults.set(id, { calls: 1, snapshot: undefined });
+          }
 
-        return terminals.kill(ids);
-      },
+          return terminals.kill(ids);
+        }),
       consume: (ids) => {
         if (!this.clients.has(client)) return;
 

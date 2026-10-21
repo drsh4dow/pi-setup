@@ -7,7 +7,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import * as BunPath from "@effect/platform-bun/BunPath";
-import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Config, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { sanitizeInline, sanitizeMultiline } from "../../lib/text.ts";
 import {
   registerBackgroundTerminalStatus,
@@ -380,7 +380,7 @@ export default function backgroundTerminals(
       const terminalSession = currentSession();
       let killError: Error | undefined;
 
-      const work = Effect.runPromise(Effect.suspend(() => terminalSession.kill(ids)));
+      const work = Effect.runPromise(terminalSession.kill(ids));
 
       work.catch((error) => {
         killError = sanitizeErrorForDisplay(error instanceof Error ? error : String(error));
@@ -389,8 +389,6 @@ export default function backgroundTerminals(
       return Effect.runPromise(
         Effect.promise(() => work).pipe(
           Effect.map((results) => {
-            terminalSession.consume(ids);
-
             const outcome = {
               results: results.map(({ id, wasRunning, killed, snapshot }) => ({
                 id,
@@ -420,18 +418,22 @@ export default function backgroundTerminals(
               structuredContent: outcome satisfies Static<typeof killOutputSchema>,
             };
           }),
+          Effect.onExit((exit) =>
+            Effect.sync(() => {
+              if (Exit.isSuccess(exit)) terminalSession.consume(ids);
+              else terminalSession.abandonKill(ids);
+            }),
+          ),
         ),
         { signal },
       ).catch((error) => {
-        terminalSession.abandonKill(ids);
-
         // An abort only interrupts the wait. A failure of the kill itself
         // must surface even when the signal is also aborted.
         if (killError) throw killError;
 
         if (signal?.aborted) {
           throw new Error(
-            "Kill wait aborted; termination continues in the background, and its end will wake you.",
+            "Kill wait aborted; termination continues in the background, and its end will be delivered to you.",
           );
         }
 

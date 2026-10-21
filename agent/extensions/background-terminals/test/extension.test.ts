@@ -3,9 +3,11 @@ import test, { type TestContext } from "node:test";
 import { Effect } from "effect";
 import { processIsGone } from "../../test/process.ts";
 import { BackgroundTerminalDelivery } from "../delivery.ts";
+import { joinBackgroundTerminalSession } from "../session.ts";
 import {
   type DeliveryMessage,
   type DeliveryOptions,
+  decodeMessage,
   registeredExtension,
   testContext,
 } from "./registration.ts";
@@ -412,11 +414,37 @@ test("a failed bg_kill leaves the end to a concurrent bg_kill result", async (t)
     kill.execute("3", { ids: [id] }),
   ]);
 
-  assert.equal(failed.status, "rejected");
+  assert.ok(failed.status === "rejected");
+  assert.match(String(failed.reason), /Unknown terminal id "bt-unknown"/);
   assert.ok(killed.status === "fulfilled");
   assert.match(killed.value.content[0].text, /\[killed\] shared · killed/);
   await sleep(100);
   assert.equal(messages.length, 0);
+});
+
+test("an end held for a bg_kill call is delivered when the call abandons its result", async (t) => {
+  const messages: DeliveryMessage[] = [];
+
+  const delivery = new BackgroundTerminalDelivery({
+    sendMessage: (message) => {
+      messages.push(decodeMessage(message));
+    },
+  });
+
+  delivery.setContext(testContext({ isIdle: () => false }));
+  const session = joinBackgroundTerminalSession(delivery, () => {});
+  t.after(() => Effect.runPromise(session.leave));
+
+  const { id } = session.start({ command: "sleep 30", title: "held", cwd: process.cwd() });
+  await Effect.runPromise(session.kill([id]));
+  await sleep(100);
+  assert.equal(messages.length, 0, "the end waits for the bg_kill call");
+
+  session.abandonKill([id]);
+  assert.deepEqual(
+    messages.map((message) => message.details.ids),
+    [[id]],
+  );
 });
 
 test("aborted bg_kill wait does not cancel termination and delivers the end once", async (t) => {

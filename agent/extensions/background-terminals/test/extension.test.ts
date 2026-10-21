@@ -25,8 +25,11 @@ async function eventually(condition: () => boolean | Promise<boolean>) {
   throw new Error("condition not met within 5 seconds");
 }
 
-async function registeredTools(t: TestContext) {
-  const { tools, handlers } = registeredExtension();
+async function registeredTools(
+  t: TestContext,
+  sendMessage?: Parameters<typeof registeredExtension>[0],
+) {
+  const { tools, handlers } = registeredExtension(sendMessage);
 
   const context = testContext({
     cwd: process.cwd(),
@@ -385,9 +388,22 @@ test("pre-aborted bg_kill still starts termination", async (t) => {
   );
 });
 
-test("aborted bg_kill wait does not cancel termination", async (t) => {
+test("a bg_kill result reports the end and nothing steers it again", async (t) => {
+  const messages: DeliveryMessage[] = [];
+  const { 0: start, 3: kill } = await registeredTools(t, (message) => messages.push(message));
+
+  const started = await start.execute("1", { command: "sleep 30", title: "kill" });
+  const killed = await kill.execute("2", { ids: [started.details.id] });
+
+  assert.match(killed.content[0].text, /\[killed\] kill · killed/);
+  await sleep(100);
+  assert.equal(messages.length, 0);
+});
+
+test("aborted bg_kill wait does not cancel termination and delivers the end once", async (t) => {
   const controller = new AbortController();
-  const [start, status, , kill] = await registeredTools(t);
+  const messages: DeliveryMessage[] = [];
+  const [start, status, , kill] = await registeredTools(t, (message) => messages.push(message));
 
   const started = await start.execute("1", {
     command: "trap '' TERM; sleep 30 & echo child:$!; wait",
@@ -403,5 +419,13 @@ test("aborted bg_kill wait does not cancel termination", async (t) => {
   await sleep(25);
   controller.abort();
   await assert.rejects(waiting, /termination continues/);
-  await eventually(async () => (await status.execute("3", { id })).details.state === "killed");
+  assert.equal(messages.length, 0, "nothing steers before the terminal settles");
+  await eventually(() => messages.length > 0);
+  await sleep(100);
+  assert.deepEqual(
+    messages.map((message) => message.details.ids),
+    [[id]],
+  );
+  assert.match(messages[0].content, /\[killed\] abort/);
+  assert.equal((await status.execute("3", { id })).details.state, "killed");
 });

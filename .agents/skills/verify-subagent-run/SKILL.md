@@ -41,11 +41,11 @@ It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1
 
 The script does three things:
 
-1. It checks that every `\* code:` citation in the spec still matches its file. A citation names a file, a function, and a line copied from the code.
+1. It checks that every `\* code:` citation in the spec still matches the code. If one does not, it stops before any model runs, because a model that no longer matches the code proves nothing. A citation names a file, a function, and a line copied from that function's body. The body includes the comment block directly above the definition. A definition whose first line ends in `;` is that one line, and a top-level statement whose first line names the function, such as `fiber.addObserver((exit) => {`, is part of its body through the line that closes it.
 2. It runs three models that must hold. [`SubagentRun.cfg`](SubagentRun.cfg) is the main model. [`ShutdownHangs.cfg`](ShutdownHangs.cfg) lets pi's graceful shutdown hang. [`ForkingPi.cfg`](ForkingPi.cfg) is the main model with a `pi` command that forks Pi.
 3. It runs [`DescendantShutdownHangs.cfg`](DescendantShutdownHangs.cfg) and [`ForkingPiShutdownHangs.cfg`](ForkingPiShutdownHangs.cfg), which reproduce known findings and must be violated. See [Known findings](#known-findings).
 
-Exit 0 means every citation is current and each model matched the `\* expect:` line at the top of its config. For a violated model, the script prints the counterexample as numbered steps. Each step names the action, the file and function it models, and the variables that changed. The full TLC output is in `${TMPDIR:-/tmp}/verify-subagent-run/`.
+Exit 0 means every citation is current and each model matched the `\* expect:` line at the top of its config. For a violated model, the script prints the broken property, such as `Invariant OnlyPiTakesTheTask is violated` or `Temporal properties were violated`, then the counterexample as numbered steps. Each step names the action, the file and function it models, and the variables that changed. The full TLC output is in `${TMPDIR:-/tmp}/verify-subagent-run/`.
 
 ## Update the model for an intended change
 

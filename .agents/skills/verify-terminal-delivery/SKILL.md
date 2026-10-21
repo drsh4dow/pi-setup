@@ -41,7 +41,7 @@ It needs Java 11 or newer on `PATH`, or in `JAVA`. The first run downloads TLC 1
 
 The script does three things:
 
-1. It checks that every `\* code:` citation in the spec still matches the code. If one does not, it stops before any model runs, because a model that no longer matches the code proves nothing. A citation names a file, a function, and a line copied from that function's body. For a tool, the function is its `name`. For an event handler, it is the event. `vp run verify` runs this step alone, as `scripts/check --citations`.
+1. It checks that every `\* code:` citation in the spec still matches the code. If one does not, it stops before any model runs, because a model that no longer matches the code proves nothing. A citation names a file, a function, and a line copied from that function's body. For a tool, the function is its `name`. For an event handler, it is the event. The body includes the comment block directly above the definition. A definition whose first line ends in `;` is that one line, and a top-level statement whose first line names the function is part of its body through the line that closes it. `vp run verify` runs this step alone, as `scripts/check --citations`.
 2. It runs seven models that must hold. `Session.cfg` is a TUI session where the user can compact. `SessionNotifications.cfg` is a TUI session without compaction. `Aborts.cfg` adds user aborts. `UnattendedRun.cfg`, `UnattendedCompletion.cfg`, and `UnattendedRunHoldsNotification.cfg` are unattended runs. `AbortedKillIsSilent.cfg` is a TUI session with one terminal and user aborts, and checks `EndReachesPi`.
 3. It runs two models that reproduce known findings and must be violated. See [Known findings](#known-findings).
 

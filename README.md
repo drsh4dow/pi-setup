@@ -582,6 +582,9 @@ changing `agent/extensions/background-terminals/` or upgrading Pi. `verify`
 runs only its citation step, which fails when a line that the model cites
 changes.
 
+Both `check` scripts run the shared runner `.agents/scripts/tlc-check`, which
+checks the citations and then runs TLC on each model config.
+
 Vite+ supplies the only linter and formatter, Oxlint and Oxfmt, and
 `vite.config.ts` owns their policy. Type-aware rules, Effect diagnostics, and
 the vendored [anti-slop plugins](oxlint/anti-slop/UPSTREAM.md) fail on

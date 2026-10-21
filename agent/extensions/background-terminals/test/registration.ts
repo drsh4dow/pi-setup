@@ -35,6 +35,7 @@ const statusResult = Schema.Struct({ content: textContent, details: metadata });
 const listResult = Schema.Struct({
   content: textContent,
   details: Schema.Struct({ terminals: Schema.Array(metadata) }),
+  structuredContent: Schema.Struct({ deliveryProblem: Schema.NullOr(Schema.String) }),
 });
 
 const killResult = Schema.Struct({

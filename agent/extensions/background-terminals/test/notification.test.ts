@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
-import { BackgroundTerminalDelivery } from "../delivery.ts";
+import { BackgroundTerminalDelivery, MAX_QUEUED_PER_KIND } from "../delivery.ts";
 import { NotificationFrames } from "../notifications.ts";
 import { Tail } from "../terminal.ts";
 import {
@@ -208,6 +208,40 @@ test("a bg_kill result gives codemode the killed terminal's unread notification"
     const killed = await kill.execute("kill", { ids: [started.details.id] });
     assert.deepEqual(killed.structuredContent.results[0].notifications, ["server ready"]);
     assert.match(killed.content[0].text, /notifications sent before it ended:\nserver ready/);
+  } finally {
+    await registration.handlers.get("session_shutdown")?.({}, context);
+  }
+});
+
+test("bg_status clears the notice of a notification dropped from a full queue", async () => {
+  const registration = registeredExtension();
+  const busy = { ...context, isIdle: () => false };
+  await registration.handlers.get("session_start")?.({}, busy);
+  const [start, status, list] = registration.tools;
+
+  try {
+    const started = await start.execute(
+      "watch",
+      {
+        command: `for i in $(seq 0 ${MAX_QUEUED_PER_KIND}); do emit-to-pi "note-$i"; done; sleep 30`,
+        title: "watcher",
+      },
+      undefined,
+      undefined,
+      busy,
+    );
+
+    const deliveryProblem = async () =>
+      (await list.execute("list", {})).structuredContent.deliveryProblem;
+
+    await eventually(async () => (await deliveryProblem()) !== null);
+    assert.match(
+      (await deliveryProblem()) ?? "",
+      new RegExp(`${started.details.id}:notification-`),
+    );
+
+    await status.execute("status", { id: started.details.id });
+    assert.equal(await deliveryProblem(), null);
   } finally {
     await registration.handlers.get("session_shutdown")?.({}, context);
   }

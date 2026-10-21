@@ -109,7 +109,8 @@ function stillRunningNotice(terminals: BackgroundTerminalSession): CustomMessage
 
 const abortedKillReasons: Record<AbandonedKillOutcome, string> = {
   delivered: "termination is not cancelled, and its end will be delivered to you",
-  awaited: "another bg_kill call reports its end in that call's result",
+  awaited:
+    "another bg_kill call reports its end in that call's result, or its end will be delivered to you if that call also ends without a result",
   ended: "it had already ended, so no new end is coming; bg_status shows its final state",
   closed: "the session is shutting down, so its end will not be delivered",
 };

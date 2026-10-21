@@ -1,6 +1,6 @@
 ---
 name: principle-redesign-from-first-principles
-description: "Apply when integrating a new requirement into an existing design."
+description: "Apply when integrating a new requirement into an existing design. Redesign as if the requirement had been foundational from day one."
 user-invokable: false
 ---
 

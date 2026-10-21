@@ -6,6 +6,17 @@ user-invokable: false
 
 Background terminals have no interactive stdin, so commands must run without prompts or interaction.
 
+To drive a TUI or any prompting program, run it inside a detached tmux session on a private socket, and drive that session with finite commands:
+
+```bash
+tmux -L <socket> new-session -d -s <name> -x 120 -y 40 '<command>'
+tmux -L <socket> send-keys -t <name> 'text' Enter
+tmux -L <socket> capture-pane -p -t <name>
+tmux -L <socket> kill-server
+```
+
+After each input, capture the pane until the text you expect appears, then read it before the next input. The tmux server runs outside the background-terminal tree and survives the Pi session, so run `kill-server` when you finish, on failure too. A project's `verify-*` skill may ship a driver that wraps these steps.
+
 Before starting a server or watcher, check `bg_list` for an existing copy. Give each new terminal a distinct, meaningful title. Continue genuinely independent work. If the requested answer depends on the job and nothing independent remains, give only a brief pending status and end the turn; deliver the answer after completion wakes you. Do not repeat the background task while waiting or poll for completion.
 
 A codemode script has no timers and cannot wait for a terminal. End the script

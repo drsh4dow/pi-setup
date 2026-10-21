@@ -100,7 +100,7 @@ const awaitGroupExit = <E, R>(alive: Effect.Effect<boolean, E, R>, timeout: Dura
     Effect.map(Option.isSome),
   );
 
-const signalGroup = (group: number, signal: NodeJS.Signals) =>
+export const signalGroup = (group: number, signal: NodeJS.Signals) =>
   Effect.try({
     try: () => process.kill(-group, signal),
     catch: (cause) => new SignalError({ group, signal, cause }),

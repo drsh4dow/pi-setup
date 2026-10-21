@@ -8,7 +8,7 @@ import {
   runFlag,
   stderrRecorder,
 } from "../launch.ts";
-import { isAlive, stopProcessGroup, stopOwnGroup, TERM_GRACE } from "../process-group.ts";
+import { isAlive, signalGroup, stopOwnGroup, TERM_GRACE } from "../process-group.ts";
 
 const FORWARDED_STDERR_LIMIT_BYTES = 64 * 1024;
 
@@ -45,10 +45,11 @@ const abandonRun = Effect.fn("abandonRun")(function* (runDirectory: string) {
       ),
     );
 
-  const stopped = yield* stopProcessGroup(process.pid, "0 millis");
+  yield* stopOwnGroup();
+  yield* signalGroup(process.pid, "SIGKILL");
 
   return yield* Effect.die(
-    new Error(`the pane child outlived pi's process group ${process.pid} (${stopped})`),
+    new Error(`the pane child outlived the SIGKILL of its process group ${process.pid}`),
   );
 }, Effect.uninterruptible);
 

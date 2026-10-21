@@ -197,8 +197,11 @@ function formatTerminalCompletion(
   return sections.join("\n");
 }
 
-function formatTerminalNotification(notification: RunningTerminalNotification): string {
-  return `${sanitizeInline(notification.terminalId)} [running] ${sanitizeInline(notification.title)}\n${tail(notification.message)}`;
+function formatTerminalNotification(
+  notification: RunningTerminalNotification,
+  terminalState: TerminalMetadata["state"],
+): string {
+  return `${sanitizeInline(notification.terminalId)} [${terminalState}] ${sanitizeInline(notification.title)}\n${tail(notification.message)}`;
 }
 
 type DeliveryItem =
@@ -213,6 +216,7 @@ type DeliveryItem =
       id: string;
       terminalId: string;
       notification: RunningTerminalNotification;
+      terminalState: TerminalMetadata["state"];
     };
 
 interface DeliveryBatch {
@@ -298,6 +302,10 @@ export class BackgroundTerminalDelivery {
       );
   }
   enqueue(snapshot: SettledTerminalSnapshot) {
+    for (const item of this.pending.values())
+      if (item.kind === "notification" && item.terminalId === snapshot.id)
+        this.pending.set(item.id, { ...item, terminalState: snapshot.state });
+
     this.queue({
       kind: "completion",
       id: snapshot.id,
@@ -311,6 +319,7 @@ export class BackgroundTerminalDelivery {
       id: notification.id,
       terminalId: notification.terminalId,
       notification,
+      terminalState: "running",
     });
   }
   private pendingNotifications(terminalId: string): RunningTerminalNotification[] {
@@ -406,7 +415,7 @@ export class BackgroundTerminalDelivery {
 
       let rendered =
         item.kind === "notification"
-          ? formatTerminalNotification(item.notification)
+          ? formatTerminalNotification(item.notification, item.terminalState)
           : formatTerminalCompletion(item.snapshot, carried);
 
       const separator = ids.length ? "\n\n---\n\n" : "";

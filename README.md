@@ -321,6 +321,12 @@ and leaves no process behind. The differences below are known and accepted.
   before the `background-terminals` handler hangs, the child Pi gets SIGKILL
   before it stops its `bg_start` jobs, and those jobs keep running in their own
   process groups.
+- **A process listing that fails or hangs.** Before the pane child exits, it
+  lists its process group with `ps`. A listing that fails or takes longer than
+  1 s counts as one that found another process. The run then ends up to about
+  4 s later, with SIGKILL to the group, and the pane child writes one line to
+  its pane's stderr that names the failure. A `ps` that even SIGKILL cannot
+  end, such as one in uninterruptible sleep, keeps the pane child running.
 - **Rebound dialog cancel key.** The child cancels an extension dialog by
   sending Escape. If `tui.select.cancel` is rebound away from Escape, every
   dialog stays open and fails the run after 5 s.

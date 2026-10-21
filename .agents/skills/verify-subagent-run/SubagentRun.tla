@@ -414,19 +414,18 @@ CAbandonRemove ==
     /\ launcherWatch' = "abandonTerm"
     /\ UNCHANGED <<wrapper, sweep, child, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
 
-\* The group's SIGTERM reaches the pane child too. It interrupts the main fiber, and abandonRun
-\* ignores it.
-\* code: agent/extensions/subagents/bin/pane-child.ts abandonRun "const stopped = yield* stopProcessGroup(process.pid, "0 millis");"
+\* code: agent/extensions/subagents/bin/pane-child.ts abandonRun "yield* stopOwnGroup();"
+\* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGTERM");"
 CAbandonTerm ==
     /\ ChildAlive
     /\ launcherWatch = "abandonTerm"
-    /\ TermGroup
-    /\ childInterrupted' = TRUE
+    /\ IF OthersInGroup
+         THEN TermGroup /\ childInterrupted' = TRUE
+         ELSE UNCHANGED <<wrapper, phase, childInterrupted>>
     /\ launcherWatch' = "abandonKill"
     /\ UNCHANGED <<sweep, child, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, trapsSignals, kills>>
 
-\* The group holds the pane child, so it outlives TERM_GRACE and the group gets SIGKILL.
-\* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGKILL");"
+\* code: agent/extensions/subagents/bin/pane-child.ts abandonRun "yield* signalGroup(process.pid, "SIGKILL");"
 CAbandonKill ==
     /\ ChildAlive
     /\ launcherWatch = "abandonKill"
@@ -446,7 +445,7 @@ CEndGroup ==
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
 
 \* The group's SIGTERM reaches the pane child too, and the finalizer holds off its interrupt.
-\* code: agent/extensions/subagents/process-group.ts stopOwnGroup "return yield* stopGroup(process.pid, "0 millis", othersInGroup);"
+\* code: agent/extensions/subagents/process-group.ts stopOwnGroup "return yield* stopGroup(process.pid, "0 millis", othersPresent);"
 \* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGTERM");"
 CEndGroupTerm ==
     /\ child = "endGroupTerm"

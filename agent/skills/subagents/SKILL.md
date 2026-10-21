@@ -43,11 +43,16 @@ playbooks name the role, such as "the `how explorer` role".
 | `swarm workers` | `anthropic/claude-opus-5-5` | `high` |
 | `arena runners`, `architect runners`, `interrogate reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 | `arena cross-judge pool` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
+| `cross-family reviewer` | `openai/gpt-6.1-sol` | `high` |
 
 A role with two models is a panel: run one subagent per model, so the panel
 size equals the number of models. Panels mix model families because their
 value is independent judgment. From the cross-judge pool, pick one model whose
 family differs from the candidates being judged, when possible.
+
+A reviewer or verifier that must run on a different model family from the
+work's author takes the `cross-family reviewer` role. When the author ran on
+`openai/gpt-6.1-sol`, run it on `anthropic/claude-opus-5-5` at `high` instead.
 
 The hardest changes, such as cross-cutting design, concurrency, or subtle
 algorithms, take the `hardest tasks` role. `high` is the thinking ceiling for

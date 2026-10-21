@@ -6,8 +6,8 @@ extensions, skills, prompts, themes, and model defaults. Pi discovers everything
 under `~/.pi/agent` on its own, so nothing here is installed as a package.
 
 [`agent/SYSTEM.md`](agent/SYSTEM.md) replaces Pi's system prompt for every
-model. It sets the agent's behavior and engineering standards. The skills hold
-the procedures for specific kinds of work.
+model. It sets the agent's behavior. The skills hold the procedures for
+specific kinds of work, and `engineering-standards` holds the code standards.
 
 ## How I work
 
@@ -362,6 +362,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `create-verification-skill`
 - `docs-search`
 - `dumpfile`
+- `engineering-standards`
 - `figure-it-out`
 - `frontend-design`
 - `how`

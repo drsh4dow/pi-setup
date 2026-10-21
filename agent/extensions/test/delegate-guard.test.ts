@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import type { ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 
-import { spawnGuard } from "../delegate-guard.ts";
+import { extensionTestAdapter, unsafeFixture } from "./adapter.ts";
+import runDelegateGuard, { spawnGuard } from "../delegate-guard.ts";
 
 const skill = readFileSync(new URL("../../skills/subagents/SKILL.md", import.meta.url), "utf8");
 
@@ -68,6 +70,7 @@ test("a subagent without owner.md is a delegate and spawns no pi print launch", 
     "/home/u/.bun/bin/pi --print <<'EOF'\nhi\nEOF",
     "FOO=1 pi \\\n  --thinking high \\\n  --print",
     `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE} "hi"`,
+    `bash -c 'pi --print "hi"'`,
   ]) {
     assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
   }
@@ -88,9 +91,65 @@ test("commands that are not pi print launches pass", () => {
     "rg -n pi-subagent agent",
     "grep -rn pi-subagent agent",
     "test -x .build/bin/pi-subagent",
+    "grep -nE 'pi-subagent|pi --print' delegate-guard.ts",
+    "grep -nE 'pi --print' delegate-guard.ts",
+    'rg "foo; pi -p" .',
+    "grep 'pi --print' delegate-guard.ts",
+    "grep 'bash -c pi --print' delegate-guard.ts",
   ]) {
     assert.equal(delegateGuard(command), undefined, command);
     assert.equal(ownerGuard(command), undefined, command);
+  }
+});
+
+test("the extension applies the same command guard to bash and bg_start", async () => {
+  const originalArgv = process.argv;
+  process.argv = [...delegateArgv];
+
+  try {
+    const extension = extensionTestAdapter();
+    runDelegateGuard(extension.api);
+    const context = unsafeFixture<ExtensionContext>({});
+    const quotedCommand = 'rg "foo; pi -p" .';
+    const launchCommand = 'pi --print "hi"';
+
+    const events: ToolCallEvent[] = [
+      {
+        type: "tool_call",
+        toolCallId: "bash-quoted",
+        toolName: "bash",
+        input: { command: quotedCommand },
+      },
+      {
+        type: "tool_call",
+        toolCallId: "bash-launch",
+        toolName: "bash",
+        input: { command: launchCommand },
+      },
+      {
+        type: "tool_call",
+        toolCallId: "bg-start-quoted",
+        toolName: "bg_start",
+        input: { command: quotedCommand },
+      },
+      {
+        type: "tool_call",
+        toolCallId: "bg-start-launch",
+        toolName: "bg_start",
+        input: { command: launchCommand },
+      },
+    ];
+
+    const results = await Promise.all(
+      events.map((event) => extension.emit("tool_call", event, context)),
+    );
+
+    assert.equal(results[0], undefined);
+    assert.notEqual(results[1], undefined);
+    assert.equal(results[2], undefined);
+    assert.notEqual(results[3], undefined);
+  } finally {
+    process.argv = originalArgv;
   }
 });
 

@@ -37,9 +37,6 @@ const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
 
 const TIMEOUT_DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
 
-// `&` next to `<` or `>` is a redirection such as `2>&1`, not a separator.
-const COMMAND_SEPARATOR = /&&|\|\||;|\||(?<![<>])&(?!>)|\r?\n/;
-
 interface HeredocTerminator {
   readonly word: string;
   readonly stripsTabs: boolean;
@@ -89,11 +86,98 @@ function withoutHeredocBodies(command: string): string {
   return kept.join("\n");
 }
 
-function words(simpleCommand: string): string[] {
-  return simpleCommand
-    .split(/\s+/)
-    .filter((word) => word !== "")
-    .map((word) => word.replaceAll(/["']/g, ""));
+interface ShellCommand {
+  readonly argv: string[];
+  readonly nestedCommands: string[];
+}
+
+function shellCommands(command: string): ShellCommand[] {
+  const commands: ShellCommand[] = [];
+  let argv: string[] = [];
+  let word = "";
+  let quote: "'" | '"' | undefined;
+  let tokenStarted = false;
+
+  const pushWord = () => {
+    if (!tokenStarted) return;
+
+    argv.push(word);
+    word = "";
+    tokenStarted = false;
+  };
+
+  const pushCommand = () => {
+    pushWord();
+
+    if (argv.length > 0) {
+      const nested = nestedShellCommand(argv);
+      commands.push({ argv, nestedCommands: nested === undefined ? [] : [nested] });
+    }
+
+    argv = [];
+  };
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+    const next = command[index + 1];
+
+    if (quote !== undefined) {
+      if (character === quote) {
+        quote = undefined;
+      } else if (character === "\\" && quote === '"' && next !== undefined) {
+        word += next;
+        tokenStarted = true;
+        index += 1;
+      } else {
+        word += character;
+        tokenStarted = true;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      tokenStarted = true;
+      continue;
+    }
+
+    if (character === "\\" && next !== undefined) {
+      word += next;
+      tokenStarted = true;
+      index += 1;
+      continue;
+    }
+
+    if (character === "\n" || (character === "\r" && next === "\n")) {
+      if (character === "\r") index += 1;
+      pushCommand();
+      continue;
+    }
+
+    if (/\s/.test(character)) {
+      pushWord();
+      continue;
+    }
+
+    const separator =
+      character === ";" ||
+      character === "|" ||
+      (character === "&" && command[index - 1] !== ">" && next !== ">");
+
+    if (separator) {
+      if ((character === "|" || character === "&") && next === character) index += 1;
+      pushCommand();
+      continue;
+    }
+
+    word += character;
+    tokenStarted = true;
+  }
+
+  pushCommand();
+
+  return commands;
 }
 
 function isPi(word: string): boolean {
@@ -124,25 +208,48 @@ function piSubagentLaunch(argv: readonly string[]): PiLaunchArgv | undefined {
   return argv.slice(commandIndex);
 }
 
+function nestedShellCommand(argv: readonly string[]): string | undefined {
+  const shellIndex = argv.findIndex(
+    (word, index) =>
+      (word === "bash" || word === "sh" || word === "zsh") &&
+      argv.slice(0, index).every(isWrapperWord),
+  );
+
+  if (shellIndex === -1) return undefined;
+
+  const optionIndex = argv.indexOf("-c", shellIndex + 1);
+
+  return optionIndex === -1 ? undefined : argv[optionIndex + 1];
+}
+
 function subagentLaunches(command: string): PiLaunchArgv[] {
   const joined = withoutHeredocBodies(command).replace(LINE_CONTINUATION, " ");
+  const launches: PiLaunchArgv[] = [];
 
-  return joined.split(COMMAND_SEPARATOR).flatMap((simpleCommand) => {
-    const argv = words(simpleCommand);
+  for (const { argv, nestedCommands } of shellCommands(joined)) {
+    const nestedLaunches = nestedCommands.flatMap(subagentLaunches);
+
+    launches.push(...nestedLaunches);
+
     const subagentLaunch = piSubagentLaunch(argv);
 
-    if (subagentLaunch !== undefined) return [subagentLaunch];
+    if (subagentLaunch !== undefined) {
+      launches.push(subagentLaunch);
+      continue;
+    }
 
-    const piIndex = argv.findIndex(isPi);
+    const piIndex = argv.findIndex((word) => !isWrapperWord(word));
 
-    if (piIndex === -1) return [];
+    if (piIndex === -1 || !isPi(argv[piIndex])) continue;
 
     const launch = argv.slice(piIndex);
 
-    if (!launch.some((word) => word === "--print" || word === "-p")) return [];
+    if (!launch.some((word) => word === "--print" || word === "-p")) continue;
 
-    return [launch];
-  });
+    launches.push(launch);
+  }
+
+  return launches;
 }
 
 function launchesDelegate(launch: PiLaunchArgv): boolean {

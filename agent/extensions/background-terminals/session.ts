@@ -8,7 +8,10 @@ import {
   type TerminalSnapshot,
 } from "./manager.ts";
 
-type KillWait = { kind: "waiting" } | { kind: "settled"; snapshot: SettledTerminalSnapshot };
+interface PendingKillResult {
+  calls: number;
+  snapshot: SettledTerminalSnapshot | undefined;
+}
 
 interface TerminalClient {
   delivery: BackgroundTerminalDelivery;
@@ -38,16 +41,17 @@ class SharedBackgroundTerminalSession {
     if (this.lifecycle === "stopping")
       throw new Error("Background terminal session is shutting down.");
 
-    // A bg_kill call waiting on a terminal reports its end in the tool result.
-    const killWaits = new Map<string, KillWait>();
+    const pendingKillResults = new Map<string, PendingKillResult>();
 
     const manager = new BackgroundTerminalManager(
       (snapshot) => {
         client.delivery.terminalSettled(snapshot.id);
         client.updateStatus();
 
-        if (killWaits.has(snapshot.id)) {
-          killWaits.set(snapshot.id, { kind: "settled", snapshot });
+        const wait = pendingKillResults.get(snapshot.id);
+
+        if (wait) {
+          wait.snapshot = snapshot;
 
           return;
         }
@@ -80,8 +84,11 @@ class SharedBackgroundTerminalSession {
       kill: (ids) => {
         const terminals = current();
 
-        for (const id of ids) {
-          if (!killWaits.has(id)) killWaits.set(id, { kind: "waiting" });
+        for (const id of new Set(ids)) {
+          const wait = pendingKillResults.get(id);
+
+          if (wait) wait.calls++;
+          else pendingKillResults.set(id, { calls: 1, snapshot: undefined });
         }
 
         return terminals.kill(ids);
@@ -89,17 +96,23 @@ class SharedBackgroundTerminalSession {
       consume: (ids) => {
         if (!this.clients.has(client)) return;
 
-        for (const id of ids) killWaits.delete(id);
+        for (const id of ids) pendingKillResults.delete(id);
         client.delivery.consume(ids);
       },
       abandonKill: (ids) => {
         if (!this.clients.has(client)) return;
 
-        for (const id of ids) {
-          const wait = killWaits.get(id);
-          killWaits.delete(id);
+        for (const id of new Set(ids)) {
+          const wait = pendingKillResults.get(id);
 
-          if (wait?.kind === "settled") client.delivery.enqueue(wait.snapshot);
+          if (!wait) continue;
+          wait.calls -= 1;
+
+          if (wait.calls > 0) continue;
+
+          pendingKillResults.delete(id);
+
+          if (wait.snapshot) client.delivery.enqueue(wait.snapshot);
         }
       },
       leave: Effect.suspend(() => this.leave(client)),

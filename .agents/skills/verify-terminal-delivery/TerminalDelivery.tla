@@ -52,7 +52,7 @@ Phases == RunPhases \cup {"settling", "settlingFlushed", "idle", "ended"}
 VARIABLES
     term,         \* each terminal's manager entry: running covers executing, draining, reaping
     howSettled,   \* what onSettled did when the terminal settled
-    killWait,     \* session.ts killWaits: a bg_kill call waits on the terminal, and holds its end once settled
+    killWait,     \* session.ts pendingKillResults: a bg_kill call waits on the terminal, and holds its end once settled
     noted,        \* terminals that have sent their notification
     pendingCompletions,  \* completions in delivery.pending
     pendingNotifications, \* notifications in delivery.pending
@@ -84,6 +84,7 @@ TypeOK ==
     /\ pendingCompletions \subseteq Terminals
     /\ pendingNotifications \subseteq Terminals
     /\ waiter \in {"none", "waiting", "woken"}
+    /\ phase = "tools" => waiter = "none"
     /\ phase \in Phases
     /\ call \in [tool : Tools, t : Terminals] \cup {NoCall}
     /\ madeCalls \in BOOLEAN
@@ -157,7 +158,7 @@ Hold(pe, pn) ==
 -----------------------------------------------------------------------------
 
 \* code: agent/extensions/background-terminals/session.ts join "client.delivery.terminalSettled(snapshot.id);"
-\* code: agent/extensions/background-terminals/session.ts join "killWaits.set(snapshot.id, { kind: \"settled\", snapshot });"
+\* code: agent/extensions/background-terminals/session.ts join "wait.snapshot = snapshot;"
 \* code: agent/extensions/background-terminals/session.ts join "client.delivery.enqueue(snapshot);"
 \* code: agent/extensions/background-terminals/delivery.ts queue "this.pending.set(item.id, item);"
 \* code: agent/extensions/background-terminals/delivery.ts queue "if (this.settleWaiter) {"
@@ -260,7 +261,7 @@ ToolStatus ==
 
 \* The call registers its kill wait before termination starts, so a settle during the
 \* wait is held for the tool result.
-\* code: agent/extensions/background-terminals/session.ts join "if (!killWaits.has(id)) killWaits.set(id, { kind: \"waiting\" });"
+\* code: agent/extensions/background-terminals/session.ts join "else pendingKillResults.set(id, { calls: 1, snapshot: undefined });"
 \* code: agent/extensions/background-terminals/manager.ts terminate "yield* this.signalTree(id, false);"
 ToolKillSignal ==
     /\ phase = "tools"
@@ -273,7 +274,7 @@ ToolKillSignal ==
 
 \* The result carries the end of a terminal that settled during the wait, so it counts as
 \* a message for NoDoubleWake.
-\* code: agent/extensions/background-terminals/session.ts join "for (const id of ids) killWaits.delete(id);"
+\* code: agent/extensions/background-terminals/session.ts join "for (const id of ids) pendingKillResults.delete(id);"
 \* code: agent/extensions/background-terminals/index.ts bg_kill "terminalSession.consume(ids);"
 ToolKillDone ==
     /\ phase = "tools"
@@ -288,10 +289,9 @@ ToolKillDone ==
                    known, sentNotifications, idleWaits, compacting, aborted>>
 
 \* The call ends without a result, so it hands an end that settled during the wait to
-\* delivery. The completion steers, because the run is active. No settle wait runs during a
-\* tool call, so the completion waiter is unset.
+\* delivery.
 \* code: agent/extensions/background-terminals/index.ts bg_kill "terminalSession.abandonKill(ids);"
-\* code: agent/extensions/background-terminals/session.ts join "if (wait?.kind === \"settled\") client.delivery.enqueue(wait.snapshot);"
+\* code: agent/extensions/background-terminals/session.ts join "if (wait.snapshot) client.delivery.enqueue(wait.snapshot);"
 \* code: agent/extensions/background-terminals/index.ts bg_kill "\"Kill wait aborted; termination continues in the background, and its end will wake you.\","
 ToolKillAborted ==
     /\ phase = "tools"
@@ -500,8 +500,6 @@ CompletionWakesAgent ==
 KillReachesAgent ==
     \A t \in Terminals : howSettled[t] = "consumed" ~> t \in known.completions
 
-\* The model reads t's end on its next request: it read it already, the next request adds it,
-\* or Pi holds it in a queue for a later run.
 ReachesPi(t) ==
     \/ t \in known.completions
     \/ t \in ctx.completions

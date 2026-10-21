@@ -75,7 +75,7 @@ The update is done when the check exits 0, or when it fails only on a finding yo
 - **Pi.** `pi.sendMessage` steers while a run is active, defers while `agent_settled` handlers run, and starts a run while idle. Steering drains one message per poll. `ctx.signal` is undefined during `agent_before_settle`, so an abort does not end the settle wait.
 - **The user.** A TUI user may prompt, compact, or abort at any time, or never act again. Unattended runs have no user.
 - **Aborts.** After an abort, a completion that was steered into the aborted run waits in Pi's queue or the transcript for the user's next prompt. That is Pi's design for queued messages, so `Aborts.cfg` checks only `NoDoubleWake`, and `AbortedKillIsSilent.cfg` checks that each end reaches Pi rather than the model (`EndReachesPi`).
-- **Left out.** The 32-item queue eviction and `bg_list`'s `deliveryProblem`, the 256 KiB batch limit, the `agent_before_settle` error outcome, several clients that share one session, session switches, and rendering.
+- **Left out.** The 32-item queue eviction and `bg_list`'s `deliveryProblem`, the 256 KiB batch limit, the `agent_before_settle` error outcome, several clients that share one session, several `bg_kill` calls that wait on one terminal at once, session switches, and rendering.
 - **Bounds.** Two terminals, except one in `UnattendedCompletion.cfg`, where two terminals reproduce [Completion deferred behind a run](#completion-deferred-behind-a-run). With three terminals, every model that must hold still held, in 13 minutes. Raise `Terminals` in a config to rerun that bound.
 
 ## Known findings

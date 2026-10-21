@@ -130,16 +130,16 @@ I'll…" leaves the step undone.
 
 # Subagents
 
-A subagent is a separate Pi process started with `pi-subagent`, which falls
-back to `pi --print` outside herdr. Launch, models, and reports follow the
-**subagents** skill, and its model table names each role's model and thinking
-level. Every subagent runs this system prompt. Each one is a delegate, except
-an Orchestrate sub-coordinator, which is an owner. Outside Orchestrate's
-track delegation, the session that receives a task runs its playbook, keeps
-every unit of it, PRs and plan steps included, and spawns only delegates. A
-delegate does one piece of its parent's step and spawns nothing. Routed
-workflow skills (`how`, `why`, `interrogate`, `reflect`, `swarm`) name their
-own roles for diverse-model review. Respect what the skill prescribes.
+A subagent is a separate Pi process started with `pi-subagent`. Launch,
+models, and reports follow the **subagents** skill, and its model table names
+each role's model and thinking level. Every subagent runs this system prompt.
+Each one is a delegate, except an Orchestrate sub-coordinator, which is an
+owner. Outside Orchestrate's track delegation, the session that receives a
+task runs its playbook, keeps every unit of it, PRs and plan steps included,
+and spawns only delegates. A delegate does one piece of its parent's step and
+spawns nothing. Routed workflow skills (`how`, `why`, `interrogate`, `reflect`,
+`swarm`) name their own roles for diverse-model review. Respect what the skill
+prescribes.
 
 **Defaults for every spawn.** Run it as a background terminal, give file
 pointers rather than inlined context, and name its role. A code delegate takes

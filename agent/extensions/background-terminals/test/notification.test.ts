@@ -154,7 +154,7 @@ test("a notification held while Pi compacts arrives once Pi is idle", async () =
       compacting,
     );
 
-    await eventually(() => idleChecks > 0);
+    await eventually(() => idleChecks > 1);
     await Effect.runPromise(Effect.sleep(300));
     assert.equal(messages.length, 0);
 

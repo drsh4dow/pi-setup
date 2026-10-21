@@ -61,7 +61,7 @@ LauncherInterruptible == {"makeRun", "openPane", "paneRun", "report"} \cup Await
 
 ChildPcs == {"unstarted", "writeStarted", "readLaunch", "removeLaunch", "spawnPi",
              "openStderr", "awaitExitCode", "writeExit", "releasePi", "awaitPi",
-             "exiting", "gone"}
+             "endGroup", "endGroupTerm", "endGroupGrace", "endGroupKill", "exiting", "gone"}
 
 LauncherWatchPcs == {"off", "watching", "abandonRemove", "abandonTerm", "abandonKill"}
 
@@ -110,6 +110,9 @@ GroupAlive == ChildAlive \/ WrapperAlive \/ \E p \in Pis : Alive(p)
 
 RunProcessesGone == ~ChildAlive /\ ~WrapperAlive /\ \A p \in Pis : ~Alive(p)
 
+\* The processes of the group other than the pane child.
+OthersInGroup == WrapperAlive \/ \E p \in Pis : Alive(p)
+
 \* Once its handlers are registered, Pi handles SIGTERM and SIGHUP alike with a graceful
 \* shutdown. Before that, either signal ends it.
 Term(p) ==
@@ -133,13 +136,11 @@ ChildDies ==
     /\ TermGroup
     /\ pane' = IF pane = "open" THEN "closed" ELSE pane
 
-\* Leaving runPi closes its scope, which interrupts the launcher watch. The interrupted watch looks
-\* at the launcher once more. If it is gone, the watch runs abandonRun as CLauncherGone does, and
-\* the interruption waits for abandonRun, which ends with the group's SIGKILL.
-\* code: agent/extensions/subagents/bin/pane-child.ts watchLauncher "Effect.onInterrupt(() => (isAlive(launcherPid) ? Effect.void : abandonRun(runDirectory))),"
+\* Leaving runPi closes its scope, which interrupts the launcher watch. The interruption waits for
+\* an abandonRun in progress, which ends with the group's SIGKILL.
+\* code: agent/extensions/subagents/bin/pane-child.ts runPi "}, Effect.scoped);"
 LeaveRunPi ==
-    /\ \/ launcherWatch = "off"
-       \/ launcherWatch = "watching" /\ launcher /= "gone"
+    /\ launcherWatch \in {"off", "watching"}
     /\ launcherWatch' = "off"
 
 \* Closing the pane hangs up its terminal, which sends SIGHUP to the session leader.
@@ -236,13 +237,14 @@ LStopReadStarted ==
     /\ launcher' = IF "started" \in files THEN "stopCheckGroup" ELSE "removeRunDirectory"
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, interrupted, sawPaneDead, child, childInterrupted, phase, trapsSignals, kills>>
 
-\* code: agent/extensions/subagents/process-group.ts stopProcessGroup "if (!isAlive(-group) || (yield* awaitGroupExit(group, exitGrace))) return "exited" as const;"
+\* code: agent/extensions/subagents/process-group.ts stopProcessGroup "return yield* stopGroup(group, exitGrace, Effect.sync(() => isAlive(-group)));"
+\* code: agent/extensions/subagents/process-group.ts stopGroup "if (!(yield* alive) || (yield* awaitGroupExit(alive, exitGrace))) return "exited" as const;"
 LStopCheckGroup ==
     /\ launcher = "stopCheckGroup"
     /\ launcher' = IF GroupAlive THEN "stopTerm" ELSE "removeRunDirectory"
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, interrupted, sawPaneDead, child, childInterrupted, phase, trapsSignals, kills>>
 
-\* code: agent/extensions/subagents/process-group.ts stopProcessGroup "yield* signalGroup(group, "SIGTERM");"
+\* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGTERM");"
 LStopTerm ==
     /\ launcher = "stopTerm"
     /\ TermGroup
@@ -250,13 +252,13 @@ LStopTerm ==
     /\ launcher' = "stopTermGrace"
     /\ UNCHANGED <<sweep, launcherWatch, files, pane, paneRun, deadline, interrupted, sawPaneDead, child, trapsSignals, kills>>
 
-\* code: agent/extensions/subagents/process-group.ts stopProcessGroup "if (yield* awaitGroupExit(group, TERM_GRACE)) return "SIGTERM" as const;"
+\* code: agent/extensions/subagents/process-group.ts stopGroup "if (yield* awaitGroupExit(alive, TERM_GRACE)) return "SIGTERM" as const;"
 LStopTermGrace ==
     /\ launcher = "stopTermGrace"
     /\ launcher' = IF GroupAlive THEN "stopKill" ELSE "removeRunDirectory"
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, interrupted, sawPaneDead, child, childInterrupted, phase, trapsSignals, kills>>
 
-\* code: agent/extensions/subagents/process-group.ts stopProcessGroup "yield* signalGroup(group, "SIGKILL");"
+\* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGKILL");"
 LStopKill ==
     /\ launcher = "stopKill"
     /\ KillGroup
@@ -319,7 +321,7 @@ CStart ==
 CWriteStarted ==
     /\ child = "writeStarted"
     /\ files' = WriteFile("started")
-    /\ child' = IF DirExists THEN "readLaunch" ELSE "exiting"
+    /\ child' = IF DirExists THEN "readLaunch" ELSE "endGroup"
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
 
 \* A failure in runPi is caught, and the pane child records exit code 1.
@@ -364,7 +366,7 @@ CPiExited ==
 CWriteExit ==
     /\ child = "writeExit"
     /\ files' = WriteFile("exit")
-    /\ child' = "exiting"
+    /\ child' = "endGroup"
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
 
 \* The spawner's scope release signals pi alone, because pi does not lead a process group.
@@ -382,7 +384,7 @@ CAwaitPi ==
     /\ child = "awaitPi"
     /\ ~HandleAlive
     /\ LeaveRunPi
-    /\ child' = IF childInterrupted THEN "exiting" ELSE "writeExit"
+    /\ child' = IF childInterrupted THEN "endGroup" ELSE "writeExit"
     /\ UNCHANGED <<wrapper, sweep, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
 
 \* code: agent/extensions/subagents/bin/pane-child.ts runPi "forceKillAfter: TERM_GRACE,"
@@ -423,10 +425,44 @@ CAbandonTerm ==
     /\ UNCHANGED <<sweep, child, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, trapsSignals, kills>>
 
 \* The group holds the pane child, so it outlives TERM_GRACE and the group gets SIGKILL.
-\* code: agent/extensions/subagents/process-group.ts stopProcessGroup "yield* signalGroup(group, "SIGKILL");"
+\* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGKILL");"
 CAbandonKill ==
     /\ ChildAlive
     /\ launcherWatch = "abandonKill"
+    /\ KillGroup
+    /\ child' = "gone"
+    /\ pane' = IF pane = "open" THEN "closed" ELSE pane
+    /\ UNCHANGED <<sweep, launcherWatch, files, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, trapsSignals, kills>>
+
+\* runPaneChild's finalizer stops the rest of the group on every way out, and an interrupt cannot
+\* stop a finalizer. One ps listing decides whether another process is in the group.
+\* code: agent/extensions/subagents/bin/pane-child.ts runPaneChild "}, Effect.ensuring(endGroup));"
+\* code: agent/extensions/subagents/bin/pane-child.ts endGroup "const endGroup = stopRestOfGroup().pipe("
+\* code: agent/extensions/subagents/process-group.ts stopGroup "if (!(yield* alive) || (yield* awaitGroupExit(alive, exitGrace))) return "exited" as const;"
+CEndGroup ==
+    /\ child = "endGroup"
+    /\ child' = IF OthersInGroup THEN "endGroupTerm" ELSE "exiting"
+    /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
+
+\* The group's SIGTERM reaches the pane child too, and the finalizer holds off its interrupt.
+\* code: agent/extensions/subagents/process-group.ts stopRestOfGroup "return yield* stopGroup(process.pid, "0 millis", othersInGroup(process.pid));"
+CEndGroupTerm ==
+    /\ child = "endGroupTerm"
+    /\ TermGroup
+    /\ childInterrupted' = TRUE
+    /\ child' = "endGroupGrace"
+    /\ UNCHANGED <<sweep, launcherWatch, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, trapsSignals, kills>>
+
+\* code: agent/extensions/subagents/process-group.ts stopGroup "if (yield* awaitGroupExit(alive, TERM_GRACE)) return "SIGTERM" as const;"
+CEndGroupGrace ==
+    /\ child = "endGroupGrace"
+    /\ child' = IF OthersInGroup THEN "endGroupKill" ELSE "exiting"
+    /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
+
+\* The group's SIGKILL ends the pane child with the rest.
+\* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGKILL");"
+CEndGroupKill ==
+    /\ child = "endGroupKill"
     /\ KillGroup
     /\ child' = "gone"
     /\ pane' = IF pane = "open" THEN "closed" ELSE pane
@@ -445,13 +481,14 @@ CInterrupt ==
     /\ child \in ChildInterruptible
     /\ IF child \notin ChildPreSpawn /\ HandleAlive
          THEN child' = "releasePi" /\ UNCHANGED launcherWatch
-         ELSE child' = "exiting" /\ LeaveRunPi
+         ELSE child' = "endGroup" /\ LeaveRunPi
     /\ UNCHANGED <<wrapper, sweep, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
 
 ChildStep ==
     \/ CStart \/ CWriteStarted \/ CReadLaunch \/ CRemoveLaunch \/ CSpawnPi
     \/ COpenStderr \/ CPiExited \/ CLauncherGone \/ CWriteExit \/ CReleasePi
-    \/ CForceKillPi \/ CAwaitPi \/ CAbandonRemove \/ CAbandonTerm \/ CAbandonKill \/ CExit
+    \/ CForceKillPi \/ CAwaitPi \/ CAbandonRemove \/ CAbandonTerm \/ CAbandonKill
+    \/ CEndGroup \/ CEndGroupTerm \/ CEndGroupGrace \/ CEndGroupKill \/ CExit
 
 -----------------------------------------------------------------------------
 (* Pi and the descendant. Their own progress is never assumed: either may  *)

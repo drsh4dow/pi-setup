@@ -5,7 +5,11 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from "no
 import path from "node:path";
 import { after, suite, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { Duration } from "effect";
+import { TERM_GRACE } from "../process-group.ts";
 import { ASSIGNMENT, fakeHerdr, isAlive, removeFakeRoots, until } from "./fake-herdr.ts";
+
+const STOPPED_WITHIN_MS = Duration.toMillis(TERM_GRACE) + 3500;
 
 suite("pi-subagent launcher", () => {
   after(removeFakeRoots);
@@ -125,12 +129,15 @@ suite("pi-subagent launcher", () => {
     run.child.kill("SIGKILL");
     await run.result();
 
-    assert.ok(await until(() => !isAlive(pi), 5000), "pi is stopped");
+    assert.ok(await until(() => !isAlive(pi), STOPPED_WITHIN_MS), "pi is stopped");
     assert.ok(
-      await until(async () => (await readdir(herdr.runtime)).length === 0, 5000),
+      await until(async () => (await readdir(herdr.runtime)).length === 0, STOPPED_WITHIN_MS),
       "the run directory is removed",
     );
-    assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
+    assert.ok(
+      await until(() => !isAlive(-pane), STOPPED_WITHIN_MS),
+      "nothing in the pane survives",
+    );
   });
 
   test("a SIGKILL to the launcher during its SIGTERM grace stops a pi whose shutdown hangs", async () => {
@@ -149,12 +156,15 @@ suite("pi-subagent launcher", () => {
     run.child.kill("SIGKILL");
     await run.result();
 
-    assert.ok(await until(() => !isAlive(pi), 5000), "pi is stopped");
+    assert.ok(await until(() => !isAlive(pi), STOPPED_WITHIN_MS), "pi is stopped");
     assert.ok(
-      await until(async () => (await readdir(herdr.runtime)).length === 0, 5000),
+      await until(async () => (await readdir(herdr.runtime)).length === 0, STOPPED_WITHIN_MS),
       "the run directory is removed",
     );
-    assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
+    assert.ok(
+      await until(() => !isAlive(-pane), STOPPED_WITHIN_MS),
+      "nothing in the pane survives",
+    );
   });
 
   test("closing the pane stops a pi whose shutdown hangs, and the launcher exits", async () => {
@@ -188,7 +198,9 @@ suite("pi-subagent launcher", () => {
     const piExited = async () => {
       const [runDirectory] = await readdir(herdr.runtime);
 
-      return runDirectory !== undefined && existsSync(path.join(herdr.runtime, runDirectory, "exit"));
+      return (
+        runDirectory !== undefined && existsSync(path.join(herdr.runtime, runDirectory, "exit"))
+      );
     };
 
     assert.ok(await until(piExited), "the pane child recorded pi's exit");
@@ -201,8 +213,14 @@ suite("pi-subagent launcher", () => {
       if (isAlive(-pane)) process.kill(-pane, "SIGKILL");
     });
 
-    assert.ok(await until(() => !isAlive(descendant), 5000), "the descendant is stopped");
-    assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
+    assert.ok(
+      await until(() => !isAlive(descendant), STOPPED_WITHIN_MS),
+      "the descendant is stopped",
+    );
+    assert.ok(
+      await until(() => !isAlive(-pane), STOPPED_WITHIN_MS),
+      "nothing in the pane survives",
+    );
   });
 
   test("a SIGKILL to the launcher after the pane closes stops a forked pi whose shutdown hangs", async (t) => {
@@ -222,7 +240,7 @@ suite("pi-subagent launcher", () => {
     run.child.kill("SIGKILL");
     await run.result();
 
-    assert.ok(await until(() => !isAlive(pi), 5000), "the forked pi is stopped");
+    assert.ok(await until(() => !isAlive(pi), STOPPED_WITHIN_MS), "the forked pi is stopped");
   });
 
   test("a SIGKILL to the launcher's group stops a pi that ignores SIGTERM, and removes the run directory", async () => {
@@ -238,12 +256,15 @@ suite("pi-subagent launcher", () => {
     process.kill(-group, "SIGKILL");
     await run.result();
 
-    assert.ok(await until(() => !isAlive(pi), 5000), "pi is stopped");
+    assert.ok(await until(() => !isAlive(pi), STOPPED_WITHIN_MS), "pi is stopped");
     assert.ok(
-      await until(async () => (await readdir(herdr.runtime)).length === 0, 5000),
+      await until(async () => (await readdir(herdr.runtime)).length === 0, STOPPED_WITHIN_MS),
       "the run directory is removed",
     );
-    assert.ok(await until(() => !isAlive(-pane), 5000), "nothing in the pane survives");
+    assert.ok(
+      await until(() => !isAlive(-pane), STOPPED_WITHIN_MS),
+      "nothing in the pane survives",
+    );
   });
 
   test("a caller that closes stdout gets exit 1, and the launcher still cleans up", async () => {

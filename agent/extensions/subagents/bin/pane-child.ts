@@ -8,7 +8,7 @@ import {
   runFlag,
   stderrRecorder,
 } from "../launch.ts";
-import { isAlive, stopProcessGroup, TERM_GRACE } from "../process-group.ts";
+import { isAlive, stopProcessGroup, stopRestOfGroup, TERM_GRACE } from "../process-group.ts";
 
 const FORWARDED_STDERR_LIMIT_BYTES = 64 * 1024;
 
@@ -54,13 +54,11 @@ const abandonRun = Effect.fn("abandonRun")(function* (runDirectory: string) {
 
 /**
  * A signal interrupts runPi, and its release of pi waits for pi's graceful shutdown. Forked before pi
- * spawns, the watch is interrupted only after that release. It then looks at the launcher once more,
- * because a descendant left in the group gets only the kernel's SIGHUP once this process exits.
+ * spawns, the watch is interrupted only after that release.
  */
 const watchLauncher = (launcherPid: number, runDirectory: string) =>
   launcherExit(launcherPid).pipe(
     Effect.andThen(abandonRun(runDirectory)),
-    Effect.onInterrupt(() => (isAlive(launcherPid) ? Effect.void : abandonRun(runDirectory))),
     Effect.catchCause((cause) => Console.error(`pi-subagent: ${Cause.pretty(cause)}`)),
     Effect.forkScoped,
   );
@@ -111,6 +109,15 @@ const runPi = Effect.fn("runPi")(function* (runDirectory: string, paneEnv: Envir
   return exitCode;
 }, Effect.scoped);
 
+/**
+ * A descendant, or a Pi that a wrapper forked, can outlive pi's handle in this group, and nothing
+ * sends it SIGKILL after this process exits if the launcher has died. A finalizer, so the group's
+ * SIGTERM cannot interrupt it.
+ */
+const endGroup = stopRestOfGroup().pipe(
+  Effect.catch((error) => Console.error(`pi-subagent: ${error.message}`)),
+);
+
 export const runPaneChild = Effect.fn("runPaneChild")(function* (
   runDirectory: string,
   paneEnv: Environment,
@@ -126,4 +133,4 @@ export const runPaneChild = Effect.fn("runPaneChild")(function* (
   yield* writeAtomically(files.exit, String(exitCode));
 
   return exitCode;
-});
+}, Effect.ensuring(endGroup));

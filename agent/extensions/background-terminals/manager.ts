@@ -34,7 +34,7 @@ const { spawn } = process.getBuiltinModule("node:child_process");
 
 type ChildProcess = ReturnType<typeof spawn>;
 
-const TERM_GRACE_MS = 2_000;
+export const TERM_GRACE_MS = 2_000;
 
 const PIPE_GRACE_MS = 1_000;
 

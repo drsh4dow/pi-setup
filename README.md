@@ -313,10 +313,9 @@ and leaves no process behind. The differences below are known and accepted.
   `--subagent-run` argument. A wrapper that forks Pi, such as a Volta shim,
   passes the argument on. An extension that starts Pi with the child's own
   arguments starts a Pi that can claim the run before the child does.
-- **A shutdown that hangs after SIGKILL.** When a `session_shutdown` handler
-  never returns, a descendant Pi can outlive a launcher that is killed by
-  SIGKILL during its release. So can the child itself when the `pi` command
-  forks Pi, as a Volta shim does.
+- **A shutdown that hangs after two SIGKILLs.** When a `session_shutdown`
+  handler never returns and both the launcher and its pane child are killed by
+  SIGKILL, nothing is left to stop the child Pi or a Pi it started.
 - **Rebound dialog cancel key.** The child cancels an extension dialog by
   sending Escape. If `tui.select.cancel` is rebound away from Escape, every
   dialog stays open and fails the run after 5 s.

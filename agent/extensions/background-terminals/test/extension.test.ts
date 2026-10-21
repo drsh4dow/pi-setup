@@ -400,6 +400,25 @@ test("a bg_kill result reports the end and nothing steers it again", async (t) =
   assert.equal(messages.length, 0);
 });
 
+test("a failed bg_kill leaves the end to a concurrent bg_kill result", async (t) => {
+  const messages: DeliveryMessage[] = [];
+  const { 0: start, 3: kill } = await registeredTools(t, (message) => messages.push(message));
+
+  const started = await start.execute("1", { command: "sleep 30", title: "shared" });
+  const id = started.details.id;
+
+  const [failed, killed] = await Promise.allSettled([
+    kill.execute("2", { ids: ["bt-unknown", id] }),
+    kill.execute("3", { ids: [id] }),
+  ]);
+
+  assert.equal(failed.status, "rejected");
+  assert.ok(killed.status === "fulfilled");
+  assert.match(killed.value.content[0].text, /\[killed\] shared · killed/);
+  await sleep(100);
+  assert.equal(messages.length, 0);
+});
+
 test("aborted bg_kill wait does not cancel termination and delivers the end once", async (t) => {
   const controller = new AbortController();
   const messages: DeliveryMessage[] = [];

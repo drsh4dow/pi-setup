@@ -102,11 +102,11 @@ export class BackgroundTerminalManager {
   private counter = 0;
   private notificationSequence = 0;
   private lifecycle: ManagerLifecycle = { kind: "running" };
-  private readonly onSettled?: (snapshot: SettledTerminalSnapshot, consumed: boolean) => void;
+  private readonly onSettled?: (snapshot: SettledTerminalSnapshot) => void;
   private readonly allocateId: () => string;
   private readonly onNotification?: (notification: RunningTerminalNotification) => void;
   constructor(
-    onSettled?: (snapshot: SettledTerminalSnapshot, consumed: boolean) => void,
+    onSettled?: (snapshot: SettledTerminalSnapshot) => void,
     allocateId?: () => string,
     onNotification?: (notification: RunningTerminalNotification) => void,
   ) {
@@ -357,8 +357,7 @@ export class BackgroundTerminalManager {
     this.entries.set(id, { kind: "settled", snapshot });
 
     try {
-      if (this.lifecycle.kind === "running")
-        this.onSettled?.(snapshot, entry.kind === "terminating" && entry.intent === "kill");
+      if (this.lifecycle.kind === "running") this.onSettled?.(snapshot);
     } catch {
       // Notification failures do not own process lifecycle state.
     }

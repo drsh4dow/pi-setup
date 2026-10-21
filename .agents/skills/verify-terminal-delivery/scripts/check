@@ -194,7 +194,7 @@ failed=0
 fetch_tlc
 
 for cfg in Session.cfg SessionNotifications.cfg Aborts.cfg UnattendedRun.cfg UnattendedCompletion.cfg \
-  CompactionHoldsNotification.cfg AbortedKillIsSilent.cfg UnattendedRunHoldsNotification.cfg \
+  UnattendedRunHoldsNotification.cfg AbortedKillIsSilent.cfg CompactionHoldsNotification.cfg \
   CompletionDeferredBehindRun.cfg; do
   run_model "$cfg" || failed=1
 done

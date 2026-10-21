@@ -10,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Duration, Predicate, Schema } from "effect";
 import { TERM_GRACE } from "../process-group.ts";
 import { e2eUnavailable } from "../../test/tmux.ts";
+import { runningSleeps } from "./fake-herdr.ts";
 
 const launcher = path.resolve(import.meta.dirname, "../../../../.build/bin/pi-subagent");
 
@@ -164,18 +165,6 @@ function mentions(pid: string, root: string): boolean {
   } catch {
     return false;
   }
-}
-
-function runningSleeps(seconds: string): number[] {
-  return readdirSync("/proc")
-    .filter((name) => {
-      try {
-        return readFileSync(`/proc/${name}/cmdline`, "latin1") === `sleep\0${seconds}\0`;
-      } catch {
-        return false;
-      }
-    })
-    .map(Number);
 }
 
 /** Pi renames its process, so a run's processes are found by the scratch root in their environment. */

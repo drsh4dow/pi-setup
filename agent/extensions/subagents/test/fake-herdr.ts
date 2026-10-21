@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -22,7 +22,7 @@ case "$1 $2" in
     echo '{"result":{}}' ;;
   "tab create") echo '{"result":{"tab":{"tab_id":"w1:t9"},"root_pane":{"pane_id":"w1:p9"}}}' ;;
   "pane run")
-    setsid bash -c "$4; exec sleep 600" </dev/null >/dev/null 2>>"$FAKE_ROOT/pane.stderr" &
+    setsid bash -c "\${FAKE_PANE_PATH:+export PATH=$FAKE_PANE_PATH; }$4; exec sleep 600" </dev/null >/dev/null 2>>"$FAKE_ROOT/pane.stderr" &
     pane=$!
     until [ "$(ps -o sid= -p "$pane" | tr -d ' ')" = "$pane" ] || ! kill -0 "$pane" 2>/dev/null; do
       sleep 0.01
@@ -84,6 +84,8 @@ case "$FAKE_PI" in
 esac
 `;
 
+const REAL_PS = spawnSync("sh", ["-c", "command -v ps"], { encoding: "utf8" }).stdout.trim();
+
 type FakePi =
   | "report"
   | "hang"
@@ -121,6 +123,12 @@ export function isAlive(pid: number): boolean {
   }
 }
 
+export const runningSleeps = (seconds: string) =>
+  spawnSync("pgrep", ["-fx", `sleep ${seconds}`], { encoding: "utf8" })
+    .stdout.split("\n")
+    .filter((line) => line !== "")
+    .map(Number);
+
 export async function until(condition: () => boolean | Promise<boolean>, deadlineMs = 10_000) {
   const deadline = Date.now() + deadlineMs;
 
@@ -157,6 +165,7 @@ export async function fakeHerdr(behavior: FakePi) {
     FAKE_ROOT: root,
     FAKE_PI: behavior,
     FAKE_CLOSE_FAIL: "",
+    FAKE_PANE_PATH: "",
   };
 
   delete baseEnv.PI_SUBAGENT_DEPTH;
@@ -173,6 +182,12 @@ export async function fakeHerdr(behavior: FakePi) {
     runtime,
     herdrCalls: async () => (await readFile(path.join(root, "herdr.log"), "utf8")).split("\n"),
     paneStderr: () => readFile(path.join(root, "pane.stderr"), "utf8"),
+    replaceProcessListing: (listing: string) =>
+      writeFile(
+        path.join(bin, "ps"),
+        `#!/usr/bin/env bash\nif [ "$1" = -A ]; then ${listing}; fi\nexec ${REAL_PS} "$@"\n`,
+        { mode: 0o755 },
+      ),
     piPid: async () => Number(await readFile(path.join(root, "pi.pid"), "utf8")),
     descendantPid: async () => Number(await readFile(path.join(root, "descendant.pid"), "utf8")),
     async panePid() {

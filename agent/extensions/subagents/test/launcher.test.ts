@@ -7,34 +7,40 @@ import { after, suite, type TestContext, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Duration } from "effect";
 import { TERM_GRACE } from "../process-group.ts";
-import { ASSIGNMENT, fakeHerdr, isAlive, removeFakeRoots, until } from "./fake-herdr.ts";
+import {
+  ASSIGNMENT,
+  fakeHerdr,
+  isAlive,
+  removeFakeRoots,
+  runningSleeps,
+  until,
+} from "./fake-herdr.ts";
 
 const STOPPED_WITHIN_MS = Duration.toMillis(TERM_GRACE) + 3500;
 
-const REAL_PS = spawnSync("sh", ["-c", "command -v ps"], { encoding: "utf8" }).stdout.trim();
-
 type FakeHerdr = Awaited<ReturnType<typeof fakeHerdr>>;
 
-const fakeProcessListing = (herdr: FakeHerdr, listing: string) =>
-  writeFile(
-    path.join(herdr.root, "bin", "ps"),
-    `#!/usr/bin/env bash\nif [ "$1" = -A ]; then ${listing}; fi\nexec ${REAL_PS} "$@"\n`,
-    { mode: 0o755 },
+async function assertListingReportedOnce(herdr: FakeHerdr, failure: RegExp) {
+  const reports = (await herdr.paneStderr())
+    .split("\n")
+    .filter((line) => line.includes("ps -A -o pid=,pgid="));
+
+  assert.equal(
+    reports.length,
+    1,
+    `the pane child reports the listing once:\n${reports.join("\n")}`,
   );
+  assert.match(reports[0] ?? "", failure);
+}
 
-const listingReports = async (herdr: FakeHerdr) =>
-  (await herdr.paneStderr()).split("\n").filter((line) => line.includes("ps -A -o pid=,pgid="));
-
-const runningSleeps = (seconds: string) =>
-  spawnSync("pgrep", ["-fx", `sleep ${seconds}`], { encoding: "utf8" })
-    .stdout.split("\n")
-    .filter((line) => line !== "")
-    .map(Number);
-
-async function killLauncherAfterPiExits(t: TestContext, herdr: FakeHerdr) {
+async function killLauncherAfterPiExits(
+  t: TestContext,
+  herdr: FakeHerdr,
+  launch: Parameters<FakeHerdr["launch"]>[0] = {},
+) {
   await herdr.writeOutcome({ kind: "completed", report: "REPORT\n" });
 
-  const run = herdr.launch();
+  const run = herdr.launch(launch);
 
   const piExited = async () => {
     const [runDirectory] = await readdir(herdr.runtime);
@@ -55,8 +61,12 @@ async function killLauncherAfterPiExits(t: TestContext, herdr: FakeHerdr) {
   return pane;
 }
 
-async function killLauncherAfterPiExitsWithDescendant(t: TestContext, herdr: FakeHerdr) {
-  const pane = await killLauncherAfterPiExits(t, herdr);
+async function killLauncherAfterPiExitsWithDescendant(
+  t: TestContext,
+  herdr: FakeHerdr,
+  launch: Parameters<FakeHerdr["launch"]>[0] = {},
+) {
+  const pane = await killLauncherAfterPiExits(t, herdr, launch);
   const descendant = await herdr.descendantPid();
 
   assert.ok(
@@ -252,17 +262,26 @@ suite("pi-subagent launcher", () => {
   test("a process listing that fails still stops a descendant whose shutdown hangs", async (t) => {
     const herdr = await fakeHerdr("leavesDescendant");
 
-    await fakeProcessListing(herdr, 'echo "$PPID $PPID"; exit 1');
+    await herdr.replaceProcessListing('echo "$PPID $PPID"; exit 1');
     await killLauncherAfterPiExitsWithDescendant(t, herdr);
+    await assertListingReportedOnce(herdr, /exited with status 1/);
+  });
 
-    const reports = await listingReports(herdr);
+  test("a process listing that leaves out the pane child still stops a descendant whose shutdown hangs", async (t) => {
+    const herdr = await fakeHerdr("leavesDescendant");
 
-    assert.equal(
-      reports.length,
-      1,
-      `the pane child reports the failed listing once:\n${reports.join("\n")}`,
-    );
-    assert.match(reports[0] ?? "", /exited with status 1/);
+    await herdr.replaceProcessListing("exit 0");
+    await killLauncherAfterPiExitsWithDescendant(t, herdr);
+    await assertListingReportedOnce(herdr, /did not list this process/);
+  });
+
+  test("a process listing that cannot start still stops a descendant whose shutdown hangs", async (t) => {
+    const herdr = await fakeHerdr("leavesDescendant");
+
+    await killLauncherAfterPiExitsWithDescendant(t, herdr, {
+      env: { FAKE_PANE_PATH: path.join(herdr.root, "bin") },
+    });
+    await assertListingReportedOnce(herdr, /could not start: NotFound/);
   });
 
   test("a process listing that hangs does not keep the pane alive after pi exits", async (t) => {
@@ -272,7 +291,7 @@ suite("pi-subagent launcher", () => {
     t.after(() => {
       for (const pid of runningSleeps(hungListing)) process.kill(pid, "SIGKILL");
     });
-    await fakeProcessListing(herdr, `trap '' TERM HUP; exec sleep ${hungListing}`);
+    await herdr.replaceProcessListing(`trap '' TERM HUP; exec sleep ${hungListing}`);
 
     const pane = await killLauncherAfterPiExits(t, herdr);
 
@@ -282,14 +301,7 @@ suite("pi-subagent launcher", () => {
     );
     assert.deepEqual(runningSleeps(hungListing), [], "no hung listing is left");
 
-    const reports = await listingReports(herdr);
-
-    assert.equal(
-      reports.length,
-      1,
-      `the pane child reports the hung listing once:\n${reports.join("\n")}`,
-    );
-    assert.match(reports[0] ?? "", /did not finish within/);
+    await assertListingReportedOnce(herdr, /did not finish within/);
   });
 
   test("a SIGKILL to the launcher after the pane closes stops a forked pi whose shutdown hangs", async (t) => {

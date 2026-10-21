@@ -495,10 +495,11 @@ To sync pstack:
    the new commit to `pstack-synced-commit.txt`. A sync at the synced commit
    changes no content and repairs only file modes.
 2. Resolve each file reported as `conflict`.
-3. Read the upstream word diff printed under each file reported as
-   `changed upstream, port by hand`, and port what you want to keep. Upstream
-   `skills/poteto-mode/SKILL.md` goes into `agent/SYSTEM.md`, which is
-   maintained by hand, so its diff is a changelog rather than a merge.
+3. For each line `changed upstream, port by hand into agent/<target>:
+   <upstream path>`, read that file's upstream word diff, which sync prints
+   before the summary lines, and port what you want to keep into the target.
+   Upstream `skills/poteto-mode/SKILL.md` goes into `agent/SYSTEM.md`, which
+   is maintained by hand, so its diff is a changelog rather than a merge.
 4. List each skill reported as `added upstream` under Installed skills.
 5. Run `vp run verify`. It runs `pstack-port.ts check`, which fails on
    Cursor-only terms that a sync brings back. Then run `vp run test:e2e`

@@ -537,11 +537,10 @@ ReachesPi(t) ==
 EndReachesPi ==
     \A t \in Terminals : howSettled[t] \in {"enqueued", "held"} ~> ReachesPi(t)
 
-\* A notification reaches the model, on its own or with the report of its terminal's end,
-\* unless the session ends first.
+\* A notification reaches the model, on its own or with the report of its terminal's end.
+\* An unattended run always ends, so the session's end excuses nothing.
 NotificationReachesAgent ==
-    \A t \in Terminals :
-        t \in noted ~> (t \in known.notifications \/ phase = "ended")
+    \A t \in Terminals : t \in noted ~> t \in known.notifications
 
 \* No end and no notification reaches the model in two messages.
 NoDoubleWake ==

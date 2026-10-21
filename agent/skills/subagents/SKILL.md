@@ -37,7 +37,8 @@ playbooks name the role, such as "the `how explorer` role".
 | Role | Model | Thinking |
 | --- | --- | --- |
 | `how explorer`, `why investigators`, `swarm scouts` | `anthropic/claude-haiku-5-5` | `medium` |
-| `hardest tasks`, `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | `anthropic/claude-opus-5-5` | `high` |
+| `hardest tasks` | `anthropic/claude-opus-5-5` | `high` |
+| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | `anthropic/claude-opus-5-5` | `medium` |
 | `judgment and prose` | `anthropic/claude-opus-5-5` | `high` |
 | `how explainer`, `why synthesizer` | `anthropic/claude-opus-5-5` | `high` |
 | `reflect judgment, synthesizer` | `anthropic/claude-opus-5-5` | `high` |
@@ -59,7 +60,7 @@ work's author takes the `cross-family reviewer` role. When the author ran on
 
 The system prompt's Subagents section says how to move a role's thinking level
 for the job. `high` is the ceiling for every model. Haiku runs at `medium`.
-Opus stays between `medium` and `high`. When a Haiku report fails a spot
+Opus stays between `low` and `high`. When a Haiku report fails a spot
 check, such as a wrong reference or a missed file, rerun that slice on Opus at
 `medium`. If a model fails to launch, rerun that seat on
 `anthropic/claude-opus-5-5` at `high` and say so in your report.

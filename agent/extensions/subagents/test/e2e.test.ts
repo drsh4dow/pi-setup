@@ -2,17 +2,23 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { after, suite, test } from "node:test";
+import { after, suite, type TestContext, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { Duration } from "effect";
+import { Duration, Predicate, Schema } from "effect";
 import { TERM_GRACE } from "../process-group.ts";
 import { e2eUnavailable } from "../../test/tmux.ts";
 
 const launcher = path.resolve(import.meta.dirname, "../../../../.build/bin/pi-subagent");
 
 const subagentExtension = path.resolve(import.meta.dirname, "../index.ts");
+
+const backgroundTerminalsExtension = path.resolve(
+  import.meta.dirname,
+  "../../background-terminals/index.ts",
+);
 
 const STALLS_THEN_HANGS_ON_SHUTDOWN = `import { writeFileSync } from "node:fs";
 
@@ -64,16 +70,85 @@ const EXTENSIONS = {
   STARTS_A_DESCENDANT,
 };
 
-const REFUSING_MODEL = JSON.stringify({
-  providers: {
-    refusing: {
-      baseUrl: "http://127.0.0.1:9/v1",
-      api: "openai-completions",
-      apiKey: "unused",
-      models: [{ id: "refusing" }],
+const REFUSING_ENDPOINT = "http://127.0.0.1:9/v1";
+
+const modelsAt = (baseUrl: string) =>
+  JSON.stringify({
+    providers: {
+      e2e: { baseUrl, api: "openai-completions", apiKey: "unused", models: [{ id: "e2e" }] },
     },
-  },
-});
+  });
+
+const decodeCompletionRequest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({ messages: Schema.Array(Schema.Struct({ role: Schema.String })) }),
+  ),
+);
+
+type ModelStep =
+  | { readonly tool: string; readonly args: Record<string, string> }
+  | { readonly text: string };
+
+function streamedCompletion(step: ModelStep, toolResults: number): string {
+  const [delta, finishReason] =
+    "text" in step
+      ? [{ role: "assistant", content: step.text }, "stop"]
+      : [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                id: `call_${toolResults}`,
+                type: "function",
+                function: { name: step.tool, arguments: JSON.stringify(step.args) },
+              },
+            ],
+          },
+          "tool_calls",
+        ];
+
+  const chunks = [
+    { choices: [{ index: 0, delta, finish_reason: null }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: finishReason }] },
+    { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+  ];
+
+  return [
+    ...chunks.map(
+      (chunk) =>
+        `data: ${JSON.stringify({ id: "e2e", object: "chat.completion.chunk", created: 0, model: "e2e", ...chunk })}\n\n`,
+    ),
+    "data: [DONE]\n\n",
+  ].join("");
+}
+
+/** An OpenAI-compatible endpoint that answers each request with the step after the last tool result. */
+async function scriptedModel(t: TestContext, steps: readonly [ModelStep, ...ModelStep[]]) {
+  const server = http.createServer((request, response) => {
+    let body = "";
+
+    request.on("data", (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    request.on("end", () => {
+      const { messages } = decodeCompletionRequest(body);
+      const toolResults = messages.filter((message) => message.role === "tool").length;
+
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(streamedCompletion(steps[toolResults] ?? steps[steps.length - 1], toolResults));
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+
+  assert.ok(address !== null && !Predicate.isString(address), "the model server listens on a port");
+
+  return `http://127.0.0.1:${address.port}/v1`;
+}
 
 function unavailable(): string | undefined {
   if (process.env.HERDR_ENV !== "1") return "the launcher opens its pane in a live herdr session";
@@ -89,6 +164,18 @@ function mentions(pid: string, root: string): boolean {
   } catch {
     return false;
   }
+}
+
+function runningSleeps(seconds: string): number[] {
+  return readdirSync("/proc")
+    .filter((name) => {
+      try {
+        return readFileSync(`/proc/${name}/cmdline`, "latin1") === `sleep\0${seconds}\0`;
+      } catch {
+        return false;
+      }
+    })
+    .map(Number);
 }
 
 /** Pi renames its process, so a run's processes are found by the scratch root in their environment. */
@@ -120,7 +207,13 @@ suite("pi-subagent (real pi in a herdr pane)", { skip: unavailable() }, () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  async function launch(piExtensions: readonly (keyof typeof EXTENSIONS)[]) {
+  async function launch(
+    piExtensions: readonly (keyof typeof EXTENSIONS)[],
+    {
+      endpoint = REFUSING_ENDPOINT,
+      extensionPaths = [],
+    }: { readonly endpoint?: string; readonly extensionPaths?: readonly string[] } = {},
+  ) {
     const root = await mkdtemp(path.join(os.tmpdir(), "pi-subagent-e2e-"));
     const runtime = path.join(root, "runtime");
     const agentDir = path.join(root, "agent");
@@ -129,7 +222,7 @@ suite("pi-subagent (real pi in a herdr pane)", { skip: unavailable() }, () => {
     await Promise.all([mkdir(runtime, { mode: 0o700 }), mkdir(agentDir, { mode: 0o700 })]);
 
     await Promise.all([
-      writeFile(path.join(agentDir, "models.json"), REFUSING_MODEL),
+      writeFile(path.join(agentDir, "models.json"), modelsAt(endpoint)),
       ...Object.entries(EXTENSIONS).map(([name, source]) =>
         writeFile(path.join(root, `${name}.ts`), source),
       ),
@@ -155,12 +248,13 @@ suite("pi-subagent (real pi in a herdr pane)", { skip: unavailable() }, () => {
         "--name",
         "subagent:e2e",
         "--model",
-        "refusing/refusing",
+        "e2e/e2e",
         "--session-dir",
         path.join(root, "sessions"),
         "--extension",
         subagentExtension,
         ...piExtensions.flatMap((name) => ["--extension", path.join(root, `${name}.ts`)]),
+        ...extensionPaths.flatMap((extension) => ["--extension", extension]),
       ],
       { cwd: root, env, stdio: ["pipe", "pipe", "pipe"] },
     );
@@ -215,5 +309,59 @@ suite("pi-subagent (real pi in a herdr pane)", { skip: unavailable() }, () => {
       await until(() => processesUnder(root).length === 0, 10_000),
       "the run leaves no process behind",
     );
+  });
+
+  test("a bg_start job that ignores SIGTERM and SIGHUP does not outlive a SIGHUP to the pane child", async (t) => {
+    const tag = `${process.pid}${Date.now() % 10_000}`;
+    const jobSleep = `700.${tag}`;
+    const toolSleep = `600.${tag}`;
+
+    const endpoint = await scriptedModel(t, [
+      {
+        tool: "bg_start",
+        args: { title: "ignores SIGTERM", command: `trap '' TERM HUP; exec sleep ${jobSleep}` },
+      },
+      { tool: "bash", args: { command: `sleep ${toolSleep}` } },
+      { text: "done" },
+    ]);
+
+    const { root, exited, output } = await launch([], {
+      endpoint,
+      extensionPaths: [backgroundTerminalsExtension],
+    });
+
+    t.after(() => {
+      for (const pid of [...runningSleeps(jobSleep), ...runningSleeps(toolSleep)]) {
+        process.kill(pid, "SIGKILL");
+      }
+    });
+
+    assert.ok(
+      await until(
+        () => runningSleeps(jobSleep).length > 0 && runningSleeps(toolSleep).length > 0,
+        90_000,
+      ),
+      `the bg_start job and the bash call both run:\n${output()}`,
+    );
+
+    const [runDirectory] = readdirSync(path.join(root, "runtime"));
+
+    assert.ok(runDirectory !== undefined, "the run directory exists");
+
+    const paneChild = Number(
+      readFileSync(path.join(root, "runtime", runDirectory, "started"), "utf8"),
+    );
+
+    process.kill(paneChild, "SIGHUP");
+
+    // On shutdown pi sends its jobs SIGTERM and then SIGKILL 2 s later. TERM_GRACE gives pi that
+    // long before the pane child kills pi, and the rest is margin for pi's start of shutdown.
+    const stoppedWithinMs = Duration.toMillis(TERM_GRACE) + 2000;
+
+    assert.ok(
+      await until(() => runningSleeps(jobSleep).length === 0, stoppedWithinMs),
+      `the bg_start job is stopped within ${stoppedWithinMs} ms of the SIGHUP:\n${output()}`,
+    );
+    await exited;
   });
 });

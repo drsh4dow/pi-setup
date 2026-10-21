@@ -284,6 +284,7 @@ export class BackgroundTerminalDelivery {
       return;
     }
 
+    // A notification waits for the run to settle, so a terminal that ends first carries it in its completion instead of steering a message of its own.
     if (item.kind === "completion" || this.context.isIdle())
       // The forked flush has no caller to receive its failure, so it reports here.
       Effect.runFork(

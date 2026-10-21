@@ -64,6 +64,22 @@ function tempDir(t: TestContext) {
   return dir;
 }
 
+function exampleSkill(
+  t: TestContext,
+  { code, spec, expect }: { code: string; spec: string; expect: "holds" | "violated" },
+) {
+  const root = tempDir(t);
+
+  const skill = join(root, ".agents/skills/verify-example");
+  mkdirSync(skill, { recursive: true });
+  mkdirSync(join(root, "src"));
+  writeFileSync(join(root, "src/example.ts"), code);
+  writeFileSync(join(skill, "Example.cfg"), `\\* expect: ${expect}\n`);
+  writeFileSync(join(skill, "Example.tla"), spec);
+
+  return skill;
+}
+
 function runCheck(
   t: TestContext,
   citations: readonly string[],
@@ -73,17 +89,8 @@ function runCheck(
     code = source,
   }: { flags?: readonly string[]; env?: NodeJS.ProcessEnv; code?: string } = {},
 ) {
-  const root = tempDir(t);
-
-  const skill = join(root, ".agents/skills/verify-example");
-  mkdirSync(skill, { recursive: true });
-  mkdirSync(join(root, "src"));
-  writeFileSync(join(root, "src/example.ts"), code);
-  writeFileSync(join(skill, "Example.cfg"), "\\* expect: holds\n");
-  writeFileSync(
-    join(skill, "Example.tla"),
-    citations.map((citation) => `\\* code: src/example.ts ${citation}\n`).join(""),
-  );
+  const spec = citations.map((citation) => `\\* code: src/example.ts ${citation}\n`).join("");
+  const skill = exampleSkill(t, { code, spec, expect: "holds" });
 
   return spawnSync(runner, [...flags, "--", skill, "Example.tla", "Example.cfg"], {
     encoding: "utf8",
@@ -305,4 +312,144 @@ test("stops the full check at a stale citation before fetching TLC", (t) => {
   );
   assert.match(result.stdout, /^check: FAILED before model checking/m);
   assert.equal(existsSync(join(cache, "pi-setup")), false);
+});
+
+const tracedSpec = String.raw`\* code: src/example.ts deliver "send(message);"
+LMakeRun ==
+    /\ TRUE
+
+\* code: src/example.ts bg_example "return run();"
+ClosePaneExternally ==
+    /\ TRUE
+
+\* code: src/example.ts turn_end "reset();"
+PClaim(p) ==
+    /\ TRUE
+`;
+
+const invariantLog = String.raw`TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-21 15:02:32.
+Error: Invariant OnlyPiTakesTheTask is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ phase = [pi |-> "unborn", descendant |-> "unborn"]
+/\ files = {}
+/\ launcher = "makeRun"
+
+State 2: <LMakeRun line 173, col 5 to line 176, col 154 of module Example>
+/\ files = {"dir", "task", "launch"}
+/\ launcher = "openPane"
+
+State 3: <PClaim line 476, col 5 to line 481, col 157 of module Example>
+/\ phase = [pi |-> "starting", descendant |-> "awaitingDelivery"]
+/\ files = {"dir", "task", "launch"}
+/\ launcher = "openPane"
+
+1639 states generated, 618 distinct states found, 224 states left on queue.
+The depth of the complete state graph search is 11.
+Finished in 00s at (2026-10-21 15:02:32)
+`;
+
+const temporalLog = String.raw`TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Checking 3 branches of temporal properties for the current state space with 59560 total distinct states at (2026-10-21 15:03:28)
+Error: Temporal properties were violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ pane = "none"
+/\ launcher = "makeRun"
+
+State 2: <LMakeRun line 173, col 5 to line 176, col 154 of module Example>
+/\ launcher = "openPane"
+
+State 3: <ClosePaneExternally line 549, col 5 to line 553, col 140 of module Example>
+/\ pane = "closed"
+
+State 4: Stuttering
+Finished checking temporal properties in 00s at 2026-10-21 15:03:28
+88896 states generated, 22773 distinct states found, 8759 states left on queue.
+Finished in 03s at (2026-10-21 15:03:28)
+`;
+
+function writeExecutable(path: string, script: string) {
+  writeFileSync(path, script, { mode: 0o755 });
+}
+
+function runModelAgainstTlcLog(t: TestContext, tlcLog: string, tlcExitCode: number) {
+  const stubs = tempDir(t);
+  const temp = tempDir(t);
+  const savedLog = join(stubs, "tlc.log");
+  writeFileSync(savedLog, tlcLog);
+  writeExecutable(join(stubs, "java"), `#!/bin/sh\ncat '${savedLog}'\nexit ${tlcExitCode}\n`);
+  writeExecutable(
+    join(stubs, "curl"),
+    '#!/bin/sh\nwhile [ $# -gt 0 ]; do\n  [ "$1" = -o ] && : >"$2"\n  shift\ndone\n',
+  );
+  writeExecutable(join(stubs, "sha256sum"), "#!/bin/sh\nexit 0\n");
+
+  const skill = exampleSkill(t, { code: source, spec: tracedSpec, expect: "violated" });
+
+  const result = spawnSync(runner, ["--", skill, "Example.tla", "Example.cfg"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${stubs}:${process.env.PATH}`,
+      JAVA: join(stubs, "java"),
+      XDG_CACHE_HOME: temp,
+      TMPDIR: temp,
+    },
+  });
+
+  return { result, log: join(temp, "verify-example/Example.log") };
+}
+
+test("prints a violated invariant's trace with each step's cited code", (t) => {
+  const { result, log } = runModelAgainstTlcLog(t, invariantLog, 12);
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(
+    result.stdout,
+    [
+      `Example.cfg: violated, expected violated. Full TLC output: ${log}`,
+      "  Invariant OnlyPiTakesTheTask is violated.",
+      "  1. initial state",
+      '       phase = [pi |-> "unborn", descendant |-> "unborn"]',
+      "       files = {}",
+      '       launcher = "makeRun"',
+      "  2. LMakeRun  (src/example.ts deliver)",
+      '       files = {"dir", "task", "launch"}',
+      '       launcher = "openPane"',
+      "  3. PClaim  (src/example.ts turn_end)",
+      '       phase = [pi |-> "starting", descendant |-> "awaitingDelivery"]',
+      '       files = {"dir", "task", "launch"}',
+      '       launcher = "openPane"',
+      "check: every citation is current and every model matches its expected result.",
+      "",
+    ].join("\n"),
+  );
+});
+
+test("prints a violated temporal property's trace through its stuttering end", (t) => {
+  const { result, log } = runModelAgainstTlcLog(t, temporalLog, 13);
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(
+    result.stdout,
+    [
+      `Example.cfg: violated, expected violated. Full TLC output: ${log}`,
+      "  Temporal properties were violated.",
+      "  1. initial state",
+      '       pane = "none"',
+      '       launcher = "makeRun"',
+      "  2. LMakeRun  (src/example.ts deliver)",
+      '       launcher = "openPane"',
+      "  3. ClosePaneExternally  (src/example.ts bg_example)",
+      '       pane = "closed"',
+      "  4. nothing else ever happens",
+      "check: every citation is current and every model matches its expected result.",
+      "",
+    ].join("\n"),
+  );
 });

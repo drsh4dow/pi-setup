@@ -35,7 +35,11 @@ import {
   renderStatusResult,
   terminalView,
 } from "./render.ts";
-import { type BackgroundTerminalSession, joinBackgroundTerminalSession } from "./session.ts";
+import {
+  type AbandonedKillOutcome,
+  type BackgroundTerminalSession,
+  joinBackgroundTerminalSession,
+} from "./session.ts";
 
 const platformLayer = Layer.merge(BunFileSystem.layer, BunPath.layer);
 
@@ -101,6 +105,25 @@ function stillRunningNotice(terminals: BackgroundTerminalSession): CustomMessage
     display: true,
     content: `[Background terminals still running]\n\n${runningTerminals(terminals).map(summary).join("\n")}\n\nThis run is non-interactive: it ends at your next message without a tool call, and shutdown kills these terminals. Stop the ones you no longer need with bg_kill. End your turn again to keep waiting for the rest.`,
   };
+}
+
+const abortedKillReasons: Record<AbandonedKillOutcome, string> = {
+  delivered: "termination is not cancelled, and its end will be delivered to you",
+  awaited: "another bg_kill call reports its end in that call's result",
+  ended: "it had already ended, so no new end is coming; bg_status shows its final state",
+  closed: "the session is shutting down, so its end will not be delivered",
+};
+
+function abortedKillMessage(outcomes: ReadonlyMap<string, AbandonedKillOutcome>): string {
+  const [shared, ...others] = new Set(outcomes.values());
+
+  if (shared && others.length === 0)
+    return `Kill wait aborted for ${[...outcomes.keys()].join(", ")}; ${abortedKillReasons[shared]}.`;
+
+  return [
+    "Kill wait aborted.",
+    ...[...outcomes].map(([id, outcome]) => `${id}: ${abortedKillReasons[outcome]}.`),
+  ].join("\n");
 }
 
 export interface BackgroundTerminalOptions {
@@ -379,6 +402,7 @@ export default function backgroundTerminals(
       const ids = [...new Set(params.ids)];
       const terminalSession = currentSession();
       let killError: Error | undefined;
+      let abandoned: ReadonlyMap<string, AbandonedKillOutcome> | undefined;
 
       const work = Effect.runPromise(terminalSession.kill(ids));
 
@@ -421,7 +445,7 @@ export default function backgroundTerminals(
           Effect.onExit((exit) =>
             Effect.sync(() => {
               if (Exit.isSuccess(exit)) terminalSession.consume(ids);
-              else terminalSession.abandonKill(ids);
+              else abandoned = terminalSession.abandonKill(ids);
             }),
           ),
         ),
@@ -431,11 +455,7 @@ export default function backgroundTerminals(
         // must surface even when the signal is also aborted.
         if (killError) throw killError;
 
-        if (signal?.aborted) {
-          throw new Error(
-            "Kill wait aborted; termination continues in the background, and its end will be delivered to you.",
-          );
-        }
+        if (signal?.aborted && abandoned) throw new Error(abortedKillMessage(abandoned));
 
         throw sanitizeErrorForDisplay(error instanceof Error ? error : String(error));
       });

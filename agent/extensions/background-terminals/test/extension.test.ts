@@ -371,23 +371,49 @@ test("sanitizes displayed data and list details omit process output", async (t) 
   );
 });
 
-test("pre-aborted bg_kill still starts termination", async (t) => {
+test("pre-aborted bg_kill still starts termination and delivers its end", async (t) => {
   const controller = new AbortController();
   controller.abort();
-  const [start, status, , kill] = await registeredTools(t);
+  const messages: DeliveryMessage[] = [];
+  const { 0: start, 3: kill } = await registeredTools(t, (message) => messages.push(message));
 
-  const started = await start.execute("1", {
-    command: "sleep 30",
-    title: "pre-abort",
-  });
+  const started = await start.execute("1", { command: "sleep 30", title: "pre-abort" });
+  const id = started.details.id;
 
   await assert.rejects(
-    kill.execute("2", { ids: [started.details.id] }, controller.signal),
-    /termination continues/,
+    kill.execute("2", { ids: [id] }, controller.signal),
+    new RegExp(
+      `^Error: Kill wait aborted for ${id}; termination is not cancelled, and its end will be delivered to you\\.$`,
+    ),
   );
-  await eventually(
-    async () => (await status.execute("3", { id: started.details.id })).details.state === "killed",
+  await eventually(() => messages.length > 0);
+  assert.match(messages[0].content, /\[killed\] pre-abort/);
+});
+
+test("an aborted bg_kill says when another result or an earlier end reports the terminal", async (t) => {
+  const controller = new AbortController();
+  controller.abort();
+  const messages: DeliveryMessage[] = [];
+  const { 0: start, 3: kill } = await registeredTools(t, (message) => messages.push(message));
+
+  const started = await start.execute("1", { command: "sleep 30", title: "shared" });
+  const id = started.details.id;
+  const reportedKill = kill.execute("2", { ids: [id] });
+
+  await assert.rejects(
+    kill.execute("3", { ids: [id] }, controller.signal),
+    new RegExp(`^Error: Kill wait aborted for ${id}; another bg_kill call reports its end`),
   );
+  assert.match((await reportedKill).content[0].text, /\[killed\] shared · killed/);
+
+  await assert.rejects(
+    kill.execute("4", { ids: [id] }, controller.signal),
+    new RegExp(
+      `^Error: Kill wait aborted for ${id}; it had already ended, so no new end is coming`,
+    ),
+  );
+  await sleep(100);
+  assert.equal(messages.length, 0);
 });
 
 test("a bg_kill result reports the end and nothing steers it again", async (t) => {
@@ -465,7 +491,7 @@ test("aborted bg_kill wait does not cancel termination and delivers the end once
   const waiting = kill.execute("2", { ids: [id] }, controller.signal);
   await sleep(25);
   controller.abort();
-  await assert.rejects(waiting, /termination continues/);
+  await assert.rejects(waiting, /; termination is not cancelled, and its end will be delivered/);
   assert.equal(messages.length, 0, "nothing steers before the terminal settles");
   await eventually(() => messages.length > 0);
   await sleep(100);

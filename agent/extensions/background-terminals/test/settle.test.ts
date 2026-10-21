@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { NOTIFICATION_MESSAGE, RESULTS_MESSAGE } from "../delivery.ts";
 import type { BackgroundTerminalOptions } from "../index.ts";
@@ -68,6 +69,43 @@ test("a subagent's interactive session waits at settle, as a print run does", as
   assert.equal(result.entries[0].customType, RESULTS_MESSAGE);
   assert.match(result.entries[0].content, /done/);
 });
+
+const notificationTimeout = { timeout: 5_000 };
+
+const waitOutlastingTest = { settleWaitMs: notificationTimeout.timeout * 12 };
+
+test(
+  "a print run's settle wait ends with a notification queued while the run was active",
+  notificationTimeout,
+  async (t) => {
+    const fixture = await settleFixture(t, "print", waitOutlastingTest);
+    await fixture.start(`printf '"server ready"\\n' >&3; sleep 30`);
+    await delay(500);
+
+    const result = await fixture.settle();
+
+    assert.ok(result, "settle must continue the run");
+    assert.equal(result.entries[0].customType, NOTIFICATION_MESSAGE);
+    assert.match(result.entries[0].content, /server ready/);
+    assert.deepEqual(fixture.steered, []);
+  },
+);
+
+test(
+  "a notification that arrives during a print run's settle wait ends the wait",
+  notificationTimeout,
+  async (t) => {
+    const fixture = await settleFixture(t, "print", waitOutlastingTest);
+    await fixture.start(`sleep 0.5; printf '"server ready"\\n' >&3; sleep 30`);
+
+    const result = await fixture.settle();
+
+    assert.ok(result, "settle must continue the run");
+    assert.equal(result.entries[0].customType, NOTIFICATION_MESSAGE);
+    assert.match(result.entries[0].content, /server ready/);
+    assert.deepEqual(fixture.steered, []);
+  },
+);
 
 test("a print run stops waiting after three idle waits on a terminal that keeps running", async (t) => {
   const fixture = await settleFixture(t, "print", { settleWaitMs: 50 });

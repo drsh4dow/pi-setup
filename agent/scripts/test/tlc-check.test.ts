@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 
-const runner = new URL("../../../.agents/scripts/tlc-check", import.meta.url).pathname;
+const checkout = new URL("../../../", import.meta.url).pathname;
+
+const runner = join(checkout, ".agents/scripts/tlc-check");
 
 const source = `const LIMIT = 3;
 function settle(count: number) {
@@ -264,6 +266,28 @@ test("reports a malformed citation line", (t) => {
       "",
     ].join("\n"),
   );
+});
+
+test("rejects an unknown argument to a wrapper with the wrapper's usage", () => {
+  const wrappers = [
+    ".agents/skills/verify-subagent-run/scripts/check",
+    ".agents/skills/verify-terminal-delivery/scripts/check",
+  ];
+
+  for (const wrapper of wrappers) {
+    for (const argument of ["extra", "--bogus"]) {
+      const result = spawnSync(join(checkout, wrapper), [argument], {
+        encoding: "utf8",
+        env: { ...process.env, JAVA: "/nonexistent/java" },
+      });
+
+      assert.equal(result.status, 2, result.stdout + result.stderr);
+      assert.equal(
+        result.stderr,
+        `check: unknown argument ${argument}. usage: ${wrapper} [--citations]\n`,
+      );
+    }
+  }
 });
 
 test("stops the full check at a stale citation before fetching TLC", (t) => {

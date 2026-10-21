@@ -22,7 +22,7 @@ case "$1 $2" in
     echo '{"result":{}}' ;;
   "tab create") echo '{"result":{"tab":{"tab_id":"w1:t9"},"root_pane":{"pane_id":"w1:p9"}}}' ;;
   "pane run")
-    setsid bash -c "$4; exec sleep 600" </dev/null >/dev/null 2>&1 &
+    setsid bash -c "$4; exec sleep 600" </dev/null >/dev/null 2>>"$FAKE_ROOT/pane.stderr" &
     pane=$!
     until [ "$(ps -o sid= -p "$pane" | tr -d ' ')" = "$pane" ] || ! kill -0 "$pane" 2>/dev/null; do
       sleep 0.01
@@ -142,6 +142,7 @@ export async function fakeHerdr(behavior: FakePi) {
   await Promise.all([mkdir(bin), mkdir(runtime, { mode: 0o700 })]);
   await Promise.all([
     writeFile(path.join(root, "herdr.log"), ""),
+    writeFile(path.join(root, "pane.stderr"), ""),
     writeFile(path.join(bin, "herdr"), FAKE_HERDR, { mode: 0o755 }),
     writeFile(path.join(bin, "pi"), FAKE_PI, { mode: 0o755 }),
   ]);
@@ -171,6 +172,7 @@ export async function fakeHerdr(behavior: FakePi) {
     root,
     runtime,
     herdrCalls: async () => (await readFile(path.join(root, "herdr.log"), "utf8")).split("\n"),
+    paneStderr: () => readFile(path.join(root, "pane.stderr"), "utf8"),
     piPid: async () => Number(await readFile(path.join(root, "pi.pid"), "utf8")),
     descendantPid: async () => Number(await readFile(path.join(root, "descendant.pid"), "utf8")),
     async panePid() {

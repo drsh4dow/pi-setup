@@ -13,10 +13,25 @@ const STOPPED_WITHIN_MS = Duration.toMillis(TERM_GRACE) + 3500;
 
 const REAL_PS = spawnSync("sh", ["-c", "command -v ps"], { encoding: "utf8" }).stdout.trim();
 
-async function killLauncherAfterPiExitsWithDescendant(
-  t: TestContext,
-  herdr: Awaited<ReturnType<typeof fakeHerdr>>,
-) {
+type FakeHerdr = Awaited<ReturnType<typeof fakeHerdr>>;
+
+const fakeProcessListing = (herdr: FakeHerdr, listing: string) =>
+  writeFile(
+    path.join(herdr.root, "bin", "ps"),
+    `#!/usr/bin/env bash\nif [ "$1" = -A ]; then ${listing}; fi\nexec ${REAL_PS} "$@"\n`,
+    { mode: 0o755 },
+  );
+
+const listingReports = async (herdr: FakeHerdr) =>
+  (await herdr.paneStderr()).split("\n").filter((line) => line.includes("ps -A -o pid=,pgid="));
+
+const runningSleeps = (seconds: string) =>
+  spawnSync("pgrep", ["-fx", `sleep ${seconds}`], { encoding: "utf8" })
+    .stdout.split("\n")
+    .filter((line) => line !== "")
+    .map(Number);
+
+async function killLauncherAfterPiExits(t: TestContext, herdr: FakeHerdr) {
   await herdr.writeOutcome({ kind: "completed", report: "REPORT\n" });
 
   const run = herdr.launch();
@@ -31,11 +46,18 @@ async function killLauncherAfterPiExitsWithDescendant(
   run.child.kill("SIGKILL");
   await run.result();
 
-  const [descendant, pane] = await Promise.all([herdr.descendantPid(), herdr.panePid()]);
+  const pane = await herdr.panePid();
 
   t.after(() => {
     if (isAlive(-pane)) process.kill(-pane, "SIGKILL");
   });
+
+  return pane;
+}
+
+async function killLauncherAfterPiExitsWithDescendant(t: TestContext, herdr: FakeHerdr) {
+  const pane = await killLauncherAfterPiExits(t, herdr);
+  const descendant = await herdr.descendantPid();
 
   assert.ok(
     await until(() => !isAlive(descendant), STOPPED_WITHIN_MS),
@@ -228,12 +250,44 @@ suite("pi-subagent launcher", () => {
   test("a process listing that fails still stops a descendant whose shutdown hangs", async (t) => {
     const herdr = await fakeHerdr("leavesDescendant");
 
-    await writeFile(
-      path.join(herdr.root, "bin", "ps"),
-      `#!/usr/bin/env bash\nif [ "$1" = -A ]; then echo "$PPID $PPID"; exit 1; fi\nexec ${REAL_PS} "$@"\n`,
-      { mode: 0o755 },
-    );
+    await fakeProcessListing(herdr, 'echo "$PPID $PPID"; exit 1');
     await killLauncherAfterPiExitsWithDescendant(t, herdr);
+
+    const reports = await listingReports(herdr);
+
+    assert.equal(
+      reports.length,
+      1,
+      `the pane child reports the failed listing once:\n${reports.join("\n")}`,
+    );
+    assert.match(reports[0] ?? "", /exited with status 1/);
+  });
+
+  test("a process listing that hangs does not keep the pane alive after pi exits", async (t) => {
+    const herdr = await fakeHerdr("report");
+    const hungListing = `600.${process.pid}${Date.now() % 10_000}`;
+
+    t.after(() => {
+      for (const pid of runningSleeps(hungListing)) process.kill(pid, "SIGKILL");
+    });
+    await fakeProcessListing(herdr, `trap '' TERM HUP; exec sleep ${hungListing}`);
+
+    const pane = await killLauncherAfterPiExits(t, herdr);
+
+    assert.ok(
+      await until(() => !isAlive(-pane), STOPPED_WITHIN_MS),
+      "nothing in the pane survives",
+    );
+    assert.deepEqual(runningSleeps(hungListing), [], "no hung listing is left");
+
+    const reports = await listingReports(herdr);
+
+    assert.equal(
+      reports.length,
+      1,
+      `the pane child reports the hung listing once:\n${reports.join("\n")}`,
+    );
+    assert.match(reports[0] ?? "", /did not finish within/);
   });
 
   test("a SIGKILL to the launcher after the pane closes stops a forked pi whose shutdown hangs", async (t) => {

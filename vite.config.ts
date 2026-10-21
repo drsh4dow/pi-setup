@@ -34,6 +34,10 @@ export default defineConfig({
         command: ".agents/skills/verify-terminal-delivery/scripts/check --citations",
         cache: false,
       },
+      "verify:poteto-scripts": [
+        "cd agent/poteto/scripts && vp exec bun install --frozen-lockfile > /dev/null",
+        "tsc --project agent/poteto/scripts/tsconfig.json",
+      ],
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
@@ -64,6 +68,7 @@ export default defineConfig({
           "verify:strict-diagnostics",
           "verify:skills",
           "verify:terminal-delivery-citations",
+          "verify:poteto-scripts",
           "test:extensions",
           "test:dumpfile",
           "test:docs",

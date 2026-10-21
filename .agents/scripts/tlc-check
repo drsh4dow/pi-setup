@@ -29,20 +29,22 @@ definition_body() {
       if (name == "top-level") return text ~ /^[^ \t})\]]/ && text !~ declaration_keyword
       return text ~ keyword_declaration || text ~ member_declaration || text ~ tool || text ~ handler
     }
-    function is_one_line(text) {
-      return text ~ /;[ \t]*$/
+    function in_body(text) {
+      if (tool_entry) return indent(text) >= start_indent
+      return indent(text) > start_indent
     }
-    function closes_definition(text) {
-      if (text !~ /^[ \t]*[})\]]/ || text ~ /[{(\[][ \t]*$/) return 0
-      if (tool_entry) return indent(text) < start_indent
-      return indent(text) <= start_indent
+    function starts_with_closer(text) {
+      return text ~ /^[ \t]*[})\]]/
+    }
+    function ends_with_opener(text) {
+      return text ~ /[{(\[][ \t]*$/
     }
     BEGIN {
       word_end = "([^A-Za-z0-9_$]|$)"
       keyword_declaration = "^[ \t]*((export|default|declare|async)[ \t]+)*(const|let|var|class|function)[ \t*]+" name word_end
       modifiers = "((private|protected|public|static|readonly|async|get|set|override|abstract)[ \t]+)*"
       parameters_then_brace = "(<.*>)?[(].*[)]([ \t]*:[^=]*)?[ \t]*[{][ \t]*$"
-      member_declaration = "^[ \t]*" modifiers name "[ \t]*(=([^=>]|$)|:|" parameters_then_brace ")"
+      member_declaration = "^[ \t]+" modifiers name "[ \t]*(=([^=>]|$)|:|" parameters_then_brace ")"
       tool = "^[ \t]*name: \"" name "\""
       handler = "^[ \t]*pi\\.on\\(\"" name "\""
       declaration_keyword = "^(export|import|const|let|var|function|async|class|type|interface|enum|declare)" word_end
@@ -52,21 +54,21 @@ definition_body() {
       next
     }
     opens_block_comment($0) { in_block_comment = 1; next }
-    is_comment($0) { next }
-    inside && closes_definition($0) {
-      inside = 0
+    is_comment($0) || $0 ~ /^[ \t]*$/ { next }
+    inside && in_body($0) { print; next }
+    inside && starts_with_closer($0) {
       print
+      inside = ends_with_opener($0)
       next
     }
-    inside { print; next }
     opens_body($0) {
       print
-      if (is_one_line($0)) next
       inside = 1
       start_indent = indent($0)
       tool_entry = $0 ~ tool
       next
     }
+    { inside = 0 }
   ' "$1"
 }
 

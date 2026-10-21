@@ -30,8 +30,9 @@ async function eventually(condition: () => boolean | Promise<boolean>) {
 async function registeredTools(
   t: TestContext,
   sendMessage?: Parameters<typeof registeredExtension>[0],
+  emit?: Parameters<typeof registeredExtension>[2],
 ) {
-  const { tools, handlers } = registeredExtension(sendMessage);
+  const { tools, handlers } = registeredExtension(sendMessage, {}, emit);
 
   const context = testContext({
     cwd: process.cwd(),
@@ -471,6 +472,36 @@ test("an end held for a bg_kill call is delivered when the call abandons its res
     messages.map((message) => message.details.ids),
     [[id]],
   );
+});
+
+test("a bg_kill aborted after the terminal settles delivers the end it held", async (t) => {
+  const controller = new AbortController();
+  const messages: DeliveryMessage[] = [];
+  let killing = false;
+
+  const { 0: start, 3: kill } = await registeredTools(
+    t,
+    (message) => messages.push(message),
+    () => {
+      if (killing) controller.abort();
+    },
+  );
+
+  const started = await start.execute("1", { command: "sleep 30", title: "held" });
+  const id = started.details.id;
+  const waiting = kill.execute("2", { ids: [id] }, controller.signal);
+  killing = true;
+
+  await assert.rejects(
+    waiting,
+    new RegExp(`^Error: Kill wait aborted for ${id}; termination is not cancelled`),
+  );
+  await sleep(100);
+  assert.deepEqual(
+    messages.map((message) => message.details.ids),
+    [[id]],
+  );
+  assert.match(messages[0].content, /\[killed\] held/);
 });
 
 test("aborted bg_kill wait does not cancel termination and delivers the end once", async (t) => {

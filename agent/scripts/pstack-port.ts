@@ -410,32 +410,25 @@ function updateClone() {
   return clone;
 }
 
-function resolveCommit(clone: string, ref: string) {
+function gitOutput(clone: string, args: string[]) {
   try {
-    return execFileSync("git", ["-C", clone, "rev-parse", "--verify", `${ref}^{commit}`], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "inherit"],
-    }).trim();
-  } catch (error) {
-    throw new Error(`git rev-parse could not resolve ${ref} to a commit in ${clone}`, {
-      cause: error,
-    });
-  }
-}
-
-function archivePstack(clone: string, commit: string) {
-  try {
-    return execFileSync("git", ["-C", clone, "archive", "--format=tar", commit, "pstack"], {
+    return execFileSync("git", ["-C", clone, ...args], {
       maxBuffer: 256 * 1024 * 1024,
       stdio: ["ignore", "pipe", "inherit"],
     });
   } catch (error) {
-    throw new Error(`git archive of pstack/ at ${commit} failed`, { cause: error });
+    throw new Error(`git ${args.join(" ")} failed in ${clone}`, { cause: error });
   }
 }
 
+function resolveCommit(clone: string, ref: string) {
+  return gitOutput(clone, ["rev-parse", "--verify", `${ref}^{commit}`])
+    .toString("utf8")
+    .trim();
+}
+
 function extractPstack(clone: string, commit: string, directory: string) {
-  const archive = archivePstack(clone, commit);
+  const archive = gitOutput(clone, ["archive", "--format=tar", commit, "pstack"]);
   mkdirSync(directory, { recursive: true });
 
   try {
@@ -450,6 +443,17 @@ function extractPstack(clone: string, commit: string, directory: string) {
   }
 
   return join(directory, "pstack");
+}
+
+type SkippedFileChange = { oldCommit: string; newCommit: string; upstreamPath: string };
+
+function upstreamWordDiff(
+  clone: string,
+  { oldCommit, newCommit, upstreamPath }: SkippedFileChange,
+) {
+  const args = ["diff", "--word-diff=plain", oldCommit, newCommit, "--", `pstack/${upstreamPath}`];
+
+  return gitOutput(clone, args).toString("utf8").trimEnd();
 }
 
 function sync(ref: string) {
@@ -508,10 +512,9 @@ function sync(ref: string) {
     }
 
     for (const upstreamPath of skippedFiles) {
-      const base = readIfPresent(join(basePstack, upstreamPath));
+      const diff = upstreamWordDiff(clone, { oldCommit: pinned, newCommit: commit, upstreamPath });
 
-      if (base !== readIfPresent(join(upstreamPstack, upstreamPath)))
-        report.push(`changed upstream, port by hand: ${upstreamPath}`);
+      if (diff !== "") report.push(`changed upstream, port by hand: ${upstreamPath}\n${diff}`);
     }
 
     overrideMergedInvocations(classified);

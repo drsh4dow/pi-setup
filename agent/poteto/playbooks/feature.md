@@ -16,6 +16,6 @@
 7. If the design is contested, `interrogate` before shipping.
 8. Run **Opening a PR**.
 
-Code-coupled work (one feature, one migration) stays with the session running this playbook, with the checkpoint inline. After the blocking phase it fans out leaf delegates, each with its own scope. Parallel delegates suit slices that produce independent artifacts (audits, cross-subsystem investigations, competing experiments). Rewrite the checkpoint at phase boundaries. Spawn a fresh delegate rather than chaining interrupts.
+Code-coupled work (one feature, one migration) goes to a single owner with the checkpoint inline. An owner already running this playbook is that owner. It fans out delegates after the blocking phase. Parent-level fan-out is for slices that produce independent artifacts (audits, cross-subsystem investigations, competing experiments). Rewrite the checkpoint at phase boundaries. Give each new phase to a fresh owner with consolidated scope rather than resuming the last one.
 
 **Reply:** what you built, what you chose and why, the throughput checkpoint, open decisions. Tables for design alternatives.

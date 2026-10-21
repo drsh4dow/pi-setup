@@ -48,17 +48,13 @@ class SharedBackgroundTerminalSession {
     const manager = new BackgroundTerminalManager(
       (snapshot) => {
         client.delivery.terminalSettled(snapshot.id);
-        client.updateStatus();
 
         const wait = pendingKillResults.get(snapshot.id);
 
-        if (wait) {
-          wait.snapshot = snapshot;
+        if (wait) wait.snapshot = snapshot;
+        else client.delivery.enqueue(snapshot);
 
-          return;
-        }
-
-        client.delivery.enqueue(snapshot);
+        client.updateStatus();
       },
       () => `bt-${++terminalSequence}`,
       (notification) => client.delivery.enqueueNotification(notification),

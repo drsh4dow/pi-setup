@@ -370,6 +370,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `mailbox`
 - `maintain-formal-verification-skill`
 - `maintain-verification-skill`
+- `make-bot-ui`
 - `no-comments`
 - `pi-harness`
 - `poteto-help`
@@ -447,7 +448,7 @@ holds the upstream commit that this setup is synced to.
 as a system prompt, and
 [`agent/poteto/`](agent/poteto/) holds that skill's playbooks, references, and
 scripts. The scripts are vendored as-is: lint, format, and type checks skip
-them. Not ported: `setup-pstack`, `make-bot-ui`, the `poteto-agent` wrapper,
+them. Not ported: `setup-pstack`, the `poteto-agent` wrapper,
 the worktree-cleanup playbook, and the Benny automations.
 
 [`agent/scripts/pstack-port.ts`](agent/scripts/pstack-port.ts) does the
@@ -496,6 +497,11 @@ To sync pstack:
 4. List each skill reported as `added upstream` under Installed skills.
 5. Run `vp run verify`. It runs `pstack-port.ts check`, which fails on
    Cursor-only terms that a sync brings back.
+
+To port a skill or file that the script skips, remove it from `skippedSkills`
+or `skippedFiles` and copy its upstream files into place by hand before the
+next sync. Sync reports a missing file that upstream had at the synced commit
+as `kept deleted`, so it never adds a newly unskipped file on its own.
 
 ## Repository layout
 

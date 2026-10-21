@@ -32,8 +32,6 @@ const pinFile = join(agentDirectory, "scripts", "pstack-synced-commit.txt");
 const upstreamRepository = "https://github.com/cursor/plugins.git";
 
 const skippedSkills = new Set([
-  // A Grok Bot webhook UI generator, with no Pi counterpart.
-  "make-bot-ui",
   // Writes Cursor's model rule; the subagents skill owns the role table instead.
   "setup-pstack",
 ]);
@@ -65,6 +63,7 @@ const invocations = new Map<string, Invocation>(
     "in-your-own-words": "user-only",
     interrogate: "both",
     ketchup: "user-only",
+    "make-bot-ui": "both",
     "maintain-formal-verification-skill": "both",
     "maintain-verification-skill": "user-only",
     "no-comments": "both",
@@ -533,14 +532,17 @@ const cursorVocabulary: [RegExp, string][] = [
     "a subagent started with `pi-subagent`, per the subagents skill",
   ],
   [/\bAskQuestion\b/, "a plain question at the end of the reply"],
-  [/pstack-models|setup-pstack|\bgrok\b/i, "a role in the subagents skill's model table"],
+  [/pstack-models|setup-pstack|\bgrok\b(?! bot\b)/i, "a role in the subagents skill's model table"],
   [/\/loop\b/, "a background terminal whose completion wakes the agent"],
   [
     /control-ui|control-cli|cursor-team-kit/,
     "agent-browser for UIs, background terminals for CLIs and TUIs",
   ],
   [/\bcreate-skill\b/, "the writing-for-agents skill"],
-  [/agent-transcripts|\.cursor\b/, "Pi session files under the directory of $PI_SESSION_FILE"],
+  [
+    /agent-transcripts|\.cursor\b(?!\.sh\b)/,
+    "Pi session files under the directory of $PI_SESSION_FILE",
+  ],
   [
     /\/poteto-mode\b|poteto-mode skill|\bCursor\b(?! Bugbot)/,
     "the Pi equivalent named in README.md's pstack mapping",

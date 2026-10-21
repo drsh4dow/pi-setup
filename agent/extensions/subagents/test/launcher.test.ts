@@ -3,13 +3,46 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { after, suite, test } from "node:test";
+import { after, suite, type TestContext, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Duration } from "effect";
 import { TERM_GRACE } from "../process-group.ts";
 import { ASSIGNMENT, fakeHerdr, isAlive, removeFakeRoots, until } from "./fake-herdr.ts";
 
 const STOPPED_WITHIN_MS = Duration.toMillis(TERM_GRACE) + 3500;
+
+const REAL_PS = spawnSync("sh", ["-c", "command -v ps"], { encoding: "utf8" }).stdout.trim();
+
+async function killLauncherAfterPiExitsWithDescendant(
+  t: TestContext,
+  herdr: Awaited<ReturnType<typeof fakeHerdr>>,
+) {
+  await herdr.writeOutcome({ kind: "completed", report: "REPORT\n" });
+
+  const run = herdr.launch();
+
+  const piExited = async () => {
+    const [runDirectory] = await readdir(herdr.runtime);
+
+    return runDirectory !== undefined && existsSync(path.join(herdr.runtime, runDirectory, "exit"));
+  };
+
+  assert.ok(await until(piExited), "the pane child recorded pi's exit");
+  run.child.kill("SIGKILL");
+  await run.result();
+
+  const [descendant, pane] = await Promise.all([herdr.descendantPid(), herdr.panePid()]);
+
+  t.after(() => {
+    if (isAlive(-pane)) process.kill(-pane, "SIGKILL");
+  });
+
+  assert.ok(
+    await until(() => !isAlive(descendant), STOPPED_WITHIN_MS),
+    "the descendant is stopped",
+  );
+  assert.ok(await until(() => !isAlive(-pane), STOPPED_WITHIN_MS), "nothing in the pane survives");
+}
 
 suite("pi-subagent launcher", () => {
   after(removeFakeRoots);
@@ -189,38 +222,18 @@ suite("pi-subagent launcher", () => {
   });
 
   test("a SIGKILL to the launcher after pi exits stops a descendant whose shutdown hangs", async (t) => {
+    await killLauncherAfterPiExitsWithDescendant(t, await fakeHerdr("leavesDescendant"));
+  });
+
+  test("a process listing that fails still stops a descendant whose shutdown hangs", async (t) => {
     const herdr = await fakeHerdr("leavesDescendant");
 
-    await herdr.writeOutcome({ kind: "completed", report: "REPORT\n" });
-
-    const run = herdr.launch();
-
-    const piExited = async () => {
-      const [runDirectory] = await readdir(herdr.runtime);
-
-      return (
-        runDirectory !== undefined && existsSync(path.join(herdr.runtime, runDirectory, "exit"))
-      );
-    };
-
-    assert.ok(await until(piExited), "the pane child recorded pi's exit");
-    run.child.kill("SIGKILL");
-    await run.result();
-
-    const [descendant, pane] = await Promise.all([herdr.descendantPid(), herdr.panePid()]);
-
-    t.after(() => {
-      if (isAlive(-pane)) process.kill(-pane, "SIGKILL");
-    });
-
-    assert.ok(
-      await until(() => !isAlive(descendant), STOPPED_WITHIN_MS),
-      "the descendant is stopped",
+    await writeFile(
+      path.join(herdr.root, "bin", "ps"),
+      `#!/usr/bin/env bash\nif [ "$1" = -A ]; then echo "$PPID $PPID"; exit 1; fi\nexec ${REAL_PS} "$@"\n`,
+      { mode: 0o755 },
     );
-    assert.ok(
-      await until(() => !isAlive(-pane), STOPPED_WITHIN_MS),
-      "nothing in the pane survives",
-    );
+    await killLauncherAfterPiExitsWithDescendant(t, herdr);
   });
 
   test("a SIGKILL to the launcher after the pane closes stops a forked pi whose shutdown hangs", async (t) => {

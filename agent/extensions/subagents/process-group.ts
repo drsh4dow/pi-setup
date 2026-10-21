@@ -1,8 +1,11 @@
-import { Data, Duration, Effect, Option } from "effect";
+import { Data, Duration, Effect, Option, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { TERM_GRACE_MS as TERMINAL_TERM_GRACE_MS } from "../background-terminals/manager.ts";
 
-/** Pi's graceful shutdown sends its background terminals SIGKILL after their own grace. */
+/**
+ * Pi's graceful shutdown sends its background terminals SIGKILL after their own grace, unless a
+ * `session_shutdown` handler that runs before theirs holds it up.
+ */
 export const TERM_GRACE = Duration.millis(TERMINAL_TERM_GRACE_MS + 1000);
 
 const KILL_GRACE = "250 millis";
@@ -16,15 +19,6 @@ export class SignalError extends Data.TaggedError("SignalError")<{
     const reason = this.cause instanceof Error ? this.cause.message : "failed";
 
     return `kill -${this.signal} -${this.group}: ${reason}`;
-  }
-}
-
-export class GroupListError extends Data.TaggedError("GroupListError")<{
-  readonly group: number;
-  readonly reason: string;
-}> {
-  override get message(): string {
-    return `could not list process group ${this.group}: ${this.reason}`;
   }
 }
 
@@ -42,28 +36,35 @@ export function isAlive(pid: number): boolean {
 const PROCESS_LINE = /^\s*(\d+)\s+(\d+)\s*$/;
 
 /**
- * `kill(-group, 0)` cannot tell whether a group holds any process but this one. `ps` runs in its own
- * group, so it never lists itself, and a listing without this process is not a listing.
+ * `kill(-group, 0)` cannot tell whether this process's group holds any other process. `ps` runs in
+ * its own group, so it never lists itself. A listing that fails or leaves out this process may have
+ * left out others too, so it counts as one that found them.
  */
-const othersInGroup = Effect.fn("othersInGroup")(function* (group: number) {
+const othersInGroup = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const lines = yield* spawner
-    .lines(ChildProcess.make("ps", ["-A", "-o", "pid=,pgid="], { detached: true }))
-    .pipe(Effect.mapError((error) => new GroupListError({ group, reason: error.message })));
+  const ps = yield* spawner.spawn(
+    ChildProcess.make("ps", ["-A", "-o", "pid=,pgid="], { detached: true, stderr: "ignore" }),
+  );
 
-  const members = lines.flatMap((line) => {
+  const [listing, exitCode] = yield* Effect.all(
+    [ps.stdout.pipe(Stream.decodeText(), Stream.mkString), ps.exitCode],
+    { concurrency: "unbounded" },
+  );
+
+  const members = listing.split("\n").flatMap((line) => {
     const match = PROCESS_LINE.exec(line);
 
-    return match !== null && Number(match[2]) === group ? [Number(match[1])] : [];
+    return match !== null && Number(match[2]) === process.pid ? [Number(match[1])] : [];
   });
 
-  if (!members.includes(process.pid)) {
-    return yield* new GroupListError({ group, reason: "ps did not list this process" });
-  }
-
-  return members.some((pid) => pid !== process.pid);
-});
+  return (
+    exitCode !== 0 || !members.includes(process.pid) || members.some((pid) => pid !== process.pid)
+  );
+}).pipe(
+  Effect.scoped,
+  Effect.orElseSucceed(() => true),
+);
 
 const awaitGroupExit = <E, R>(alive: Effect.Effect<boolean, E, R>, timeout: Duration.Input) =>
   Effect.sleep("20 millis").pipe(
@@ -114,5 +115,5 @@ export const stopProcessGroup = Effect.fn("stopProcessGroup")(function* (
  * reaches this process too, and the group's SIGKILL ends it when another process outlives the grace.
  */
 export const stopRestOfGroup = Effect.fn("stopRestOfGroup")(function* () {
-  return yield* stopGroup(process.pid, "0 millis", othersInGroup(process.pid));
+  return yield* stopGroup(process.pid, "0 millis", othersInGroup);
 });

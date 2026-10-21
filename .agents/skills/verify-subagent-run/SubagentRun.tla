@@ -139,6 +139,7 @@ ChildDies ==
 \* Leaving runPi closes its scope, which interrupts the launcher watch. The interruption waits for
 \* an abandonRun in progress, which ends with the group's SIGKILL.
 \* code: agent/extensions/subagents/bin/pane-child.ts runPi "}, Effect.scoped);"
+\* code: agent/extensions/subagents/bin/pane-child.ts watchLauncher "Effect.forkScoped,"
 LeaveRunPi ==
     /\ launcherWatch \in {"off", "watching"}
     /\ launcherWatch' = "off"
@@ -237,7 +238,7 @@ LStopReadStarted ==
     /\ launcher' = IF "started" \in files THEN "stopCheckGroup" ELSE "removeRunDirectory"
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, interrupted, sawPaneDead, child, childInterrupted, phase, trapsSignals, kills>>
 
-\* code: agent/extensions/subagents/process-group.ts stopProcessGroup "return yield* stopGroup(group, exitGrace, Effect.sync(() => isAlive(-group)));"
+\* code: agent/extensions/subagents/process-group.ts stopProcessGroup "Effect.sync(() => isAlive(-group)),"
 \* code: agent/extensions/subagents/process-group.ts stopGroup "if (!(yield* alive) || (yield* awaitGroupExit(alive, exitGrace))) return "exited" as const;"
 LStopCheckGroup ==
     /\ launcher = "stopCheckGroup"
@@ -445,7 +446,8 @@ CEndGroup ==
     /\ UNCHANGED <<wrapper, sweep, launcherWatch, files, pane, paneRun, deadline, launcher, interrupted, sawPaneDead, childInterrupted, phase, trapsSignals, kills>>
 
 \* The group's SIGTERM reaches the pane child too, and the finalizer holds off its interrupt.
-\* code: agent/extensions/subagents/process-group.ts stopRestOfGroup "return yield* stopGroup(process.pid, "0 millis", othersInGroup(process.pid));"
+\* code: agent/extensions/subagents/process-group.ts stopRestOfGroup "return yield* stopGroup(process.pid, "0 millis", othersInGroup);"
+\* code: agent/extensions/subagents/process-group.ts stopGroup "yield* signalGroup(group, "SIGTERM");"
 CEndGroupTerm ==
     /\ child = "endGroupTerm"
     /\ TermGroup

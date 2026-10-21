@@ -37,6 +37,11 @@ const COMPLETION_OUTPUT_BYTES = 24 * 1024;
 
 const COMPLETION_BATCH_BYTES = 256 * 1024;
 
+const BATCH_HEADERS = {
+  notification: "[Background terminal notifications]\n\n",
+  completion: "[Background terminal results]\n\n",
+} as const;
+
 const logError = (message: string) => Effect.runSync(Effect.logError(message));
 
 export function sanitizeErrorForDisplay(error: Error | string): Error {
@@ -309,6 +314,18 @@ export class BackgroundTerminalDelivery {
       item.kind === "notification" && item.terminalId === terminalId ? [item.notification] : [],
     );
   }
+  // Notifications that do not fit with their completion stay in the notification batch, which drain sends first.
+  private carriedNotifications(snapshot: SettledTerminalSnapshot): RunningTerminalNotification[] {
+    const notifications = this.pendingNotifications(snapshot.id);
+
+    if (!notifications.length) return notifications;
+
+    const aloneBytes =
+      Buffer.byteLength(BATCH_HEADERS.completion) +
+      Buffer.byteLength(formatTerminalCompletion(snapshot, notifications));
+
+    return aloneBytes <= COMPLETION_BATCH_BYTES ? notifications : [];
+  }
   takeNotifications(terminalId: string): RunningTerminalNotification[] {
     const notifications = this.pendingNotifications(terminalId);
 
@@ -367,26 +384,24 @@ export class BackgroundTerminalDelivery {
     const terminals: TerminalView[] = [];
     const notifications: NotificationView[] = [];
 
-    const parts = [
-      kind === "notification"
-        ? "[Background terminal notifications]\n\n"
-        : "[Background terminal results]\n\n",
-    ];
+    const parts: string[] = [BATCH_HEADERS[kind]];
 
     let bytes = Buffer.byteLength(parts[0]);
 
-    const endingTerminals = new Set(
+    const carriedIds = new Set(
       [...this.pending.values()].flatMap((item) =>
-        item.kind === "completion" ? [item.terminalId] : [],
+        item.kind === "completion"
+          ? this.carriedNotifications(item.snapshot).map((notification) => notification.id)
+          : [],
       ),
     );
 
     for (const item of this.pending.values()) {
       if (item.kind !== kind) continue;
 
-      if (item.kind === "notification" && endingTerminals.has(item.terminalId)) continue;
+      if (item.kind === "notification" && carriedIds.has(item.id)) continue;
 
-      let carried = item.kind === "completion" ? this.pendingNotifications(item.terminalId) : [];
+      const carried = item.kind === "completion" ? this.carriedNotifications(item.snapshot) : [];
 
       let rendered =
         item.kind === "notification"
@@ -402,7 +417,6 @@ export class BackgroundTerminalDelivery {
       if (item.kind === "completion" && bytes + addedBytes > COMPLETION_BATCH_BYTES) {
         rendered = `${summary(item.snapshot)}\nCompletion detail exceeded the delivery limit; use bg_status ${item.id}.`;
         addedBytes = Buffer.byteLength(rendered);
-        carried = [];
       }
 
       parts.push(separator, rendered);

@@ -16,12 +16,12 @@ description: Model-check with TLA+ that a background terminal's end and its emit
 
 Run the check after any change to these files, or to the Pi version in `bun.lock`. Each `\* code:` citation in the spec names one of these functions, tools, or event handlers. Every model config runs the same spec, so they all cover the same code.
 
-| File under `agent/extensions/background-terminals/` | Functions                                                                                                                      |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `delivery.ts`                                       | `queue`, `flush`, `drain`, `batch`, `enqueueNotification`, `takePending`, `takeNotifications`, `waitForDelivery`               |
-| `index.ts`                                          | tools `bg_start`, `bg_status`, `bg_kill`; handlers `agent_before_settle`, `agent_settled`, `turn_end`; `MAX_IDLE_SETTLE_WAITS` |
-| `manager.ts`                                        | `settle`, `terminate`, `appendNotification`                                                                                    |
-| `session.ts`                                        | `join` (with its `kill`, `consume`, and `abandonKill`), `leave`                                                                |
+| File under `agent/extensions/background-terminals/` | Functions                                                                                                                                |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `delivery.ts`                                       | `queue`, `flush`, `drain`, `batch`, `carriedNotifications`, `enqueueNotification`, `takePending`, `takeNotifications`, `waitForDelivery` |
+| `index.ts`                                          | tools `bg_start`, `bg_status`, `bg_kill`; handlers `agent_before_settle`, `agent_settled`, `turn_end`; `MAX_IDLE_SETTLE_WAITS`           |
+| `manager.ts`                                        | `settle`, `terminate`, `appendNotification`                                                                                              |
+| `session.ts`                                        | `join` (with its `kill`, `consume`, and `abandonKill`), `leave`                                                                          |
 
 The spec also cites Pi under `node_modules/`, as installed from `bun.lock`. In `pi-coding-agent`'s `agent-session.js`, it cites `sendCustomMessage`, `_startRun`, `_handlePostAgentRun`, `_runBeforeSettleBoundary`, `_emitAgentSettled`, `isIdle`, `isCompacting`, `abort`, and `_clearManualCompactionState`. In `pi-agent-core`'s `agent-loop.js`, it cites `runLoop`. The sync commit below has both packages at 1.2.0.
 
@@ -75,7 +75,7 @@ The update is done when the check exits 0, or when it fails only on a finding yo
 - **Pi.** `pi.sendMessage` steers while a run is active, defers while `agent_settled` handlers run, and starts a run while idle. Steering drains one message per poll. `ctx.signal` is undefined during `agent_before_settle`, so an abort does not end the settle wait.
 - **The user.** A TUI user may prompt, compact, or abort at any time, or never act again. Unattended runs have no user.
 - **Aborts.** After an abort, a completion that was steered into the aborted run waits in Pi's queue or the transcript for the user's next prompt. That is Pi's design for queued messages, so `Aborts.cfg` checks only `NoDoubleWake`, and `AbortedKillIsSilent.cfg` checks that each end reaches Pi rather than the model (`EndReachesPi`).
-- **Left out.** The 32-item queue eviction and `bg_list`'s `deliveryProblem`, the 256 KiB batch limit and the oversized completion that sends its notifications after it, the `agent_before_settle` error outcome, several clients that share one session, several `bg_kill` calls that wait on one terminal at once, session switches, and rendering.
+- **Left out.** The 32-item queue eviction and `bg_list`'s `deliveryProblem`, the 256 KiB batch limit (a completion too large to carry its notifications sends them just before it), the `agent_before_settle` error outcome, several clients that share one session, several `bg_kill` calls that wait on one terminal at once, session switches, and rendering.
 - **Bounds.** Two terminals, except one in `UnattendedCompletion.cfg`, where two terminals reproduce [Completion deferred behind a run](#completion-deferred-behind-a-run). With three terminals, every model that must hold still held, in 13 minutes. Raise `Terminals` in a config to rerun that bound.
 
 ## Known findings

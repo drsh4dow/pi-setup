@@ -149,8 +149,9 @@ SendToPi(s, msg) ==
 \* notifications.
 \* code: agent/extensions/background-terminals/delivery.ts drain "const batch = this.batch(\"notification\") ?? this.batch(\"completion\");"
 \* code: agent/extensions/background-terminals/delivery.ts drain "this.consume(batch.details.ids);"
-\* code: agent/extensions/background-terminals/delivery.ts batch "if (item.kind === \"notification\" && endingTerminals.has(item.terminalId)) continue;"
-\* code: agent/extensions/background-terminals/delivery.ts batch "let carried = item.kind === \"completion\" ? this.pendingNotifications(item.terminalId) : [];"
+\* code: agent/extensions/background-terminals/delivery.ts batch "if (item.kind === \"notification\" && carriedIds.has(item.id)) continue;"
+\* code: agent/extensions/background-terminals/delivery.ts batch "const carried = item.kind === \"completion\" ? this.carriedNotifications(item.snapshot) : [];"
+\* code: agent/extensions/background-terminals/delivery.ts carriedNotifications "const notifications = this.pendingNotifications(snapshot.id);"
 \* code: agent/extensions/background-terminals/delivery.ts batch "ids.push(item.id, ...carried.map((notification) => notification.id));"
 Batches(pe, pn) ==
     SelectSeq(<<[completions |-> {}, notifications |-> pn \ pe],

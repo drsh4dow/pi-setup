@@ -68,14 +68,15 @@ function runCheck(
   {
     flags = ["--citations"],
     env = process.env,
-  }: { flags?: readonly string[]; env?: NodeJS.ProcessEnv } = {},
+    code = source,
+  }: { flags?: readonly string[]; env?: NodeJS.ProcessEnv; code?: string } = {},
 ) {
   const root = tempDir(t);
 
   const skill = join(root, ".agents/skills/verify-example");
   mkdirSync(skill, { recursive: true });
   mkdirSync(join(root, "src"));
-  writeFileSync(join(root, "src/example.ts"), source);
+  writeFileSync(join(root, "src/example.ts"), code);
   writeFileSync(join(skill, "Example.cfg"), "\\* expect: holds\n");
   writeFileSync(
     join(skill, "Example.tla"),
@@ -94,7 +95,6 @@ test("accepts a citation of any line in the cited definition's scope", (t) => {
     'turn_end "reset();"',
     'bg_example "return run();"',
     'LIMIT "const LIMIT = 3;"',
-    'addObserver "process.exit(exit);"',
   ]);
 
   assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -108,7 +108,6 @@ test("reports a citation of a line just outside the cited definition's scope", (
     'bg_example "return other();"',
     'report "// A comment that a blank line separates from its declaration."',
     'LIMIT "return count > LIMIT;"',
-    'addObserver "process.on(\\"SIGTERM\\", () => interrupt(fiber));"',
     'missing "anything"',
   ]);
 
@@ -121,7 +120,6 @@ test("reports a citation of a line just outside the cited definition's scope", (
       "stale citation: src/example.ts bg_example no longer contains: return other();",
       "stale citation: src/example.ts report no longer contains: // A comment that a blank line separates from its declaration.",
       "stale citation: src/example.ts LIMIT no longer contains: return count > LIMIT;",
-      'stale citation: src/example.ts addObserver no longer contains: process.on("SIGTERM", () => interrupt(fiber));',
       "stale citation: src/example.ts has no definition of missing",
       "check: code that Example.tla models changed. Run .agents/skills/verify-example/scripts/check and follow its SKILL.md.",
       "",
@@ -145,6 +143,38 @@ test("reports a snippet that only a comment above or inside the definition conta
       "stale citation: src/example.ts deliver no longer contains: // Sends the message once.",
       "stale citation: src/example.ts report no longer contains: the report. */",
       "stale citation: src/example.ts addObserver no longer contains: // Wires the fiber's exit.",
+      "check: code that Example.tla models changed. Run .agents/skills/verify-example/scripts/check and follow its SKILL.md.",
+      "",
+    ].join("\n"),
+  );
+});
+
+test("reports a name that only a column-0 mention contains as having no definition", (t) => {
+  const result = runCheck(t, ['settle "settle(3);"'], {
+    code: 'console.log("settle: process.exit(1)");\nsettle(3);\n',
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stdout, /^stale citation: src\/example\.ts has no definition of settle$/m);
+});
+
+test("scopes top-level to module-level statements outside every definition", (t) => {
+  const current = runCheck(t, [
+    'top-level "fiber.addObserver((exit) => {"',
+    'top-level "process.exit(exit);"',
+    'top-level "process.on(\\"SIGTERM\\", () => interrupt(fiber));"',
+  ]);
+
+  assert.equal(current.status, 0, current.stdout + current.stderr);
+
+  const stale = runCheck(t, ['top-level "send(message);"', 'top-level "const LIMIT = 3;"']);
+
+  assert.equal(stale.status, 1, stale.stderr);
+  assert.equal(
+    stale.stdout,
+    [
+      "stale citation: src/example.ts top-level no longer contains: send(message);",
+      "stale citation: src/example.ts top-level no longer contains: const LIMIT = 3;",
       "check: code that Example.tla models changed. Run .agents/skills/verify-example/scripts/check and follow its SKILL.md.",
       "",
     ].join("\n"),

@@ -179,26 +179,29 @@ test("queued delivery keeps live notifications and drops settled ones", async ()
     },
   });
 
-  delivery.setContext({ ...context, isIdle: () => false });
-  delivery.enqueueNotification({
-    id: "bt-1:notification-1",
-    terminalId: "bt-1",
-    title: "finished watcher",
-    message: "stale",
-  });
-  delivery.enqueueNotification({
-    id: "bt-2:notification-1",
-    terminalId: "bt-2",
-    title: "running watcher",
-    message: "current",
-  });
-  assert.equal(messages.length, 0);
-  delivery.terminalSettled("bt-1");
-  await Effect.runPromise(delivery.flush);
-  assert.equal(messages.length, 1);
-  assert.doesNotMatch(messages[0].content, /stale/);
-  assert.match(messages[0].content, /current/);
-  delivery.clear();
+  try {
+    delivery.setContext({ ...context, isIdle: () => false });
+    delivery.enqueueNotification({
+      id: "bt-1:notification-1",
+      terminalId: "bt-1",
+      title: "finished watcher",
+      message: "stale",
+    });
+    delivery.enqueueNotification({
+      id: "bt-2:notification-1",
+      terminalId: "bt-2",
+      title: "running watcher",
+      message: "current",
+    });
+    assert.equal(messages.length, 0);
+    delivery.terminalSettled("bt-1");
+    await Effect.runPromise(delivery.flush);
+    assert.equal(messages.length, 1);
+    assert.doesNotMatch(messages[0].content, /stale/);
+    assert.match(messages[0].content, /current/);
+  } finally {
+    delivery.clear();
+  }
 });
 
 test("settlement clears notifications evicted from a full queue", () => {

@@ -102,12 +102,12 @@ test("a completion too large to carry its notifications sends them first and kee
     },
   });
 
-  // Each control character renders as a 3-byte replacement, so the notifications
-  // outgrow one batch together but each fits alone.
   const notificationIds = Array.from(
     { length: MAX_QUEUED_PER_KIND },
     (_, index) => `bt-1:notification-${index}`,
   );
+
+  const tripledBySanitizing = "\x01".repeat(4_000);
 
   try {
     delivery.setContext(testContext({ isIdle: () => false }));
@@ -117,7 +117,7 @@ test("a completion too large to carry its notifications sends them first and kee
         id,
         terminalId: "bt-1",
         title: "repository scout",
-        message: "\x01".repeat(4_000),
+        message: tripledBySanitizing,
       });
 
     delivery.enqueue(snapshot("scout report"));
@@ -127,6 +127,7 @@ test("a completion too large to carry its notifications sends them first and kee
     );
 
     assert.equal(results.length, 1);
+    assert.ok(messages.length > 1, "the notifications outgrow the results message");
     assert.match(results[0].content, /scout report/);
     assert.equal(
       messages.at(-1)?.customType,

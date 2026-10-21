@@ -288,7 +288,7 @@ export class BackgroundTerminalDelivery {
       return;
     }
 
-    // A notification waits for the run to settle, so a terminal that ends first carries it in its completion instead of steering a message of its own.
+    // A notification waits for the run to settle, so a terminal that ends first can carry it in its completion.
     if (item.kind === "completion" || this.context.isIdle())
       // The forked flush has no caller to receive its failure, so it reports here.
       Effect.runFork(
@@ -327,7 +327,6 @@ export class BackgroundTerminalDelivery {
       item.kind === "notification" && item.terminalId === terminalId ? [item.notification] : [],
     );
   }
-  // Notifications that do not fit with their completion stay in the notification batch, which drain sends first.
   private carriedNotifications(snapshot: SettledTerminalSnapshot): RunningTerminalNotification[] {
     const notifications = this.pendingNotifications(snapshot.id);
 

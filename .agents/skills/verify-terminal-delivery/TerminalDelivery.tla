@@ -109,9 +109,7 @@ Min(a, b) == IF a < b THEN a ELSE b
 Count(sent, items) ==
     [t \in Terminals |-> IF t \in items /\ sent[t] < 2 THEN sent[t] + 1 ELSE sent[t]]
 
-\* Counts every message that carries a terminal's item, so one flush that sends an item in
-\* two messages counts it twice.
-CountMessages(sent, msgs, field) ==
+CountPerMessage(sent, msgs, field) ==
     [t \in Terminals |-> Min(2, sent[t] + Cardinality({i \in 1..Len(msgs) : t \in msgs[i][field]}))]
 
 MergeAll(msgs) ==
@@ -144,38 +142,35 @@ SendToPi(s, msg) ==
       [] s.phase \in {"settling", "settlingFlushed"} -> [s EXCEPT !.deferred = @ \cup {msg}]
       [] s.phase = "idle" -> StartRun(s, msg)
 
-\* The messages drain builds from the pending ends pe and notifications pn, in order: the
-\* notifications of terminals without a pending end, then the ends with their terminals'
-\* notifications.
 \* code: agent/extensions/background-terminals/delivery.ts drain "const batch = this.batch(\"notification\") ?? this.batch(\"completion\");"
 \* code: agent/extensions/background-terminals/delivery.ts drain "this.consume(batch.details.ids);"
 \* code: agent/extensions/background-terminals/delivery.ts batch "if (item.kind === \"notification\" && carriedIds.has(item.id)) continue;"
 \* code: agent/extensions/background-terminals/delivery.ts batch "const carried = item.kind === \"completion\" ? this.carriedNotifications(item.snapshot) : [];"
 \* code: agent/extensions/background-terminals/delivery.ts carriedNotifications "const notifications = this.pendingNotifications(snapshot.id);"
 \* code: agent/extensions/background-terminals/delivery.ts batch "ids.push(item.id, ...carried.map((notification) => notification.id));"
-Batches(pe, pn) ==
-    SelectSeq(<<[completions |-> {}, notifications |-> pn \ pe],
-                [completions |-> pe, notifications |-> pn \cap pe]>>,
+Batches(ends, notes) ==
+    SelectSeq(<<[completions |-> {}, notifications |-> notes \ ends],
+                [completions |-> ends, notifications |-> notes \cap ends]>>,
               LAMBDA m : m # NoMessage)
 
 \* code: agent/extensions/background-terminals/delivery.ts flush "deliverAs: \"steer\","
 RECURSIVE SendAll(_, _)
 SendAll(s, msgs) == IF msgs = <<>> THEN s ELSE SendAll(SendToPi(s, Head(msgs)), Tail(msgs))
 
-FlushFrom(s, pe, pn) ==
-    LET msgs == Batches(pe, pn)
+FlushFrom(s, ends, notes) ==
+    LET msgs == Batches(ends, notes)
     IN
     /\ ApplyPi(SendAll(s, msgs))
     /\ pendingCompletions' = {}
     /\ pendingNotifications' = {}
-    /\ sentCompletions' = CountMessages(sentCompletions, msgs, "completions")
-    /\ sentNotifications' = CountMessages(sentNotifications, msgs, "notifications")
+    /\ sentCompletions' = CountPerMessage(sentCompletions, msgs, "completions")
+    /\ sentNotifications' = CountPerMessage(sentNotifications, msgs, "notifications")
 
-Flush(pe, pn) == FlushFrom(PiState, pe, pn)
+Flush(ends, notes) == FlushFrom(PiState, ends, notes)
 
-Hold(pe, pn) ==
-    /\ pendingCompletions' = pe
-    /\ pendingNotifications' = pn
+Hold(ends, notes) ==
+    /\ pendingCompletions' = ends
+    /\ pendingNotifications' = notes
     /\ UNCHANGED <<phase, steer, deferred, ctx, aborted, sentCompletions, sentNotifications>>
 
 -----------------------------------------------------------------------------
@@ -407,8 +402,8 @@ BSWake ==
     /\ waiter' = "none"
     /\ pendingCompletions' = {}
     /\ pendingNotifications' = {}
-    /\ sentCompletions' = CountMessages(sentCompletions, msgs, "completions")
-    /\ sentNotifications' = CountMessages(sentNotifications, msgs, "notifications")
+    /\ sentCompletions' = CountPerMessage(sentCompletions, msgs, "completions")
+    /\ sentNotifications' = CountPerMessage(sentNotifications, msgs, "notifications")
     /\ idleWaits' = IF hasItems THEN 0 ELSE Min(idleWaits + 1, MaxIdleSettleWaits + 1)
     /\ Decide(hasItems \/ idleWaits + 1 <= MaxIdleSettleWaits, Merge(ctx, MergeAll(msgs)))
     /\ UNCHANGED <<term, howSettled, killWait, noted, call, madeCalls, deferred, known, compacting, aborted>>
@@ -539,7 +534,6 @@ EndReachesPi ==
     \A t \in Terminals : howSettled[t] \in {"enqueued", "held"} ~> ReachesPi(t)
 
 \* A notification reaches the model, on its own or with the report of its terminal's end.
-\* An unattended run always ends, so the session's end excuses nothing.
 NotificationReachesAgent ==
     \A t \in Terminals : t \in noted ~> t \in known.notifications
 

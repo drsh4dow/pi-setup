@@ -450,7 +450,7 @@ Cursor plugin.
 [`agent/scripts/pstack-synced-commit.txt`](agent/scripts/pstack-synced-commit.txt)
 holds the upstream commit that this setup is synced to.
 [`agent/SYSTEM.md`](agent/SYSTEM.md) is pstack's `poteto-mode` skill rewritten
-as a system prompt, and
+as a system prompt in XML sections, and
 [`agent/poteto/`](agent/poteto/) holds that skill's playbooks, references, and
 scripts. The scripts are vendored as-is: lint, format, and type checks skip
 them. Not ported: `setup-pstack`, the `poteto-agent` wrapper, the simulator

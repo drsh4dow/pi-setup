@@ -1,7 +1,7 @@
 ---
 name: unslop
 description: Cut AI tells from any writing. Use for any prose surface, your reply to the user included.
-user-invokable: false
+disable-model-invocation: true
 ---
 
 # Unslop

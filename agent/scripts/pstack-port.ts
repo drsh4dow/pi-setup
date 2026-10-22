@@ -36,59 +36,8 @@ const skippedSkills = new Set([
   "setup-pstack",
 ]);
 
-const skippedFiles = new Map([["skills/poteto-mode/SKILL.md", "SYSTEM.md"]]);
-
-type Invocation = "user-only" | "both" | "model-only";
-
-// Upstream marks almost every skill command-only, so each one needs a decision here.
-const invocations = new Map<string, Invocation>(
-  Object.entries({
-    architect: "both",
-    arena: "both",
-    "automate-me": "both",
-    "benchmark-checklist": "model-only",
-    "blast-radius": "both",
-    bro: "user-only",
-    correct: "both",
-    "create-formal-verification-skill": "user-only",
-    "create-verification-skill": "user-only",
-    "figure-it-out": "both",
-    how: "both",
-    "in-your-own-words": "user-only",
-    interrogate: "both",
-    ketchup: "user-only",
-    "make-bot-ui": "both",
-    "maintain-formal-verification-skill": "both",
-    "maintain-verification-skill": "user-only",
-    "no-comments": "both",
-    "poteto-help": "user-only",
-    recall: "both",
-    reflect: "both",
-    sharpen: "both",
-    "show-me-your-work": "both",
-    swarm: "both",
-    tdd: "both",
-    teach: "user-only",
-    "technical-writing": "model-only",
-    "typescript-best-practices": "model-only",
-    unslop: "model-only",
-    why: "both",
-  } satisfies Record<string, Invocation>),
-);
-
-function skillInvocation(skill: string) {
-  if (skill.startsWith("principle-")) return "model-only";
-
-  return invocations.get(skill);
-}
-
-const commandOnlyLine = "disable-model-invocation: true";
-
-const invocationLines: Record<Invocation, string[]> = {
-  "user-only": [commandOnlyLine],
-  both: [],
-  "model-only": ["user-invokable: false"],
-};
+// Maintained by hand, so sync prints the upstream word diff instead of merging.
+const skippedFiles = new Map([["skills/poteto-mode/SKILL.md", "skills/poteto-mode/SKILL.md"]]);
 
 function destination(upstreamPath: string) {
   if (skippedFiles.has(upstreamPath)) return undefined;
@@ -129,11 +78,9 @@ function upstreamFiles(pstack: string) {
   return files;
 }
 
-function portedSkills(files: Map<string, string>) {
+function portedSkills(targets: Iterable<string>) {
   return new Set(
-    [...files.values()].flatMap(
-      (target) => target.match(/^skills\/([^/]+)\/SKILL\.md$/)?.[1] ?? [],
-    ),
+    [...targets].flatMap((target) => target.match(/^skills\/([^/]+)\/SKILL\.md$/)?.[1] ?? []),
   );
 }
 
@@ -187,59 +134,16 @@ function editFrontmatter(text: string, edit: (lines: string[]) => string[]) {
   return `---\n${lines.join("\n")}\n---\n${text.slice(frontmatter[0].length)}`;
 }
 
-function withInvocation(lines: string[], invocation: Invocation) {
-  const kept = lines.filter((line) => !/^(?:disable-model-invocation|user-invokable):/.test(line));
-  let insertAt = kept.findIndex((line) => line.startsWith("description:")) + 1;
-
-  while (insertAt > 0 && insertAt < kept.length && /^\s/.test(kept[insertAt])) insertAt += 1;
-
-  kept.splice(insertAt, 0, ...invocationLines[invocation]);
-
-  return kept;
-}
-
 function rewriteFrontmatter(text: string, skill: string) {
-  return editFrontmatter(text, (lines) => {
-    const invocation = skillInvocation(skill);
-    const rewritten = invocation === undefined ? lines : withInvocation(lines, invocation);
+  if (skill !== "unslop") return text;
 
-    if (skill === "unslop") {
-      const description = rewritten.indexOf("description: Cut AI tells from any writing.");
-      rewritten[description] =
-        "description: Cut AI tells from any writing. Use for any prose surface, your reply to the user included.";
-    }
-
-    return rewritten;
-  });
-}
-
-function classifySkills(pstack: string, files: Map<string, string>) {
-  const classified = new Map<string, Invocation>();
-  const missing: string[] = [];
-
-  for (const skill of portedSkills(files)) {
-    const invocation = skillInvocation(skill);
-
-    if (invocation !== undefined) {
-      classified.set(skill, invocation);
-      continue;
-    }
-
-    const upstream = readFileSync(join(pstack, "skills", skill, "SKILL.md"), "utf8");
-    const frontmatter = upstream.match(frontmatterPattern)?.[1].split("\n") ?? [];
-
-    const upstreamChoice = frontmatter.includes(commandOnlyLine)
-      ? "Upstream makes it command-only."
-      : "Upstream lets the model load it.";
-
-    missing.push(
-      `skills/${skill}: new upstream skill. Add it to \`invocations\` in agent/scripts/pstack-port.ts as "user-only", "both", or "model-only". ${upstreamChoice}`,
-    );
-  }
-
-  if (missing.length > 0) throw new Error(missing.join("\n"));
-
-  return classified;
+  return editFrontmatter(text, (lines) =>
+    lines.map((line) =>
+      line === "description: Cut AI tells from any writing."
+        ? "description: Cut AI tells from any writing. Use for any prose surface, your reply to the user included."
+        : line,
+    ),
+  );
 }
 
 function rewriteCommands(text: string, skills: Set<string>) {
@@ -264,7 +168,7 @@ function isExecutable(mode: number) {
 
 function render(pstack: string, out: string) {
   const files = upstreamFiles(pstack);
-  const skills = portedSkills(files);
+  const skills = portedSkills([...files.values(), ...skippedFiles.values()]);
   const executableTargets = new Map<string, boolean>();
 
   for (const [upstreamPath, target] of files) {
@@ -361,19 +265,6 @@ function matchExecutableBit(localPath: string, executable: boolean) {
   return `${change}: ${localPath}`;
 }
 
-function overrideMergedInvocations(classified: Map<string, Invocation>) {
-  for (const [skill, invocation] of classified) {
-    const localPath = join(agentDirectory, "skills", skill, "SKILL.md");
-    const local = readIfPresent(localPath);
-
-    if (local === undefined) continue;
-
-    const rewritten = editFrontmatter(local, (lines) => withInvocation(lines, invocation));
-
-    if (rewritten !== local) writeFileSync(localPath, rewritten);
-  }
-}
-
 function updateClone() {
   const cacheHome = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
   const clone = join(cacheHome, "pi-setup", "cursor-plugins");
@@ -464,7 +355,6 @@ function sync(ref: string) {
   try {
     const basePstack = extractPstack(clone, pinned, join(scratch, "base-source"));
     const upstreamPstack = extractPstack(clone, commit, join(scratch, "upstream-source"));
-    const classified = classifySkills(upstreamPstack, upstreamFiles(upstreamPstack));
     const upstreamDirectory = join(scratch, "upstream");
     const baseDirectory = join(scratch, "base");
     const targets = render(upstreamPstack, upstreamDirectory);
@@ -519,7 +409,6 @@ function sync(ref: string) {
       report.push(`changed upstream, port by hand into ${localPath}: ${upstreamPath}`);
     }
 
-    overrideMergedInvocations(classified);
     writeFileSync(pinFile, `${commit}\n`);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -546,7 +435,7 @@ const cursorVocabulary: [RegExp, string][] = [
     "Pi session files under the directory of $PI_SESSION_FILE",
   ],
   [
-    /\/poteto-mode\b|poteto-mode skill|\bCursor\b(?! Bugbot)/,
+    /(?<![\w:.])\/poteto-mode\b|\bCursor\b(?! Bugbot)/,
     "the Pi equivalent named in README.md's pstack mapping",
   ],
 ];

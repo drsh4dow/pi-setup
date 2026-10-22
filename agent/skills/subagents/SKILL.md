@@ -58,7 +58,7 @@ A reviewer or verifier that must run on a different model family from the
 work's author takes the `cross-family reviewer` role. When the author ran on
 `openai/gpt-6.1-sol`, run it on `anthropic/claude-opus-5-5` at `high` instead.
 
-The system prompt's Subagents section says how to move a role's thinking level
+The Subagents section of [poteto-mode](../poteto-mode/SKILL.md) says how to move a role's thinking level
 for the job. `high` is the ceiling for every model. Haiku runs at `medium`.
 Opus stays between `low` and `high`. When a Haiku report fails a spot
 check, such as a wrong reference or a missed file, rerun that slice on Opus at

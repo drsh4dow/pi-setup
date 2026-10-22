@@ -1,7 +1,7 @@
 ---
 name: principle-model-the-domain
 description: "Apply when writing stateful logic, or when code branches a lot or repeats a shape assumption across files. Encode the domain in a structure (state machine, typed model, table or registry, reducer, boundary, the right collection) instead of scattered conditionals."
-user-invokable: false
+disable-model-invocation: true
 ---
 
 # Model the Domain

@@ -19,19 +19,19 @@ Skill visibility lets a user choose which loaded skills the model can discover, 
 Preconditions:
 
 - A fresh launch passed doctor.
-- `grep -c disable-model-invocation "$($CP path RUN agent)/skills/architect/SKILL.md"` prints `0`.
+- `grep -c 'disable-model-invocation: true' "$($CP path RUN agent)/skills/architect/SKILL.md"` prints `1`. Every pstack skill starts hidden, as upstream ships it.
 
-- **Open the list.** Run `$CP send RUN /skill-visibility` and `$CP wait RUN 'Done' 10`. The dialog `Skill visibility` opens with `→ ● architect — discoverable` selected. Skills such as `ketchup` and `teach` show `○ … — hidden`. Snap it.
-- **Hide a skill.** Run `$CP keys RUN Enter` and `$CP wait RUN 'architect is now hidden from model discovery' 10`. The selected row now reads `→ ○ architect — hidden`.
+- **Open the list.** Run `$CP send RUN /skill-visibility` and `$CP wait RUN 'architect — hidden' 10`. The list is taller than the pane, so `Done` is offscreen. The dialog `Skill visibility` opens with `→ ○ architect — hidden` selected. Skills this setup adds, such as `dumpfile` and `mailbox`, show `● … — discoverable`. Snap it.
+- **Expose a skill.** Run `$CP keys RUN Enter` and `$CP wait RUN 'architect is now model-discoverable' 10`. The selected row now reads `→ ● architect — discoverable`.
 - **Close and reload.** Run `$CP keys RUN Escape` and `$CP wait RUN 'Reloaded keybindings, extensions, skills' 10`. The notice `Reloading skills.` comes first.
-- **Side effect.** Run `grep -n disable-model-invocation "$($CP path RUN agent)/skills/architect/SKILL.md"`. It prints `disable-model-invocation: true` inside the frontmatter. `git status --short agent/skills` in the checkout prints nothing.
-- **Hidden autocomplete.** Run `$CP keys RUN -l '/skill:unsl'`. No suggestion list appears, because `unslop` is `user-invokable: false`. Run `$CP keys RUN C-u`.
+- **Side effect.** Run `grep -n disable-model-invocation "$($CP path RUN agent)/skills/architect/SKILL.md"`. It prints `disable-model-invocation: false` inside the frontmatter. `git status --short agent/skills` in the checkout prints nothing.
+- **Hidden autocomplete.** Run `$CP keys RUN -l '/skill:pi-har'`. No suggestion list appears, because `pi-harness` is `user-invokable: false`. Run `$CP keys RUN C-u`.
 - **Visible autocomplete.** Run `$CP keys RUN -l '/skill:recal'`. The list shows `→ skill:recall` with its description. Run `$CP keys RUN C-u`.
 - **Proof.** Snap after each step, and copy the scratch `architect/SKILL.md` into the evidence directory.
 
 ## Gotchas
 
 - The extension writes the `SKILL.md` of whichever skill it toggles, wherever that file lives. `control-pi` loads only the scratch copies, so never launch Pi for this recipe any other way.
-- Toggling a skill back writes `disable-model-invocation: false` instead of removing the line. A round trip does not restore the original bytes.
-- The dialog lists only user-invokable skills, so `unslop` and the `principle-*` skills are absent from it.
+- Making a skill discoverable writes `disable-model-invocation: false` instead of removing the line. A round trip on a skill that had no line does not restore the original bytes.
+- The dialog lists only user-invokable skills, so `pi-harness`, `engineering-standards`, and the other `user-invokable: false` skills are absent from it.
 - Closing the dialog without a change does not reload.

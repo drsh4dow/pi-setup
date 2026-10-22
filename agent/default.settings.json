@@ -17,7 +17,6 @@
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-5-5",
   "enabledModels": [
-    "opencode-go/glm-5.3-flash",
     "anthropic/claude-opus-5-5",
     "openai/gpt-6.1-sol",
     "openai/gpt-6-astra",

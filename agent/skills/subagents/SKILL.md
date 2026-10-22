@@ -35,6 +35,12 @@ blocks any spawn the kind does not allow.
 Each subagent runs the model and thinking level of its role. Skills and
 playbooks name the role, such as "the `how explorer` role".
 
+The families differ in strength. `openai/gpt-6.1-sol` is exhaustive on
+details and edge cases: boundaries, proofs, exploits, spec gaps. Opus has
+taste: it writes, plans, and implements best, and judges whether code reads
+well and has the simplest shape. Give a new role the family whose strength the
+job needs.
+
 | Role | Model | Thinking |
 | --- | --- | --- |
 | `how explorer`, `why investigators`, `swarm scouts` | `anthropic/claude-haiku-5-5` | `medium` |
@@ -45,6 +51,7 @@ playbooks name the role, such as "the `how explorer` role".
 | `reflect judgment, synthesizer` | `anthropic/claude-opus-5-5` | `high` |
 | `reflect divergent` | `openai/gpt-6.1-sol` | `high` |
 | `reflect tooling` | `anthropic/claude-opus-5-5` | `medium` |
+| `researcher` | `openai/gpt-6.1-sol` | `high` |
 | `swarm workers` | `anthropic/claude-opus-5-5` | `high` |
 | `arena runners`, `architect runners`, `interrogate reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 | `arena cross-judge pool` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |

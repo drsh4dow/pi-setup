@@ -406,6 +406,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `principle-test-behavior-not-implementation`
 - `recall`
 - `reflect`
+- `research`
 - `setup-sh4dow-skills`
 - `sharpen`
 - `subagents`

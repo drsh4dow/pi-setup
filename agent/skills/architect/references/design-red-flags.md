@@ -4,7 +4,7 @@ Screen every candidate before synthesis. A red flag is a reason to revise or rej
 
 ## Shallow module
 
-A shallow module exposes a large interface while hiding little complexity. Judge depth by the capability and policy hidden behind the public surface relative to the size of that surface. Prefer a simple interface backed by substantial behavior.
+A shallow module's interface is nearly as complex as its implementation. The **codebase-design** skill defines depth, the deletion test, and the rest of the vocabulary this screen uses.
 
 Do not confuse a deep module with a deep call chain. A deep call chain scatters understanding across layers. A deep module concentrates capability behind one interface.
 

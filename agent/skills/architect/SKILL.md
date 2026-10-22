@@ -37,7 +37,7 @@ Design it twice. Require at least two structurally distinct candidates before sy
 
 Screen every candidate against [`references/design-red-flags.md`](references/design-red-flags.md) before synthesis. Assume the next contributor is an agent that sees only the files it opened, copies the nearest example, and takes the shortest path that compiles. Prefer the design where a change that looks right from one file is right for the whole repo.
 
-Compare viable candidates on interface depth. Prefer the design that hides more complexity behind a smaller, simpler public surface. A rich interface can keep call chains short by concentrating capability instead of scattering it across layers.
+Compare viable candidates on depth, locality, and seam placement, in the vocabulary of the **codebase-design** skill. Prefer the deeper module: more behavior behind a smaller interface. A rich interface can keep call chains short by concentrating capability instead of scattering it across layers.
 
 Arena returns one synthesized design package. Its synthesis decision fills the rationale's "Synthesis decision" section.
 

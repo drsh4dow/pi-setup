@@ -1,6 +1,8 @@
 ---
 name: docs-search
-description: Use before building on an SDK, framework, or platform API, to check native capabilities before adding custom infrastructure, or before relying on uncertain or version-sensitive behavior. Questions about Pi and its @earendil-works libraries belong to pi-harness.
+description: Documentation search. Use before relying on uncertain or version-sensitive behavior or when in need of documentation or for library and API questions.
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Documentation search
@@ -34,6 +36,6 @@ need another search.
 
 If Context7 is unavailable or lacks the relevant version, consult the installed
 source or canonical project documentation. Retrieve live documentation through
-[web-search](../web-search/SKILL.md): fetch the docs site's `llms.txt` when it
+web-search skill: fetch the docs site's `llms.txt` when it
 exists, otherwise search restricted to the official domain. State a version gap
 rather than treating unrelated documentation as authoritative.

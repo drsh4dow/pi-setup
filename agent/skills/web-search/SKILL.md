@@ -1,6 +1,8 @@
 ---
 name: web-search
-description: Find and read live web sources when the answer needs evidence unavailable in the current context. Library and API questions start with docs-search.
+description: Find and read live web sources when the answer needs evidence unavailable in the current context.
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Web search
@@ -10,12 +12,12 @@ same script, and return only what the answer needs: titles, URLs, dates, and
 the decisive passages. Codemode cuts output past 10,000 tokens from the middle,
 so a script that returns whole results loses part of what it retrieved.
 
-| Need | Route |
-| --- | --- |
-| Discover sources | `tools.mcp__perplexity__perplexity_search` |
-| Read known URLs | `tools.mcp__exa__web_fetch_exa` |
-| GitHub issues, PRs, code, or repositories | `gh search` through `tools.bash` |
-| Login, forms, clicks, or visual state | the `agent-browser` skill |
+| Need                                      | Route                                      |
+| ----------------------------------------- | ------------------------------------------ |
+| Discover sources                          | `tools.mcp__perplexity__perplexity_search` |
+| Read known URLs                           | `tools.mcp__exa__web_fetch_exa`            |
+| GitHub issues, PRs, code, or repositories | `gh search` through `tools.bash`           |
+| Login, forms, clicks, or visual state     | the `agent-browser` skill                  |
 
 GitHub allows 30 search requests a minute across `gh search` commands, so
 start with two or three targeted queries and read the items they find.
@@ -78,12 +80,6 @@ against the request. Check a missing page's status code with
 other failure with `agent-browser`. Use `agent-browser` as well for an empty or
 shell page, and when the page's current state matters, such as prices, status,
 or a change published today, since Exa may serve a cached copy.
-
-## Cost
-
-Searches cost $0.005 and pages $0.001 from prepaid balances. Size fan-out to
-the question. An insufficient-credit or authentication error ends
-retrieval: report it with the failing tool rather than retrying.
 
 ## Establish the answer
 

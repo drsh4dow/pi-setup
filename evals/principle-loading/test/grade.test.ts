@@ -184,3 +184,23 @@ test("a run that timed out or ended on an error does not count", () => {
   assert.equal(gradeRun(run, errored).invalid, "last stop reason error");
   assert.equal(gradeRun(run, undefined).invalid, "no session file");
 });
+
+test("a run that left the project unchanged is reported as changing nothing", () => {
+  const run: RunRecord = {
+    target: "principle-ask-or-proceed",
+    model: "m",
+    trial: 1,
+    workdir: "/tmp/x",
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    durationMs: 1,
+    session: "s.jsonl",
+  };
+
+  const answer = session(finalAnswer("ASSUMPTIONS I'M MAKING: ..."));
+
+  assert.equal(gradeRun({ ...run, projectChanges: 0 }, answer).changedNothing, true);
+  assert.equal(gradeRun({ ...run, projectChanges: 3 }, answer).changedNothing, false);
+  assert.equal(gradeRun(run, answer).changedNothing, undefined);
+});

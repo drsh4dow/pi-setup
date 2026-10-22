@@ -52,6 +52,21 @@ function git(cwd: string, args: readonly string[]) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
 
+function gitOutput(cwd: string, args: readonly string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+/** Files left changed plus commits added on any ref since the setup state, so a run that only asked counts 0. */
+export function projectChanges(workdir: string, setupHead: string): number {
+  const changedFiles = gitOutput(workdir, ["status", "--porcelain", "--untracked-files=all"])
+    .split("\n")
+    .filter((line) => line !== "").length;
+
+  const newCommits = Number(gitOutput(workdir, ["rev-list", "--count", "--all", `^${setupHead}`]));
+
+  return changedFiles + newCommits;
+}
+
 /** A fresh working directory named like the project, holding the fixture as its git history. */
 export function prepareWorkdir(scenario: Scenario): string {
   const workdir = mkdtempSync(join(tmpdir(), `${scenario.fixture}-`));
@@ -130,6 +145,7 @@ async function execute(run: PlannedRun, thinking: string, timeoutMs: number): Pr
   mkdirSync(run.dir, { recursive: true });
 
   const workdir = prepareWorkdir(run.scenario);
+  const setupHead = gitOutput(workdir, ["rev-parse", "HEAD"]);
   const sessionDir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
   const started = Date.now();
 
@@ -163,6 +179,7 @@ async function execute(run: PlannedRun, thinking: string, timeoutMs: number): Pr
     timedOut: result.timedOut,
     durationMs: Date.now() - started,
     session: session ?? null,
+    projectChanges: projectChanges(workdir, setupHead),
   };
 
   writeAtomically(join(run.dir, "run.json"), `${JSON.stringify(record, null, 2)}\n`);

@@ -246,6 +246,8 @@ export const RunRecord = Schema.Struct({
   timedOut: Schema.Boolean,
   durationMs: Schema.Finite,
   session: Schema.NullOr(Schema.String),
+  /** Changed files plus new commits after the run. Absent in records written before it was measured. */
+  projectChanges: Schema.optionalKey(Schema.Int),
 });
 
 export type RunRecord = typeof RunRecord.Type;
@@ -260,6 +262,8 @@ export interface GradedRun {
   readonly targetLoaded: boolean;
   /** Loaded before the first edit or write, or the run never edited. */
   readonly targetLoadedEarly: boolean;
+  /** The run left the project as setup made it, usually because it stopped to ask. Absent when unmeasured. */
+  readonly changedNothing: boolean | undefined;
 }
 
 function invalidReason(run: RunRecord, grade: SessionGrade | undefined): string | undefined {
@@ -286,6 +290,7 @@ export function gradeRun(run: RunRecord, sessionJsonl: string | undefined): Grad
     invalid: invalidReason(run, grade),
     targetLoaded: load !== undefined,
     targetLoadedEarly: early,
+    changedNothing: run.projectChanges === undefined ? undefined : run.projectChanges === 0,
   };
 }
 
@@ -337,6 +342,30 @@ export function report(graded: readonly GradedRun[]): string {
 
   out.push(`| **all** | ${totals.join(" | ")} |`, "");
 
+  out.push("## Runs that changed nothing in the project (usually stopped to ask)", "");
+  out.push(`| Scenario | ${models.join(" | ")} |`);
+  out.push(`| --- | ${models.map(() => "---").join(" | ")} |`);
+
+  const changedNothing = (runs: readonly GradedRun[]) =>
+    fraction(
+      runs.filter((run) => run.changedNothing !== undefined),
+      (run) => run.changedNothing === true,
+    );
+
+  for (const target of targets) {
+    const row = models.map((model) =>
+      changedNothing(graded.filter((run) => run.run.target === target && run.run.model === model)),
+    );
+
+    out.push(`| ${target} | ${row.join(" | ")} |`);
+  }
+
+  const changedNothingTotals = models.map((model) =>
+    changedNothing(graded.filter((run) => run.run.model === model)),
+  );
+
+  out.push(`| **all** | ${changedNothingTotals.join(" | ")} |`, "");
+
   out.push(
     "## Off-target loads (runs that loaded the principle in other scenarios / valid runs of other scenarios)",
     "",
@@ -364,9 +393,9 @@ export function report(graded: readonly GradedRun[]): string {
 
   out.push("", "## Runs", "");
   out.push(
-    "| Scenario | Model | Trial | Status | Target | Loaded principles (step) | First edit | Secs |",
+    "| Scenario | Model | Trial | Status | Target | Loaded principles (step) | First edit | Changes | Secs |",
   );
-  out.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  out.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
 
   for (const run of graded) {
     const loads = run.grade?.loads
@@ -374,7 +403,7 @@ export function report(graded: readonly GradedRun[]): string {
       .join(", ");
 
     out.push(
-      `| ${run.run.target} | ${run.run.model} | ${run.run.trial} | ${run.invalid ?? "ok"} | ${targetCell(run)} | ${loads || "none"} | ${run.grade?.firstMutationStep ?? "–"} | ${Math.round(run.run.durationMs / 1000)} |`,
+      `| ${run.run.target} | ${run.run.model} | ${run.run.trial} | ${run.invalid ?? "ok"} | ${targetCell(run)} | ${loads || "none"} | ${run.grade?.firstMutationStep ?? "–"} | ${run.run.projectChanges ?? "–"} | ${Math.round(run.run.durationMs / 1000)} |`,
     );
   }
 

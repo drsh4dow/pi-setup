@@ -1,21 +1,27 @@
 # pi-setup
 
-Global Pi configuration: system prompt, vendored TypeScript extensions, skills,
-themes, and prompts. Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as the system
-prompt for every model.
+Global Pi configuration, checked out at `~/.pi`. TypeScript extensions on
+Effect 4, with Bun and Vite+ for tooling.
 
-Use `vp` for package management and scripts. Run
-`vp run verify` before reporting a code or tooling change.
+Every decision in this repository should improve the agent's experience of
+the harness.
 
-Every decision made in the code/output of this repository should increase the AX
-(Agent Experience) of the harness.
+## Where to look
 
-Before writing Effect code, read `node_modules/effect/AGENTS.md`, the guide
-that ships with the installed version. For API details and idiomatic usage,
-read the examples in `node_modules/effect/ai-docs/` and the source in
-`node_modules/effect/src/` and `node_modules/@effect/*/src/`. Run `vp install`
-if `node_modules` is absent.
+| Task            | Location                                                              |
+| --------------- | --------------------------------------------------------------------- |
+| System prompt   | `agent/SYSTEM.md`                                                     |
+| Shared settings | `agent/default.settings.json`                                         |
+| Extension       | `agent/extensions/<name>/index.ts` or `agent/extensions/<name>.ts`    |
+| Skill           | `agent/skills/<name>/SKILL.md`                                        |
+| Effect API      | `node_modules/effect/AGENTS.md`, then `ai-docs/` and `src/` beside it |
+| Pi API          | the `pi-harness` skill                                                |
+| Checks          | `vite.config.ts`                                                      |
 
-## Issue tracker
+## Rules
 
-Issues live as GitHub issues in `drsh4dow/pi-setup`, driven by the `gh` CLI.
+- Use `vp` for packages and scripts. Run `vp run verify` before you report a
+  change.
+- `agent/settings.json` and the runtime state under `agent/` are local and
+  ignored. Never commit them.
+- Issues live in `drsh4dow/pi-setup` on GitHub. Use the `gh` CLI.

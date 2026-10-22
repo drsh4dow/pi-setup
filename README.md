@@ -345,8 +345,9 @@ and leaves no process behind. The differences below are known and accepted.
 [`vercel-labs/agent-browser`](https://github.com/vercel-labs/agent-browser/tree/main/skills/agent-browser)
 skill.
 
-`wizard` and `writing-for-agents` are vendored from
-[`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
+`wizard` and `writing-for-agents` come from
+[Matt Pocock's skills](https://github.com/mattpocock/skills) and are maintained
+here as this setup's own.
 
 `codebase-design`, `domain-modeling`, `grill-with-docs`, `grilling`, and
 `improve-codebase-architecture` start from

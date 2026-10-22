@@ -1,6 +1,6 @@
 ---
 name: principle-guard-the-context-window
-description: "Apply when context is filling up: large outputs, long files, repeated reads, or fan-out planning."
+description: "Apply before reading or searching anything large (many files, big logs, long transcripts, unsized command output), when planning fan-out, or when context is filling up."
 disable-model-invocation: false
 user-invokable: false
 ---

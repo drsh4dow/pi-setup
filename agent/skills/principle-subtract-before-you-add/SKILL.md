@@ -1,6 +1,6 @@
 ---
 name: principle-subtract-before-you-add
-description: "Apply when sequencing an addition, refactor, or rewrite."
+description: "Apply before adding a feature, option, or code path to existing code, and before a refactor or rewrite: first look for what to delete."
 disable-model-invocation: false
 user-invokable: false
 ---

@@ -1,7 +1,8 @@
 ---
 name: principle-boundary-discipline
-description: "Apply when wiring validation, error handling, or framework adapters. Concentrate guards at system boundaries (CLI, config, network, external APIs); trust internal types and keep business logic in pure functions."
-disable-model-invocation: true
+description: "Apply when wiring validation, error handling, or framework adapters."
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Boundary Discipline
@@ -11,7 +12,7 @@ Place validation, type narrowing, and error handling at system boundaries. Trust
 **Why:** Scattered validation is noisy, redundant, and gives a false sense of safety. Keep logic out of framework wiring so it can be tested without the framework.
 
 **The pattern:**
-- **At boundaries** (CLI args, config files, external APIs, network protocols): validate, return errors, handle defensively.
+- **At boundaries** (CLI args, config files, environment variables, external APIs, network protocols, RPC and IPC payloads, JSON, database rows): validate, return errors, handle defensively.
 - **Inside the system:** typed data, error propagation, no re-validation. Trust the types.
 - **Across the boundary.** Expose domain concepts, not the boundary's private representation. Keep general-purpose mechanism inside and special-purpose policy at the edge.
 

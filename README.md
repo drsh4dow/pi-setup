@@ -8,7 +8,7 @@ under `~/.pi/agent` on its own, so nothing here is installed as a package.
 [`agent/SYSTEM.md`](agent/SYSTEM.md) replaces Pi's system prompt for every
 model. It sets the agent's baseline behavior. `/skill:poteto-mode` loads
 pstack's working method for the rest of the session. The skills hold the
-procedures for specific kinds of work, and `engineering-standards` holds the
+procedures for specific kinds of work, and `principle-engineering-standards` holds the
 code standards.
 
 ## How I work
@@ -367,7 +367,6 @@ Every skill whose name also appears in pstack is ported from it. See
 - `create-verification-skill`
 - `docs-search`
 - `dumpfile`
-- `engineering-standards`
 - `figure-it-out`
 - `frontend-design`
 - `how`
@@ -382,24 +381,23 @@ Every skill whose name also appears in pstack is ported from it. See
 - `pi-harness`
 - `poteto-help`
 - `poteto-mode`
+- `principle-ask-or-proceed`
 - `principle-attack-the-premise`
 - `principle-boundary-discipline`
 - `principle-build-the-lever`
 - `principle-encode-lessons-in-structure`
+- `principle-engineering-standards`
 - `principle-exhaust-the-design-space`
 - `principle-experience-first`
 - `principle-explain-the-number`
 - `principle-fix-root-causes`
-- `principle-foundational-thinking`
 - `principle-guard-the-context-window`
 - `principle-laziness-protocol`
 - `principle-make-operations-idempotent`
-- `principle-migrate-callers-then-delete-legacy-apis`
 - `principle-minimize-reader-load`
 - `principle-model-the-domain`
-- `principle-never-block-on-the-human`
-- `principle-outcome-oriented-execution`
 - `principle-prove-it-works`
+- `principle-push-back`
 - `principle-redesign-from-first-principles`
 - `principle-separate-before-serializing-shared-state`
 - `principle-sequence-verifiable-units`

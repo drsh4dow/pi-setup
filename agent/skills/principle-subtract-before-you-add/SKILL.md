@@ -1,7 +1,8 @@
 ---
 name: principle-subtract-before-you-add
-description: "Apply when sequencing an addition, refactor, or rewrite. Remove dead code, redundant validators, and stub references first, then build on the simpler base."
-disable-model-invocation: true
+description: "Apply when sequencing an addition, refactor, or rewrite."
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Subtract Before You Add
@@ -12,7 +13,8 @@ Make simplification a continual investment. Leave the design slightly simpler an
 
 - Sequence removal before construction
 - Cut before you polish (get to the minimum before investing in quality)
-- Design for observed usage, not speculative edge cases
+- Design for observed usage, not speculative edge cases. Build the features the request asks for, not the ones that seem useful.
+- Learn why a comment or odd-looking code exists before you delete it
 - No speculative validators, parsers, or guards beyond what the spec demands
 - Simplify prompts (remove redundant instructions, excessive templates)
 - When a reference has no novel content, delete it rather than leaving a stub

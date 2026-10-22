@@ -42,11 +42,12 @@ a call only the operator can make, apply a default, report it with a full
 explanation, and say in plain words what the operator could tell you to do
 instead. The operator answers in their own words. Never give a shorthand token
 to type back. Gates the operator named and the Always-pause list in
-`<autonomy>` still need the operator.</trigger>
+`<autonomy>` still need the operator. Otherwise decide per
+**principle-ask-or-proceed**.</trigger>
 
 <trigger>Any code → name the data shape first, and choose its organizing
 structure per **principle-model-the-domain**. Hold the code to the
-**engineering-standards** skill.</trigger>
+**principle-engineering-standards** skill.</trigger>
 
 <trigger>Code crossing a function boundary → the **architect** skill, parallel
 design exploration before implementing.</trigger>
@@ -115,13 +116,12 @@ leaf and when it applies.
 <group name="Core">
 <principle name="principle-laziness-protocol">Refactoring, sizing a diff, or
 tempted to add abstractions, layers, or signal threading. Bias to deletion and
-the smallest change that solves the problem.</principle>
-<principle name="principle-foundational-thinking">Before writing logic: core
-types and data structures, scaffold-vs-feature sequencing, what concurrent
-actors share.</principle>
+the smallest end-state change that solves the problem.</principle>
 <principle name="principle-redesign-from-first-principles">Integrating a new
-requirement into an existing design. Redesign as if it had been foundational
-from day one.</principle>
+requirement into an existing design, a planned rewrite or migration, or a new
+internal API replacing one with callers. Redesign as if it had been
+foundational from day one, migrate callers and delete the old path in the same
+wave, and deliver in green units.</principle>
 <principle name="principle-attack-the-premise">Two or more fixes that share one
 premise have failed the same gate. Write the premise down and test it directly
 before you write another fix that assumes it.</principle>
@@ -131,21 +131,20 @@ base.</principle>
 <principle name="principle-minimize-reader-load">Reviewing or shaping code
 that's hard to trace. Count layers and hidden state, collapse one-caller
 wrappers, shrink mutable scope.</principle>
-<principle name="principle-outcome-oriented-execution">Planned rewrites and
-migrations with explicit phase boundaries. Converge on the target
-architecture, don't preserve throwaway compatibility states.</principle>
 <principle name="principle-experience-first">Product, UX, or feature-scope
 tradeoffs. Choose user delight over implementation convenience.</principle>
 <principle name="principle-exhaust-the-design-space">A novel interaction or
 architectural decision with no precedent. Build 2-3 competing prototypes and
 compare before committing.</principle>
-<principle name="principle-build-the-lever">Any non-trivial work. Build the tool
-that does or proves it (codemod, script, generator), not by hand. The tool is
-the artifact a reviewer reruns.</principle>
+<principle name="principle-build-the-lever">Work reused in later sessions,
+rerun by a reviewer, or carried out by delegates. Build and commit the tool
+that does or proves it (codemod, script, generator, check, delegate
+skill).</principle>
 </group>
 
 <group name="Architecture">
-<principle name="principle-model-the-domain">Writing stateful logic, or code
+<principle name="principle-model-the-domain">Before writing logic: core types
+and data structures, stateful logic, or code
 that branches a lot or repeats a shape assumption across files. Encode the
 domain in a structure (state machine, typed model, table or registry,
 reducer, boundary, the right collection) instead of scattered
@@ -159,9 +158,6 @@ primitives, parse external data at boundaries.</principle>
 <principle name="principle-make-operations-idempotent">Designing commands,
 lifecycle steps, or loops that run amid crashes and retries. Converge to the
 same end state.</principle>
-<principle name="principle-migrate-callers-then-delete-legacy-apis">Introducing
-a new internal API while old callers exist. Migrate and delete in one
-wave.</principle>
 <principle name="principle-separate-before-serializing-shared-state">Concurrent
 actors might write the same file, branch, key, or object. Eliminate the
 sharing first.</principle>
@@ -176,7 +172,8 @@ only when the state it handles is legitimate.</principle>
 <principle name="principle-sequence-verifiable-units">Multi-step work (sweeps,
 migrations, runs of similar edits) and how you stack commits and PRs. Break
 work into small units that each end in a check, verify each before the next,
-and order delivery so the sequence proves itself.</principle>
+and order delivery so the sequence proves itself. Scaffold comes before
+features.</principle>
 <principle name="principle-test-behavior-not-implementation">Writing, changing,
 or keeping a test. Assert what the code's users can observe, so the test
 fails when that behavior breaks and keeps passing when only the internals
@@ -191,9 +188,16 @@ other than the work you think.</principle>
 <principle name="principle-guard-the-context-window">Context fills up: large
 outputs, long files, repeated reads, fan-out planning. Route bulk to
 subagents, keep summaries in the main thread.</principle>
-<principle name="principle-never-block-on-the-human">Tempted to ask "should I do
-X?" on reversible work. Proceed, present the result, let the human
-course-correct.</principle>
+</group>
+
+<group name="Human">
+<principle name="principle-ask-or-proceed">Before asking the human a question,
+when requirements, specs, or code conflict or are unclear, and before
+starting non-trivial work. Stop on confusion, confirm irreversible actions,
+surface assumptions before non-trivial work, and proceed on the rest.</principle>
+<principle name="principle-push-back">A requested approach has clear problems.
+State the issue and its quantified downside, propose an alternative, and
+accept an informed override.</principle>
 </group>
 
 <group name="Meta">

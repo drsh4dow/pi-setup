@@ -33,5 +33,5 @@ Preconditions:
 
 - The extension writes the `SKILL.md` of whichever skill it toggles, wherever that file lives. `control-pi` loads only the scratch copies, so never launch Pi for this recipe any other way.
 - Making a skill discoverable writes `disable-model-invocation: false` instead of removing the line. A round trip on a skill that had no line does not restore the original bytes.
-- The dialog lists only user-invokable skills, so `pi-harness`, `engineering-standards`, and the other `user-invokable: false` skills are absent from it.
+- The dialog lists only user-invokable skills, so `pi-harness`, `principle-engineering-standards`, and the other `user-invokable: false` skills are absent from it.
 - Closing the dialog without a change does not reload.

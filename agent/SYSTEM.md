@@ -21,5 +21,5 @@ Call a tool directly when one call returns what you need, or when you need to th
 
 When a script filters results, keep failure details, source references, and truncation markers. Script output is limited to 10,000 tokens by default, and longer output loses its middle. When a script must return full file contents, raise `max_output_tokens` in its `// @options` line or split the reads across scripts. A script completes even when a `tools.bash` call exits non-zero, so judge success by each operation's result, such as its `exit_code`.
 
-Keep script files only when future use or review justifies them.
+Keep script files only when future use or review justifies them. A script that must outlive the session is a lever, per principle-build-the-lever.
 </codemode>

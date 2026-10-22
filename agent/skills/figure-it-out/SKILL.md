@@ -24,7 +24,7 @@ Then present the framing as the reply that ends the turn: the predicate, the sco
 
 ## Phase B: Design the workflow
 
-Decompose into atomic, independently-landable units. Sequence riskiest-unknown-first. In an empty repo the domain model is the riskiest unknown, so its types are the first unit. Scaffold and verification come before features (the **foundational-thinking** principle skill).
+Decompose into atomic, independently-landable units. Sequence riskiest-unknown-first. In an empty repo the domain model is the riskiest unknown, so its types are the first unit. Scaffold and verification come before features (the **sequence-verifiable-units** principle skill).
 
 - Build the verification harness before the work, with the baseline captured from the pre-change state, so the check reads as "old value vs new value".
 - For one-way-door design decisions, run the **architect** skill (it runs **arena**). Skip it for mechanical work whose shape is already concrete. A second arena over a settled design is over-engineering (the **laziness-protocol** principle skill).

@@ -1,12 +1,15 @@
 ---
 name: principle-model-the-domain
-description: "Apply when writing stateful logic, or when code branches a lot or repeats a shape assumption across files. Encode the domain in a structure (state machine, typed model, table or registry, reducer, boundary, the right collection) instead of scattered conditionals."
-disable-model-invocation: true
+description: "Apply before writing logic: choosing core types and data structures, writing stateful logic, or when code branches a lot or repeats a shape assumption across files."
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Model the Domain
 
 Encode the real domain in a data structure instead of scattering it across conditionals. A structure that matches the domain makes invalid states unrepresentable and deletes branches. Choosing it at write time is cheap. Recovering it later reads as a refactor and gets deferred.
+
+**Data structures first.** Get the data shape right before writing logic, so the downstream code becomes obvious. Define core types early, trace every access pattern, and choose structures that match the dominant paths. Types and data models should converge.
 
 Reach for:
 
@@ -22,3 +25,5 @@ Reach for:
 Do not force an abstraction. Prefer boring code if the current shape is already clear, local, and unlikely to grow. Be skeptical of an abstraction that adds indirection without removing branches, duplicated rules, invalid states, or lifecycle risk.
 
 The sign that you skipped this is a new feature that grows an existing if/else chain by one more branch, or a second boolean that must stay in sync with the first. Temporal decomposition is another sign. Phase-named modules repeat the same domain rules across steps.
+
+Land each increment as a coherent abstraction, or deepen one that exists, rather than spreading a new capability across callers as special-case coordination.

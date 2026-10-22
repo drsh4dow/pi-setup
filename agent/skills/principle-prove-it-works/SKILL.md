@@ -1,7 +1,8 @@
 ---
 name: principle-prove-it-works
-description: "Apply after completing a task, before declaring done. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or 'it compiles.'"
-disable-model-invocation: true
+description: "Apply after completing a task, before declaring it done."
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Prove It Works
@@ -15,8 +16,6 @@ Check the real thing, not a proxy:
 - Read the actual value, not a cached or derived representation
 - When verification fails, suspect the observation method before suspecting the system
 
-## Script the check when you can
+## Script the check a reviewer must rerun
 
-The strongest proof is a deterministic script that re-runs the same comparison, not a one-time eyeball. Write the script, run it, and keep its output as an artifact a reviewer can re-run instead of trusting your word.
-
-Keep the artifact visible for the human. Commit it only for large or complex work where the trail has to be auditable later, like a big port or migration (the **show-me-your-work** skill).
+A check a reviewer must rerun is a lever: build and commit it per [Build the Lever](../principle-build-the-lever/SKILL.md). For large or complex work whose trail has to be auditable later, like a big port or migration, also keep a decision trail with the **show-me-your-work** skill.

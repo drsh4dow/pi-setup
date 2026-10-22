@@ -30,10 +30,5 @@
       }
     ]
   },
-  "include": [
-    "vite.config.ts",
-    "agent/extensions/**/*.ts",
-    "agent/lib/**/*.ts",
-    "agent/scripts/**/*.ts"
-  ]
+  "include": ["vite.config.ts", "agent/extensions/**/*.ts", "agent/lib/**/*.ts", "scripts/**/*.ts"]
 }

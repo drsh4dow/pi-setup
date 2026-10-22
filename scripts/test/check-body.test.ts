@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 
-const checker = new URL("../../skills/writing-good-prs/scripts/check-body.ts", import.meta.url)
-  .pathname;
+const checker = new URL(
+  "../../agent/skills/writing-good-prs/scripts/check-body.ts",
+  import.meta.url,
+).pathname;
 
-const issueTemplate = new URL("../../../.github/ISSUE_TEMPLATE/ticket.md", import.meta.url)
-  .pathname;
+const issueTemplate = new URL("../../.github/ISSUE_TEMPLATE/ticket.md", import.meta.url).pathname;
 
 function check(t: TestContext, body: string, args: string[]) {
   const root = mkdtempSync(join(tmpdir(), "check-body-"));
@@ -38,7 +39,7 @@ Agents wrote PR bodies in three shapes. Closes #47.
 
 ## Evidence
 
-- \`node --test agent/scripts/test/check-body.test.ts\` fails on the base and passes on the head.
+- \`node --test scripts/test/check-body.test.ts\` fails on the base and passes on the head.
 
 ## Merge danger
 

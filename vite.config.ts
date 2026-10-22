@@ -6,7 +6,9 @@ import { defineConfig } from "vite-plus";
 const ignoredFiles = [
   ".repos/**",
   "agent/npm/**",
-  "agent/poteto/**",
+  "agent/playbooks/**",
+  "agent/references/**",
+  "agent/scripts/**",
   "agent/sessions/**",
   "agent/skills/*",
   "oxlint/anti-slop/**",
@@ -26,17 +28,17 @@ export default defineConfig({
         ],
         cache: false,
       },
-      "verify:strict-diagnostics": "node agent/scripts/verify-strict-diagnostics.ts",
+      "verify:strict-diagnostics": "node scripts/verify-strict-diagnostics.ts",
       // File modes live in the git index, which the cache does not fingerprint, so a
       // replayed pass could hide a script that lost its executable bit.
-      "verify:skills": { command: "node agent/scripts/verify-skills.ts", cache: false },
+      "verify:skills": { command: "node scripts/verify-skills.ts", cache: false },
       "verify:terminal-delivery-citations": {
         command: ".agents/skills/verify-terminal-delivery/scripts/check --citations",
         cache: false,
       },
       "verify:poteto-scripts": [
-        "cd agent/poteto/scripts && vp exec bun install --frozen-lockfile > /dev/null",
-        "tsc --project agent/poteto/scripts/tsconfig.json",
+        "cd agent/scripts && vp exec bun install --frozen-lockfile > /dev/null",
+        "tsc --project agent/scripts/tsconfig.json",
       ],
       "test:extensions": {
         command:
@@ -57,9 +59,8 @@ export default defineConfig({
         },
       },
       "test:docs": [
-        "node --test --test-reporter=dot agent/scripts/test/*.test.ts",
-        "node agent/scripts/verify-docs.ts",
-        "node agent/scripts/pstack-port.ts check",
+        "node --test --test-reporter=dot scripts/test/*.test.ts",
+        "node scripts/verify-docs.ts",
       ],
       // The dependencies run concurrently; vp check runs once they pass.
       verify: {
@@ -164,7 +165,7 @@ export default defineConfig({
         // Effect safety rules still apply wherever they actually use Effect.
         files: [
           "**/test/**",
-          "agent/scripts/**",
+          "scripts/**",
           "agent/extensions/background-terminals/bin/**",
           "agent/extensions/subagents/bin/**",
           "cli/dumpfile/**",

@@ -9,7 +9,7 @@ unslopped prose, simple code, and verified work. This file stays in force for
 the rest of the session.
 
 <paths>
-Playbooks, references, and scripts live in `~/.pi/agent/poteto/`. Resolve
+Playbooks, references, and scripts live in `~/.pi/agent/`. Resolve
 paths such as `playbooks/babysit.md` or `scripts/watch-pr/watch-pr` against
 that directory. The agent store, for state that must outlive a session such as
 orchestration stores, decision trails, and plan docs, is

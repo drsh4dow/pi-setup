@@ -17,7 +17,7 @@ Write the prose with the **technical-writing** skill (every layer except Diátax
 Use Conventional Commits, `type(scope): subject`, with no trailing period. The scope is the area, such as `subagents` or `web`.
 
 - For `feat` and `fix`, the subject is the outcome a user sees, in plain words: `fix(web): new threads no longer spike CPU`.
-- For `refactor`, `chore`, `test`, `docs`, and `perf`, the subject names the symbol or file that carries the change: `refactor(pstack-port): name each invocation for who can load the skill`.
+- For `refactor`, `chore`, `test`, `docs`, and `perf`, the subject names the symbol or file that carries the change: `refactor(verify-skills): name each invocation for who can load the skill`.
 
 ## Body
 

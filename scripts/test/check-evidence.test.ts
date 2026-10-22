@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
-const checker = new URL("../../skills/show-me-your-work/scripts/check-evidence.ts", import.meta.url)
-  .pathname;
+const checker = new URL(
+  "../../agent/skills/show-me-your-work/scripts/check-evidence.ts",
+  import.meta.url,
+).pathname;
 
 const header = "ts\tphase\tdecision\twhy\tevidence\tresult\n";
 

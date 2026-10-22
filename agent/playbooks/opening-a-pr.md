@@ -6,9 +6,9 @@ Invoked at the end of every other playbook.
 
 **Commits.** Commit liberally. Rebase into small, ordered commits before opening PRs. Each commit is a future PR: landable, ordered to tell the story. Amend when the fix belongs in a just-made commit. New commit when separable. Commit bodies don't restate the subject.
 
-**PRs.** Apply the [`deslop`](../../prompts/deslop.md) prompt over the diff before commit and `/skill:no-comments` before review. Write every PR title, description, and commit body with `/skill:technical-writing` (every layer except Diátaxis, and apply the STE vocabulary rules: one word per action, keep articles, a plain verb over `-ing` where one works), then apply `/skill:unslop`.
+**PRs.** Apply the [`deslop`](../prompts/deslop.md) prompt over the diff before commit and `/skill:no-comments` before review. Write every PR title, description, and commit body with `/skill:technical-writing` (every layer except Diátaxis, and apply the STE vocabulary rules: one word per action, keep articles, a plain verb over `-ing` where one works), then apply `/skill:unslop`.
 
-**Titles and descriptions.** Write the PR title and body with the [`writing-good-prs`](../../skills/writing-good-prs/SKILL.md) skill. Run its `check-body.ts` on the body until it exits 0, then create or edit the PR from that file.
+**Titles and descriptions.** Write the PR title and body with the [`writing-good-prs`](../skills/writing-good-prs/SKILL.md) skill. Run its `check-body.ts` on the body until it exits 0, then create or edit the PR from that file.
 
 **Forge.** Resolve the forge before the first PR operation and keep that choice for create, edit, view, watch, and merge. GitHub CLI (`gh`) is the default. If `command -v origin` succeeds and Origin can resolve the repository, prefer `origin pr ...`. If Origin is absent or cannot resolve the repository, stay on `gh` and record the fallback. Do not require Graphite (`gt`).
 

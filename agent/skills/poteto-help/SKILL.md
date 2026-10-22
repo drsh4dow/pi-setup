@@ -97,7 +97,7 @@ Not in pstack:
 
 ## Playbooks and principles
 
-Playbooks are step lists in `~/.pi/agent/poteto/playbooks/`, not skills, so they have no slash command. Describing the task picks one, and these phrases name one directly:
+Playbooks are step lists in `~/.pi/agent/playbooks/`, not skills, so they have no slash command. Describing the task picks one, and these phrases name one directly:
 
 - "babysit this pr" runs Babysit and watches the PR until it merges, closes, or you say stop. The agent wakes on each new review, comment, or CI change. "get it green" stops at merge-ready, and "check on pr 123" makes one status pass. Babysitting doesn't merge unless you ask to merge, land, or ship.
 - "land the stack" runs Shipping.
@@ -106,9 +106,9 @@ Playbooks are step lists in `~/.pi/agent/poteto/playbooks/`, not skills, so they
 - "full autopilot on this queue" runs Autopilot-full. "stack them, don't ship" runs Autopilot-stack.
 - "run the eval playbook" runs Eval.
 
-The Playbooks section of [`poteto-mode`](../poteto-mode/SKILL.md) lists every playbook and when it applies. The [Opening a PR](../../poteto/playbooks/opening-a-pr.md), [Babysit](../../poteto/playbooks/babysit.md), and [Shipping](../../poteto/playbooks/shipping.md) playbooks cover opening, babysitting, and landing a PR.
+The Playbooks section of [`poteto-mode`](../poteto-mode/SKILL.md) lists every playbook and when it applies. The [Opening a PR](../../playbooks/opening-a-pr.md), [Babysit](../../playbooks/babysit.md), and [Shipping](../../playbooks/shipping.md) playbooks cover opening, babysitting, and landing a PR.
 
-pstack has no planning skill. For work that spans phases or stacked PRs, asking for a plan runs the [Multi-phase plan playbook](../../poteto/playbooks/multi-phase-plan.md), which writes the plan and doesn't implement it. For a design question, the Prototype playbook or `/skill:architect` settles it in code first.
+pstack has no planning skill. For work that spans phases or stacked PRs, asking for a plan runs the [Multi-phase plan playbook](../../playbooks/multi-phase-plan.md), which writes the plan and doesn't implement it. For a design question, the Prototype playbook or `/skill:architect` settles it in code first.
 
 Principles are one-rule skills that `/skill:poteto-mode` reads and cites in its replies. The user rarely invokes one. They steer with the names instead, as in "apply prove it works. show me the real output." Typing `/skill:principle-<name>` still loads one on demand. Each lives in a `principle-*` directory next to this one.
 
@@ -121,7 +121,7 @@ Principles are one-rule skills that `/skill:poteto-mode` reads and cites in its 
 | Runs cost more than expected | See the cost paragraph under Get set up. |
 | A skill didn't load on its own | A pstack skill loads only when the user types it or `/skill:poteto-mode` runs it, and the mode doesn't run every skill. The skills this setup adds load when a task matches their description, and the model can miss a match. Type `/skill:<name>` to force one. |
 | Parallel agents overwrote each other | Give each agent its own worktree, with its own ports and state. |
-| An overnight run moved but finished nothing | The loop needs a check that can pass or fail, not a duration. See the [Autonomous run playbook](../../poteto/playbooks/autonomous-run.md). |
+| An overnight run moved but finished nothing | The loop needs a check that can pass or fail, not a duration. See the [Autonomous run playbook](../../playbooks/autonomous-run.md). |
 | The reply claims success from a green build | Ask for the real command, flow, stored value, or profile. That's the prove-it-works principle. |
 
 For a run that drifts, [`references/prompting.md`](references/prompting.md) has one-line steers. [`references/recipes.md`](references/recipes.md) has the recipes worth copying.

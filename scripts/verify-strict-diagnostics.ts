@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 
-const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const fixture = mkdtempSync(join(tmpdir(), "pi-strict-diagnostics-"));
 
@@ -75,7 +75,7 @@ try {
     copyFileSync(join(repository, path), destination);
   }
 
-  const sourceDirectories = ["agent/extensions", "agent/lib", "agent/scripts", "cli/dumpfile/src"];
+  const sourceDirectories = ["agent/extensions", "agent/lib", "scripts", "cli/dumpfile/src"];
 
   for (const directory of sourceDirectories)
     mkdirSync(join(fixture, directory), { recursive: true });

@@ -227,7 +227,7 @@ implementation, while the shell-level `pi mcp` commands keep using native MCP.
 
 ## What's included
 
-`agent/scripts/verify-docs.ts` checks the inventories below against the
+`scripts/verify-docs.ts` checks the inventories below against the
 tracked and untracked, non-ignored files.
 
 ### Installed extensions
@@ -447,21 +447,19 @@ Every skill whose name also appears in pstack is ported from it. See
 
 Most skills come from
 [pstack](https://github.com/cursor/plugins/tree/main/pstack), Lauren Tan's
-Cursor plugin.
-[`agent/scripts/pstack-synced-commit.txt`](agent/scripts/pstack-synced-commit.txt)
-holds the upstream commit that this setup is synced to.
+Cursor plugin. This setup no longer syncs from upstream; the ported files are
+maintained here as its own.
 [`agent/skills/poteto-mode/SKILL.md`](agent/skills/poteto-mode/SKILL.md) is
 pstack's `poteto-mode` skill rewritten for Pi in XML sections, and
-[`agent/poteto/`](agent/poteto/) holds that skill's playbooks, references, and
+[`agent/playbooks/`](agent/playbooks/),
+[`agent/references/`](agent/references/), and
+[`agent/scripts/`](agent/scripts/) hold that skill's playbooks, references, and
 scripts. The scripts are vendored as-is: lint, format, and type checks skip
 them. Not ported: `setup-pstack`, the `poteto-agent` wrapper, the simulator
 and Cursor cache steps of the worktree-cleanup playbook, and the Benny
 automations.
 
-[`agent/scripts/pstack-port.ts`](agent/scripts/pstack-port.ts) does the
-mechanical part of the port: file placement, relative links, frontmatter, and
-`/skill:name` commands. The Cursor-specific parts are local edits, mapped as
-follows:
+The port rewrote pstack's Cursor-specific parts for Pi, mapped as follows:
 
 | pstack on Cursor                                                       | Pi                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -489,37 +487,14 @@ list, so the model reaches them only through `/skill:poteto-mode`, which names
 each one and reads it by path, or when the user types `/skill:name`. The
 skills this setup adds stay discoverable.
 
-To sync pstack:
-
-1. Run `node agent/scripts/pstack-port.ts sync [<ref>]`. The script fetches
-   upstream into a clone under `~/.cache/pi-setup/`, ports `<ref>` (default
-   `origin/main`) into `agent/`, and merges it with local edits against the
-   synced commit. Each ported file takes the upstream file's executable bit,
-   and the report names every existing file whose mode changed. Then it writes
-   the new commit to `pstack-synced-commit.txt`. A sync at the synced commit
-   changes no content and repairs only file modes.
-2. Resolve each file reported as `conflict`.
-3. For each line `changed upstream, port by hand into agent/<target>:
-   <upstream path>`, read that file's upstream word diff, which sync prints
-   before the summary lines, and port what you want to keep into the target.
-   Upstream `skills/poteto-mode/SKILL.md` goes into
-   `agent/skills/poteto-mode/SKILL.md`, which is maintained by hand, so its diff is a changelog rather than a merge.
-4. List each skill reported as `added upstream` under Installed skills.
-5. Run `vp run verify`. It runs `pstack-port.ts check`, which fails on
-   Cursor-only terms that a sync brings back. Then run `vp run test:e2e`
-   before you commit the sync.
-
-To port a skill or file that the script skips, remove it from `skippedSkills`
-or `skippedFiles` and copy its upstream files into place by hand before the
-next sync. Sync reports a missing file that upstream had at the synced commit
-as `kept deleted`, so it never adds a newly unskipped file on its own.
-
 ## Repository layout
 
 ```text
 agent/
 ├── SYSTEM.md          # minimal system prompt
-├── poteto/            # pstack playbooks, references, and scripts
+├── playbooks/         # pstack playbooks
+├── references/        # pstack references
+├── scripts/           # pstack Bun scripts
 ├── default.settings.json  # models, thinking level, compaction, and theme
 ├── keybindings.json
 ├── mcp.json           # Perplexity and Exa servers for the web-search skill
@@ -527,6 +502,7 @@ agent/
 ├── skills/            # agent workflows and references
 ├── prompts/           # prompt templates
 └── themes/            # Catppuccin and Gruvbox themes
+scripts/               # repository checks
 cli/
 └── dumpfile/          # R2 upload CLI, signer Worker, tests, and setup wizard
 oxlint/                # vendored anti-slop lint plugins
@@ -557,12 +533,12 @@ vp run verify
 diagnostic-enforcement, and behavioral checks. Its tasks live in
 `vite.config.ts`. Suites replay from cache when their inputs are unchanged, and
 `vp run --no-cache verify` reruns everything. `verify:poteto-scripts`
-type-checks the vendored Bun scripts under `agent/poteto/scripts/` against
+type-checks the vendored Bun scripts under `agent/scripts/` against
 their own `tsconfig.json` and locked dependencies. Live Pi integration tests
 need provider credentials and run separately with `vp run test:e2e`. Run them
 after you upgrade Pi.
 
-`agent/scripts/verify-skills.ts` checks the skill packages under
+`scripts/verify-skills.ts` checks the skill packages under
 `agent/skills/` and `.agents/skills/`. It loads them with Pi's own
 `DefaultResourceLoader`, the loader a session in this checkout uses, so it sees
 the same skills, including untracked and nested ones and each tree's layout
@@ -570,7 +546,7 @@ rules. It fails on every diagnostic Pi reports, for example frontmatter that is
 not valid YAML, an empty description, or two skills with the same name. It also
 fails when a skill's `name` differs from its directory name, and when Pi loads
 no skill at all. It fails when a file under the `scripts/` directory of a skill
-that Pi loads, or under `agent/poteto/scripts/`, starts with `#!` but is not
+that Pi loads, or under `agent/scripts/`, starts with `#!` but is not
 executable, either in the git index or on disk, and names the
 `chmod +x <path> && git add <path>` command that fixes it. The check ignores settings, including the packages that
 settings install, so the untracked `agent/settings.json` cannot change its

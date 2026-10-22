@@ -354,8 +354,8 @@ here as this setup's own.
 (tracker, domain docs, standards and guardrails) that the
 engineering skills read, so they work the same in any project.
 
-`codebase-design`, `domain-modeling`, `grill-with-docs`, `grilling`, and
-`improve-codebase-architecture` start from
+`codebase-design`, `domain-modeling`, `grill-with-docs`, `grilling`,
+`improve-codebase-architecture`, `to-spec`, and `to-tickets` start from
 [Matt Pocock's skills](https://github.com/mattpocock/skills), adapted so the
 design step runs through `architect` and `arena`. Thanks, Matt.
 
@@ -412,6 +412,8 @@ Every skill whose name also appears in pstack is ported from it. See
 - `swarm`
 - `tdd`
 - `teach`
+- `to-spec`
+- `to-tickets`
 - `typescript-best-practices`
 - `unslop`
 - `web-search`

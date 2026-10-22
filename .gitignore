@@ -15,7 +15,6 @@ trust.json
 models-store.json
 mcp-cache.json
 mcp-onboarding.json
-/agent/mcp.json
 /agent/settings.json
 /agent/mcp-auth.json
 /agent/mcp.log

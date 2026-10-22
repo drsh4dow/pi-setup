@@ -211,8 +211,15 @@ ln -s ../.pi/agent/skills ~/.agents/skills
 If `~/.agents/skills` already exists, merge the skills you want to keep into
 `agent/skills` and move the original directory aside first.
 
-Native MCP is opt-in, and this setup configures no servers. From a repository,
-`pi mcp add -l` adds a project server to `.pi/mcp.json`, and `/mcp` inspects it.
+[`agent/mcp.json`](agent/mcp.json) is Pi's user-level MCP configuration. It
+connects the Perplexity and Exa servers behind the `web-search` skill and reads
+their keys from `PERPLEXITY_API_KEY` and `EXA_API_KEY`. Each server is hidden
+except for the one tool the skill uses, `perplexity_search` or `web_fetch_exa`,
+and that tool is reachable only from codemode. Tools a vendor adds later,
+including Perplexity's per-token Agent API tools, therefore stay unreachable.
+Git tracks this file, so write credentials as `${NAME}` references and never as
+literal values. From a repository, `pi mcp add -l` adds a project server to
+`.pi/mcp.json`, and `/mcp` inspects it.
 Do not install `pi-mcp-adapter` alongside native MCP: it replaces Pi's session
 implementation, while the shell-level `pi mcp` commands keep using native MCP.
 
@@ -259,10 +266,6 @@ tracked and untracked, non-ignored files.
   missing model, login, or catalog entry
 - `tps-tracker`: live and final output-token throughput
 - `ui-moto`: compact model and project status header
-- `web-search`: registers the Perplexity and Exa MCP servers behind the
-  `web-search` skill. Only `perplexity_search` and `web_fetch_exa` are
-  reachable, and only from codemode. Needs `PERPLEXITY_API_KEY` and
-  `EXA_API_KEY`
 
 `agent/extensions/herdr-agent-state.ts` carries local patches. Updating Herdr's
 integration overwrites it, so restore the repository version afterwards and run
@@ -518,6 +521,7 @@ agent/
 ├── poteto/            # pstack playbooks, references, and scripts
 ├── default.settings.json  # models, thinking level, compaction, and theme
 ├── keybindings.json
+├── mcp.json           # Perplexity and Exa servers for the web-search skill
 ├── extensions/        # local tools, commands, and UI extensions
 ├── skills/            # agent workflows and references
 ├── prompts/           # prompt templates

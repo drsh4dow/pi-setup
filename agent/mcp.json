@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "perplexity": {
+      "url": "https://api.perplexity.ai/mcp",
+      "headers": { "Authorization": "Bearer ${PERPLEXITY_API_KEY}" },
+      "description": "Web search through the Perplexity Search API",
+      "exposure": "hidden",
+      "toolExposure": { "perplexity_search": "codemode" }
+    },
+    "exa": {
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": { "x-api-key": "${EXA_API_KEY}" },
+      "description": "Read known URLs as Markdown through Exa",
+      "exposure": "hidden",
+      "toolExposure": { "web_fetch_exa": "codemode" }
+    }
+  }
+}

@@ -15,7 +15,7 @@ Decide whether the human must answer before you act. Take the first case that ma
 
 2. **Irreversible action: confirm.** Force-pushing, deleting production data, and sending external messages need the human's confirmation every time.
 
-3. **Open decision: surface it first.** When the request leaves open a choice that is the human's to make, and a wrong guess means redoing the work, state your assumptions for those choices and end the turn. That covers product behavior, a contract others will build on (a data model, an API, a file format), and scope the request didn't name. Size is not the test: a large task with clear requirements proceeds. Defaults, validation ranges, library picks, and file layout are execution choices. Make them and report them under case 4.
+3. **Open decision: surface it first.** When the request leaves open a choice that is the human's to make, and a wrong guess means redoing the work, state your assumptions for those choices and end the turn. A choice is the human's when another careful engineer could reasonably choose differently and the choice changes what users see or what callers must send or receive. That covers product behavior, a contract others will build on (a data model, an API, a file format), and scope the request didn't name. Size is not the test: a large task with clear requirements proceeds. Defaults, validation ranges, library picks, and file layout are execution choices. Make them and report them under case 4.
 
    List only the assumptions that change the outcome:
 

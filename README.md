@@ -362,6 +362,9 @@ design step runs through `architect` and `arena`. Thanks, Matt.
 Every skill whose name also appears in pstack is ported from it. See
 [pstack](#pstack).
 
+`reflect` also covers Matt Pocock's `retro`: it can review any session and
+routes each lesson either to a skill or to the project's agent environment.
+
 - `agent-browser`
 - `architect`
 - `arena`

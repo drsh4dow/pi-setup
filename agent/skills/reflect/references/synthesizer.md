@@ -18,7 +18,8 @@ Apply each criterion to every finding:
 - Convergence: findings echoed by 2+ reviewers carry higher confidence. Singletons must clear a higher bar on the other criteria.
 - Decision-changing: a future agent does something different because of the edit, not just reads more text.
 - Structural-mechanism check: route to Backlog when a lint rule, script, metadata flag, or runtime check already enforces the rule or could enforce it cheaply. Skill prose is for things mechanisms cannot enforce.
-- Skill-was-used: accept only findings that route to a skill, tool, or MCP the parent invoked in the transcript. If the skill wasn't used but should have been, route to `tune description: <skill path>`. If neither, reject as `skill-not-used`.
+- Layer: route each finding to the harness (a skill every project shares) or to the project (`project: <path + section>` in the repository the session worked in). A lesson about this one codebase belongs to the project. A lesson about how agents work belongs to the harness.
+- Skill-was-used: accept a harness finding only when it routes to a skill, tool, or MCP the parent invoked in the transcript. If the skill wasn't used but should have been, route to `tune description: <skill path>`. If neither, reject as `skill-not-used`.
 - Already-covered: read the target skill before accepting any body-edit row. If the proposal duplicates clear, well-placed existing guidance, reject as `already-covered`, because the issue is execution, not the skill. If the existing guidance is buried, weak, or easy to skip past, accept the row but reframe the proposal as a wording / placement improvement that makes it fire (not a duplicate addition).
 
 Drop (implementation details that drift):
@@ -42,6 +43,7 @@ Output exactly the format below. No preamble, no narration. One sentence per cel
 | <failure mode in a skill the parent used> | <change to that skill's body> | <skill path + section> |
 | <skill existed but didn't trigger> | <tune the skill's description so it fires next time> | <tune description: <skill path>> |
 | <new pattern, no existing skill is a real home> | <draft a new skill via writing-for-agents> | <new skill via writing-for-agents: <kebab-name>> |
+| <gap in the project's agent environment> | <edit to its agent file, standards record, or docs> | <project: <path + section>> |
 
 One row per finding. The user approves row by row.
 
@@ -53,4 +55,4 @@ For each rejected finding:
 
 ## Backlog
 
-For each item, describe the pattern, what was hit, and the suggested mechanism. The parent files each to whatever devex / backlog tracker the team uses.
+For each item, name its layer (harness or project), then describe the pattern, what was hit, and the suggested mechanism. The parent files each through the issue tracker of that layer's repository.

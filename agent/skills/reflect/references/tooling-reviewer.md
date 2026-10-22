@@ -16,6 +16,19 @@ Examples of the pattern:
 - User describes a flaky test the agent could have queried via an observability MCP. Routing: the debugging skill should mention the observability MCP.
 - User links a chat thread the agent could have fetched via a chat MCP. Routing: the relevant skill should mention the chat MCP.
 
+## Lens addition: the project's agent environment
+
+The session worked in the project repository at <PROJECT_ROOT>. Read its agent file, its `docs/agents/` config record, and its check commands and CI before judging. A check that exists but is unwired or broken is the finding, not a reason to invent a new one. Look for:
+
+- **Navigation**: the agent took long to find a file or fact, or tripped on a hidden dependency between files. Propose a navigation pointer in the agent file or a doc.
+- **Automated checks**: the agent made a mistake a lint rule, type check, test, or CI job could catch, or the repository runs no guardrail at all.
+- **Standards**: a review missed a mistake, or a standard is unclear. A mechanical violation, such as a banned API, an import shape, or a file location, gets a check, not prose. A judgement call goes to the standards record (`docs/agents/standards.md`).
+- **Agent file weight**: steering instructions in the agent file that belong in the standards record or a check, and instructions that change nothing the agent would do by default.
+- **Tool economy**: expensive tool calls, or token-heavy tooling, the session could have avoided.
+- **Information access**: a crucial fact the agent could not reach, such as server logs it could tee or a read-only service it could query.
+
+Route each to `project: <path + section>`. Project findings are in scope whether or not a skill was used.
+
 Read the active transcript at <ABSOLUTE_PATH> (or use the digest below if no path is given). It is a Pi session file: one JSON entry per line, with turns as `message` entries whose `message.role` is `user`, `assistant`, or `toolResult`, and tool calls as `toolCall` blocks in assistant content.
 
 Scan for:
@@ -26,9 +39,9 @@ Scan for:
 - Debugging entry points: how to capture a trace, where logs land, which RPC to hit
 - Build / package-manager / sandbox surprises that cost minutes the first time
 
-## Scope to skills and tools the session actually used
+## Scope harness findings to what the session used
 
-Route findings only to skills, tools, or MCPs this transcript used. A skill counts as used when the transcript shows a `read` of its `SKILL.md` (under `~/.pi/agent/skills/`, `~/.agents/skills/`, or `.agents/skills/`), directly or inside a codemode script, a `/skill:<name>` command (a user message holding a `<skill name="<name>">` block), a subagent assignment naming its path, or a tool call (bash, MCP, etc.) matching its documented commands. Speculative routings to skills the parent never opened do not count.
+This scope applies to harness findings only; project findings stay in scope as above. Route harness findings only to skills, tools, or MCPs this transcript used. A skill counts as used when the transcript shows a `read` of its `SKILL.md` (under `~/.pi/agent/skills/`, `~/.agents/skills/`, or `.agents/skills/`), directly or inside a codemode script, a `/skill:<name>` command (a user message holding a `<skill name="<name>">` block), a subagent assignment naming its path, or a tool call (bash, MCP, etc.) matching its documented commands. Speculative routings to skills the parent never opened do not count.
 
 Two finding shapes are valid:
 - The parent invoked the skill and you found a real gap in its body. Route to the skill's relevant section.
@@ -39,7 +52,7 @@ Drop any skill that was neither invoked nor a missed-trigger candidate.
 List each durable learning. For each:
 - Principle: one sentence naming the convention or technical fact. Concrete enough that a future agent recognizes when it applies.
 - Evidence: the exact moment in the transcript (turn number or short quote, including the command or flag).
-- Routing: the most relevant existing skill (its `SKILL.md` path as the transcript shows it), OR `tune description: <skill path>` when the skill should have triggered but didn't, OR "new skill: <kebab-name>".
+- Routing: `project: <path + section>` for a project finding. For a harness finding, the most relevant existing skill (its `SKILL.md` path as the transcript shows it), OR `tune description: <skill path>` when the skill should have triggered but didn't, OR "new skill: <kebab-name>".
 
 Skip trivial things (typos, retries) and anything already obvious from the skill the parent followed. Skip implementation details that drift: specific SHAs, current file paths, version numbers, exact byte counts. Convention generalizes. Pinned details don't.
 

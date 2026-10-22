@@ -419,6 +419,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `why`
 - `wizard`
 - `writing-for-agents`
+- `writing-good-commits`
 - `writing-good-prs`
 - `writing-good-tickets`
 

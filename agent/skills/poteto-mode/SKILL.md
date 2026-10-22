@@ -67,7 +67,8 @@ skill. Write the reply per `<writing_the_reply>`. Agent-facing prose also
 follows the **writing-for-agents** skill.</trigger>
 
 <trigger>Docs, RFCs, readmes, PR descriptions, or commit messages → the
-**technical-writing** skill.</trigger>
+**technical-writing** skill. Commit messages also follow the
+**writing-good-commits** skill.</trigger>
 
 <trigger>Before commit → read and apply the deslop prompt,
 `~/.pi/agent/prompts/deslop.md`.</trigger>

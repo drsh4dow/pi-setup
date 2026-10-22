@@ -1,12 +1,12 @@
 ---
 name: writing-good-prs
-description: Write or update a pull request title and body that a reviewer can verify in a minute. Use when opening a PR, editing its description, or writing a squash commit body.
+description: Write or update a pull request title and body that a reviewer can verify in a minute. Use when opening a PR or editing its description.
 user-invokable: false
 ---
 
 # Writing good PRs
 
-A PR body is a one-minute briefing for a reviewer who has the diff open. It becomes the squash commit body, so it is also what a maintainer reads in `git log` months later. It shows the change, proves the change works with a before and an after, and says how risky the merge is.
+A PR body is a one-minute briefing for a reviewer who has the diff open. It shows the change, proves the change works with a before and an after, and says how risky the merge is.
 
 When the repository has a PR template, fill the template's sections, and apply the rules below to the section that plays each role. Otherwise use the shape below.
 

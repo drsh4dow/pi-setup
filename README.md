@@ -365,6 +365,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `dumpfile`
 - `frontend-design`
 - `how`
+- `interrogate`
 - `mailbox`
 - `maintain-formal-verification-skill`
 - `maintain-verification-skill`

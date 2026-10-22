@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { onPort, prepareWorkdir, projectChanges } from "../run.ts";
+import { killProcessesIn, onPort, prepareWorkdir, projectChanges } from "../run.ts";
 import { fixturePorts, scenarios } from "../scenarios.ts";
 
 function git(cwd: string, args: readonly string[]): string {
@@ -78,4 +79,26 @@ test("every fixture that listens on a fixed port declares it", () => {
     [...listening].toSorted(([a], [b]) => a.localeCompare(b)),
     [...fixturePorts].toSorted(([a], [b]) => a.localeCompare(b)),
   );
+});
+
+test("a process left running in a run's directory in its own group is killed", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "leftover-"));
+  const outside = mkdtempSync(join(tmpdir(), "bystander-"));
+  const leftover = spawn("sleep", ["60"], { cwd: directory, detached: true, stdio: "ignore" });
+  const bystander = spawn("sleep", ["60"], { cwd: outside, detached: true, stdio: "ignore" });
+
+  try {
+    const exited = new Promise((resolve) =>
+      leftover.on("exit", (_code, signal) => resolve(signal)),
+    );
+
+    assert.deepEqual(killProcessesIn(directory), [leftover.pid]);
+    assert.equal(await exited, "SIGKILL");
+    assert.equal(bystander.exitCode, null);
+    assert.equal(bystander.signalCode, null);
+  } finally {
+    bystander.kill("SIGKILL");
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
 });

@@ -16,6 +16,7 @@ import {
   mkdtempSync,
   openSync,
   readdirSync,
+  readlinkSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
@@ -120,6 +121,41 @@ function writeAtomically(path: string, text: string) {
   renameSync(temporary, path);
 }
 
+/**
+ * Kills every process working inside the directory. A server the candidate started in its own
+ * process group (a background terminal, nohup) survives the group kill and would keep the
+ * fixture's port for the next run.
+ */
+export function killProcessesIn(directory: string): number[] {
+  const killed: number[] = [];
+
+  for (const entry of readdirSync("/proc")) {
+    const pid = Number(entry);
+
+    if (!Number.isInteger(pid) || pid === process.pid) continue;
+
+    let cwd: string;
+
+    try {
+      cwd = readlinkSync(`/proc/${pid}/cwd`);
+    } catch {
+      // The process exited, or belongs to another user and cannot be ours.
+      continue;
+    }
+
+    if (cwd !== directory && !cwd.startsWith(`${directory}/`)) continue;
+
+    try {
+      process.kill(pid, "SIGKILL");
+      killed.push(pid);
+    } catch {
+      // It exited between the read and the kill.
+    }
+  }
+
+  return killed;
+}
+
 function runPi(cwd: string, args: readonly string[], logDir: string, timeoutMs: number) {
   const stdout = openSync(join(logDir, "stdout.txt"), "w");
   const stderr = openSync(join(logDir, "stderr.txt"), "w");
@@ -155,6 +191,7 @@ function runPi(cwd: string, args: readonly string[], logDir: string, timeoutMs: 
         closeSync(stdout);
         closeSync(stderr);
         killGroup("SIGKILL");
+        killProcessesIn(cwd);
         done({ exitCode, signal, timedOut });
       });
     },

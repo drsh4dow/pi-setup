@@ -11,6 +11,8 @@ Actively build and sharpen the project's domain model as you design. This is the
 
 ## File structure
 
+When the repository has a domain record, `docs/agents/domain.md`, its layout and paths override the defaults below.
+
 Most repos have a single context:
 
 ```

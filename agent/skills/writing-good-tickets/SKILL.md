@@ -9,7 +9,7 @@ user-invokable: false
 
 An issue and a ticket are the same artifact. A ticket is one unit of work that one agent or one developer can take to one PR. Its body has the same sections whoever writes it, so the reader finds the problem, the finish condition, and the decisions in the same place every time.
 
-Follow the repository's tracker and template conventions. When the repository has an issue template, fill the template's sections and apply the rules below to the section that plays each role. Otherwise use the shape below.
+Follow the repository's tracker and template conventions, starting from its issue tracker record, `docs/agents/issue-tracker.md`, when it has one. When the repository has an issue template, fill the template's sections and apply the rules below to the section that plays each role. Otherwise use the shape below.
 
 ## Title
 
@@ -66,7 +66,6 @@ Size each ticket as a vertical slice. It cuts a narrow path through every layer 
 ## Before you file
 
 - Search the tracker for the same symptom, error text, and area. For a confident duplicate, add the new evidence to the existing issue instead of filing. For a possible match, link it and say why this is not a duplicate.
-- When the tracker has `ready-for-agent` and `ready-for-human` labels, apply one. A `ready-for-human` ticket says why an agent cannot take it.
 - For complex agent-facing workflow instructions inside a ticket, use the **writing-for-agents** skill.
 
 ## Check the body
@@ -77,4 +76,4 @@ Write the body to a file, then run:
 ../writing-good-prs/scripts/check-body.ts ticket <body-file> --title "<title>"
 ```
 
-Add `--template <path>` when the repository has an issue template, so the check takes the section headings and their order from it. Fix each printed problem and rerun until the check exits 0, then pass the same file to `gh issue create --body-file` or `gh issue edit --body-file`.
+Add `--template <path>` when the repository has an issue template, so the check takes the section headings and their order from it. Fix each printed problem and rerun until the check exits 0, then publish the same file through the tracker, such as with `gh issue create --body-file` or `gh issue edit --body-file` on GitHub.

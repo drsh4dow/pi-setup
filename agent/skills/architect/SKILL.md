@@ -15,9 +15,10 @@ Open a todolist with one entry per phase before starting.
 
 1. Ground
 2. Sketch
-3. Agree
-4. Implement
-5. Scrap
+3. Interrogate
+4. Agree
+5. Implement
+6. Scrap
 
 ## Phase A: Ground the problem
 
@@ -48,13 +49,15 @@ Compare viable candidates on depth, locality, and seam placement, in the vocabul
 
 Arena returns one synthesized design package. Its synthesis decision fills the rationale's "Synthesis decision" section.
 
+Interrogate the synthesis. Arena's cross-judge scored the candidates before the graft, so no other model has read the synthesized sketch. Run the **interrogate** skill on it, with the design task as the intent and [`references/design-red-flags.md`](references/design-red-flags.md) as the rubric. Fold every Act on finding into the sketch, and carry the Consider findings into Phase C.
+
 ## Phase C: Agree (opt-in)
 
-Default: proceed directly to implementation with the synthesized design. No human checkpoint.
+Default: proceed directly to implementation with the synthesized design. No human checkpoint. Record the Consider findings under the rationale's "Open questions and risks".
 
-Opt in to a checkpoint when the invoker explicitly asks: "/skill:architect with checkpoint," "stop and show me before implementing," or similar. Then surface the synthesized design and pause for sign-off.
+Opt in to a checkpoint when the invoker explicitly asks: "/skill:architect with checkpoint," "stop and show me before implementing," or similar. Then surface the synthesized design and apply the **grilling** skill to it. The Consider findings and the decisions the sketch opened form the first frontier. Decisions settled earlier in the session stay settled. Implement once the frontier is empty and the human signs off.
 
-The synthesis can ship as its own commit either way, as the "scaffold first" step of the **sequence-verifiable-units** principle skill. Each fill-in unit still ends in a passing check, per the same principle. For adversarial pressure on the design before implementing, run the **interrogate** skill on the synthesized sketch.
+The synthesis can ship as its own commit either way, as the "scaffold first" step of the **sequence-verifiable-units** principle skill. Each fill-in unit still ends in a passing check, per the same principle.
 
 If the human pushes back on the shape (in a checkpoint or after the fact), treat that as Phase A evidence. Re-ground and re-run Phase B before writing more code.
 

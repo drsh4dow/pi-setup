@@ -29,7 +29,7 @@ Launch all reviewers in a single message as subagents per the subagents skill, o
 
 Each reviewer's write scope says it changes nothing.
 
-Read `references/reviewer-prompt.md` and fill in the same template for every reviewer with the stated intent, the diff or file contents, the rubric from `references/rubric.md`, and the code-quality lens from `references/code-quality-review.md`. Pick each subagent's thinking level for the job, per the subagents skill.
+Read `references/reviewer-prompt.md` and fill in the same template for every reviewer with the stated intent, the diff or file contents, the rubric from `references/rubric.md`, and the code-quality lens from `references/code-quality-review.md`. When the caller names its own rubric, such as architect's design red flags for a sketch, use it in place of both. Pick each subagent's thinking level for the job, per the subagents skill.
 
 ## Step 4, Synthesize
 

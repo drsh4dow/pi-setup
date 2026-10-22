@@ -28,7 +28,7 @@ Review whether the code achieves this intent well. Do NOT question the intent it
 
 ## Instructions
 
-Review the code through every lens in the rubric and the code-quality lens above that you find relevant. Do not force lenses that don't apply. A simple bug fix does not need paragraphs about architectural integrity.
+Review the code through every lens in the rubric and the code-quality lens above that you find relevant. When the code is a design sketch, with `not implemented` bodies and pseudocode, review the design it commits to: the types, the signatures, and the module map. A missing body is not a finding. Do not force lenses that don't apply. A simple bug fix does not need paragraphs about architectural integrity.
 
 For each finding, provide:
 

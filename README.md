@@ -250,8 +250,8 @@ tracked and untracked, non-ignored files.
   ["agent"]]` under `[ui.sidebar.agents]` in `~/.config/herdr/config.toml`
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
-- `prompt-context`: restores active-tool snippets and guidelines, which Pi
-  omits when a custom system prompt replaces its own
+- `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the
+  stock wording, which Pi omits when a custom system prompt replaces its own
 - `sacrifice-preference`: marks spawned work as the preferred target under Linux
   memory pressure
 - `session-timer`: branch duration since the first user message, with clock

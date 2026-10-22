@@ -1,6 +1,7 @@
 ---
 name: subagents
 description: Read before using subagents.
+disable-model-invocation: false
 user-invokable: false
 ---
 

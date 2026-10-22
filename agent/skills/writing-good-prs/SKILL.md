@@ -1,6 +1,7 @@
 ---
 name: writing-good-prs
 description: Write or update a pull request title and body that a reviewer can verify in a minute. Use when opening a PR or editing its description.
+disable-model-invocation: false
 user-invokable: false
 ---
 

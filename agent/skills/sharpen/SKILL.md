@@ -1,7 +1,8 @@
 ---
 name: sharpen
 description: "Make a task deeper, not bigger, then rewrite the prompt. Use for /skill:sharpen."
-disable-model-invocation: true
+disable-model-invocation: false
+user-invokable: false
 ---
 
 I want a deeper version of this task, not a bigger one. Before rewriting it, do four things:

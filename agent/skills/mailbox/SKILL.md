@@ -1,8 +1,8 @@
 ---
 name: mailbox
-description: >-
-  Read, search, compose, reply to, and send email or select mail accounts using
-  the Himalaya CLI.
+description: Read, search, compose, reply to, and send email or select mail accounts using the Himalaya CLI.
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Mailbox

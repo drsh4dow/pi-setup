@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   openSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   renameSync,
   writeFileSync,
@@ -17,6 +18,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const KILL_GRACE_MS = 10_000;
+
+/**
+ * Pi arguments that load the system prompt, skills, and prompts of the checkout at `root` instead
+ * of the live agent directory's, so an eval measures a branch before it is merged. Settings,
+ * credentials, extensions, and MCP servers still come from the live agent directory.
+ */
+export function checkoutHarnessArgs(root: string): string[] {
+  return [
+    "--system-prompt",
+    readFileSync(join(root, "agent", "SYSTEM.md"), "utf8"),
+    "--no-skills",
+    "--skill",
+    join(root, "agent", "skills"),
+    "--no-prompt-templates",
+    "--prompt-template",
+    join(root, "agent", "prompts"),
+  ];
+}
 
 /**
  * The candidate must not inherit this session's identity: PI_* would point it at the parent's

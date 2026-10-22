@@ -1,0 +1,8 @@
+{
+  "name": "ledger",
+  "private": true,
+  "scripts": {
+    "test": "pnpm -r test",
+    "lint": "biome check ."
+  }
+}

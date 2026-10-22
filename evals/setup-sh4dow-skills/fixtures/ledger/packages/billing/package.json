@@ -1,0 +1,1 @@
+{ "name": "@ledger/billing", "scripts": { "test": "node --test" } }

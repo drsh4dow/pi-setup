@@ -1,0 +1,1 @@
+{ "name": "@ledger/accounts", "scripts": { "test": "node --test" } }

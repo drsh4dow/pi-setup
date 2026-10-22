@@ -349,6 +349,11 @@ skill.
 [Matt Pocock's skills](https://github.com/mattpocock/skills) and are maintained
 here as this setup's own.
 
+`setup-sh4dow-skills` is this setup's counterpart to Matt Pocock's
+`setup-matt-pocock-skills`: it writes the per-repository config record
+(tracker, domain docs, standards and guardrails) that the
+engineering skills read, so they work the same in any project.
+
 `codebase-design`, `domain-modeling`, `grill-with-docs`, `grilling`, and
 `improve-codebase-architecture` start from
 [Matt Pocock's skills](https://github.com/mattpocock/skills), adapted so the
@@ -401,6 +406,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `principle-test-behavior-not-implementation`
 - `recall`
 - `reflect`
+- `setup-sh4dow-skills`
 - `sharpen`
 - `subagents`
 - `swarm`

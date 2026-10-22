@@ -26,6 +26,10 @@ When a script filters results, keep failure details, source references, and trun
 Keep script files only when future use or review justifies them. A script that must outlive the session is a lever, per principle-build-the-lever.
 </codemode>
 
+<state>
+the state folder is `~/.local/state/pi-agent/<project>/`, where `<project>` is the repository name of the `origin` remote, or the git toplevel's directory name when there is no remote. keep there the artifacts a later session reuses and that must outlive compaction and this session, such as research, reviews, reflect results, prototype verdicts, and eval runs, in one subfolder per task. files the project's collaborators need belong in the repository instead.
+</state>
+
 <git>
 Keep history linear, so a reader can walk it one commit at a time.
 When subagents commit, give each writer its own branch or worktree.

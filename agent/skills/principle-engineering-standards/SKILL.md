@@ -1,6 +1,7 @@
 ---
-name: engineering-standards
+name: principle-engineering-standards
 description: "Apply when writing, changing, or reviewing code. Contracts, dependencies, unchecked assumptions, failures, cost, readability, tests, and verification."
+disable-model-invocation: true
 user-invokable: false
 ---
 

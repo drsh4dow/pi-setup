@@ -10,11 +10,11 @@ Use `vp` for package management and scripts. Run
 Every decision made in the code/output of this repository should increase the AX
 (Agent Experience) of the harness.
 
-Before writing Effect code, read `.repos/effect/LLMS.md` and inspect its source
-and tests for idiomatic usage, module structure, and API design. Use the
-submodule as read-only reference and keep application imports on the installed
-`effect` and `@effect/*` packages. If it is absent, initialize it with
-`git submodule update --init --recursive`.
+Before writing Effect code, read `node_modules/effect/AGENTS.md`, the guide
+that ships with the installed version. For API details and idiomatic usage,
+read the examples in `node_modules/effect/ai-docs/` and the source in
+`node_modules/effect/src/` and `node_modules/@effect/*/src/`. Run `vp install`
+if `node_modules` is absent.
 
 ## Issue tracker
 

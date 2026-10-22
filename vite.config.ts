@@ -1,10 +1,9 @@
 import { effectNative, strict as effectStrict } from "@effect/tsgo/oxlint-presets";
 import { defineConfig } from "vite-plus";
 
-// Reference checkouts, runtime state, installed skills, vendored pstack support
+// Runtime state, installed skills, vendored pstack support
 // files, and vendored lint rules are not application source.
 const ignoredFiles = [
-  ".repos/**",
   "agent/npm/**",
   "agent/poteto/**",
   "agent/sessions/**",

@@ -521,7 +521,11 @@ fails when a skill's `name` differs from its directory name, and when Pi loads
 no skill at all. It fails when a file under the `scripts/` directory of a skill
 that Pi loads, or under `agent/scripts/`, starts with `#!` but is not
 executable, either in the git index or on disk, and names the
-`chmod +x <path> && git add <path>` command that fixes it. The check ignores settings, including the packages that
+`chmod +x <path> && git add <path>` command that fixes it. It fails on a
+Markdown line that sends the agent to a skill Pi does not load, and names the
+file and line. It reads the forms the skills use: "the **how** skill", "the
+**laziness-protocol** and **minimize-reader-load** principle skills",
+"**principle-boundary-discipline**", and `/skill:how`. The check ignores settings, including the packages that
 settings install, so the untracked `agent/settings.json` cannot change its
 result. It also ignores `~/.agents/skills/` and does not load extensions.
 

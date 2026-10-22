@@ -7,7 +7,7 @@ import {
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
-import { closeSync, lstatSync, openSync, readSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
@@ -96,6 +96,64 @@ function nameDirectoryMismatches(skills: readonly Skill[]) {
   });
 }
 
+// The forms one document uses to send the agent to a skill: "the **how** skill", "the **a** and
+// **b** principle skills" (a principle skill's name carries the `principle-` prefix),
+// "**principle-x**", and "/skill:name". A bold term with no leading "the", such as "a
+// **model-invoked** skill", names a kind of skill. A quoted `'/skill:pre'` is a keystroke
+// string, such as an autocomplete prefix.
+const BOLD_SKILL_SERIES =
+  /\bthe ((?:\*\*[a-z0-9-]+\*\*(?:,? (?:and|or) |, ))*\*\*[a-z0-9-]+\*\*) (principle )?skills?\b/g;
+
+const BOLD_NAME = /\*\*([a-z0-9-]+)\*\*/g;
+
+const BOLD_PRINCIPLE = /\*\*(principle-[a-z0-9-]+)\*\*/g;
+
+const SLASH_COMMAND = /(?<!')\/skill:([a-z0-9-]+)(?![a-z0-9-]*')/g;
+
+function pointedSkills(line: string) {
+  const names = new Set<string>();
+
+  for (const [, series, principle] of line.matchAll(BOLD_SKILL_SERIES)) {
+    for (const [, name] of series.matchAll(BOLD_NAME)) {
+      names.add(principle && !name.startsWith("principle-") ? `principle-${name}` : name);
+    }
+  }
+
+  for (const [, name] of line.matchAll(BOLD_PRINCIPLE)) names.add(name);
+
+  for (const [, name] of line.matchAll(SLASH_COMMAND)) names.add(name);
+
+  return names;
+}
+
+function danglingSkillPointers(loaded: readonly Skill[]) {
+  const names = new Set(loaded.map(({ name }) => name));
+
+  const markdown = execFileSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.md"],
+    { cwd: root, encoding: "utf8" },
+  )
+    .split("\0")
+    .filter((path) => path !== "" && lstatSync(resolve(root, path), { throwIfNoEntry: false }));
+
+  const errors: string[] = [];
+
+  for (const path of markdown) {
+    const lines = readFileSync(resolve(root, path), "utf8").split("\n");
+
+    for (const [lineIndex, line] of lines.entries()) {
+      for (const name of pointedSkills(line)) {
+        if (names.has(name)) continue;
+
+        errors.push(`${path}:${lineIndex + 1}: points to skill "${name}", which Pi does not load`);
+      }
+    }
+  }
+
+  return errors;
+}
+
 const settingsIgnoringUntrackedMachineSettings = SettingsManager.inMemory(
   {},
   { projectTrusted: true },
@@ -140,6 +198,7 @@ const errors = [
   ...shebangScriptErrors(checkedScripts),
   ...diagnostics.map(diagnosticError),
   ...nameDirectoryMismatches(skills),
+  ...danglingSkillPointers(skills),
 ];
 
 if (skills.length === 0) {

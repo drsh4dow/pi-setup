@@ -117,6 +117,54 @@ test("fails on SKILL.md frontmatter that Pi drops or that names another director
   assert.equal(fixed.status, 0, fixed.stderr);
 });
 
+test("fails on every skill pointer in Markdown that names a skill Pi does not load", (t) => {
+  const how = "agent/skills/how/SKILL.md";
+  const proveItWorks = "agent/skills/principle-prove-it-works/SKILL.md";
+  const pointing = "agent/skills/pointing/SKILL.md";
+  const readme = "README.md";
+
+  const root = repository(t, {
+    [how]: skillManifest(how, "Explain a subsystem."),
+    [proveItWorks]: skillManifest(proveItWorks, "Verify the real thing."),
+    [pointing]: [
+      skillManifest(pointing, "Points at other skills."),
+      "Run the **how** skill, per the **prove-it-works** principle skill.",
+      "Then run the **interrogate** skill.",
+      "Apply the **how** and **show-me-your-work** skills, per the **gone** principle skill.",
+      "Validate per **principle-boundary-discipline**.",
+      "A **model-invoked** skill keeps its description.",
+      "Type `'/skill:ho'` and pick `/skill:how`.",
+      "",
+    ].join("\n"),
+    [readme]: "Run `/skill:figure-it-out` on the migration.\n",
+  });
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+
+  const dangling = result.stderr.split("\n").filter((line) => line.includes("points to skill"));
+  assert.deepEqual(dangling.toSorted(), [
+    `${readme}:1: points to skill "figure-it-out", which Pi does not load`,
+    `${pointing}:7: points to skill "interrogate", which Pi does not load`,
+    `${pointing}:8: points to skill "principle-gone", which Pi does not load`,
+    `${pointing}:8: points to skill "show-me-your-work", which Pi does not load`,
+    `${pointing}:9: points to skill "principle-boundary-discipline", which Pi does not load`,
+  ]);
+
+  for (const name of ["interrogate", "show-me-your-work", "principle-gone", "figure-it-out"]) {
+    const path = `agent/skills/${name}/SKILL.md`;
+    mkdirSync(join(root, dirname(path)), { recursive: true });
+    writeFileSync(join(root, path), skillManifest(path, "Now loaded."));
+  }
+
+  const boundary = "agent/skills/principle-boundary-discipline/SKILL.md";
+  mkdirSync(join(root, dirname(boundary)));
+  writeFileSync(join(root, boundary), skillManifest(boundary, "Validate at boundaries."));
+
+  const fixed = run(root);
+  assert.equal(fixed.status, 0, fixed.stderr);
+});
+
 test("loads .agents/skills and nested skills in the layout a session uses", (t) => {
   const architect = "agent/skills/architect/SKILL.md";
   const guide = ".agents/skills/notes/guide.md";

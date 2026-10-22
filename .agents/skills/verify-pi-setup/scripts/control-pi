@@ -90,7 +90,7 @@ cmd_launch() {
   echo "$CHECKOUT" >"$SCRATCH/checkout"
   install -m 600 "$LIVE_AGENT_DIR/auth.json" "$AGENT_DIR/auth.json"
   cp "$CHECKOUT/agent/SYSTEM.md" "$CHECKOUT/agent/keybindings.json" "$AGENT_DIR/"
-  cp -R "$CHECKOUT/agent/skills" "$CHECKOUT/agent/prompts" "$CHECKOUT/agent/themes" "$AGENT_DIR/"
+  cp -R "$CHECKOUT/agent/skills" "$CHECKOUT/agent/themes" "$AGENT_DIR/"
   # Extensions resolve imports from their own path, so they load in place from the checkout.
   jq --arg extensions "$CHECKOUT/agent/extensions" '. + {extensions: [$extensions]}' \
     "$CHECKOUT/agent/default.settings.json" >"$AGENT_DIR/settings.json"

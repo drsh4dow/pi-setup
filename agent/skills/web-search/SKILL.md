@@ -15,7 +15,6 @@ so a script that returns whole results loses part of what it retrieved.
 | Discover sources | `tools.mcp__perplexity__perplexity_search` |
 | Read known URLs | `tools.mcp__exa__web_fetch_exa` |
 | GitHub issues, PRs, code, or repositories | `gh search` through `tools.bash` |
-| Login, forms, clicks, or visual state | the `agent-browser` skill |
 
 GitHub allows 30 search requests a minute across `gh search` commands, so
 start with two or three targeted queries and read the items they find.
@@ -74,10 +73,10 @@ needs.
 
 A batch leaves out pages it could not fetch, so match the returned `URL:` lines
 against the request. Check a missing page's status code with
-`curl -sL -o /dev/null -w '%{http_code}'`: report a 404 as gone, and read any
-other failure with `agent-browser`. Use `agent-browser` as well for an empty or
-shell page, and when the page's current state matters, such as prices, status,
-or a change published today, since Exa may serve a cached copy.
+`curl -sL -o /dev/null -w '%{http_code}'`: report a 404 as gone, and report any
+other failure with its status code. Report an empty or shell page as unread. Exa may serve a cached copy, so say so when
+the page's current state matters, such as prices, status, or a change
+published today.
 
 ## Cost
 

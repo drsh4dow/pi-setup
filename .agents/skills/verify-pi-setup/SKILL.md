@@ -1,6 +1,6 @@
 ---
 name: verify-pi-setup
-description: Drive this repository's Pi configuration (extensions, skills, prompts, SYSTEM.md, keybindings) in an isolated Pi TUI under tmux and capture proof. Use before reporting a change to an extension, a setting, or resource loading as working, and to reproduce a TUI bug in this repo.
+description: Drive this repository's Pi configuration (extensions, skills, SYSTEM.md, keybindings) in an isolated Pi TUI under tmux and capture proof. Use before reporting a change to an extension, a setting, or resource loading as working, and to reproduce a TUI bug in this repo.
 ---
 
 # Verify pi-setup
@@ -21,7 +21,7 @@ The helper drives the checkout it lives in, so a git worktree verifies its own b
 Launch builds the scratch state from the checkout every time:
 
 - `settings.json` is `agent/default.settings.json` plus an `extensions` entry pointing at the checkout's `agent/extensions`. The live `agent/settings.json` is never read.
-- `SYSTEM.md`, `keybindings.json`, `skills/`, `prompts/`, and `themes/` are copies. Edit the checkout and relaunch to pick up a change. Extensions load in place, but Pi reads them at startup, so relaunch after editing them too.
+- `SYSTEM.md`, `keybindings.json`, `skills/`, and `themes/` are copies. Edit the checkout and relaunch to pick up a change. Extensions load in place, but Pi reads them at startup, so relaunch after editing them too.
 - Pi runs with `--no-skills --skill <scratch>/agent/skills`, which keeps out `~/.agents/skills` and any project skills.
 - `auth.json` is a copy of the live one. Launch first refreshes each OAuth token with less than 30 minutes left, in the live directory under Pi's lock, so the scratch copy does not refresh and rotate a token the live session still holds.
 - `PI_*` and `HERDR_*` variables from the caller are dropped, and `HERDR_ENV=0` keeps the instance out of Herdr.

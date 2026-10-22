@@ -1,162 +1,14 @@
 # Pi setup
 
 My global configuration for [Pi](https://github.com/earendil-works/pi). It
-lives at `~/.pi` and holds a strict system prompt, vendored TypeScript
-extensions, skills, prompts, themes, and model defaults. Pi discovers everything
+lives at `~/.pi` and holds a short system prompt, vendored TypeScript
+extensions, five skills, themes, and model defaults. Pi discovers everything
 under `~/.pi/agent` on its own, so nothing here is installed as a package.
 
 [`agent/SYSTEM.md`](agent/SYSTEM.md) replaces Pi's system prompt for every
-model. It sets the agent's behavior. The skills hold the procedures for
-specific kinds of work, and `engineering-standards` holds the code standards.
-
-## How I work
-
-The nature of the task decides the path. Some tasks are just a conversation,
-some are research, and some are implementation that I do directly in the
-session.
-
-When I understand the scope well, or just want the agent to come up with a
-plan, I ask it to research the problem and propose one. I correct the plan, then
-rewind with a handoff, so implementation starts from the corrected plan instead
-of the research that produced it.
-
-Rewinding keeps a conclusion and drops the path that led to it. Besides plans, I
-use it after side branches where I investigate, discuss, or settle a question.
-Pressing Escape twice on an empty editor opens the session tree (`/tree` does
-the same), and I pick the point where the research or detour started. Pi can
-summarize the branch I'm leaving, or I run `/handoff`, `/copy` the result, and
-paste it at that point. I usually stay in the same session.
-
-### Take a ticket to a PR
-
-The system prompt leans autonomous, so I name a stop at each stage where a
-wrong ticket or a wrong design would be expensive. The agent waits at every
-stop I name.
-
-**1. Check the ticket.** The agent reads the code and plays the ticket back
-before it designs anything, so a wrong premise shows up early.
-
-```text
-Ticket: <paste it, or gh issue view 123>.
-Read the code it touches. Restate the goal, the problem, and what the ticket
-assumes about the system. Flag anything that contradicts the code or looks
-wrong. Don't design or change anything yet.
-```
-
-**2. Review the design.** The agent runs `how` and `architect`, then stops
-with the design. I read the usage sketch first, because awkward call sites mean
-the types are wrong.
-
-```text
-Implement it. Architect it with a checkpoint: show me the usage sketch, the
-types, the rationale, and the open questions, then stop. Don't write
-implementation code until I approve the design.
-```
-
-**3. Approve the PR.** The agent delegates the code, verifies it on the real
-app, and commits. It opens the PR only after I see the result.
-
-```text
-Approved. Build it against the sketch and verify it. Commit locally and show
-me the diff summary and the evidence before you open the PR.
-```
-
-### Start a new project
-
-With no existing code, the expensive mistake is the wrong data model, so I
-review the design before anything else exists. The examples follow one project,
-a web app where an on-call team logs incidents and reads a weekly summary.
-
-1. Sharpen the idea. I say who the project is for and how I'll know it works.
-
-   ```text
-   /skill:sharpen
-   New project: a web app where an on-call team of five logs incidents and
-   reads a weekly summary. It works when someone logs an incident in under a
-   minute and Monday's summary lists every incident from the past week.
-   Don't write code yet.
-   ```
-
-2. Ask for the design with a stop. Architect skips grounding here because there
-   is no system to study.
-
-   ```text
-   Architect the core data model and module map with a checkpoint. Show me the
-   usage sketch, the types, the rationale, and the open questions, then stop.
-   ```
-
-   I push back on the design in plain words until the types fit every case.
-
-   ```text
-   An incident can be reopened. Model its status so a reopened incident keeps
-   its earlier resolution, then redo the sketch.
-   ```
-
-3. Scaffold the checks before any feature.
-
-   ```text
-   Scaffold the project from the approved design: strict types, lint, a verify
-   command, and an AGENTS.md that names it. No features yet.
-   ```
-
-4. Build the first feature with the ticket flow above.
-
-   ```text
-   Ticket: log an incident. A team member enters a title, a severity, and a
-   start time, and the incident appears at the top of the list.
-   ```
-
-5. Once a user can reach that feature, generate the verify skill. It writes
-   `.agents/skills/verify-<app>/`, which Pi discovers on its own. Earlier, it
-   has nothing to drive.
-
-   ```text
-   /skill:create-verification-skill
-   ```
-
-6. Add the rest one ticket at a time. Every few features, run
-   `/skill:maintain-verification-skill` to add them to the feature map.
-
-   ```text
-   Ticket: weekly summary. Every Monday, the summary page lists last week's
-   incidents grouped by severity, with time to resolve for each.
-   ```
-
-### Work in a large legacy codebase
-
-The agent can't understand millions of lines, so I keep it on the slice the
-ticket touches and make it prove behavior on the running app.
-
-1. Start Pi at the repository root and name the package in every prompt. The
-   system prompt makes the agent read a package's own `AGENTS.md` before it
-   touches that package. Pi discovers skills only in the root
-   `.agents/skills/`, so verify skills go there.
-2. Make the package runnable and drivable before the first change. Each app
-   gets its own `verify-<app>` skill.
-
-   ```text
-   /skill:create-verification-skill
-   Scope: <the service or package>. If it doesn't build or start, tell me
-   exactly why before you generate anything.
-   ```
-
-3. Map the slice, and ask why for anything that looks pointless. Old code often
-   has a reason nobody remembers.
-
-   ```text
-   How does <subsystem> handle <what the ticket touches>? Then, why is
-   <odd part> built this way? Cite the code and the history. Change nothing.
-   ```
-
-4. Take the ticket through the flow above. Stage 1 matters most here, because
-   tickets often describe how the code used to work.
-5. Run `/skill:blast-radius` on any diff I don't trust before it merges.
-6. When a verify run fails because the app changed rather than broke, run
-   `/skill:maintain-verification-skill`.
-7. Clean up through the tickets, not in one sweep. `/skill:correct` turns a
-   mistake agents repeat into a type, lint, or test, and it fails only on new
-   cases of a pattern that is already common. A migration across many call
-   sites goes to `/skill:figure-it-out`.
+model. It holds a short preface and the rules for choosing and combining tools.
+The `prompt-context` extension adds back the tool descriptions and guidelines
+that Pi drops when a custom prompt replaces its own.
 
 ## Defaults
 
@@ -164,9 +16,9 @@ ticket touches and make it prove behavior on the running app.
 - `Alt-P` cycles the enabled models: `anthropic/claude-opus-5-5`,
   `anthropic/claude-fable-5-1`, `openai/gpt-6.1-sol`, `openai/gpt-6-astra`,
   and `opencode-go/glm-5.3-flash`.
-- Subagents run `claude-opus-5-5`, and scouting roles run `claude-haiku-5-5`.
-  Thinking tops out at `high`. Review and design panels pair Opus with
-  `gpt-6.1-sol`. The role table lives in the
+- Subagents run `claude-opus-5-5`, exploration runs `claude-haiku-5-5`, and
+  reviews of work from another model family run `gpt-6.1-sol`. Thinking tops
+  out at `high`. The table lives in the
   [`subagents`](agent/skills/subagents/SKILL.md) skill.
 - Compaction is Pi's built-in one. Opus reserves 700K tokens, so it compacts
   well before its context window fills.
@@ -211,7 +63,8 @@ ln -s ../.pi/agent/skills ~/.agents/skills
 If `~/.agents/skills` already exists, merge the skills you want to keep into
 `agent/skills` and move the original directory aside first.
 
-Native MCP is opt-in, and this setup configures no servers. From a repository,
+The `web-search` extension registers the Perplexity and Exa MCP servers. Set
+`PERPLEXITY_API_KEY` and `EXA_API_KEY` before you start Pi. From a repository,
 `pi mcp add -l` adds a project server to `.pi/mcp.json`, and `/mcp` inspects it.
 Do not install `pi-mcp-adapter` alongside native MCP: it replaces Pi's session
 implementation, while the shell-level `pi mcp` commands keep using native MCP.
@@ -339,179 +192,26 @@ and leaves no process behind. The differences below are known and accepted.
 
 ### Installed skills
 
-`agent-browser` is adapted from the
-[`vercel-labs/agent-browser`](https://github.com/vercel-labs/agent-browser/tree/main/skills/agent-browser)
-skill.
-
-`wizard` and `writing-for-agents` are vendored from
-[`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
-
-Every skill whose name also appears in pstack is ported from it. See
-[pstack](#pstack).
-
-- `agent-browser`
-- `architect`
-- `arena`
-- `automate-me`
 - `background-terminals`
-- `benchmark-checklist`
-- `blast-radius`
-- `bro`
-- `correct`
-- `create-formal-verification-skill`
-- `create-verification-skill`
 - `docs-search`
-- `engineering-standards`
-- `figure-it-out`
-- `frontend-design`
-- `how`
-- `in-your-own-words`
-- `interrogate`
-- `ketchup`
-- `mailbox`
-- `maintain-formal-verification-skill`
-- `maintain-verification-skill`
-- `make-bot-ui`
-- `no-comments`
 - `pi-harness`
-- `poteto-help`
-- `principle-attack-the-premise`
-- `principle-boundary-discipline`
-- `principle-build-the-lever`
-- `principle-encode-lessons-in-structure`
-- `principle-exhaust-the-design-space`
-- `principle-experience-first`
-- `principle-explain-the-number`
-- `principle-fix-root-causes`
-- `principle-foundational-thinking`
-- `principle-guard-the-context-window`
-- `principle-laziness-protocol`
-- `principle-make-operations-idempotent`
-- `principle-migrate-callers-then-delete-legacy-apis`
-- `principle-minimize-reader-load`
-- `principle-model-the-domain`
-- `principle-never-block-on-the-human`
-- `principle-outcome-oriented-execution`
-- `principle-prove-it-works`
-- `principle-redesign-from-first-principles`
-- `principle-separate-before-serializing-shared-state`
-- `principle-sequence-verifiable-units`
-- `principle-subtract-before-you-add`
-- `principle-test-behavior-not-implementation`
-- `principle-type-system-discipline`
-- `recall`
-- `reflect`
-- `sharpen`
-- `show-me-your-work`
 - `subagents`
-- `swarm`
-- `tdd`
-- `teach`
-- `technical-writing`
-- `typescript-best-practices`
-- `unslop`
 - `web-search`
-- `why`
-- `wizard`
-- `writing-for-agents`
-- `writing-good-prs`
-- `writing-good-tickets`
-
-### Installed prompts
-
-- `bro`: restate the last message in plain language, with no jargon
-- `deslop`: simplify a completed work package
-- `handoff`: compact the conversation into a message for a fresh agent
-- `restate-sharpened`: load the sharpen skill and restate the user's goals and
-  problem
 
 ### Installed themes
 
 - `catppuccin-mocha`
 - `gruvbox-dark-hard`
 
-## pstack
-
-The system prompt and most skills come from
-[pstack](https://github.com/cursor/plugins/tree/main/pstack), Lauren Tan's
-Cursor plugin.
-[`agent/scripts/pstack-synced-commit.txt`](agent/scripts/pstack-synced-commit.txt)
-holds the upstream commit that this setup is synced to.
-[`agent/SYSTEM.md`](agent/SYSTEM.md) is pstack's `poteto-mode` skill rewritten
-as a system prompt, and
-[`agent/poteto/`](agent/poteto/) holds that skill's playbooks, references, and
-scripts. The scripts are vendored as-is: lint, format, and type checks skip
-them. Not ported: `setup-pstack`, the `poteto-agent` wrapper, the simulator
-and Cursor cache steps of the worktree-cleanup playbook, and the Benny
-automations.
-
-[`agent/scripts/pstack-port.ts`](agent/scripts/pstack-port.ts) does the
-mechanical part of the port: file placement, relative links, frontmatter, and
-`/skill:name` commands. The Cursor-specific parts are local edits, mapped as
-follows:
-
-| pstack on Cursor                                                       | Pi                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Task` subagents, `subagent_type`, `poteto-agent`, `run_in_background` | `pi-subagent` subagents started with `bg_start`, per the `subagents` skill. `poteto-agent` maps to the delegate kind. An owner, such as an Autopilot-full PR owner, a Feature owner, or an Orchestrate sub-coordinator, is an owner-kind subagent in its own worktree. It has no VM or dashboard, so the agent store records its children. |
-| `readonly: true`                                                       | The assignment's write scope says the subagent changes nothing.                                                                                                                                                                                                                                                                            |
-| Cloud agents and cloud VMs                                             | Local subagents, each in its own git worktree with its own ports and state.                                                                                                                                                                                                                                                                |
-| Resuming a subagent                                                    | `pi-subagent --session <file>` on its session file.                                                                                                                                                                                                                                                                                        |
-| `comment-sicko` agent                                                  | `no-comments/references/comment-sicko.md`, passed with `--append-system-prompt`.                                                                                                                                                                                                                                                           |
-| `pstack-models.mdc`, `/setup-pstack`, Grok and Cursor model slugs      | The role's row in the `subagents` model table, passed as `--model` and `--thinking`.                                                                                                                                                                                                                                                       |
-| `AskQuestion`                                                          | A plain question at the end of the reply.                                                                                                                                                                                                                                                                                                  |
-| Todolist                                                               | A Markdown checklist in the reply, as `SYSTEM.md` defines it.                                                                                                                                                                                                                                                                              |
-| `/loop`                                                                | A background terminal whose completion wakes the agent: the watcher command for an event, `sleep <seconds>` for a cadence. Terminals end with the Pi session.                                                                                                                                                                              |
-| `control-ui`                                                           | The `agent-browser` skill.                                                                                                                                                                                                                                                                                                                 |
-| `control-cli`                                                          | The `background-terminals` skill, with tmux for TUIs.                                                                                                                                                                                                                                                                                      |
-| `create-skill`                                                         | The `writing-for-agents` skill.                                                                                                                                                                                                                                                                                                            |
-| `/deslop`                                                              | The [`deslop`](agent/prompts/deslop.md) prompt, read and applied by the agent.                                                                                                                                                                                                                                                             |
-| `agent-transcripts/`                                                   | Pi session files: `$PI_SESSION_FILE` and the other sessions in its directory.                                                                                                                                                                                                                                                              |
-| `/poteto-mode` and the `poteto-mode` skill                             | `agent/SYSTEM.md`, loaded for every session.                                                                                                                                                                                                                                                                                               |
-| `.cursor/skills/`                                                      | `.agents/skills/`                                                                                                                                                                                                                                                                                                                          |
-| Cursor's built-in babysit, Plan Mode, and Custom Modes                 | Removed.                                                                                                                                                                                                                                                                                                                                   |
-
-The `invocations` table in `pstack-port.ts` decides who can load each skill:
-only the user with `/skill:name`, only the model, or both. Upstream marks
-almost every skill command-only, so sync stops before it writes anything when
-upstream adds a skill that the table does not classify. The error names the
-entry to add.
-
-To sync pstack:
-
-1. Run `node agent/scripts/pstack-port.ts sync [<ref>]`. The script fetches
-   upstream into a clone under `~/.cache/pi-setup/`, ports `<ref>` (default
-   `origin/main`) into `agent/`, and merges it with local edits against the
-   synced commit. Each ported file takes the upstream file's executable bit,
-   and the report names every existing file whose mode changed. Then it writes
-   the new commit to `pstack-synced-commit.txt`. A sync at the synced commit
-   changes no content and repairs only file modes.
-2. Resolve each file reported as `conflict`.
-3. For each line `changed upstream, port by hand into agent/<target>:
-   <upstream path>`, read that file's upstream word diff, which sync prints
-   before the summary lines, and port what you want to keep into the target.
-   Upstream `skills/poteto-mode/SKILL.md` goes into `agent/SYSTEM.md`, which
-   is maintained by hand, so its diff is a changelog rather than a merge.
-4. List each skill reported as `added upstream` under Installed skills.
-5. Run `vp run verify`. It runs `pstack-port.ts check`, which fails on
-   Cursor-only terms that a sync brings back. Then run `vp run test:e2e`
-   before you commit the sync.
-
-To port a skill or file that the script skips, remove it from `skippedSkills`
-or `skippedFiles` and copy its upstream files into place by hand before the
-next sync. Sync reports a missing file that upstream had at the synced commit
-as `kept deleted`, so it never adds a newly unskipped file on its own.
-
 ## Repository layout
 
 ```text
 agent/
-├── SYSTEM.md          # system prompt, ported from pstack's poteto-mode
-├── poteto/            # pstack playbooks, references, and scripts
+├── SYSTEM.md          # system prompt: preface and tool rules
 ├── default.settings.json  # models, thinking level, compaction, and theme
 ├── keybindings.json
 ├── extensions/        # local tools, commands, and UI extensions
 ├── skills/            # agent workflows and references
-├── prompts/           # prompt templates
 └── themes/            # Catppuccin and Gruvbox themes
 oxlint/                # vendored anti-slop lint plugins
 ```
@@ -540,9 +240,7 @@ vp run verify
 `verify`, like CI, runs credential-free formatting, lint, type,
 diagnostic-enforcement, and behavioral checks. Its tasks live in
 `vite.config.ts`. Suites replay from cache when their inputs are unchanged, and
-`vp run --no-cache verify` reruns everything. `verify:poteto-scripts`
-type-checks the vendored Bun scripts under `agent/poteto/scripts/` against
-their own `tsconfig.json` and locked dependencies. Live Pi integration tests
+`vp run --no-cache verify` reruns everything. Live Pi integration tests
 need provider credentials and run separately with `vp run test:e2e`. Run them
 after you upgrade Pi.
 
@@ -554,7 +252,7 @@ rules. It fails on every diagnostic Pi reports, for example frontmatter that is
 not valid YAML, an empty description, or two skills with the same name. It also
 fails when a skill's `name` differs from its directory name, and when Pi loads
 no skill at all. It fails when a file under the `scripts/` directory of a skill
-that Pi loads, or under `agent/poteto/scripts/`, starts with `#!` but is not
+that Pi loads starts with `#!` but is not
 executable, either in the git index or on disk, and names the
 `chmod +x <path> && git add <path>` command that fixes it. The check ignores settings, including the packages that
 settings install, so the untracked `agent/settings.json` cannot change its

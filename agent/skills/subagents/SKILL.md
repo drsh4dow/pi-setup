@@ -12,62 +12,33 @@ report.
 
 ## Kinds
 
-Every subagent is a delegate, except one a playbook hands a whole unit, which
-is an owner. The launch names the kind, and the `delegate-guard` extension
-blocks any spawn the kind does not allow.
+Every subagent is a delegate, except one you hand a whole unit, such as a PR,
+which is an owner. The launch names the kind, and the `delegate-guard`
+extension blocks any spawn the kind does not allow.
 
-- **Delegate.** Does one piece of its parent's step: code for a written scope,
-  an exploration, a review, a swarm lane, an arena or architect candidate, or
-  Comment Sicko. It is a leaf. Its parent owns the playbook, the todolist, the
+- **Delegate.** Does one piece of its parent's task: code for a written scope,
+  an exploration, or a review. It is a leaf. Its parent owns the task, the
   review of its output, and every spawn.
-- **Owner.** Carries one unit a playbook hands it: a PR under Autopilot-full,
-  Autopilot-stack, or a multi-phase plan, code-coupled Feature work, a Visual
-  parity component, or an Orchestrate track. It runs its unit the way a
-  top-level session would, keeps the todolist, and launches each of its
-  workers and verifiers as a delegate. An owner is a background terminal of
-  its parent, so it ends with its parent, and its children are absent from the
-  parent's `bg_list`. Record each owner's children in the agent store so the
-  root can probe them.
+- **Owner.** Carries one whole unit the way a top-level session would, and
+  launches each of its workers and verifiers as a delegate. An owner is a
+  background terminal of its parent, so it ends with its parent, and its
+  children are absent from the parent's `bg_list`.
 
 ## Models
 
-Each subagent runs the model and thinking level of its role. Skills and
-playbooks name the role, such as "the `how explorer` role".
-
-| Role | Model | Thinking |
+| Work | Model | Thinking |
 | --- | --- | --- |
-| `how explorer`, `why investigators`, `swarm scouts` | `anthropic/claude-haiku-5-5` | `medium` |
-| `hardest tasks` | `anthropic/claude-opus-5-5` | `high` |
-| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | `anthropic/claude-opus-5-5` | `medium` |
-| `judgment and prose` | `anthropic/claude-opus-5-5` | `high` |
-| `how explainer`, `why synthesizer` | `anthropic/claude-opus-5-5` | `high` |
-| `reflect judgment, synthesizer` | `anthropic/claude-opus-5-5` | `high` |
-| `reflect divergent` | `openai/gpt-6.1-sol` | `high` |
-| `reflect tooling` | `anthropic/claude-opus-5-5` | `medium` |
-| `swarm workers` | `anthropic/claude-opus-5-5` | `high` |
-| `arena runners`, `architect runners`, `interrogate reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
-| `arena cross-judge pool` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
-| `cross-family reviewer` | `openai/gpt-6.1-sol` | `high` |
+| Exploration and search | `anthropic/claude-haiku-5-5` | `medium` |
+| Code, review, and judgment | `anthropic/claude-opus-5-5` | `high` |
+| Second-opinion review of work Opus wrote | `openai/gpt-6.1-sol` | `high` |
 
-A role with two models is a panel: run one subagent per model, so the panel
-size equals the number of models. Panels mix model families because their
-value is independent judgment. From the cross-judge pool, pick one model whose
-family differs from the candidates being judged, when possible.
-
-A reviewer or verifier that must run on a different model family from the
-work's author takes the `cross-family reviewer` role. When the author ran on
-`openai/gpt-6.1-sol`, run it on `anthropic/claude-opus-5-5` at `high` instead.
-
-The system prompt's Subagents section says how to move a role's thinking level
-for the job. `high` is the ceiling for every model. Haiku runs at `medium`.
-Opus stays between `low` and `high`. When a Haiku report fails a spot
-check, such as a wrong reference or a missed file, rerun that slice on Opus at
-`medium`. If a model fails to launch, rerun that seat on
-`anthropic/claude-opus-5-5` at `high` and say so in your report.
+`high` is the ceiling for every model. Lower Opus to `medium` or `low` for
+routine work. When a Haiku report fails a spot check, such as a wrong
+reference or a missed file, rerun that slice on Opus at `medium`. If a model
+fails to launch, rerun that seat on `anthropic/claude-opus-5-5` at `high` and
+say so in your report.
 
 ## Prepare
-
-Read and apply [writing-for-agents](../writing-for-agents/SKILL.md).
 
 Write one self-contained assignment per subagent; the child sees none of this
 conversation. An assignment is ready when it states:
@@ -114,7 +85,6 @@ the assignment.
 
 ## Use the report
 
-Read an owner's todolist before its diff, and send back a skipped step its
-playbook marks mandatory. For changes, read the diff and run the repository's verification yourself: the
+For changes, read the diff and run the repository's verification yourself: the
 report states what the child intended, and the diff shows what it did. For
 findings, check consequential claims against their cited sources.

@@ -1,15 +1,8 @@
 import { effectNative, strict as effectStrict } from "@effect/tsgo/oxlint-presets";
 import { defineConfig } from "vite-plus";
 
-// Runtime state, installed skills, vendored pstack support
-// files, and vendored lint rules are not application source.
-const ignoredFiles = [
-  "agent/npm/**",
-  "agent/poteto/**",
-  "agent/sessions/**",
-  "agent/skills/*",
-  "oxlint/anti-slop/**",
-];
+// Runtime state, installed skills, and vendored lint rules are not application source.
+const ignoredFiles = ["agent/npm/**", "agent/sessions/**", "agent/skills/*", "oxlint/anti-slop/**"];
 
 export default defineConfig({
   run: {
@@ -32,10 +25,6 @@ export default defineConfig({
         command: ".agents/skills/verify-terminal-delivery/scripts/check --citations",
         cache: false,
       },
-      "verify:poteto-scripts": [
-        "cd agent/poteto/scripts && vp exec bun install --frozen-lockfile > /dev/null",
-        "tsc --project agent/poteto/scripts/tsconfig.json",
-      ],
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
@@ -44,7 +33,6 @@ export default defineConfig({
       "test:docs": [
         "node --test --test-reporter=dot agent/scripts/test/*.test.ts",
         "node agent/scripts/verify-docs.ts",
-        "node agent/scripts/pstack-port.ts check",
       ],
       // The dependencies run concurrently; vp check runs once they pass.
       verify: {
@@ -53,7 +41,6 @@ export default defineConfig({
           "verify:strict-diagnostics",
           "verify:skills",
           "verify:terminal-delivery-citations",
-          "verify:poteto-scripts",
           "test:extensions",
           "test:docs",
         ],

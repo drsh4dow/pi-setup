@@ -1,6 +1,8 @@
 ---
 name: dumpfile
 description: Serve a local asset at a public URL. Use when media must be linked from a PR, issue, or other evidence.
+disable-model-invocation: false
+user-invokable: false
 ---
 
 # Dumpfile

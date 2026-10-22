@@ -33,8 +33,6 @@ Use Conventional Commits, `type(scope): subject`, with no trailing period. The s
 ## Scope
 
 ## Tradeoffs
-
-Made by <model> in <harness>.
 ```
 
 Drop `## Shape` and `## Tradeoffs` when they have nothing to say. Start at `## Why` with no preamble. Write short sentences with few identifiers, and keep the body to 40 non-blank lines. Full SHAs, swarm or arena lane recitals, the story of how the tooling got fixed, file-by-file checklists, metric tables, and review verdicts go in a linked artifact.
@@ -96,10 +94,6 @@ Give 1 to 3 items on what the PR covers and what it deliberately leaves out, suc
 ### Tradeoffs
 
 Name only the rejected alternatives a reviewer would otherwise ask about.
-
-### Attribution
-
-End with the model and harness that did the work, such as `Made by Claude Opus 5.5 in Pi.`
 
 ## Check the body
 

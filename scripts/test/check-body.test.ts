@@ -48,8 +48,6 @@ Two-way door. Blast radius: agents that write PR bodies.
 ## Scope
 
 - Leaves the babysit playbook alone.
-
-Made by Claude Opus 5.5 in Pi.
 `;
 
 test("passes a PR body in the default shape, ignoring headings inside fenced blocks", (t) => {

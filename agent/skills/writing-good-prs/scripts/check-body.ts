@@ -270,15 +270,6 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
   return findings;
 }
 
-function attributionFindings(kind: Kind, body: Body): Finding[] {
-  const prefix = kind === "pr" ? "Made by" : "Filed by";
-  const last = body.lines.findLast((line) => line.text.trim() !== "");
-
-  if (last?.text.startsWith(`${prefix} `)) return [];
-
-  return [{ where: last?.number ?? 1, message: `end with "${prefix} <model> in <harness>."` }];
-}
-
 function titleFindings(kind: Kind, title: string): Finding[] {
   if (/[.\u2013\u2014]$/.test(title.trim())) {
     return [{ where: "title", message: "title ends with punctuation" }];
@@ -338,7 +329,6 @@ function main(): number {
     ...(args.title === undefined ? [] : titleFindings(args.kind, args.title)),
     ...headingFindings(body, shape),
     ...contentFindings(args.kind, body),
-    ...(args.template === undefined ? attributionFindings(args.kind, body) : []),
   ].sort((a, b) => order(a) - order(b));
 
   for (const finding of findings) {

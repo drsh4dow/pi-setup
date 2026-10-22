@@ -44,5 +44,6 @@ Keep implementation details out of the map. Name user paths, stable strings, req
 - [Process status](./process-status.md) covers `/ps`, `/ps <id>`, Ctrl-O, and the `session_usage` tool.
 - [Background terminals](./background-terminals.md) covers model-started jobs, the `bg` footer count, and the completion wake-up.
 - [Session chrome](./session-chrome.md) covers the header, the session timer, and the per-response throughput line.
+- [Architecture review](./architecture-review.md) covers `/skill:improve-codebase-architecture` from the scan through grilling, architect, arena, and interrogate to the checkpoint.
 
 Not yet mapped: the `pi-subagent` launcher and Herdr panes (`subagents`), `delegate-guard`, `sacrifice-preference`, `prompt-context`, and the prompt templates (`/deslop`, `/handoff`, `/bro`, `/restate-sharpened`).

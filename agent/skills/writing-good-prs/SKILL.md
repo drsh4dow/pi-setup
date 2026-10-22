@@ -11,7 +11,7 @@ A PR body is a one-minute briefing for a reviewer who has the diff open. It show
 
 When the repository has a PR template, fill the template's sections, and apply the rules below to the section that plays each role. Otherwise use the shape below.
 
-Write the prose with the **technical-writing** skill (every layer except Diátaxis), then the **unslop** skill.
+Edit the prose with the **unslop** skill.
 
 ## Title
 

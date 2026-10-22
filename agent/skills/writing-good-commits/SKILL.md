@@ -9,7 +9,7 @@ user-invokable: false
 
 A commit message is what a maintainer reads in `git log`, `git blame`, and `git bisect` months later, with no PR or chat beside it. The subject names the change. The body says why the change was needed.
 
-Write the prose with the **technical-writing** skill (every layer except Diátaxis), then the **unslop** skill.
+Edit the prose with the **unslop** skill.
 
 ## Size
 

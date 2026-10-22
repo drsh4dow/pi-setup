@@ -18,4 +18,4 @@ Check the real thing, not a proxy:
 
 ## Script the check a reviewer must rerun
 
-A check a reviewer must rerun is a lever: build and commit it per [Build the Lever](../principle-build-the-lever/SKILL.md). For large or complex work whose trail has to be auditable later, like a big port or migration, also keep a decision trail with the **show-me-your-work** skill.
+A check a reviewer must rerun is a lever: build and commit it per [Build the Lever](../principle-build-the-lever/SKILL.md).

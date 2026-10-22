@@ -404,6 +404,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `principle-separate-before-serializing-shared-state`
 - `principle-sequence-verifiable-units`
 - `principle-test-behavior-not-implementation`
+- `prototype`
 - `recall`
 - `reflect`
 - `research`

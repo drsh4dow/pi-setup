@@ -23,11 +23,31 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { RunRecord } from "./grade.ts";
-import { scenarios, type Scenario } from "./scenarios.ts";
+import { fixturePorts, scenarios, type Scenario } from "./scenarios.ts";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
 
 const KILL_GRACE_MS = 10_000;
+
+const portQueues = new Map<number, Promise<void>>();
+
+/** Runs tasks that hold the same port one after another. Tasks without a port start at once. */
+export function onPort<T>(port: number | undefined, task: () => Promise<T>): Promise<T> {
+  if (port === undefined) return task();
+
+  const previous = portQueues.get(port) ?? Promise.resolve();
+  const result = previous.then(task);
+
+  portQueues.set(
+    port,
+    result.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+
+  return result;
+}
 
 interface PlannedRun {
   readonly scenario: Scenario;
@@ -246,9 +266,12 @@ async function main() {
   const worker = async () => {
     while (next < plan.length) {
       const run = plan[next++];
+
       // Each worker runs its share of the plan one at a time; the pool bounds concurrency.
       // oxlint-disable-next-line no-await-in-loop
-      const record = await execute(run, values.thinking, timeoutMs);
+      const record = await onPort(fixturePorts.get(run.scenario.fixture), () =>
+        execute(run, values.thinking, timeoutMs),
+      );
 
       finished += 1;
       console.log(

@@ -10,6 +10,16 @@ export interface Scenario {
   readonly prompt: string;
 }
 
+/**
+ * Fixtures whose servers listen on a fixed port. Candidates start them to try their change, so
+ * runs of fixtures sharing a port must not overlap, or one run's requests reach another's server.
+ */
+export const fixturePorts: ReadonlyMap<string, number> = new Map([
+  ["storefront", 3000],
+  ["inventory-api", 3000],
+  ["request-pipeline", 3000],
+]);
+
 // Prompts read like a user's request: no meta words, and no mention of skills or principles.
 export const scenarios: readonly Scenario[] = [
   {

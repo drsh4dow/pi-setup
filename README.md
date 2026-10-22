@@ -348,6 +348,11 @@ skill.
 `wizard` and `writing-for-agents` are vendored from
 [`mattpocock/skills` at `6fd9479`](https://github.com/mattpocock/skills/tree/6fd947921b935b7e1e69293a200400f0fdd5c15f/skills).
 
+`codebase-design`, `domain-modeling`, `grill-with-docs`, `grilling`, and
+`improve-codebase-architecture` start from
+[Matt Pocock's skills](https://github.com/mattpocock/skills), adapted so the
+design step runs through `architect` and `arena`. Thanks, Matt.
+
 Every skill whose name also appears in pstack is ported from it. See
 [pstack](#pstack).
 

@@ -18,8 +18,7 @@ Oxfmt. `@oxlint/plugins` is the authoring API used by this vendored plugin, not
 another linter. Keep it compatible with Vite+'s bundled Oxlint, and keep
 `@effect/tsgo` compatible with both Oxlint and its type-checking binary.
 
-`vp lint` checks maintained extensions, libraries, scripts, and dumpfile source
-and tests. `vp check` adds formatting and type checks;
+`vp lint` checks maintained extensions, libraries, scripts, and their tests. `vp check` adds formatting and type checks;
 `vp run verify` also builds the CLI binaries and runs behavioral tests.
 
 Runtime state, other installed skills, reference checkouts, and this vendored

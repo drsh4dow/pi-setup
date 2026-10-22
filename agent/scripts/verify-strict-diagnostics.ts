@@ -63,19 +63,10 @@ try {
   for (const path of ["node_modules", "oxlint"])
     symlinkSync(join(repository, path), join(fixture, path), "dir");
 
-  for (const path of [
-    ".gitignore",
-    "package.json",
-    "tsconfig.json",
-    "vite.config.ts",
-    "cli/dumpfile/tsconfig.json",
-  ]) {
-    const destination = join(fixture, path);
-    mkdirSync(dirname(destination), { recursive: true });
-    copyFileSync(join(repository, path), destination);
-  }
+  for (const path of [".gitignore", "package.json", "tsconfig.json", "vite.config.ts"])
+    copyFileSync(join(repository, path), join(fixture, path));
 
-  const sourceDirectories = ["agent/extensions", "agent/lib", "agent/scripts", "cli/dumpfile/src"];
+  const sourceDirectories = ["agent/extensions", "agent/lib", "agent/scripts"];
 
   for (const directory of sourceDirectories)
     mkdirSync(join(fixture, directory), { recursive: true });

@@ -1,6 +1,4 @@
 .env
-.dev.vars*
-.wrangler/
 node_modules/
 /.build/
 /.vite/

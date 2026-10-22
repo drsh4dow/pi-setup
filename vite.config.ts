@@ -22,7 +22,6 @@ export default defineConfig({
         command: [
           "vp exec bun build --compile --outfile .build/bin/emit-to-pi agent/extensions/background-terminals/bin/emit-to-pi.ts > /dev/null",
           "vp exec bun build --compile --outfile .build/bin/pi-subagent agent/extensions/subagents/bin/pi-subagent.ts > /dev/null",
-          "vp exec bun build --compile --outfile .build/bin/dumpfile cli/dumpfile/src/cli.ts > /dev/null",
         ],
         cache: false,
       },
@@ -43,19 +42,6 @@ export default defineConfig({
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
         dependsOn: ["build:cli"],
       },
-      "test:dumpfile": {
-        command: [
-          "bash -n cli/dumpfile/setup.sh cli/dumpfile/bin/dumpfile",
-          "node --test --test-reporter=dot cli/dumpfile/test/*.test.ts",
-          "WRANGLER_LOG=warn wrangler deploy --dry-run --config cli/dumpfile/wrangler.jsonc",
-        ],
-        dependsOn: ["build:cli"],
-        // The dry run bundles into .wrangler, which would otherwise make every run a cache miss.
-        cache: {
-          input: [{ auto: true }, "!cli/dumpfile/.wrangler/**"],
-          output: [{ auto: true }, "!cli/dumpfile/.wrangler/**"],
-        },
-      },
       "test:docs": [
         "node --test --test-reporter=dot agent/scripts/test/*.test.ts",
         "node agent/scripts/verify-docs.ts",
@@ -70,7 +56,6 @@ export default defineConfig({
           "verify:terminal-delivery-citations",
           "verify:poteto-scripts",
           "test:extensions",
-          "test:dumpfile",
           "test:docs",
         ],
       },
@@ -160,14 +145,13 @@ export default defineConfig({
     },
     overrides: [
       {
-        // These are native process, test-runner, or Cloudflare entry points.
+        // These are native process or test-runner entry points.
         // Effect safety rules still apply wherever they actually use Effect.
         files: [
           "**/test/**",
           "agent/scripts/**",
           "agent/extensions/background-terminals/bin/**",
           "agent/extensions/subagents/bin/**",
-          "cli/dumpfile/**",
           "vite.config.ts",
         ],
         rules: {

@@ -225,7 +225,7 @@ tracked and untracked, non-ignored files.
 
 - `background-terminals`: `bg_start`, `bg_status`, `bg_list`, and `bg_kill` for
   session-owned processes, plus `emit-to-pi` notifications
-- `build-bin-path`: puts `.build/bin` (`pi-subagent`, `emit-to-pi`, `dumpfile`)
+- `build-bin-path`: puts `.build/bin` (`pi-subagent` and `emit-to-pi`)
   on the PATH of every command Pi runs, the `bash` tool included
 - `delegate-guard`: keeps subagents two tiers deep. A subagent launched without
   `subagents/owner.md` is a delegate and may run no `pi --print` or `pi -p`
@@ -361,7 +361,6 @@ Every skill whose name also appears in pstack is ported from it. See
 - `create-formal-verification-skill`
 - `create-verification-skill`
 - `docs-search`
-- `dumpfile`
 - `engineering-standards`
 - `figure-it-out`
 - `frontend-design`
@@ -425,14 +424,6 @@ Every skill whose name also appears in pstack is ported from it. See
 - `handoff`: compact the conversation into a message for a fresh agent
 - `restate-sharpened`: load the sharpen skill and restate the user's goals and
   problem
-
-### Installed CLI tools
-
-- [`dumpfile`](cli/dumpfile/README.md) publishes screenshots, recordings, and
-  other review evidence to immutable public R2 URLs. The links are not
-  permanent, and setup can opt into 30-day object-age retention. Run
-  `./cli/dumpfile/setup.sh` once to provision Cloudflare and install the
-  command.
 
 ### Installed themes
 
@@ -522,8 +513,6 @@ agent/
 ├── skills/            # agent workflows and references
 ├── prompts/           # prompt templates
 └── themes/            # Catppuccin and Gruvbox themes
-cli/
-└── dumpfile/          # R2 upload CLI, signer Worker, tests, and setup wizard
 oxlint/                # vendored anti-slop lint plugins
 ```
 
@@ -595,7 +584,7 @@ Keep these versions aligned when upgrading:
   `vp toolchain` reports.
 - Vite+ and `@effect/tsgo` move together.
 
-`vp run build:cli` compiles `pi-subagent`, `emit-to-pi`, and `dumpfile` with
+`vp run build:cli` compiles `pi-subagent` and `emit-to-pi` with
 Bun. The `build-bin-path` extension puts `.build/bin` on the search path of
 every command Pi runs.
 

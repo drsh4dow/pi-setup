@@ -1,0 +1,9 @@
+{
+  "name": "query-parser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "bench": "node bench/bench.js"
+  }
+}

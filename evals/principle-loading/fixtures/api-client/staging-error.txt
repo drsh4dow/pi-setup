@@ -1,0 +1,5 @@
+$ LEDGER_ENV=staging node scripts/check-balance.js acct_123
+Error: unable to verify the first certificate
+    at TLSSocket.onConnectSecure (node:_tls_wrap:1677:34)
+    at TLSSocket.emit (node:events:519:28)
+  code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'

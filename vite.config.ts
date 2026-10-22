@@ -2,7 +2,7 @@ import { effectNative, strict as effectStrict } from "@effect/tsgo/oxlint-preset
 import { defineConfig } from "vite-plus";
 
 // Reference checkouts, runtime state, installed skills, vendored pstack support
-// files, and vendored lint rules are not application source.
+// files, vendored lint rules, and the projects evals copy for candidates are not application source.
 const ignoredFiles = [
   ".repos/**",
   "agent/npm/**",
@@ -11,6 +11,9 @@ const ignoredFiles = [
   "agent/scripts/**",
   "agent/sessions/**",
   "agent/skills/*",
+  "evals/*/fixtures/**",
+  "evals/*/setup/**",
+  "evals/*/results/**",
   "oxlint/anti-slop/**",
 ];
 
@@ -58,6 +61,7 @@ export default defineConfig({
           output: [{ auto: true }, "!cli/dumpfile/.wrangler/**"],
         },
       },
+      "test:evals": "node --test --test-reporter=dot evals/*/test/*.test.ts",
       "test:docs": [
         "node --test --test-reporter=dot scripts/test/*.test.ts",
         "node scripts/verify-docs.ts",
@@ -72,6 +76,7 @@ export default defineConfig({
           "verify:poteto-scripts",
           "test:extensions",
           "test:dumpfile",
+          "test:evals",
           "test:docs",
         ],
       },
@@ -166,6 +171,7 @@ export default defineConfig({
         files: [
           "**/test/**",
           "scripts/**",
+          "evals/**",
           "agent/extensions/background-terminals/bin/**",
           "agent/extensions/subagents/bin/**",
           "cli/dumpfile/**",

@@ -1,0 +1,21 @@
+# CI failures for test/sync.test.js since the last two fixes (copied from the CI UI)
+
+run 4812  main  test: raise sync test timeout to 10s
+  not ok 1 - a newer remote edit wins over the local copy
+    expected: 'remote edit'
+    actual:   'local edit'
+    duration_ms: 1.204
+
+run 4820  main  test: retry the flaky sync test up to 3 times
+  not ok 1 - a newer remote edit wins over the local copy
+    expected: 'remote edit'
+    actual:   'local edit'
+    duration_ms: 0.981
+
+run 4833  main  test: retry the flaky sync test up to 3 times
+  not ok 1 - a newer remote edit wins over the local copy
+    expected: 'remote edit'
+    actual:   'local edit'
+    duration_ms: 0.873
+
+passing runs in between: 4813-4819, 4821-4832 (21 of 24 runs passed)

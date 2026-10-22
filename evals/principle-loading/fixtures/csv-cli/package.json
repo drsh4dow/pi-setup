@@ -1,0 +1,9 @@
+{
+  "name": "csvstat",
+  "version": "1.4.0",
+  "type": "module",
+  "bin": { "csvstat": "bin/csvstat.js" },
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

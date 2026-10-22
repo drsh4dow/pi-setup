@@ -20,3 +20,4 @@ mcp-onboarding.json
 /agent/mcp.log
 /agent/mcp.log.1
 /docs/research/
+/evals/*/results/

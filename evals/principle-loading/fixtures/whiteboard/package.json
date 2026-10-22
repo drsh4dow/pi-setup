@@ -1,0 +1,9 @@
+{
+  "name": "whiteboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/relay.ts",
+    "test": "node --test test/"
+  }
+}

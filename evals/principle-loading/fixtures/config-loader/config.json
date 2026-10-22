@@ -1,0 +1,4 @@
+{
+  "port": 9000,
+  "database": { "host": "db.internal" }
+}

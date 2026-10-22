@@ -1,0 +1,10 @@
+deploy:
+  stage: deploy
+  retry:
+    max: 2
+    when: [runner_system_failure, stuck_or_timeout_failure]
+  variables:
+    DB_PATH: /srv/reporting/app.db
+    RELEASES_DIR: /srv/reporting/releases
+  script:
+    - ./scripts/deploy.sh

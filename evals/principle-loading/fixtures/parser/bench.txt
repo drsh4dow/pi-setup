@@ -1,0 +1,6 @@
+npm run bench, on my laptop
+
+before (regex tokenizer, main):   412 ms
+after  (hand-written scanner):    128 ms
+
+=> 3.2x faster

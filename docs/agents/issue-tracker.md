@@ -1,0 +1,17 @@
+# Issue tracker: GitHub
+
+Issues and specs for this repository live as GitHub issues in `drsh4dow/pi-setup`. Use the `gh` CLI for every operation. It infers the repository from `git remote -v` inside a clone.
+
+Write issue bodies in the sections of [`.github/ISSUE_TEMPLATE/ticket.md`](../../.github/ISSUE_TEMPLATE/ticket.md).
+
+## Operations
+
+- **Publish**: `gh issue create --title "..." --body-file -` with the body on a heredoc.
+- **Fetch**: `gh issue view <number> --json number,title,body,labels,comments`.
+- **Search**: `gh issue list --state all --search "<words>" --json number,title,state,labels`.
+- **Comment**: `gh issue comment <number> --body-file -`.
+- **Nest under a parent**: `gh issue create --parent <parent> ...`, or `gh issue edit <parent> --add-sub-issue <child>` afterwards.
+- **Block**: `gh api --method POST repos/drsh4dow/pi-setup/issues/<blocked>/dependencies/blocked_by -F issue_id=<blocker-id>`, where `<blocker-id>` is the blocker's database id from `gh api repos/drsh4dow/pi-setup/issues/<number> --jq .id`, not its number. Where dependencies are unavailable, start the blocked issue's body with `Blocked by: #<n>, #<n>`.
+- **Close**: `gh issue close <number> --comment "..."`.
+
+GitHub shares one number space between issues and pull requests, so a bare `#42` can be either. Resolve it with `gh pr view 42`, then `gh issue view 42`.

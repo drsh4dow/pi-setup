@@ -16,6 +16,12 @@ submodule as read-only reference and keep application imports on the installed
 `effect` and `@effect/*` packages. If it is absent, initialize it with
 `git submodule update --init --recursive`.
 
-## Issue tracker
+## Agent skills
 
-Issues live as GitHub issues in `drsh4dow/pi-setup`, driven by the `gh` CLI.
+The engineering skills read this repository's config record in `docs/agents/`.
+Rerun `/skill:setup-sh4dow-skills` when the tracker, the domain layout, or the
+guardrails change.
+
+- Issue tracker: GitHub issues in `drsh4dow/pi-setup`, through `gh`. See `docs/agents/issue-tracker.md`.
+- Domain docs: single-context. See `docs/agents/domain.md`.
+- Standards: `AGENTS.md`, `vite.config.ts` lint rules, and strict `tsconfig.json`, checked by `vp run verify` in CI. See `docs/agents/standards.md`.

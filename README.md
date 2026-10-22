@@ -6,8 +6,7 @@ extensions, skills, prompts, themes, and model defaults. Pi discovers everything
 under `~/.pi/agent` on its own, so nothing here is installed as a package.
 
 [`agent/SYSTEM.md`](agent/SYSTEM.md) replaces Pi's system prompt for every
-model. It sets the agent's baseline behavior. `/skill:poteto-mode` loads
-pstack's working method for the rest of the session. The skills hold the
+model. It sets the agent's baseline behavior. The skills hold the
 procedures for specific kinds of work, and `principle-engineering-standards` holds the
 code standards.
 
@@ -31,7 +30,7 @@ paste it at that point. I usually stay in the same session.
 
 ### Take a ticket to a PR
 
-`/skill:poteto-mode` leans autonomous, so I name a stop at each stage where a
+The agent leans autonomous, so I name a stop at each stage where a
 wrong ticket or a wrong design would be expensive. The agent waits at every
 stop I name.
 
@@ -129,10 +128,9 @@ a web app where an on-call team logs incidents and reads a weekly summary.
 The agent can't understand millions of lines, so I keep it on the slice the
 ticket touches and make it prove behavior on the running app.
 
-1. Start Pi at the repository root and name the package in every prompt. The
-   poteto-mode skill makes the agent read a package's own `AGENTS.md` before it
-   touches that package. Pi discovers skills only in the root
-   `.agents/skills/`, so verify skills go there.
+1. Start Pi at the repository root and name the package in every prompt. Pi
+   discovers skills only in the root `.agents/skills/`, so verify skills go
+   there.
 2. Make the package runnable and drivable before the first change. Each app
    gets its own `verify-<app>` skill.
 
@@ -157,8 +155,7 @@ ticket touches and make it prove behavior on the running app.
    `/skill:maintain-verification-skill`.
 7. Clean up through the tickets, not in one sweep. `/skill:correct` turns a
    mistake agents repeat into a type, lint, or test, and it fails only on new
-   cases of a pattern that is already common. A migration across many call
-   sites goes to `/skill:figure-it-out`.
+   cases of a pattern that is already common.
 
 ## Defaults
 
@@ -361,26 +358,17 @@ Every skill whose name also appears in pstack is ported from it. See
 - `background-terminals`
 - `benchmark-checklist`
 - `blast-radius`
-- `bro`
 - `correct`
 - `create-formal-verification-skill`
 - `create-verification-skill`
 - `docs-search`
 - `dumpfile`
-- `figure-it-out`
 - `frontend-design`
 - `how`
-- `in-your-own-words`
-- `interrogate`
-- `ketchup`
 - `mailbox`
 - `maintain-formal-verification-skill`
 - `maintain-verification-skill`
-- `make-bot-ui`
-- `no-comments`
 - `pi-harness`
-- `poteto-help`
-- `poteto-mode`
 - `principle-ask-or-proceed`
 - `principle-attack-the-premise`
 - `principle-boundary-discipline`
@@ -407,12 +395,10 @@ Every skill whose name also appears in pstack is ported from it. See
 - `recall`
 - `reflect`
 - `sharpen`
-- `show-me-your-work`
 - `subagents`
 - `swarm`
 - `tdd`
 - `teach`
-- `technical-writing`
 - `typescript-best-practices`
 - `unslop`
 - `web-search`
@@ -450,51 +436,36 @@ Most skills come from
 [pstack](https://github.com/cursor/plugins/tree/main/pstack), Lauren Tan's
 Cursor plugin. This setup no longer syncs from upstream; the ported files are
 maintained here as its own.
-[`agent/skills/poteto-mode/SKILL.md`](agent/skills/poteto-mode/SKILL.md) is
-pstack's `poteto-mode` skill rewritten for Pi in XML sections, and
-[`agent/playbooks/`](agent/playbooks/),
-[`agent/references/`](agent/references/), and
-[`agent/scripts/`](agent/scripts/) hold that skill's playbooks, references, and
-scripts. The scripts are vendored as-is: lint, format, and type checks skip
-them. Not ported: `setup-pstack`, the `poteto-agent` wrapper, the simulator
-and Cursor cache steps of the worktree-cleanup playbook, and the Benny
-automations.
+[`agent/scripts/`](agent/scripts/) holds pstack's Bun scripts, vendored as-is:
+lint, format, and type checks skip them. Not ported: `setup-pstack`, the
+`poteto-agent` wrapper, and the Benny automations. Removed after the port:
+`poteto-mode` with its playbooks and references.
 
 The port rewrote pstack's Cursor-specific parts for Pi, mapped as follows:
 
-| pstack on Cursor                                                       | Pi                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Task` subagents, `subagent_type`, `poteto-agent`, `run_in_background` | `pi-subagent` subagents started with `bg_start`, per the `subagents` skill. `poteto-agent` maps to the delegate kind, launched with poteto-mode appended to its system prompt. An owner, such as an Autopilot-full PR owner, a Feature owner, or an Orchestrate sub-coordinator, is an owner-kind subagent in its own worktree. It has no VM or dashboard, so the agent store records its children. |
-| `readonly: true`                                                       | The assignment's write scope says the subagent changes nothing.                                                                                                                                                                                                                                                                                                                                     |
-| Cloud agents and cloud VMs                                             | Local subagents, each in its own git worktree with its own ports and state.                                                                                                                                                                                                                                                                                                                         |
-| Resuming a subagent                                                    | `pi-subagent --session <file>` on its session file.                                                                                                                                                                                                                                                                                                                                                 |
-| `comment-sicko` agent                                                  | `no-comments/references/comment-sicko.md`, passed with `--append-system-prompt`.                                                                                                                                                                                                                                                                                                                    |
-| `pstack-models.mdc`, `/setup-pstack`, Grok and Cursor model slugs      | The role's row in the `subagents` model table, passed as `--model` and `--thinking`.                                                                                                                                                                                                                                                                                                                |
-| `AskQuestion`                                                          | A plain question at the end of the reply.                                                                                                                                                                                                                                                                                                                                                           |
-| Todolist                                                               | A Markdown checklist in the reply, as `poteto-mode` defines it.                                                                                                                                                                                                                                                                                                                                     |
-| `/loop`                                                                | A background terminal whose completion wakes the agent: the watcher command for an event, `sleep <seconds>` for a cadence. Terminals end with the Pi session.                                                                                                                                                                                                                                       |
-| `control-ui`                                                           | The `agent-browser` skill.                                                                                                                                                                                                                                                                                                                                                                          |
-| `control-cli`                                                          | The `background-terminals` skill, with tmux for TUIs.                                                                                                                                                                                                                                                                                                                                               |
-| `create-skill`                                                         | The `writing-for-agents` skill.                                                                                                                                                                                                                                                                                                                                                                     |
-| `/deslop`                                                              | The [`deslop`](agent/prompts/deslop.md) prompt, read and applied by the agent.                                                                                                                                                                                                                                                                                                                      |
-| `agent-transcripts/`                                                   | Pi session files: `$PI_SESSION_FILE` and the other sessions in its directory.                                                                                                                                                                                                                                                                                                                       |
-| `/poteto-mode` and the `poteto-mode` skill                             | `/skill:poteto-mode`, maintained by hand.                                                                                                                                                                                                                                                                                                                                                           |
-| `.cursor/skills/`                                                      | `.agents/skills/`                                                                                                                                                                                                                                                                                                                                                                                   |
-| Cursor's built-in babysit, Plan Mode, and Custom Modes                 | Removed.                                                                                                                                                                                                                                                                                                                                                                                            |
-
-Ported skills keep upstream's frontmatter, which marks every one
-`disable-model-invocation: true`. Pi leaves them out of the model's skill
-list, so the model reaches them only through `/skill:poteto-mode`, which names
-each one and reads it by path, or when the user types `/skill:name`. The
-skills this setup adds stay discoverable.
+| pstack on Cursor                                                       | Pi                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Task` subagents, `subagent_type`, `poteto-agent`, `run_in_background` | `pi-subagent` subagents started with `bg_start`, per the `subagents` skill. `poteto-agent` maps to the delegate kind. An owner is an owner-kind subagent in its own worktree. It has no VM or dashboard, so the agent store records its children. |
+| `readonly: true`                                                       | The assignment's write scope says the subagent changes nothing.                                                                                                                                                                                   |
+| Cloud agents and cloud VMs                                             | Local subagents, each in its own git worktree with its own ports and state.                                                                                                                                                                       |
+| Resuming a subagent                                                    | `pi-subagent --session <file>` on its session file.                                                                                                                                                                                               |
+| `pstack-models.mdc`, `/setup-pstack`, Grok and Cursor model slugs      | The role's row in the `subagents` model table, passed as `--model` and `--thinking`.                                                                                                                                                              |
+| `AskQuestion`                                                          | A plain question at the end of the reply.                                                                                                                                                                                                         |
+| Todolist                                                               | A Markdown checklist in the reply.                                                                                                                                                                                                                |
+| `/loop`                                                                | A background terminal whose completion wakes the agent: the watcher command for an event, `sleep <seconds>` for a cadence. Terminals end with the Pi session.                                                                                     |
+| `control-ui`                                                           | The `agent-browser` skill.                                                                                                                                                                                                                        |
+| `control-cli`                                                          | The `background-terminals` skill, with tmux for TUIs.                                                                                                                                                                                             |
+| `create-skill`                                                         | The `writing-for-agents` skill.                                                                                                                                                                                                                   |
+| `/deslop`                                                              | The [`deslop`](agent/prompts/deslop.md) prompt, read and applied by the agent.                                                                                                                                                                    |
+| `agent-transcripts/`                                                   | Pi session files: `$PI_SESSION_FILE` and the other sessions in its directory.                                                                                                                                                                     |
+| `.cursor/skills/`                                                      | `.agents/skills/`                                                                                                                                                                                                                                 |
+| Cursor's built-in babysit, Plan Mode, and Custom Modes                 | Removed.                                                                                                                                                                                                                                          |
 
 ## Repository layout
 
 ```text
 agent/
 ├── SYSTEM.md          # minimal system prompt
-├── playbooks/         # pstack playbooks
-├── references/        # pstack references
 ├── scripts/           # pstack Bun scripts
 ├── default.settings.json  # models, thinking level, compaction, and theme
 ├── keybindings.json

@@ -25,7 +25,7 @@ Pi leaves it unset for an ephemeral session. Then pass a tight digest of the ses
 
 Start three subagents together, per the **subagents** skill. Reviewers use MCP tools to look up the tickets, chat threads, and observability traces the transcript references.
 
-Each reviewer and the synthesizer run the role named below in the subagents skill's model table. Pick each subagent's thinking level for the job, per the Subagents section of the **poteto-mode** skill.
+Each reviewer and the synthesizer run the role named below in the subagents skill's model table. Pick each subagent's thinking level for the job, per the **subagents** skill.
 
 | Lens | Role | Prompt template |
 |---|---|---|

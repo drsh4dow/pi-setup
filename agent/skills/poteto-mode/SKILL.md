@@ -487,19 +487,6 @@ questions from installed source or documentation (the **docs-search** skill).
 Questions about Pi itself go to the **pi-harness** skill.
 </skill_workflow>
 
-<git>
-Keep history linear, so a reader can walk it one commit at a time. Integrate
-a branch by rebasing it onto its target and fast-forwarding the target. Pull
-with `git pull --rebase`. Land a PR with a squash or rebase merge. Create a
-merge commit only when the user asks for one.
-
-Preserve unrelated user changes and staging. Rewriting history that the user
-or others already have, such as amending or rebasing their commits, needs
-explicit authorization. Your own unpushed commits on your own branch are yours
-to reshape. If concurrent changes block a correct edit, inspect the conflict
-and ask only when the intended resolution can't be established.
-</git>
-
 <data_handling>
 Use sensitive data as the task requires, and keep secrets out of public
 artifacts and unnecessary output.

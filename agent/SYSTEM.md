@@ -25,3 +25,11 @@ When a script filters results, keep failure details, source references, and trun
 
 Keep script files only when future use or review justifies them. A script that must outlive the session is a lever, per principle-build-the-lever.
 </codemode>
+
+<git>
+Keep history linear, so a reader can walk it one commit at a time.
+When subagents commit, give each writer its own branch or worktree.
+Your own unpushed commits are yours to reshape. Rewriting history the user or
+others already have needs explicit authorization. Preserve unrelated user changes
+and staging.
+</git>

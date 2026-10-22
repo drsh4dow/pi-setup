@@ -69,4 +69,7 @@ Side effects happen inline as decisions crystallize; apply the **domain-modeling
 - **Naming a deepened module after a concept not in `GLOSSARY.md`?** Add the term to `GLOSSARY.md`. Create the file lazily if it doesn't exist.
 - **Sharpening a fuzzy term during the conversation?** Update `GLOSSARY.md` right there.
 - **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing; skip ephemeral reasons ("not worth it right now") and self-evident ones.
-- **Want to explore alternative interfaces for the deepened module?** Use the design-it-twice pattern of the **codebase-design** skill.
+
+### 4. Design the deepened module
+
+When the frontier is empty and the user keeps the candidate, run the **architect** skill with checkpoint on it. Pass the settled design tree, the candidate's files, its dependency category from the codebase-design skill's [DEEPENING.md](../codebase-design/DEEPENING.md), and the `GLOSSARY.md` terms as Phase A grounding. Architect designs the interface at least twice through arena and stops for the user's sign-off before it implements anything.

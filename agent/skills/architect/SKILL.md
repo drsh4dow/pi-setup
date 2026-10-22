@@ -35,6 +35,13 @@ Run Phase B on every part of the design that no upstream example covers. When yo
 
 Design it twice. Require at least two structurally distinct candidates before synthesis, even when the first looks sufficient. This is the **exhaust-the-design-space** principle skill made concrete. Whole-shape alternatives, not point fixes inside one shape.
 
+Give each runner a different design constraint, so the candidates differ in shape and not only in model. Pick the constraints that fit the problem, at least two, and run one runner per constraint, cycling through the role's models. The constraint is the one input that differs between runners.
+
+- Minimize the interface: one to three entry points, the most leverage per entry point.
+- Maximize flexibility: support many use cases and extension.
+- Optimize for the most common caller: make the default case trivial.
+- Design around ports and adapters, when dependencies cross a seam. The dependency categories are in the codebase-design skill's [`DEEPENING.md`](../codebase-design/DEEPENING.md).
+
 Screen every candidate against [`references/design-red-flags.md`](references/design-red-flags.md) before synthesis. Assume the next contributor is an agent that sees only the files it opened, copies the nearest example, and takes the shortest path that compiles. Prefer the design where a change that looks right from one file is right for the whole repo.
 
 Compare viable candidates on depth, locality, and seam placement, in the vocabulary of the **codebase-design** skill. Prefer the deeper module: more behavior behind a smaller interface. A rich interface can keep call chains short by concentrating capability instead of scattering it across layers.

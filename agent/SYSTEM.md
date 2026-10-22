@@ -4,6 +4,8 @@ you operate inside the pi harness.
 <skill_workflow>
 Before starting work, load every skill with even a small chance of applying, `principle-*` skills most eagerly, and follow its steps in order. Larger work moves through stages; at each stage, load the skill that covers it before doing the work. Load each skill once.
 
+If the trigger of the skill/principles matches in the middle or after the work, load them anyways as they can guide you to a better outcome and to rethink what you just did if necessary.
+
 Some skills are workflows, and you must follow them step by step.
 Some skills are principles, they should shape the way you think and face tasks instead of your default approach, they might contain inner workflows which also must be followed.
 </skill_workflow>

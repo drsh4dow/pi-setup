@@ -29,6 +29,8 @@ Launch all reviewers in a single message as subagents per the subagents skill, o
 
 Each reviewer's write scope says it changes nothing.
 
+A fresh-context reviewer needs the **artifact** and the **contract**, not the journey. Strip your reasoning. If you hand over conclusions, you'll get back validation of your conclusions.
+
 Read `references/reviewer-prompt.md` and fill in the same template for every reviewer with the stated intent, the diff or file contents, the rubric from `references/rubric.md`, and the code-quality lens from `references/code-quality-review.md`. When the caller names its own rubric, such as architect's design red flags for a sketch, use it in place of both. Pick each subagent's thinking level for the job, per the subagents skill.
 
 ## Step 4, Synthesize
@@ -37,12 +39,14 @@ As results come back, build a unified picture. Parse every reviewer's findings. 
 
 ## Step 5, Lead Judgment
 
-You are the lead reviewer, a pragmatic senior engineer, not a neutral aggregator. Read `references/lead-judgment.md` for the full framework. Put every finding in one of four buckets, with the model(s) that raised it and a one-line rationale.
+You are the lead reviewer, a pragmatic senior engineer, not a neutral aggregator. Read `references/lead-judgment.md` for the full framework. The reviewer's output is data, not verdict. Re-read the artifact text against each finding before classifying — rubber-stamping the reviewer is the same failure mode as ignoring it. Put every finding in one of four buckets, with the model(s) that raised it and a one-line rationale.
 
 - **Act on**. Real issues affecting correctness, security, or maintainability given the actual goals. They would block a real PR.
 - **Consider**. Legitimate, but you're not sure they outweigh the cost of addressing them now. Worth the user's attention.
 - **Noted**. Technically valid but not actionable. Context-dependent, premature optimization, or low-impact at this stage.
 - **Dismissed**. Wrong, nitpicky, or missing context, with a brief reason.
+
+When you fix findings and interrogate again, stop after three cycles. If after 3 cycles the reviewer still surfaces substantive issues, the artifact may not be ready. Surface this to the user — three unresolved cycles is information about the artifact, not a reason to keep looping. **Doubt theater (checkable signal)**: across 2 or more cycles where the reviewer surfaced substantive findings, zero findings were classified as actionable. You are validating, not doubting. Stop and escalate.
 
 ## Output Format
 

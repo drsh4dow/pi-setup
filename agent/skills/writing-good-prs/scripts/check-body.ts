@@ -94,12 +94,10 @@ function parseBody(text: string): Body {
     .map((line, index) => ({ number: index + 1, text: line.replace(/\r$/, "") }));
   const preamble: Line[] = [];
   const sections: Section[] = [];
-  let inFence = false;
+  const inFence = fenced(lines);
 
-  for (const line of lines) {
-    if (/^\s*(```|~~~)/.test(line.text)) inFence = !inFence;
-
-    const heading = inFence ? null : line.text.match(/^## +(.+?)\s*#*\s*$/);
+  for (const [index, line] of lines.entries()) {
+    const heading = inFence[index] ? null : line.text.match(/^## +(.+?)\s*#*\s*$/);
     const current = sections.at(-1);
 
     if (heading) {
@@ -168,19 +166,37 @@ function sectionNamed(body: Body, names: readonly string[]) {
   return body.sections.find((section) => names.includes(normalize(section.heading)));
 }
 
-function proseLines(lines: readonly Line[]) {
-  const prose: Line[] = [];
-  let inFence = false;
+// Marks each line that opens, sits inside, or closes a fenced block. A fence closes only on
+// the same character repeated at least as often, so a pasted body that holds ``` blocks
+// inside a ```` block stays one block.
+function fenced(lines: readonly Line[]): boolean[] {
+  let open: string | undefined;
 
-  for (const line of lines) {
-    if (/^\s*(```|~~~)/.test(line.text)) {
-      inFence = !inFence;
-    } else if (!inFence) {
-      prose.push(line);
+  return lines.map((line) => {
+    const marker = line.text.match(/^\s*(`{3,}|~{3,})(.*)$/);
+
+    if (open === undefined) {
+      open = marker?.[1];
+      return marker !== null;
     }
-  }
 
-  return prose;
+    if (
+      marker !== null &&
+      marker[1][0] === open[0] &&
+      marker[1].length >= open.length &&
+      marker[2].trim() === ""
+    ) {
+      open = undefined;
+    }
+
+    return true;
+  });
+}
+
+function proseLines(lines: readonly Line[]) {
+  const inFence = fenced(lines);
+
+  return lines.filter((_, index) => !inFence[index]);
 }
 
 function contentFindings(kind: Kind, body: Body): Finding[] {

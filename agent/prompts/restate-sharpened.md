@@ -1,6 +1,6 @@
 ---
 name: restate-sharpened
-description: Compact the current conversation into a handoff message for another agent to pick up.
+description: Restate the user's goal through the sharpen skill, then offer the full plan.
 argument-hint: "Goals"
 ---
 
@@ -13,3 +13,5 @@ Use the user input below as the statement to sharpen and restate.
 <user-input>
   $ARGUMENTS
 </user-input>
+
+End by offering to present the full executable plan, then list the decisions the user must make as a numbered list, each with your recommendation.

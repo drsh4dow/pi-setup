@@ -53,7 +53,7 @@ job needs.
 | `reflect tooling` | `anthropic/claude-opus-5-5` | `medium` |
 | `researcher` | `openai/gpt-6.1-sol` | `high` |
 | `swarm workers` | `anthropic/claude-opus-5-5` | `high` |
-| `arena runners`, `architect runners`, `interrogate reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
+| `arena runners`, `architect runners`, `architect reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 | `arena cross-judge pool` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 | `cross-family reviewer` | `openai/gpt-6.1-sol` | `high` |
 | `code-review detail personas` | `openai/gpt-6.1-sol` | `high` |

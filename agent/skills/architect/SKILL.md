@@ -15,7 +15,7 @@ Open a todolist with one entry per phase before starting.
 
 1. Ground
 2. Sketch
-3. Interrogate
+3. Review
 4. Agree
 5. Implement
 6. Scrap
@@ -49,7 +49,9 @@ Compare viable candidates on depth, locality, and seam placement, in the vocabul
 
 Arena returns one synthesized design package. Its synthesis decision fills the rationale's "Synthesis decision" section.
 
-Interrogate the synthesis. Arena's cross-judge scored the candidates before the graft, so no other model has read the synthesized sketch. Run the **interrogate** skill on it, with the design task as the intent and [`references/design-red-flags.md`](references/design-red-flags.md) as the rubric. Fold every Act on finding into the sketch, and carry the Consider findings into Phase C.
+Review the synthesis. Arena's cross-judge scored the candidates before the graft, so no other model has read the synthesized sketch. Launch one reviewer per model of the `architect reviewers` role in the **subagents** skill, all at once, each a delegate that changes nothing. Build each assignment from [`references/sketch-reviewer-prompt.md`](references/sketch-reviewer-prompt.md), with the design task as the intent, the sketch files, and the absolute path of [`references/design-red-flags.md`](references/design-red-flags.md). Leave out your reasoning about the sketch: a reviewer handed your conclusions returns validation of them.
+
+Merge findings that name the same problem, and note which models raised each: a problem two models found independently is the strongest signal. Then judge every finding as the lead, per the code-review skill's [lead judgment framework](../code-review/references/lead-judgment.md): **Act on** when the design cannot meet the task or will force a rewrite, **Consider** when it is legitimate but its cost is unclear, **Noted** when it is valid but not actionable, **Dismissed** with a one-line reason. Fold every Act on finding into the sketch, and carry the Consider findings into Phase C.
 
 ## Phase C: Agree (opt-in)
 

@@ -37,3 +37,13 @@ Don't dismiss findings just because they're uncomfortable. The whole point of ad
 - You read the finding and think "...yeah, actually"
 
 Be especially careful about dismissing security findings and correctness bugs. These deserve more scrutiny even when they come from a single model.
+
+### Agreement Is Not Verification
+
+A reviewer's output is data, not a verdict. Re-read the artifact against each finding before you classify it, including the findings you would have raised yourself. Rubber-stamping a reviewer is the same failure as ignoring one.
+
+## Bound the Loop
+
+When findings are fixed and the artifact reviewed again, stop after three rounds. If the reviewers still raise substantive issues after three, the artifact may not be ready: tell the user rather than looping, since three unresolved rounds is information about the artifact.
+
+Watch for doubt theater. When two or more rounds raised substantive findings and you classified none of them Act on, you are validating, not judging. Stop and escalate to the user.

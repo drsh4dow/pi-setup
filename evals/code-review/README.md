@@ -4,6 +4,11 @@ Measures how many planted defects a review catches, and how much it flags on a c
 compares two arms on the same branches: a plain review prompt and the code-review skill. Each run
 loads skills from this checkout.
 
+The retired `interrogate` skill was a third arm while code-review was built. On the three `-hard`
+fixtures and the clean control, with an Opus lead and two trials each, it caught 87% of defects
+against code-review's 98%, and flagged 0.7 blocking findings per clean-control run against 0.3.
+Its diff review was then folded into code-review, and its design review into `architect`.
+
 ## Layout
 
 - `fixtures/<name>/`: the base project, committed on `main`.

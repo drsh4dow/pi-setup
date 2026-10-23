@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) with a panel of persona subagents, one lens each: spec fidelity, standards, logical proof, simplification, readability, comments, prose, security, and tests. Use when the user wants a branch, a PR, or work-in-progress changes reviewed, or asks to review since X."
+description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) with a panel of persona subagents, one lens each: spec fidelity, standards, logical proof, simplification, readability, comments, prose, security, and tests. Use when the user wants a branch, a PR, or work-in-progress changes reviewed, asks to review since X, or asks for an adversarial or multi-model review, to challenge, stress-test, or tear apart code."
 disable-model-invocation: false
 user-invokable: true
 ---
@@ -47,7 +47,7 @@ Each persona runs the model of its seat's role in the **subagents** skill's mode
 
 ## 5. Launch the panel
 
-Write one assignment per persona, per the **subagents** skill. Each is a delegate whose write scope is nothing in the repository. Its assignment holds the diff command, the commits, the fixed point, the spec or inferred intent, the standards record or the files you found, the guardrail commands, and the done condition: every hunk in scope read through the persona's lens.
+Write one assignment per persona, per the **subagents** skill. Each is a delegate whose write scope is nothing in the repository. Its assignment holds the diff command, the commits, the fixed point, the spec or inferred intent, the standards record or the files you found, the guardrail commands, and the done condition: every hunk in scope read through the persona's lens. Give a persona the artifact and the contract, never the journey: leave out your reasoning about the change and what you expect it to find. A reviewer handed your conclusions returns validation of them.
 
 The review's folder is `reviews/<branch>-<short-sha>/` in the state folder, as an absolute path. Start the personas all at once with `bg_start`, each appending its persona file and the shared finding format after the subagent prompts, and writing its report to `<persona>.md` in the review's folder:
 

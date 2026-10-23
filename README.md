@@ -367,7 +367,8 @@ the same names. `code-review` runs a panel of persona subagents. Its
 personas draw on pstack's comment sicko and on
 [Addy Osmani's agent-skills](https://github.com/addyosmani/agent-skills) (MIT):
 its code reviewer, security auditor, test engineer, and code simplification
-skill.
+skill. It also absorbs the diff review of the retired `interrogate` skill,
+whose design-sketch review now lives in `architect`.
 
 `reflect` also covers Matt Pocock's `retro`: it can review any session and
 routes each lesson either to a skill or to the project's agent environment.
@@ -392,7 +393,6 @@ routes each lesson either to a skill or to the project's agent environment.
 - `grilling`
 - `how`
 - `improve-codebase-architecture`
-- `interrogate`
 - `mailbox`
 - `maintain-formal-verification-skill`
 - `maintain-verification-skill`

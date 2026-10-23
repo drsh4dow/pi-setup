@@ -79,7 +79,7 @@ one. Declare each constant in the narrowest scope that covers its uses.
 **principle-test-behavior-not-implementation**, which defines the tautological
 tests that are forbidden.
 
-**Verification.** Prove the change against the real artifact per
-**principle-prove-it-works**, check each unit before the next per
+**Verification.** Prove the change against the real artifact per the
+`<guardrails>` in the system prompt and **principle-prove-it-works**, check each unit before the next per
 **principle-sequence-verifiable-units**, and run the checks the repository
 requires.

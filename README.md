@@ -468,9 +468,7 @@ Most skills come from
 [pstack](https://github.com/cursor/plugins/tree/main/pstack), Lauren Tan's
 Cursor plugin. This setup no longer syncs from upstream; the ported files are
 maintained here as its own. Not ported: `setup-pstack`, the `poteto-agent`
-wrapper, and the Benny automations. Removed after the port: `poteto-mode` with
-its playbooks, references, and Bun scripts. The `watch-pr` script lives on in
-the `babysit` skill.
+wrapper, and the Benny automations.
 
 The port rewrote pstack's Cursor-specific parts for Pi, mapped as follows:
 

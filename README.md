@@ -362,6 +362,10 @@ design step runs through `architect` and `arena`. Thanks, Matt.
 Every skill whose name also appears in pstack is ported from it. See
 [pstack](#pstack).
 
+`babysit` revives pstack's Babysit playbook as a skill. It owns pstack's
+`watch-pr` watcher under `agent/skills/babysit/scripts/`, with its own locked
+dependencies and its Bugbot triage rubric.
+
 `code-review`, `prototype`, and `research` start from Matt Pocock's skills of
 the same names. `code-review` runs a panel of persona subagents. Its
 personas draw on pstack's comment sicko and on
@@ -377,6 +381,7 @@ routes each lesson either to a skill or to the project's agent environment.
 - `architect`
 - `arena`
 - `automate-me`
+- `babysit`
 - `background-terminals`
 - `benchmark-checklist`
 - `blast-radius`
@@ -487,7 +492,8 @@ The port rewrote pstack's Cursor-specific parts for Pi, mapped as follows:
 | `/deslop`                                                              | The [`deslop`](agent/prompts/deslop.md) prompt, read and applied by the agent.                                                                                                                                                                    |
 | `agent-transcripts/`                                                   | Pi session files: `$PI_SESSION_FILE` and the other sessions in its directory.                                                                                                                                                                     |
 | `.cursor/skills/`                                                      | `.agents/skills/`                                                                                                                                                                                                                                 |
-| Cursor's built-in babysit, Plan Mode, and Custom Modes                 | Removed.                                                                                                                                                                                                                                          |
+| Cursor's built-in babysit                                              | The `babysit` skill.                                                                                                                                                                                                                              |
+| Plan Mode and Custom Modes                                             | Removed.                                                                                                                                                                                                                                          |
 
 ## Repository layout
 
@@ -534,7 +540,8 @@ diagnostic-enforcement, and behavioral checks. Its tasks live in
 `vite.config.ts`. Suites replay from cache when their inputs are unchanged, and
 `vp run --no-cache verify` reruns everything. `verify:poteto-scripts`
 type-checks the vendored Bun scripts under `agent/scripts/` against
-their own `tsconfig.json` and locked dependencies. Live Pi integration tests
+their own `tsconfig.json` and locked dependencies. `verify:babysit-scripts`
+type-checks and tests the `babysit` skill's `watch-pr` the same way. Live Pi integration tests
 need provider credentials and run separately with `vp run test:e2e`. Run them
 after you upgrade Pi.
 

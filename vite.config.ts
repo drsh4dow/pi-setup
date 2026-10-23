@@ -49,6 +49,11 @@ export default defineConfig({
         "cd agent/scripts && vp exec bun install --frozen-lockfile > /dev/null",
         "tsc --project agent/scripts/tsconfig.json",
       ],
+      "verify:babysit-scripts": [
+        "cd agent/skills/babysit/scripts && vp exec bun install --frozen-lockfile > /dev/null",
+        "tsc --project agent/skills/babysit/scripts/tsconfig.json",
+        "cd agent/skills/babysit/scripts && vp exec bun test --only-failures",
+      ],
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
@@ -81,6 +86,7 @@ export default defineConfig({
           "verify:gates",
           "verify:terminal-delivery-citations",
           "verify:poteto-scripts",
+          "verify:babysit-scripts",
           "test:extensions",
           "test:dumpfile",
           "test:evals",

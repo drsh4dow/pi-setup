@@ -5,5 +5,12 @@
     "reason": "The process-kill test moved with the session runner to evals/lib/test/pi-run.test.ts, assertions intact.",
     "owner": "drsh4dow",
     "until": "2026-12-31"
+  },
+  {
+    "path": "agent/scripts/package.json",
+    "rule": "check-removed",
+    "reason": "watch-pr moved to agent/skills/babysit/scripts with its tests and typecheck; verify:babysit-scripts now runs them in verify, which never ran them here.",
+    "owner": "drsh4dow",
+    "until": "2026-12-31"
   }
 ]

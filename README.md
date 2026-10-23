@@ -247,6 +247,9 @@ tracked and untracked, non-ignored files.
   as the `$bg` Herdr pane token. Herdr shows it only where a sidebar row names
   it, for example `rows = [["state_icon", "machine", "workspace", "tab", "$bg"],
   ["agent"]]` under `[ui.sidebar.agents]` in `~/.config/herdr/config.toml`
+- `herdr-worktrees`: inside Herdr, each checkout that appears under
+  `.worktrees/<branch>` or `.worktrees/<repo>/<branch>` of the session's
+  directory opens as a Herdr workspace, grouped under its repository
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the

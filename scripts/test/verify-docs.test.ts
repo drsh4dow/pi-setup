@@ -7,12 +7,13 @@ import test, { type TestContext } from "node:test";
 
 const checker = new URL("../verify-docs.ts", import.meta.url).pathname;
 
-function repository(t: TestContext, readme: string, extraFiles: Record<string, string> = {}) {
+function repository(t: TestContext, inventory: string, extraFiles: Record<string, string> = {}) {
   const root = mkdtempSync(join(tmpdir(), "verify-docs-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const files = {
-    "README.md": readme,
+    "README.md": "# Setup\n",
+    "docs/inventory.md": inventory,
     "agent/extensions/example/index.ts": "",
     "agent/skills/example/SKILL.md": "# Example\n",
     "agent/prompts/example.md": "# Example\n",
@@ -32,7 +33,7 @@ function repository(t: TestContext, readme: string, extraFiles: Record<string, s
   return root;
 }
 
-const validReadme = `# Setup
+const validInventory = `# Inventory
 
 ### Installed extensions
 
@@ -59,7 +60,7 @@ function run(root: string) {
 }
 
 test("accepts matching tracked inventory and resolving links", (t) => {
-  const root = repository(t, `${validReadme}\n[Guide](docs/guide.md#start)\n`, {
+  const root = repository(t, `${validInventory}\n[Guide](guide.md#start)\n`, {
     "docs/guide.md": "# Start\n\n[Setup](../README.md)\n",
   });
 
@@ -70,7 +71,7 @@ test("accepts matching tracked inventory and resolving links", (t) => {
 test("checks unstaged skills and their links while excluding ignored files", (t) => {
   const root = repository(
     t,
-    validReadme.replace("### Installed skills", "### Installed skills\n\n- `new`"),
+    validInventory.replace("### Installed skills", "### Installed skills\n\n- `new`"),
     { ".gitignore": "agent/skills/ignored/\n" },
   );
 
@@ -90,7 +91,7 @@ test("checks unstaged skills and their links while excluding ignored files", (t)
 });
 
 test("ignores example links and headings inside fenced code", (t) => {
-  const root = repository(t, validReadme, {
+  const root = repository(t, validInventory, {
     "docs/guide.md": [
       "````md",
       "```md",
@@ -111,7 +112,7 @@ test("ignores example links and headings inside fenced code", (t) => {
 });
 
 test("still checks links after a fenced example", (t) => {
-  const root = repository(t, validReadme, {
+  const root = repository(t, validInventory, {
     "docs/guide.md": "```md\n[Example](ignored.md)\n```\n[Real](missing.md)\n",
   });
 
@@ -122,7 +123,7 @@ test("still checks links after a fenced example", (t) => {
 });
 
 test("reports a broken link in any tracked Markdown file", (t) => {
-  const root = repository(t, validReadme, {
+  const root = repository(t, validInventory, {
     "docs/guide.md": "[Missing](nested/nope.md)\n",
   });
 
@@ -132,25 +133,25 @@ test("reports a broken link in any tracked Markdown file", (t) => {
 });
 
 test("reports broken same-file and cross-file Markdown anchors", (t) => {
-  const root = repository(t, `${validReadme}\n[Missing](#absent)\n`, {
+  const root = repository(t, `${validInventory}\n[Missing](#absent)\n`, {
     "docs/guide.md": "# Present\n\n[Missing](../README.md#also-absent)\n",
   });
 
   const result = run(root);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /README\.md.*#absent/);
+  assert.match(result.stderr, /docs\/inventory\.md.*#absent/);
   assert.match(result.stderr, /docs\/guide\.md.*README\.md#also-absent/);
 });
 
 test("ignores tracked Markdown removed from the working tree", (t) => {
-  const root = repository(t, validReadme, { "docs/removed.md": "# Removed\n" });
+  const root = repository(t, validInventory, { "docs/removed.md": "# Removed\n" });
   rmSync(join(root, "docs/removed.md"));
   const result = run(root);
   assert.equal(result.status, 0, result.stderr);
 });
 
 test("includes directly tracked extension files in the inventory", (t) => {
-  const root = repository(t, validReadme.replace("- `example`", "- `direct`\n- `example`"), {
+  const root = repository(t, validInventory.replace("- `example`", "- `direct`\n- `example`"), {
     "agent/extensions/direct.ts": "",
   });
 
@@ -158,10 +159,10 @@ test("includes directly tracked extension files in the inventory", (t) => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("reports README inventory drift from tracked components", (t) => {
+test("reports inventory drift from tracked components", (t) => {
   const root = repository(
     t,
-    validReadme.replace(
+    validInventory.replace(
       "- `example`\n\n### Installed skills",
       "- `missing`\n\n### Installed skills",
     ),

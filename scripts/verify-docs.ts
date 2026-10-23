@@ -148,10 +148,12 @@ const inventory = [
   },
 ];
 
-const readme = readFileSync(resolve(root, "README.md"), "utf8");
+const inventoryFile = "docs/inventory.md";
+
+const inventoryText = readFileSync(resolve(root, inventoryFile), "utf8");
 
 for (const { heading, actual } of inventory) {
-  const section = readme.match(
+  const section = inventoryText.match(
     new RegExp(`^### ${heading}\\s*$([\\s\\S]*?)(?=^###? |(?![\\s\\S]))`, "m"),
   );
 
@@ -163,7 +165,9 @@ for (const { heading, actual } of inventory) {
   const found = [...new Set(documented)].toSorted();
 
   if (JSON.stringify(expected) !== JSON.stringify(found)) {
-    errors.push(`${heading}: found [${expected.join(", ")}], documented [${found.join(", ")}]`);
+    errors.push(
+      `${inventoryFile} ${heading}: found [${expected.join(", ")}], documented [${found.join(", ")}]`,
+    );
   }
 }
 

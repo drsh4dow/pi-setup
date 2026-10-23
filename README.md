@@ -559,9 +559,13 @@ result. It also ignores `~/.agents/skills/` and does not load extensions.
 `scripts/verify-gates.ts` fails when unpushed work weakens a gate: a skipped or
 deleted test, assertions removed from a test that stays, a new `@ts-ignore` or
 lint disable, an empty `catch`, a loosened threshold or severity, or a check
-removed from `package.json`, `vite.config.ts`, or a workflow. It reads the diff
-against the upstream merge base plus untracked files, and only uncommitted
-changes when the branch has no upstream, as in CI. It reports a threshold change
+removed from `package.json`, `vite.config.ts`, or a workflow, ignoring comment
+lines. It reads the diff against the upstream merge base plus untracked files.
+When the branch has no upstream, as on a new local branch or in CI, it uses the
+merge base with the default branch (`origin/HEAD`, then `main` or `master`, remote first),
+and only uncommitted changes when none exists. Eval fixtures under
+`evals/*/{fixtures,changes,defects}/` hold deliberately weak code that verify
+never runs, so it skips them. It reports a threshold change
 it cannot classify instead of passing it. A finding passes only when an entry in
 `scripts/verify-gates.exceptions.json` names its path glob and rule with a
 reason, an owner, and an `until` date, and it fails again once that date has

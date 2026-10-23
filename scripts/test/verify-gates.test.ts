@@ -44,6 +44,8 @@ const baseline = {
     "",
   ].join("\n"),
   "package.json": '{\n  "scripts": {\n    "verify": "node lint.js && node --test"\n  }\n}\n',
+  ".github/workflows/ci.yml":
+    "jobs:\n  verify:\n    # lint and test every push\n    run: npm run verify\n",
 } satisfies Readonly<Record<string, string>>;
 
 function repo(t: TestContext) {
@@ -84,6 +86,7 @@ function repo(t: TestContext) {
     work,
     write,
     replace,
+    git,
     remove: (path: string) => git("rm", "-q", path),
     commit: () => git("commit", "-qam", "change"),
     check: () => {
@@ -184,6 +187,38 @@ test("covers committed but unpushed changes and untracked files", (t) => {
   assert.equal(result.status, 1);
   assert.ok(result.stderr.includes("test/sum.test.js:5: test-skipped:"), result.stderr);
   assert.ok(result.stderr.includes("src/new.ts:1: checker-silenced:"), result.stderr);
+});
+
+test("with no upstream, checks committed work against the default branch", (t) => {
+  const r = repo(t);
+  r.git("checkout", "-q", "-b", "feature");
+  r.replace("test/sum.test.js", 'it("adds"', `${SKIP}("adds"`);
+  r.commit();
+
+  const result = r.check();
+
+  assert.equal(result.status, 1, result.stdout);
+  assert.ok(result.stderr.includes("test/sum.test.js:5: test-skipped:"), result.stderr);
+  assert.match(result.stderr, /merge base with origin\/(?:HEAD|main)\./);
+});
+
+test("a reworded comment in a check config is not a removed check", (t) => {
+  const r = repo(t);
+  r.replace(".github/workflows/ci.yml", "# lint and test every push", "# verify each push");
+
+  const result = r.check();
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("eval fixtures, which verify never runs, gate nothing", (t) => {
+  const r = repo(t);
+  r.write("evals/review/fixtures/app/test_app.py", "try:\n    go()\nexcept OSError: pass\n");
+  r.write("evals/review/changes/app/src/app.ts", `${TS_IGNORE}\nexport const x = 1;\n`);
+
+  const result = r.check();
+
+  assert.equal(result.status, 0, result.stderr);
 });
 
 function except(r: Repo, until: string) {

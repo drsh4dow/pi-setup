@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Flags the cheap roads to green in everything not yet pushed: committed, staged, unstaged, and
-// untracked changes against the upstream branch. A regex-level guard catches the moves agents
+// untracked changes against the upstream branch, or the default branch when there is none. A regex-level guard catches the moves agents
 // actually make (a skipped or deleted test, a silenced checker, a swallowed error, a loosened
 // threshold, a removed check), not a determined human hiding a change. When it cannot tell
 // whether a change tightens or loosens, it reports it.
@@ -81,6 +81,16 @@ const CONFIG_PATH = /\.(?:json|jsonc|ya?ml|toml)$/;
 const CHECK_CONFIG_PATH =
   /(?:^|\/)(?:package\.json|vite\.config\.[cm]?[jt]s|lefthook\.ya?ml|\.pre-commit-config\.yaml)$|(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/;
 
+// Eval fixtures hold deliberately weak code that reviewers are graded on catching. Verify never
+// runs them, so they gate nothing.
+const FIXTURE_PATH = /^evals\/[^/]+\/(?:fixtures|changes|defects)\//;
+
+const COMMENT_LINE = /^\s*(?:\/\/|#|\/?\*)/;
+
+// Tried in order when the branch has no upstream, as on a new local branch or in CI's detached
+// checkout, so committed work is still checked against where it will land.
+const DEFAULT_BRANCHES = ["origin/HEAD", "origin/main", "origin/master", "main", "master"];
+
 const SKIPPED_TEST =
   /\b(?:describe|it|test|suite|context)\.(?:skip|only|todo)\b|\bx(?:it|describe|test)\s*\(/;
 
@@ -136,16 +146,30 @@ function git(root: string, args: readonly string[]) {
   });
 }
 
-function diffBase(root: string) {
+function resolves(root: string, ref: string) {
   try {
-    git(root, ["rev-parse", "--verify", "--quiet", "@{upstream}"]);
+    git(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+
+    return true;
   } catch {
-    return { base: "HEAD", scope: "uncommitted changes only, because the branch has no upstream" };
+    return false;
+  }
+}
+
+function diffBase(root: string) {
+  const target = ["@{upstream}", ...DEFAULT_BRANCHES].find((ref) => resolves(root, ref));
+
+  if (target === undefined) {
+    return {
+      base: "HEAD",
+      scope: "uncommitted changes only, because there is no upstream or default branch",
+    };
   }
 
-  const base = git(root, ["merge-base", "HEAD", "@{upstream}"]).trim();
+  const base = git(root, ["merge-base", "HEAD", target]).trim();
+  const against = target === "@{upstream}" ? "upstream" : target;
 
-  return { base, scope: `changes since ${base.slice(0, 7)}, the merge base with upstream` };
+  return { base, scope: `changes since ${base.slice(0, 7)}, the merge base with ${against}` };
 }
 
 function stripPrefix(raw: string) {
@@ -379,7 +403,12 @@ function checkFindings({ path, hunks }: FileChange): Finding[] {
 
   return hunks.flatMap((hunk) =>
     hunk.removed
-      .filter(({ text }) => CHECK_WORD.test(text) && !added.has(withoutTrailingComma(text)))
+      .filter(
+        ({ text }) =>
+          CHECK_WORD.test(text) &&
+          !COMMENT_LINE.test(text) &&
+          !added.has(withoutTrailingComma(text)),
+      )
       .map(({ number, text }) => ({
         rule: "check-removed" as const,
         path,
@@ -390,6 +419,8 @@ function checkFindings({ path, hunks }: FileChange): Finding[] {
 }
 
 function findingsOf(change: FileChange): Finding[] {
+  if (FIXTURE_PATH.test(change.path)) return [];
+
   if (change.deleted) {
     if (!TEST_PATH.test(change.path)) return [];
 

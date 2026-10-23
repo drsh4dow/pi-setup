@@ -243,7 +243,7 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
   if (
     kind === "pr" &&
     evidence !== undefined &&
-    !evidence.lines.some((line) => /^\s*\*\*Not checked:\*\*/.test(line.text))
+    !proseLines(evidence.lines).some((line) => /^\s*\*\*Not checked:\*\*/.test(line.text))
   ) {
     findings.push({
       where: evidence.line,
@@ -271,15 +271,22 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
     const labels = new Map(
       risk.lines.flatMap((line) => {
         const label = line.text.match(/^\s*- \*\*(Blast radius|Door|Merge condition)\.\*\*(.*)$/i);
-        return label ? [[label[1].toLowerCase(), label[2]] as const] : [];
+        return label ? [[label[1].toLowerCase(), label[2].trim()] as const] : [];
       }),
     );
 
     for (const label of ["Blast radius", "Door", "Merge condition"]) {
-      if (!labels.has(label.toLowerCase())) {
+      const fact = labels.get(label.toLowerCase());
+
+      if (fact === undefined) {
         findings.push({
           where: risk.line,
           message: `"## Risk" has no "- **${label}.**" line`,
+        });
+      } else if (fact === "") {
+        findings.push({
+          where: risk.line,
+          message: `"## Risk" has an empty "- **${label}.**" line, give the fact`,
         });
       }
     }

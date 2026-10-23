@@ -25,6 +25,7 @@ When you catch yourself writing the same instruction a second time:
 - Give every number a mechanism. A number with no command behind it is an aspiration, not a constraint. State the number and the reason together. A threshold without a rationale gets deleted by the next person who hits it.
 - When you have no number, ratchet. Set 80% coverage on a codebase at 62% and you get a red build forever, then a team that learns to ignore red builds. The alternative asks for no decision: record where you are, then refuse to get worse. Every check compares against the recorded value, not an aspiration. When a number improves, update it; when it drops, that's the finding.
 - Unblock with an exception, not a deletion. An exception with an owner and a date unblocks you. Deleting the constraint unblocks everyone forever.
+- Guard the bar itself. Watch for these five moves in the diff: the threshold moved, a test got easier, a checker got silenced, work is unfinished, an exception appeared. A regex-level guard over the diff is enough: it catches the cheap-road-to-green moves agents actually make, not a determined human hiding a change. When the guard can't tell whether a change tightens or loosens, report it; staying quiet is the wrong default.
 
 **Feedback loop:**
 - **Capture every correction.** When the human intervenes or tests fail, decide if it's a one-off or a pattern.

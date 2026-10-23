@@ -534,6 +534,17 @@ file and line. It reads the forms the skills use: "the **how** skill", "the
 settings install, so the untracked `agent/settings.json` cannot change its
 result. It also ignores `~/.agents/skills/` and does not load extensions.
 
+`scripts/verify-gates.ts` fails when unpushed work weakens a gate: a skipped or
+deleted test, assertions removed from a test that stays, a new `@ts-ignore` or
+lint disable, an empty `catch`, a loosened threshold or severity, or a check
+removed from `package.json`, `vite.config.ts`, or a workflow. It reads the diff
+against the upstream merge base plus untracked files, and only uncommitted
+changes when the branch has no upstream, as in CI. It reports a threshold change
+it cannot classify instead of passing it. A finding passes only when an entry in
+`scripts/verify-gates.exceptions.json` names its path glob and rule with a
+reason, an owner, and an `until` date, and it fails again once that date has
+passed. It exits 2 when it cannot run.
+
 `.agents/skills/verify-subagent-run/scripts/check` model-checks the subagent
 run lifecycle with TLA+. It needs Java 11 or newer and downloads TLC once, so
 `verify` leaves it out. Run it after changing `agent/extensions/subagents/` or

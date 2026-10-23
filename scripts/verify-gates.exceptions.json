@@ -1,0 +1,9 @@
+[
+  {
+    "path": "evals/principle-loading/fixtures/**",
+    "rule": "test-deleted",
+    "reason": "The principle-loading scenarios for principles that moved into SYSTEM.md or were folded into another principle were deleted with their fixtures.",
+    "owner": "drsh4dow",
+    "until": "2026-12-31"
+  }
+]

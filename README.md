@@ -468,11 +468,10 @@ routes each lesson either to a skill or to the project's agent environment.
 Most skills come from
 [pstack](https://github.com/cursor/plugins/tree/main/pstack), Lauren Tan's
 Cursor plugin. This setup no longer syncs from upstream; the ported files are
-maintained here as its own.
-[`agent/scripts/`](agent/scripts/) holds pstack's Bun scripts, vendored as-is:
-lint, format, and type checks skip them. Not ported: `setup-pstack`, the
-`poteto-agent` wrapper, and the Benny automations. Removed after the port:
-`poteto-mode` with its playbooks and references.
+maintained here as its own. Not ported: `setup-pstack`, the `poteto-agent`
+wrapper, and the Benny automations. Removed after the port: `poteto-mode` with
+its playbooks, references, and Bun scripts. The `watch-pr` script lives on in
+the `babysit` skill.
 
 The port rewrote pstack's Cursor-specific parts for Pi, mapped as follows:
 
@@ -500,7 +499,6 @@ The port rewrote pstack's Cursor-specific parts for Pi, mapped as follows:
 ```text
 agent/
 ├── SYSTEM.md          # minimal system prompt
-├── scripts/           # pstack Bun scripts
 ├── default.settings.json  # models, thinking level, compaction, and theme
 ├── keybindings.json
 ├── mcp.json           # Perplexity and Exa servers for the web-search skill
@@ -538,10 +536,9 @@ vp run verify
 `verify`, like CI, runs credential-free formatting, lint, type,
 diagnostic-enforcement, and behavioral checks. Its tasks live in
 `vite.config.ts`. Suites replay from cache when their inputs are unchanged, and
-`vp run --no-cache verify` reruns everything. `verify:poteto-scripts`
-type-checks the vendored Bun scripts under `agent/scripts/` against
-their own `tsconfig.json` and locked dependencies. `verify:babysit-scripts`
-type-checks and tests the `babysit` skill's `watch-pr` the same way. Live Pi integration tests
+`vp run --no-cache verify` reruns everything. `verify:babysit-scripts`
+type-checks and tests the `babysit` skill's `watch-pr` against its own
+`tsconfig.json` and locked dependencies. Live Pi integration tests
 need provider credentials and run separately with `vp run test:e2e`. Run them
 after you upgrade Pi.
 
@@ -553,8 +550,8 @@ rules. It fails on every diagnostic Pi reports, for example frontmatter that is
 not valid YAML, an empty description, or two skills with the same name. It also
 fails when a skill's `name` differs from its directory name, and when Pi loads
 no skill at all. It fails when a file under the `scripts/` directory of a skill
-that Pi loads, or under `agent/scripts/`, starts with `#!` but is not
-executable, either in the git index or on disk, and names the
+that Pi loads starts with `#!` but is not executable, either in the git index
+or on disk, and names the
 `chmod +x <path> && git add <path>` command that fixes it. It fails on a
 Markdown line that sends the agent to a skill Pi does not load, and names the
 file and line. It reads the forms the skills use: "the **how** skill", "the

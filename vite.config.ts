@@ -9,7 +9,6 @@ const ignoredFiles = [
   "agent/npm/**",
   "agent/playbooks/**",
   "agent/references/**",
-  "agent/scripts/**",
   "agent/sessions/**",
   "agent/skills/*",
   "evals/*/fixtures/**",
@@ -45,10 +44,6 @@ export default defineConfig({
         command: ".agents/skills/verify-terminal-delivery/scripts/check --citations",
         cache: false,
       },
-      "verify:poteto-scripts": [
-        "cd agent/scripts && vp exec bun install --frozen-lockfile > /dev/null",
-        "tsc --project agent/scripts/tsconfig.json",
-      ],
       "verify:babysit-scripts": [
         "cd agent/skills/babysit/scripts && vp exec bun install --frozen-lockfile > /dev/null",
         "tsc --project agent/skills/babysit/scripts/tsconfig.json",
@@ -85,7 +80,6 @@ export default defineConfig({
           "verify:skills",
           "verify:gates",
           "verify:terminal-delivery-citations",
-          "verify:poteto-scripts",
           "verify:babysit-scripts",
           "test:extensions",
           "test:dumpfile",

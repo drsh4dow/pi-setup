@@ -37,18 +37,15 @@ function assertNamesFix(stderr: string, scripts: readonly string[]) {
   }
 }
 
-test("requires the executable bit on shebang skill and poteto scripts in the index and on disk", (t) => {
+test("requires the executable bit on shebang skill scripts in the index and on disk", (t) => {
   const scripts = [
     "agent/skills/example/scripts/log.sh",
     ".agents/skills/verify-example/scripts/check",
-    "agent/scripts/orch/orch",
   ];
 
   const root = repository(t, {
     [scripts[0]]: "#!/usr/bin/env bash\n",
     [scripts[1]]: "#!/usr/bin/env node\n",
-    [scripts[2]]: "#!/usr/bin/env bun\n",
-    "agent/scripts/orch/orch.ts": "export {};\n",
     "agent/skills/example/SKILL.md": "---\nname: example\ndescription: An example skill.\n---\n",
     ".agents/skills/verify-example/SKILL.md":
       "---\nname: verify-example\ndescription: Verify the example app.\n---\n",
@@ -59,7 +56,7 @@ test("requires the executable bit on shebang skill and poteto scripts in the ind
   const missing = run(join(root, "agent"));
   assert.notEqual(missing.status, 0);
   assertNamesFix(missing.stderr, scripts);
-  assert.doesNotMatch(missing.stderr, /data\.tsv|scripts\/tool\.ts|cli\.ts/);
+  assert.doesNotMatch(missing.stderr, /data\.tsv|scripts\/tool\.ts/);
 
   execFileSync("git", ["update-index", "--chmod=+x", ...scripts], { cwd: root });
   const indexOnly = run(root);

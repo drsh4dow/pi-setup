@@ -7,9 +7,23 @@
     "until": "2026-12-31"
   },
   {
-    "path": "agent/scripts/package.json",
+    "path": "agent/scripts/**",
+    "rule": "test-deleted",
+    "reason": "orch and check-plan served the deleted Orchestrate and Multi-phase-plan playbooks and had no callers; their tests go with them.",
+    "owner": "drsh4dow",
+    "until": "2026-12-31"
+  },
+  {
+    "path": "agent/skills/babysit/scripts/package.json",
     "rule": "check-removed",
-    "reason": "watch-pr moved to agent/skills/babysit/scripts with its tests and typecheck; verify:babysit-scripts now runs them in verify, which never ran them here.",
+    "reason": "Git pairs the deleted agent/scripts/package.json with this new file; its watch-pr tests and typecheck run in verify:babysit-scripts.",
+    "owner": "drsh4dow",
+    "until": "2026-12-31"
+  },
+  {
+    "path": "vite.config.ts",
+    "rule": "check-removed",
+    "reason": "verify:poteto-scripts type-checked agent/scripts, which is deleted; verify:babysit-scripts covers the one script that survived.",
     "owner": "drsh4dow",
     "until": "2026-12-31"
   }

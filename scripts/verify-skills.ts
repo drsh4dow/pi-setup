@@ -183,12 +183,7 @@ const diagnostics = session.diagnostics.filter(
   ({ path }) => path === undefined || isInCheckout(path),
 );
 
-const POTETO_SCRIPTS = "agent/scripts/";
-
-const scriptDirectories = [
-  ...skills.map(({ baseDir }) => `${relative(root, baseDir)}/scripts/`),
-  POTETO_SCRIPTS,
-];
+const scriptDirectories = skills.map(({ baseDir }) => `${relative(root, baseDir)}/scripts/`);
 
 const checkedScripts = index.filter(({ path }) =>
   scriptDirectories.some((directory) => path.startsWith(directory)),

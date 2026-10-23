@@ -81,6 +81,20 @@ test("flags Evidence that only names a command, and Risk without its labeled lin
   ]);
 });
 
+test("counts a Not checked line only outside pasted code, and a Risk line only with its fact", (t) => {
+  const body = goodPr
+    .replace("**Not checked:** nothing", "```text\n**Not checked:** nothing\n```")
+    .replace(/- \*\*Blast radius\.\*\*.*\n/, "- **Blast radius.**  \n");
+
+  const result = check(t, body, ["pr"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    '13: "## Evidence" has no "**Not checked:**" line, list what has no witness or write nothing',
+    '25: "## Risk" has an empty "- **Blast radius.**" line, give the fact',
+  ]);
+});
+
 test("reads a pasted body with its own fences as one block, not as sections", (t) => {
   const pasted = [
     "<details><summary>The ticket body</summary>",

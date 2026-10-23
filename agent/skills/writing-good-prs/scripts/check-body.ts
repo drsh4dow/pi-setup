@@ -38,9 +38,7 @@ const defaultShapes: Record<Kind, readonly SectionRule[]> = {
     { heading: "Why", required: true },
     { heading: "Shape", required: false },
     { heading: "Evidence", required: true },
-    { heading: "Merge danger", required: true },
-    { heading: "Scope", required: true },
-    { heading: "Tradeoffs", required: false },
+    { heading: "Risk", required: true },
   ],
   ticket: [
     { heading: "Problem", required: true },
@@ -49,8 +47,6 @@ const defaultShapes: Record<Kind, readonly SectionRule[]> = {
     { heading: "Context", required: false },
   ],
 };
-
-const MAX_PR_LINES = 40;
 
 const usage = "expected <pr|ticket> <body-file> [--title <title>] [--template <file>]";
 
@@ -189,7 +185,6 @@ function proseLines(lines: readonly Line[]) {
 
 function contentFindings(kind: Kind, body: Body): Finding[] {
   const findings: Finding[] = [];
-  const nonBlank = body.lines.filter((line) => line.text.trim() !== "");
 
   for (const line of body.preamble) {
     const text = line.text.trim();
@@ -218,12 +213,25 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
   }
 
   const evidence = sectionNamed(body, ["evidence", "verification"]);
-  const artifact = /https?:\/\/|`[^`]+`|^\s*(```|~~~)|^\s*\|/;
+  // A witness is something the reviewer sees: pasted output, a table, media, or a link.
+  // Inline code alone names a command without showing what it printed.
+  const witness = /https?:\/\/|!\[|<img|<video|<details|^\s*(```|~~~)|^\s*\|/;
 
-  if (evidence !== undefined && !evidence.lines.some((line) => artifact.test(line.text))) {
+  if (evidence !== undefined && !evidence.lines.some((line) => witness.test(line.text))) {
     findings.push({
       where: evidence.line,
-      message: `"## ${evidence.heading}" names no artifact, add the test, command, output, or media link that shows before and after`,
+      message: `"## ${evidence.heading}" shows no witness, paste the output, or add the table, media, or CI link that shows before and after`,
+    });
+  }
+
+  if (
+    kind === "pr" &&
+    evidence !== undefined &&
+    !evidence.lines.some((line) => /^\s*\*\*Not checked:\*\*/.test(line.text))
+  ) {
+    findings.push({
+      where: evidence.line,
+      message: `"## ${evidence.heading}" has no "**Not checked:**" line, list what has no witness or write nothing`,
     });
   }
 
@@ -241,31 +249,33 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
 
   if (kind === "ticket") return findings;
 
-  const mergeDanger = sectionNamed(body, ["merge danger"]);
+  const risk = sectionNamed(body, ["risk"]);
 
-  if (mergeDanger !== undefined) {
-    const text = mergeDanger.lines.map((line) => line.text).join("\n");
+  if (risk !== undefined) {
+    const labels = new Map(
+      risk.lines.flatMap((line) => {
+        const label = line.text.match(/^\s*- \*\*(Blast radius|Door|Merge condition)\.\*\*(.*)$/i);
+        return label ? [[label[1].toLowerCase(), label[2]] as const] : [];
+      }),
+    );
 
-    if (!/\b(one|two)-way door\b/i.test(text)) {
-      findings.push({
-        where: mergeDanger.line,
-        message: '"## Merge danger" does not say "one-way door" or "two-way door"',
-      });
+    for (const label of ["Blast radius", "Door", "Merge condition"]) {
+      if (!labels.has(label.toLowerCase())) {
+        findings.push({
+          where: risk.line,
+          message: `"## Risk" has no "- **${label}.**" line`,
+        });
+      }
     }
 
-    if (!/\bblast radius\b/i.test(text)) {
+    const door = labels.get("door");
+
+    if (door !== undefined && !/\b(one|two)-way\b/i.test(door)) {
       findings.push({
-        where: mergeDanger.line,
-        message: '"## Merge danger" does not name the blast radius',
+        where: risk.line,
+        message: '"## Risk" Door line does not say one-way or two-way',
       });
     }
-  }
-
-  if (nonBlank.length > MAX_PR_LINES) {
-    findings.push({
-      where: nonBlank[MAX_PR_LINES].number,
-      message: `${nonBlank.length} non-blank lines, keep the body to ${MAX_PR_LINES} and link the rest`,
-    });
   }
 
   return findings;

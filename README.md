@@ -446,6 +446,8 @@ routes each lesson either to a skill or to the project's agent environment.
 
 - `bro`: restate the last message in plain language, with no jargon
 - `handoff`: compact the conversation into a message for a fresh agent
+- `implement-chunk`: orchestrate a ticket and its sub-tickets through
+  subagents to merge-ready PRs, then verify them live after merge
 - `restate-sharpened`: load the sharpen skill and restate the user's goals and
   problem
 

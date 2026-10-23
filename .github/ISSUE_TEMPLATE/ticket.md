@@ -1,29 +1,21 @@
 ---
 name: Ticket
 about: A bug, feature, or chore that one agent or one developer can take to one PR.
-title: "area: symptom or outcome"
+title: "area: symptom"
 ---
 
 ## Problem
 
-<!-- Bug: steps to reproduce, expected, observed, version or commit, how often, and evidence. Feature: who needs it, current behavior, desired behavior. Say why it matters. -->
+<!-- One story in the present tense: who hits it, the trigger, what happens, what should happen, and what it costs. Then the pasted witness (output, log lines, screenshot, or quoted report) with where you saw it and how often, and the steps to reproduce it from a fresh clone. -->
 
 ## Done when
 
-- [ ] <!-- A check someone can run and observe: a command and its output, a feature walked in the running app, or a test at a named seam. -->
+- [ ] <!-- **The behavior, in plain words.** Check: the setup, the action, and the exact result to observe. -->
 
-## Decisions
+## Suggested approach
 
-<!-- Accepted, Assumed, and Open. Open holds only product or preference calls. Delete this section when it is empty. -->
+<!-- Optional and never binding. The suspected cause marked Hypothesis, a possible approach, and the alternative you would rule out with the reason. Delete this section when it is empty. -->
 
-## Pointers
+## Context
 
-<!-- Symbols, commands, and permalinks pinned to a commit SHA. Label cause guesses as hypotheses. Delete this section when it is empty. -->
-
-## Out of scope
-
-<!-- Adjacent work the implementer would otherwise take on. Delete this section when it is empty. -->
-
-## Blocked by
-
-<!-- Tickets that must land first. Delete this section when it is empty. -->
+<!-- Docs, specs, external URLs, and attachments the implementer must read, each with one line on why it matters. Relate issues and PRs through the tracker, not here. Delete this section when it is empty. -->

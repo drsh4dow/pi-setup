@@ -45,10 +45,8 @@ const defaultShapes: Record<Kind, readonly SectionRule[]> = {
   ticket: [
     { heading: "Problem", required: true },
     { heading: "Done when", required: true },
-    { heading: "Decisions", required: false },
-    { heading: "Pointers", required: false },
-    { heading: "Out of scope", required: false },
-    { heading: "Blocked by", required: false },
+    { heading: "Suggested approach", required: false },
+    { heading: "Context", required: false },
   ],
 };
 
@@ -194,7 +192,10 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
   const nonBlank = body.lines.filter((line) => line.text.trim() !== "");
 
   for (const line of body.preamble) {
-    if (line.text.trim() !== "" && !line.text.trim().startsWith("<!--")) {
+    const text = line.text.trim();
+
+    // The tracker records put a "Blocked by:" line first where the tracker has no native edge.
+    if (text !== "" && !text.startsWith("<!--") && !/^Blocked by:/.test(text)) {
       findings.push({
         where: line.number,
         message: "text before the first section, start at the first ## heading",
@@ -285,7 +286,7 @@ function titleFindings(kind: Kind, title: string): Finding[] {
   }
 
   if (kind === "ticket" && !/^[^:\s][^:]*: \S/.test(title)) {
-    return [{ where: "title", message: 'title is not "area: symptom or outcome"' }];
+    return [{ where: "title", message: 'title is not "area: symptom"' }];
   }
 
   return [];

@@ -62,9 +62,10 @@ Publish one ticket per approved slice, in dependency order (blockers first), so 
 
 Write each ticket's body per the **writing-good-tickets** skill, and pass its body check before you publish. The body's sections carry the breakdown:
 
-- `## Problem`: what the ticket delivers, end to end, from the user's perspective, not a layer-by-layer implementation list.
-- `## Done when`: the acceptance criteria, as checks someone can run.
-- `## Pointers`: the parent issue when the source was one, and the blocking tickets when the tracker has no native edge.
+- `## Problem`: the story of what the user cannot do today and what that costs them, end to end, not a layer-by-layer implementation list.
+- `## Done when`: the behavior this slice delivers, each item with the check that shows it.
+
+Relate the parent issue and the blocking tickets through the tracker record's **Nest under a parent** and **Block** operations, so the body carries no list of issues.
 
 Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
 

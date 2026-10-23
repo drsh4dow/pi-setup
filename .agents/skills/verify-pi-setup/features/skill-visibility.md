@@ -19,15 +19,16 @@ Skill visibility lets a user choose which loaded skills the model can discover, 
 Preconditions:
 
 - A fresh launch passed doctor.
-- `grep -c 'disable-model-invocation: true' "$($CP path RUN agent)/skills/architect/SKILL.md"` prints `1`. Every pstack skill starts hidden, as upstream ships it.
 
-- **Open the list.** Run `$CP send RUN /skill-visibility` and `$CP wait RUN 'architect — hidden' 10`. The list is taller than the pane, so `Done` is offscreen. The dialog `Skill visibility` opens with `→ ○ architect — hidden` selected. Skills this setup adds, such as `dumpfile` and `mailbox`, show `● … — discoverable`. Snap it.
-- **Expose a skill.** Run `$CP keys RUN Enter` and `$CP wait RUN 'architect is now model-discoverable' 10`. The selected row now reads `→ ● architect — discoverable`.
+Which skills start hidden is the user's configuration, and it changes. Assert only that a toggle flips the state it started from, never which state a given skill has.
+
+- **Open the list.** Run `$CP send RUN /skill-visibility` and `$CP wait RUN 'Skill visibility' 10`. The list is taller than the pane, so `Done` is offscreen. The first skill is selected, as `→ ● <name> — discoverable` or `→ ○ <name> — hidden`. Record its name and state. Snap it.
+- **Flip it.** Run `$CP keys RUN Enter` and `$CP wait RUN '<name> is now (model-discoverable|hidden from model discovery)' 10`. The notice and the selected row show the opposite of the recorded state.
 - **Close and reload.** Run `$CP keys RUN Escape` and `$CP wait RUN 'Reloaded keybindings, extensions, skills' 10`. The notice `Reloading skills.` comes first.
-- **Side effect.** Run `grep -n disable-model-invocation "$($CP path RUN agent)/skills/architect/SKILL.md"`. It prints `disable-model-invocation: false` inside the frontmatter. `git status --short agent/skills` in the checkout prints nothing.
+- **Side effect.** Run `grep -n disable-model-invocation "$($CP path RUN agent)/skills/<name>/SKILL.md"`. Inside the frontmatter it prints `true` when the skill is now hidden and `false` when it is now discoverable. `git status --short agent/skills` in the checkout prints nothing.
 - **Hidden autocomplete.** Run `$CP keys RUN -l '/skill:pi-har'`. No suggestion list appears, because `pi-harness` is `user-invokable: false`. Run `$CP keys RUN C-u`.
 - **Visible autocomplete.** Run `$CP keys RUN -l '/skill:recal'`. The list shows `→ skill:recall` with its description. Run `$CP keys RUN C-u`.
-- **Proof.** Snap after each step, and copy the scratch `architect/SKILL.md` into the evidence directory.
+- **Proof.** Snap after each step, and copy the flipped skill's scratch `SKILL.md` into the evidence directory.
 
 ## Gotchas
 

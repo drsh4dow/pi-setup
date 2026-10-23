@@ -73,17 +73,19 @@ test("flags Evidence that names no artifact and Merge danger that names no door"
 });
 
 test("takes the shape from the issue template, and flags the template left unfilled", (t) => {
-  const filled = `## Problem
+  const filled = `Blocked by: #41
+
+## Problem
 
 \`pi-subagent\` leaks a background job after SIGHUP.
 
 ## Done when
 
-- [ ] A \`bg_start\` job that traps SIGTERM exits with its subagent.
+- [ ] **The job ends with its subagent.** Check: a \`bg_start\` job that traps SIGTERM exits with it.
 
-## Out of scope
+## Context
 
-- Volta shims.
+- The Volta shim docs, because a shim forks the Pi it starts.
 `;
 
   const filledResult = check(t, filled, ["ticket", "--template", issueTemplate]);
@@ -100,4 +102,31 @@ test("takes the shape from the issue template, and flags the template left unfil
     ),
     unfilledResult.lines.join("\n"),
   );
+});
+
+test("flags a ticket that keeps the retired Decisions and Out of scope sections", (t) => {
+  const body = `## Problem
+
+A stale citation goes unreported without Java.
+
+## Done when
+
+- [ ] **The stale citation is reported.** Check: the check prints it and exits 1.
+
+## Decisions
+
+- Assumed: one fix covers both checks.
+
+## Out of scope
+
+- A citations mode.
+`;
+
+  const result = check(t, body, ["ticket", "--title", "verify: a stale citation goes unreported"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    '9: unexpected heading "## Decisions", use these in order: ## Problem, ## Done when, ## Suggested approach, ## Context',
+    '13: unexpected heading "## Out of scope", use these in order: ## Problem, ## Done when, ## Suggested approach, ## Context',
+  ]);
 });

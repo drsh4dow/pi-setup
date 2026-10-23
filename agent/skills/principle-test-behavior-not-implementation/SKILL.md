@@ -16,6 +16,16 @@ Judge each test against two imagined edits:
 
 Keep a test that catches the first edit and survives the second. Rewrite or delete the rest. To write a test that does both, drive the code through its users' interface with a concrete input. Derive the expected value from the requirement, not from a run of the code. Assert what the contract promises, no less and no more.
 
+Would the tests catch a regression if the code changed? Answer it by experiment, not by reading. Invert one condition the change adds (drop a negation, swap `&&` for `||`), run the suite, then restore the file from a copy. A mutation that stays green is a finding: name the test case that is missing.
+
+**Not all checks are equally circular.** Rank them by one question: can the agent make this pass by writing code that doesn't work?
+
+- **External** — axe-core encodes WCAG, `osv-scanner` reads a vulnerability database, Lighthouse measures a real browser. The agent can't argue with these.
+- **Project** — your lint rules, your layer boundaries. A human owns the file.
+- **Suite** — your own tests. Most useful, and the only genuinely circular one.
+
+A bar made entirely of the third kind is worth less than one with an outside opinion in it. Check that at least one external constraint is present.
+
 The contract decides, not the shape of the assertion. When "an empty cart never charges" is the promise, an assertion that the payment client got no call is behavior. Pair it with a case where the charge happens, so that the test shows it can see a call. The payload that a mocked external service receives is behavior, because that service observes it. A call to an internal helper is implementation, because no user can see it. An empty list is the exact answer when no record matches, and a hollow check when the test only needs some result. An exact error message pins wording that no caller reads. The error type that callers branch on is the contract.
 
 Tautological tests are forbidden: a test that asserts what the code was just told to produce, restates the implementation, or exercises framework or library behavior. None of them fails when your code breaks.

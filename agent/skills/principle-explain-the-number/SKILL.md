@@ -11,7 +11,17 @@ Before you trust a number, find what limits it and rule out that it measured som
 
 - **Ask "why not double?"** Name the resource or code path that bounds the result, such as a core, a lock, the disk, the network, or the load generator itself. Get it from a profile or from system counters taken during a run, then map it to source. A guess from reading the code is not a limiter. If you cannot say why the number is not twice as good, you do not know what you measured.
 - **List what else the number could be measuring, and rule out each one with evidence.** The usual suspects are errors, skipped or cached work, code that never ran, an untuned side (one left on default settings), noise, and a piece too small to matter end to end.
+- **Beat the noise, not just the mean.** Repeat the measurement and compare the delta against run-to-run variance. A 3% gain inside ±5% variance is not a gain; it is a different sample. A baseline taken on a cold cache against a result taken on a warm one measures the cache, not your change.
 - **Keep the evidence with the number.** Put the run count, the spread, and the limiter in the notes or a linked artifact.
+
+When the number decides whether a change stays:
+
+| Result vs. baseline | Action |
+|---|---|
+| Past the threshold, tests green | **Keep.** Commit with the before/after numbers in the message. |
+| Within noise (no measurable change) | **Revert.** |
+| Worse | **Revert.** |
+| Improved, but a test went red | **Revert.** A regression wearing a win's clothing. |
 
 For a performance number, run the full procedure with the [benchmark-checklist](../benchmark-checklist/SKILL.md) skill. For an eval result, ask the same of the trials: did every run do the task, does the gap hold across trials and models, and does the scenario matter.
 

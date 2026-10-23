@@ -15,6 +15,7 @@ Place validation, type narrowing, and error handling at system boundaries. Trust
 - **At boundaries** (CLI args, config files, environment variables, external APIs, network protocols, RPC and IPC payloads, JSON, database rows): validate, return errors, handle defensively.
 - **Inside the system:** typed data, error propagation, no re-validation. Trust the types.
 - **Across the boundary.** Expose domain concepts, not the boundary's private representation. Keep general-purpose mechanism inside and special-purpose policy at the edge.
+- **Everything observable is a contract.** With a sufficient number of users of an API, all observable behaviors of your system will be depended on by somebody, regardless of what you promise in the contract. Published names are compatibility identifiers. Renaming one is a migration, not an edit.
 
 **Applications:**
 

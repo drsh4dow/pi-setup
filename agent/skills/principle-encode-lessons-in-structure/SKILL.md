@@ -21,10 +21,16 @@ When you catch yourself writing the same instruction a second time:
 
 **Corollary:** If the fix is structural, only use the structural fix. The instruction is the symptom.
 
+**Design gates that hold.**
+- Give every number a mechanism. A number with no command behind it is an aspiration, not a constraint. State the number and the reason together. A threshold without a rationale gets deleted by the next person who hits it.
+- When you have no number, ratchet. Set 80% coverage on a codebase at 62% and you get a red build forever, then a team that learns to ignore red builds. The alternative asks for no decision: record where you are, then refuse to get worse. Every check compares against the recorded value, not an aspiration. When a number improves, update it; when it drops, that's the finding.
+- Unblock with an exception, not a deletion. An exception with an owner and a date unblocks you. Deleting the constraint unblocks everyone forever.
+
 **Feedback loop:**
 - **Capture every correction.** When the human intervenes or tests fail, decide if it's a one-off or a pattern.
 - **Route to the right layer.** One-off -> brain note. Recurring fix -> skill or lint rule. Systemic issue -> principle.
 - **Close the loop.** Don't just record. Apply now or create a concrete todo.
+- **Log every attempt, including the reverted ones.** Keep a short ledger so a discarded idea stays discarded. What matters is that the next person (or the next agent) reads it before proposing an experiment, and doesn't re-run one that already failed.
 
 **Anti-patterns:**
 - Acknowledging without recording ("I'll keep that in mind" does not persist)

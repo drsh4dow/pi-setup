@@ -29,5 +29,8 @@ Make simplification a continual investment. Leave the design slightly simpler an
 - No speculative validators, parsers, or guards beyond what the spec demands
 - Simplify prompts (remove redundant instructions, excessive templates)
 - When a reference has no novel content, delete it rather than leaving a stub
+- "Neutral" is a revert, not a keep. This is the step teams skip: the change is already written, throwing it away feels wasteful, so it lands unmeasured, and the codebase accretes complexity that never bought anything.
+- Prefer standard library and existing utilities over new dependencies. Every dependency is a liability.
+- If you notice something worth improving outside your task scope, note it — don't fix it. Other instances of the same fault, per **principle-fix-root-causes**, and simplification of code the change already touches are in scope. Separate refactoring from feature work: a refactoring change and a feature change are two different changes — submit them separately.
 
 **The test:** If a human developer would find the code exhausting to maintain, it is a bad solution.

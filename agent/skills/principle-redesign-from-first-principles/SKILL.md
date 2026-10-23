@@ -20,6 +20,7 @@ When integrating a change, don't bolt it onto the existing design. Redesign as i
 - Treat a temporary adapter as exceptional and time-boxed, never as default architecture.
 - Update tests to assert the new contract, and delete tests that only protect pre-refactor implementation details.
 - Migrating and deleting in one wave applies when no external users depend on backward compatibility and the project can absorb a coordinated breaking change.
+- Persisted data and published names are the exception. A schema change is the riskiest migration because the data is the one thing you cannot roll back by reverting a deploy. **Additive first, destructive last and alone.** Adds (new nullable column, new table, new index) are safe in any deploy; drops and renames get their own deploy *after* no code references the old shape.
 
 **Deliver it in green units.** Think about the whole redesign, then deliver it incrementally, each unit ending in a passing check per [Sequence Verifiable Units](../principle-sequence-verifiable-units/SKILL.md). Run the full static and runtime verification when the redesign is complete.
 

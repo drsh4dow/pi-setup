@@ -143,7 +143,7 @@ Size each ticket as a vertical slice. It cuts a narrow path through every layer 
 
 ## Before you file
 
-- Search the tracker for the same symptom, error text, and area. For a confident duplicate, add the new evidence to the existing issue instead of filing. For a possible match, comment on it with a link to the new ticket and say why it is not a duplicate.
+- Search the tracker for the same symptom, error text, and area. For a confident duplicate, add the new evidence to the existing issue instead of filing. For a possible match, file the new ticket, then comment on the match with a link to it and say why it is not a duplicate.
 - For complex agent-facing workflow instructions inside a ticket, use the **writing-for-agents** skill.
 
 ## Check the body

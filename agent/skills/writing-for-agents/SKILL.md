@@ -60,6 +60,14 @@ Splitting one document into two spends one of the two loads, so split only when 
 - **By sequence**: split a run of steps where the post-completion steps tempt the agent to rush the one in front of it. Keeping them out of view drives more legwork on the current task. Beware the reverse: merging sequences exposes each step's later steps to what follows, inviting premature completion.
 - **By invocation**, skill-specific: see [`SKILL-MECHANICS.md`](SKILL-MECHANICS.md).
 
+## Adapting outside skills
+
+When a skill or rule comes from another author's collection, adapt it into this harness instead of vendoring it:
+
+- Credit the source as inspiration in one line. Drop upstream pins, commit hashes, and sync dates, since the adapted copy tracks no upstream.
+- Strip the author's personal conventions, such as their labels, folders, tools, and tracker habits, and route each step through the skills and records this harness already has.
+- Keep the guidance you adopt verbatim, and check each copied span against the source mechanically. Where the host forces a rewrite, compare the rewritten rule with its source for who must do what, to what, and in what scope. Connective words such as "not", "only", and "the caller, not the callee" carry the rule, and a quote check passes over them.
+
 ## Leading words
 
 A **leading word** is a compact concept already living in the model's pretraining that the agent thinks with while running the document (_lesson_, _fog of war_, _tracer bullets_). Repeated as a token, never as a sentence, it accumulates a distributed definition and anchors a whole region of behaviour in the fewest tokens, by recruiting priors the model already holds. Coining your own works if you define it clearly, but a made-up word recruits no priors: you pay in definition tokens what a pretrained word gives free; reach for an existing word first.

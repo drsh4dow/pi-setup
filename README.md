@@ -445,7 +445,6 @@ routes each lesson either to a skill or to the project's agent environment.
 ### Installed prompts
 
 - `bro`: restate the last message in plain language, with no jargon
-- `deslop`: simplify a completed work package
 - `handoff`: compact the conversation into a message for a fresh agent
 - `restate-sharpened`: load the sharpen skill and restate the user's goals and
   problem
@@ -488,7 +487,6 @@ The port rewrote pstack's Cursor-specific parts for Pi, mapped as follows:
 | `control-ui`                                                           | The `agent-browser` skill.                                                                                                                                                                                                                        |
 | `control-cli`                                                          | The `background-terminals` skill, with tmux for TUIs.                                                                                                                                                                                             |
 | `create-skill`                                                         | The `writing-for-agents` skill.                                                                                                                                                                                                                   |
-| `/deslop`                                                              | The [`deslop`](agent/prompts/deslop.md) prompt, read and applied by the agent.                                                                                                                                                                    |
 | `agent-transcripts/`                                                   | Pi session files: `$PI_SESSION_FILE` and the other sessions in its directory.                                                                                                                                                                     |
 | `.cursor/skills/`                                                      | `.agents/skills/`                                                                                                                                                                                                                                 |
 | Cursor's built-in babysit                                              | The `babysit` skill.                                                                                                                                                                                                                              |

@@ -10,7 +10,7 @@ history or generated files, and a prompt that reads like a real request.
 ```sh
 node evals/principle-loading/run.ts --out evals/principle-loading/results/<name> \
   [--models anthropic/claude-opus-5-5,openai/gpt-6.1-sol] [--trials 3] \
-  [--only principle-push-back,...] [--concurrency 6] [--thinking high] [--timeout-minutes 20]
+  [--only principle-fix-root-causes,...] [--concurrency 6] [--thinking high] [--timeout-minutes 20]
 node evals/principle-loading/grade.ts evals/principle-loading/results/<name>
 ```
 

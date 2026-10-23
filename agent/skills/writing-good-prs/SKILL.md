@@ -153,7 +153,7 @@ Closes #73
 
 ## Evidence
 
-- **A killed watcher's second notification reaches the model** (Done when 1). Pi TUI through `verify-pi-setup`, watcher killed on its first notification:
+- **A killed watcher's second notification reaches the model** (Done when 1). A `pi --print` run whose watcher the model kills on its first notification, so the change has no screen to capture:
   ```text
   before  model reply: a-61 end
   after   model reply: a-61 b-62 end
@@ -168,7 +168,7 @@ Closes #73
   TerminalDelivery.cfg: NoDoubleWake holds
   ```
 
-**Not checked:** macOS, because the TUI driver runs only on Linux here.
+**Not checked:** macOS, because the e2e suite runs only on Linux here.
 
 ## Risk
 

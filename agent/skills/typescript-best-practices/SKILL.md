@@ -8,7 +8,7 @@ user-invokable: false
 
 # TypeScript best practices
 
-Apply the **type-system-discipline** principle skill first.
+Apply the Contracts section of the **engineering-standards** principle skill first.
 
 | Rule | Summary |
 |------|---------|

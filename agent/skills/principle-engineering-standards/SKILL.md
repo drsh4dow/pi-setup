@@ -21,6 +21,21 @@ Use direct calls for known contracts, and confine
 reflection and runtime structural inspection to code whose job is parsing or
 dynamic integration.
 
+Make the compiler reject impossible states, mismatched primitives, and
+unhandled variants. Prefer defining errors and special cases out of existence
+over proliferating handlers. For TypeScript syntax, see the
+`typescript-best-practices` skill.
+
+- **Brand semantic primitives.** `UserId` and `OrderId` are strings underneath
+  but should not be interchangeable. Give each its own type, such as a branded
+  intersection in TypeScript or a newtype elsewhere. Validate once at creation,
+  trust the type downstream. If two arguments share a primitive type but mean
+  different things, brand them.
+- **Derive types from authoritative schemas.** When a protocol buffer, OpenAPI
+  spec, GraphQL schema, database migration, design-token file, or another file
+  owns a shape, derive from it instead of hand-rolling a parallel type. See the
+  **encode-lessons-in-structure** principle skill.
+
 **Dependencies.** Make dependencies explicit, construct them at the
 application's assembly points, and pass them to consumers.
 

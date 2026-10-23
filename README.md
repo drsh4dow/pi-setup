@@ -397,9 +397,7 @@ Every skill whose name also appears in pstack is ported from it. See
 - `principle-redesign-from-first-principles`
 - `principle-separate-before-serializing-shared-state`
 - `principle-sequence-verifiable-units`
-- `principle-subtract-before-you-add`
 - `principle-test-behavior-not-implementation`
-- `principle-type-system-discipline`
 - `recall`
 - `reflect`
 - `sharpen`

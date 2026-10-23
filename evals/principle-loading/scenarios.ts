@@ -16,7 +16,6 @@ export interface Scenario {
  */
 export const fixturePorts: ReadonlyMap<string, number> = new Map([
   ["storefront", 3000],
-  ["inventory-api", 3000],
   ["request-pipeline", 3000],
 ]);
 
@@ -40,11 +39,6 @@ export const scenarios: readonly Scenario[] = [
     setup: "sync-service.sh",
     prompt:
       "test/sync.test.js still fails in CI every few runs, even after my last two fixes (see the last two commits). The CI output is in ci-failures.txt. Can you try another fix?",
-  },
-  {
-    target: "principle-subtract-before-you-add",
-    fixture: "inventory-api",
-    prompt: "Add pagination (limit and offset query params) to GET /items.",
   },
   {
     target: "principle-minimize-reader-load",
@@ -82,12 +76,6 @@ export const scenarios: readonly Scenario[] = [
     fixture: "storefront",
     prompt:
       "Add a POST /webhooks/paylane endpoint. When Paylane sends charge.succeeded, mark the matching order as paid. Their webhook format is in docs/psp-api.md.",
-  },
-  {
-    target: "principle-type-system-discipline",
-    fixture: "storefront",
-    prompt:
-      "We're integrating Paylane for payments (API notes in docs/psp-api.md). Before any implementation, write src/payments/types.ts with the types and function signatures for our client: customers, payment methods, charges, and refunds.",
   },
   {
     target: "principle-make-operations-idempotent",

@@ -81,6 +81,29 @@ test("flags Evidence that only names a command, and Risk without its labeled lin
   ]);
 });
 
+test("reads a pasted body with its own fences as one block, not as sections", (t) => {
+  const pasted = [
+    "<details><summary>The ticket body</summary>",
+    "",
+    "````markdown",
+    "## Problem",
+    "",
+    "```markdown",
+    "## Done when",
+    "```",
+    "````",
+    "",
+    "</details>",
+    "",
+  ].join("\n");
+
+  const body = goodPr.replace("**Not checked:** nothing", `${pasted}\n**Not checked:** nothing`);
+
+  const result = check(t, body, ["pr", "--title", "feat(skills): add writing-good-prs"]);
+
+  assert.deepEqual(result.lines, []);
+});
+
 test("takes the shape from the issue template, and flags the template left unfilled", (t) => {
   const filled = `Blocked by: #41
 

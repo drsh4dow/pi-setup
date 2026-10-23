@@ -27,7 +27,7 @@ function check(t: TestContext, body: string, args: string[]) {
 
 const goodPr = `## Why
 
-Agents wrote PR bodies in three shapes. Closes #47.
+A reviewer cannot tell whether a PR's proof ran. Closes #47.
 
 ## Shape
 
@@ -39,15 +39,19 @@ Agents wrote PR bodies in three shapes. Closes #47.
 
 ## Evidence
 
-- \`node --test scripts/test/check-body.test.ts\` fails on the base and passes on the head.
+- **The check flags a body with no witness.** \`node --test scripts/test/check-body.test.ts\`:
+  \`\`\`text
+  before  ✖ flags Evidence that only names a command
+  after   ✔ flags Evidence that only names a command
+  \`\`\`
 
-## Merge danger
+**Not checked:** nothing
 
-Two-way door. Blast radius: agents that write PR bodies.
+## Risk
 
-## Scope
-
-- Leaves the babysit playbook alone.
+- **Blast radius.** Agents that write PR bodies with this skill.
+- **Door.** Two-way, because the skill and its check are text files.
+- **Merge condition.** none
 `;
 
 test("passes a PR body in the default shape, ignoring headings inside fenced blocks", (t) => {
@@ -57,18 +61,23 @@ test("passes a PR body in the default shape, ignoring headings inside fenced blo
   assert.equal(result.status, 0);
 });
 
-test("flags Evidence that names no artifact and Merge danger that names no door", (t) => {
+test("flags Evidence that only names a command, and Risk without its labeled lines", (t) => {
   const body = goodPr
-    .replace(/- `node --test.*\n/, "Tests pass.\n")
-    .replace("Two-way door. Blast radius: agents that write PR bodies.", "Low risk.");
+    .replace(
+      /- \*\*The check flags[\s\S]*?```\n\n\*\*Not checked:\*\* nothing\n/,
+      "- `vp run verify` passes.\n",
+    )
+    .replace(/- \*\*Door\.\*\*.*\n/, "- **Door.** Cheap to revert.\n")
+    .replace(/- \*\*Merge condition\.\*\*.*\n/, "");
 
   const result = check(t, body, ["pr"]);
 
   assert.equal(result.status, 1);
   assert.deepEqual(result.lines, [
-    '13: "## Evidence" names no artifact, add the test, command, output, or media link that shows before and after',
-    '17: "## Merge danger" does not say "one-way door" or "two-way door"',
-    '17: "## Merge danger" does not name the blast radius',
+    '13: "## Evidence" shows no witness, paste the output, or add the table, media, or CI link that shows before and after',
+    '13: "## Evidence" has no "**Not checked:**" line, list what has no witness or write nothing',
+    '17: "## Risk" has no "- **Merge condition.**" line',
+    '17: "## Risk" Door line does not say one-way or two-way',
   ]);
 });
 

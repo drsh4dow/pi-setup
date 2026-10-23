@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Stand-in for scp: copies local files into the fake host $STUB_HOSTS/HOST, with the
+# destination's /srv/ path mapped into it. Logs each call to $STUB_LOG.
+set -uo pipefail
+
+files=()
+while (( $# > 0 )); do
+  case $1 in
+    -o | -P | -i) shift 2 ;;
+    -*) shift ;;
+    *)
+      files+=("$1")
+      shift
+      ;;
+  esac
+done
+destination=${files[-1]}
+unset 'files[-1]'
+host=${destination%%:*}
+host=${host#*@}
+path=${destination#*:}
+printf 'scp %s %s %s\n' "${files[*]}" "$host" "$path" >>"$STUB_LOG"
+
+root="$STUB_HOSTS/$host"
+if [[ ! -d $root || -e $root/.unreachable ]]; then
+  printf 'ssh: connect to host %s port 22: Connection refused\n' "$host" >&2
+  exit 255
+fi
+if [[ -e $root/.scp-fails ]]; then
+  printf 'scp: %s: Permission denied\n' "$path" >&2
+  exit 1
+fi
+cp -- "${files[@]}" "$root$path"

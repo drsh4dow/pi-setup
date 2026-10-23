@@ -56,6 +56,8 @@ job needs.
 | `arena runners`, `architect runners`, `interrogate reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 | `arena cross-judge pool` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 | `cross-family reviewer` | `openai/gpt-6.1-sol` | `high` |
+| `code-review detail personas` | `openai/gpt-6.1-sol` | `high` |
+| `code-review taste personas` | `anthropic/claude-opus-5-5` | `high` |
 
 A role with two models is a panel: run one subagent per model, so the panel
 size equals the number of models. Panels mix model families because their

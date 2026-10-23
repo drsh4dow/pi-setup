@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Stand-in for curl uploads (curl -fsS -T FILE -H HEADER URL): stores FILE under
+# $STUB_STORE at the URL's path and logs the call to $STUB_LOG. While
+# $STUB_STORE/.failures holds a count above zero, a call fails and decrements it.
+set -uo pipefail
+
+file="" headers=() url=""
+while (( $# > 0 )); do
+  case $1 in
+    -T)
+      file=$2
+      shift 2
+      ;;
+    -H)
+      headers+=("$2")
+      shift 2
+      ;;
+    -*) shift ;;
+    *)
+      url=$1
+      shift
+      ;;
+  esac
+done
+printf 'curl -T %s -H %s %s\n' "$file" "${headers[*]}" "$url" >>"$STUB_LOG"
+
+failures_file="$STUB_STORE/.failures"
+if [[ -f $failures_file ]] && (( $(<"$failures_file") > 0 )); then
+  printf '%s\n' "$(( $(<"$failures_file") - 1 ))" >"$failures_file"
+  printf 'curl: (22) The requested URL returned error: 503\n' >&2
+  exit 22
+fi
+path=${url#*://*/}
+mkdir -p "$STUB_STORE/$(dirname "$path")"
+cp -- "$file" "$STUB_STORE/$path"

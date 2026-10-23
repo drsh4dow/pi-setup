@@ -1,0 +1,8 @@
+# Copy to shipit.conf in your project. Keys are listed in README.md.
+app=storefront
+build_cmd=npm ci && npm run build
+build_dir=build
+deploy_root=/srv/storefront
+keep=5
+ssh_user=deploy
+store_url=https://artifacts.internal.example.com/releases

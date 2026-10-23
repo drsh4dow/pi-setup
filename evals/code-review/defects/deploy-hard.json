@@ -1,0 +1,99 @@
+{
+  "commitMessage": "feat: batched deploys with health checks and automatic rollback\n\nA deploy used to walk the inventory one host at a time and stop at the first failed\nstep, leaving the hosts before it on the new release and the rest on the old one. With\nthe storefront fleet at forty hosts that is slow, and a release that boots but serves\nerrors went everywhere because nothing checked it.\n\nDeploys now go out in batches (--batch-size, or batch_size in shipit.conf). After a\nbatch is activated, shipit runs health_cmd on each of its hosts, with retries, before\nstarting the next batch. When a host fails a step or its health check, every host the\ndeploy activated is rolled back and shipit exits 5. Pruning moves to the end of the\ndeploy so a rolled-back deploy keeps the releases it needs.\n\nReleases now record the version they were built from, and shipit releases shows it,\nnewest release first. -v/--verbose prints the ssh, scp, and curl commands shipit runs,\nwhich is what we kept reaching for while debugging the batch logic. rollback_host is\nshared by shipit rollback and the automatic rollback.",
+  "spec": "- `shipit deploy ENV [ARTIFACT] [--batch-size N]` deploys the hosts in batches of N, in inventory order. N defaults to the new `batch_size` config key, whose default is 1. A batch size below 1 is a usage error (exit 2).\n- After a batch is activated, shipit runs the new `health_cmd` config key on each host of the batch, up to `health_attempts` times (default 10), `health_interval` seconds apart (default 5), and starts the next batch only once every host in the batch has passed. Without `health_cmd`, hosts count as healthy.\n- When a host fails a deploy step or its health check, shipit returns every host it activated in this deploy to the release that host was running before the deploy, leaves hosts in later batches untouched, and exits 5. A host that ran no release before the deploy keeps the new one.\n- Old releases are pruned only once every batch has passed; a deploy that rolls back prunes nothing.\n- Each release records the version it was built from. `shipit releases ENV` prints `HOST RELEASE_ID VERSION current|-`, newest release first, with `-` as the version of releases deployed before this change.\n- A global `-v`/`--verbose` flag, given before the command, prints every ssh, scp, and curl command shipit runs before running it.\n- The README documents the new flags, config keys, and exit code.",
+  "defects": [
+    {
+      "id": "deploy-hard-rollback-target-not-prior-release",
+      "lens": "spec-fidelity",
+      "file": "lib/batch.sh",
+      "lines": [
+        38,
+        38
+      ],
+      "summary": "roll_back_deploy picks each host's target with previous_release, which lib/releases.sh (unchanged logic) defines as the newest release older than the current one, not the release the host ran before this deploy. docs/design.md notes current is not always the newest after a manual rollback, so on a host that was rolled back off a bad release, a failed deploy reactivates that bad release instead of the one it was running, contradicting the spec's rollback bullet. The feature tests only roll back hosts whose current release was also their newest.",
+      "proof": "Run from the feature branch checkout: bash -c 'source test/lib.sh; setup_project staging web1; enable_health_check; build_version 1.0.0; deploy_at 20240101000000 staging; build_version 1.1.0; deploy_at 20240102000000 staging; shipit_ok rollback staging; echo \"before=$(current_of web1)\"; build_version 1.2.0; make_unhealthy web1; deploy_at 20240103000000 staging; echo \"exit=$STATUS after=$(current_of web1)\"' prints `before=20240101000000` then `exit=5 after=20240102000000`: web1 was running 20240101000000 (it had been rolled back off 20240102000000) when the failed deploy started, and the automatic rollback leaves it on 20240102000000."
+    },
+    {
+      "id": "deploy-hard-layout-version-not-bumped",
+      "lens": "standards",
+      "file": "lib/releases.sh",
+      "lines": [
+        95,
+        99
+      ],
+      "summary": "write_release_meta makes shipit write a new file, releases/ID/.shipit-release, under deploy_root on every host, but the change leaves LAYOUT_VERSION at 2, adds no upgrade_layout step, and adds no section to docs/layout.md. CONTRIBUTING rule 3 and the versioning rule in docs/layout.md (neither file is in the diff) require all three for any new file, including one inside a release and one an older shipit would ignore."
+    },
+    {
+      "id": "deploy-hard-errexit-off-in-deploy-host",
+      "lens": "logical-proof",
+      "file": "lib/batch.sh",
+      "lines": [
+        18,
+        18
+      ],
+      "summary": "Calling `if ! deploy_host ...` turns errexit off for deploy_host and everything it calls. deploy_host (lib/deploy.sh, steps mostly unchanged) relies on errexit to stop at a failed step, as docs/design.md states. The sha256sum check is a standalone step, so a checksum mismatch is now ignored, and activate_release, the last step, decides deploy_host's status. A corrupted or tampered artifact goes live with exit 0. A failed scp is also ignored when an artifact of the same name is already on the host. The feature's failure tests pass only because their failures also break the unpack and activate steps.",
+      "proof": "Run from the feature branch checkout: bash -c 'source test/lib.sh; setup_project staging web1; build_version 1.0.0; deploy_at 20240101000000 staging; build_version 1.1.0; mkdir -p \"$TEST_TMP/evil\"; echo \"<h1>tampered</h1>\" > \"$TEST_TMP/evil/index.html\"; tar -czf \"$PROJECT/dist/demo-1.1.0.tar.gz\" -C \"$TEST_TMP/evil\" .; deploy_at 20240102000000 staging; echo \"exit=$STATUS current=$(current_of web1) page=$(cat \"$(on_host web1 current/index.html)\")\"' prints `exit=0 current=20240102000000 page=<h1>tampered</h1>`: the 1.1.0 artifact no longer matches its .sha256, but it is activated and the deploy succeeds. On main the same script prints `exit=1 current=20240101000000 page=<h1>demo</h1>`."
+    },
+    {
+      "id": "deploy-hard-health-loop-reimplements-retry",
+      "lens": "simplifier",
+      "file": "lib/health.sh",
+      "lines": [
+        14,
+        22
+      ],
+      "summary": "wait_healthy hand-rolls an attempt counter, a sleep, and per-attempt warnings around remote_sh. That loop is `retry ATTEMPTS DELAY CMD...` from lib/common.sh, unchanged and already used by upload: `retry \"$attempts\" \"$interval\" remote_sh \"$host\" \"$cmd\" || { log_error ...; return 1; }` does the same in one line."
+    },
+    {
+      "id": "deploy-hard-release-ids-named-version",
+      "lens": "reader",
+      "file": "lib/status.sh",
+      "lines": [
+        15,
+        17
+      ],
+      "summary": "cmd_releases stores the release ids in `versions` and loops over them as `version`, while the recorded app version goes in `build`. docs/design.md defines version as the app version from VERSION (1.4.0) and release id as the timestamp, so `printf ... \"$version\" \"${build:--}\"` reads as if the version column came first and the second column were something else."
+    },
+    {
+      "id": "deploy-hard-stale-list-order-comment",
+      "lens": "comment-sicko",
+      "file": "lib/releases.sh",
+      "lines": [
+        9,
+        9
+      ],
+      "summary": "The file header still says list_releases prints ids oldest first and callers wanting the newest take the tail. The change made list_releases print newest first (`sort -r`) and changed prune_releases and previous_release to read from the head. The header lies outside every diff hunk, so only someone reading the whole file sees it."
+    },
+    {
+      "id": "deploy-hard-readme-all-or-nothing",
+      "lens": "unslop",
+      "file": "README.md",
+      "lines": [
+        80,
+        83
+      ],
+      "summary": "The closing paragraph of the new README section promises an all-or-nothing deploy, every host \"back exactly where it started\", and a broken release that \"never reaches more than one batch\". None of that holds: hosts with no earlier release keep the new one, rollback goes to the previous release, unpacked releases and artifacts stay behind, and without health_cmd a release that boots but is broken reaches every batch. \"Predictable at any size of environment\" adds nothing."
+    },
+    {
+      "id": "deploy-hard-verbose-leaks-store-token",
+      "lens": "security",
+      "file": "lib/common.sh",
+      "lines": [
+        50,
+        62
+      ],
+      "summary": "trace prints commands through command_line, which runs redact over shell_quote output. %q escapes the space after `Bearer` (`Bearer\\ TOKEN`), so redact's `(Bearer )` pattern never matches. Under --verbose, the unchanged curl call in lib/upload.sh, which goes through run and then trace, prints SHIPIT_STORE_TOKEN to stderr and into CI logs, which breaks the token rule in docs/design.md. The run failure path still redacts `$*` correctly, so the base test for masking passes.",
+      "proof": "Run from the feature branch checkout: bash -c 'source test/lib.sh; setup_project staging web1; build_version 1.0.0; export SHIPIT_STORE_TOKEN=s3cr3t-token; shipit --verbose upload; echo \"exit=$STATUS\"; grep -o \"Bearer.*s3cr3t-token\" <<<\"$ERR\"' prints `exit=0` then `Bearer\\ s3cr3t-token` twice: the verbose trace of both curl uploads carries the full token."
+    },
+    {
+      "id": "deploy-hard-earlier-batches-test-vacuous",
+      "lens": "tests",
+      "file": "test/test_batch.sh",
+      "lines": [
+        84,
+        96
+      ],
+      "summary": "test_health_failure_rolls_back_earlier_batches deploys four hosts with --batch-size 3, so the failing web3 is in batch 1 with web1 and web2, and there is no earlier batch, while web4 is never touched. The test passes when roll_back_deploy rolls back only the current batch: resetting `activated` at the top of each batch leaves the whole suite green. With --batch-size 2 the test fails on that mutation."
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "commitMessage": "feat: add an admin API to inspect and reset buckets\n\nOn-call has asked for a way to see how close a client is to its limit and\nto unblock a client without restarting ratelimitd. NewAdmin returns an\nhttp.Handler behind a bearer token, with GET /admin/buckets/{key} to read\na bucket and DELETE /admin/buckets/{key} to refill it to burst.\n\nThe limiter gains Snapshot, which reads a bucket without taking a token or\nstoring the refill, and Reset. ratelimitd mounts the admin API under\n/admin/ when it is given a token, and the README documents it.",
+  "spec": "- `NewAdmin(l, token)` returns an `http.Handler` that serves the admin API. An empty token is an error.\n- Every admin request must send `Authorization: Bearer <token>`. Anything else gets 401.\n- `GET /admin/buckets/{key}` answers 200 with JSON `{\"key\", \"remaining\", \"burst\", \"as_of\"}`. `remaining` is the number of tokens the key could spend right now, at most `burst`. `as_of` is the RFC 3339 time of the reading. A key with no bucket gets 404.\n- Reading a bucket must not change it: no token taken, no refill stored.\n- `DELETE /admin/buckets/{key}` refills the key's bucket to `burst` and answers 204. A key with no bucket gets 404.\n- `ratelimitd` mounts the admin API under `/admin/` when `-admin-token` or the `RATELIMIT_ADMIN_TOKEN` environment variable is set, and leaves it off otherwise.\n- The README documents the admin API.",
+  "defects": [
+    {
+      "id": "ratelimit-env-token-ignored",
+      "lens": "spec-fidelity",
+      "file": "cmd/ratelimitd/main.go",
+      "lines": [
+        18,
+        18
+      ],
+      "summary": "The -admin-token flag defaults to \"\" and nothing reads RATELIMIT_ADMIN_TOKEN, so setting only the environment variable leaves the admin API off, contrary to the spec and the README."
+    },
+    {
+      "id": "ratelimit-as-of-wall-clock",
+      "lens": "standards",
+      "file": "admin.go",
+      "lines": [
+        38,
+        45
+      ],
+      "summary": "newBucketView stamps as_of with time.Now(), breaking CONTRIBUTING rule 1 (only clock.go calls time.Now; reported times come from the injected Clock), so as_of ignores the limiter's clock and cannot be tested under the fake one."
+    },
+    {
+      "id": "ratelimit-snapshot-uncapped",
+      "lens": "logical-proof",
+      "file": "limiter.go",
+      "lines": [
+        121,
+        122
+      ],
+      "summary": "Snapshot adds elapsed * rate to the stored tokens without capping at burst, so an idle bucket reports more remaining tokens than it can ever hold (refill caps with math.Min, Snapshot does not).",
+      "proof": "After applying the overlay, add proof_test.go in the package root:\n\npackage ratelimit\nimport (\"testing\"; \"time\")\nfunc TestProofSnapshotExceedsBurst(t *testing.T) {\n\tl, clock := newTestLimiter(t, 1, 5)\n\tl.Allow(\"10.0.0.1\")\n\tclock.advance(10 * time.Second)\n\tstate, _ := l.Snapshot(\"10.0.0.1\")\n\tt.Logf(\"remaining=%v burst=%d\", state.Remaining, state.Burst)\n}\n\nthen `go test -run TestProofSnapshotExceedsBurst -v .` logs `remaining=14 burst=5`; the spec requires remaining <= burst, so it should be 5."
+    },
+    {
+      "id": "ratelimit-passthrough-bucket-service",
+      "lens": "simplifier",
+      "file": "admin.go",
+      "lines": [
+        22,
+        29
+      ],
+      "summary": "bucketService is a pass-through wrapper whose methods only forward to Limiter.Snapshot and Limiter.Reset; Admin could hold the *Limiter and call it directly."
+    },
+    {
+      "id": "ratelimit-show-arrow-nesting",
+      "lens": "reader",
+      "file": "admin.go",
+      "lines": [
+        70,
+        87
+      ],
+      "summary": "show nests its happy path three ifs deep and puts each failure in an else branch far from its condition; guard clauses returning early on unauthorized, unknown key, and encode failure would read flat like reset does."
+    },
+    {
+      "id": "ratelimit-reset-lock-sermon",
+      "lens": "comment-sicko",
+      "file": "limiter.go",
+      "lines": [
+        127,
+        131
+      ],
+      "summary": "A five-line comment explains why a mutex prevents data races, recounts an abandoned sync.Map attempt, and ends 'Please do not remove the lock!', on code that just follows the type's documented locking."
+    },
+    {
+      "id": "ratelimit-readme-slop",
+      "lens": "unslop",
+      "file": "README.md",
+      "lines": [
+        35,
+        38
+      ],
+      "summary": "The Admin API section opens with marketing filler: 'powerful, seamless', 'not just visibility, but real-time control', 'it has you covered', 'no restarts, no hassle', and em dashes, saying nothing the reference lines below don't."
+    },
+    {
+      "id": "ratelimit-reset-unauthenticated",
+      "lens": "security",
+      "file": "admin.go",
+      "lines": [
+        89,
+        95
+      ],
+      "summary": "The DELETE handler never calls a.authorized, so any client that can reach /admin/ can refill its own bucket without the token and bypass rate limiting entirely; ratelimitd mounts /admin/ on the public listener.",
+      "proof": "After applying the overlay: `go build -o rld ./cmd/ratelimitd && ./rld -addr 127.0.0.1:18933 -admin-token s3cret -rate 1 -burst 2 &`, then five `curl -s -o /dev/null -w '%{http_code} ' 127.0.0.1:18933/` give `200 200 429 429 429`; `curl -X DELETE 127.0.0.1:18933/admin/buckets/127.0.0.1` with no Authorization header gives `204`; and five more GETs, each followed by that unauthenticated DELETE, give `200 200 200 200 200`. Expected: the DELETE answers 401 and the limit holds."
+    },
+    {
+      "id": "ratelimit-reset-test-reads-internals",
+      "lens": "tests",
+      "file": "limiter_test.go",
+      "lines": [
+        123,
+        134
+      ],
+      "summary": "TestResetRefillsBucket asserts the private l.buckets[\"k\"].tokens field instead of the behavior (Burst requests allowed after Reset), and the admin DELETE test only checks the 204, so nothing tests the refill through the public API."
+    }
+  ]
+}

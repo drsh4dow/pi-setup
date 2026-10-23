@@ -1,0 +1,12 @@
+# Copy to shipit.conf in your project. Keys are listed in README.md.
+app=storefront
+batch_size=2
+build_cmd=npm ci && npm run build
+build_dir=build
+deploy_root=/srv/storefront
+health_attempts=12
+health_cmd=curl -fsS http://localhost:8080/healthz
+health_interval=5
+keep=5
+ssh_user=deploy
+store_url=https://artifacts.internal.example.com/releases

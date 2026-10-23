@@ -1,0 +1,98 @@
+{
+  "commitMessage": "feat: cancel and retry jobs from the admin API\n\nA dead job could only be replaced by enqueueing a copy, which lost its history, and a job\nthat should never run (a duplicate send, a customer who unsubscribed) had to fail its way to\ndead. Operators can now POST /jobs/{id}/cancel for a pending or leased job and POST\n/jobs/{id}/retry for a dead one. Both go through the journal, so they survive a restart.\n\nCanceling a leased job revokes its lease token: the store answers ErrCanceled, a kind of\nErrLeaseLost, and the worker stops the handler and leaves the job alone. The worker's outcome\nreporting moves into report and gaveUp so lost leases and cancellations are logged in one\nplace. Store lookups share a find helper, and refused operations come back as a StateError\nthat writeStoreError maps to 409.\n\nSupport staff also get an auditor role that reads jobs with their payloads, so they can see\nwhat a job was given before they ask an operator to retry it.",
+  "spec": "- `POST /jobs/{id}/cancel`, for operators, cancels a `pending` or `leased` job, with an optional body `{\"reason\": <string>}`, and answers 200 with the job, now `canceled`. `canceled` is final. A job in any other state answers 409 `not_cancelable` with its current `state`.\n- A canceled job never runs again. Canceling a leased job revokes its lease: the handler's context is canceled within one heartbeat, and the worker neither completes nor fails the job.\n- `POST /jobs/{id}/retry`, for operators, moves a `dead` job back to `pending`, due immediately, with `attempts` reset to 0. An optional body `{\"maxAttempts\": <positive integer>}` sets a new attempt limit; without it the job keeps its own `maxAttempts`. A job in any other state answers 409 `not_dead` with its current `state`.\n- A new `auditor` token role, for support staff, can do everything a viewer can and also sees payloads in `GET /jobs/{id}`. Auditors can't enqueue, cancel, or retry; those requests answer 403.\n- Cancels and retries are journaled like every other change and survive a restart. `GET /jobs?state=canceled` lists canceled jobs and `GET /stats` counts them.\n- The README documents both endpoints, the `canceled` state, and the auditor role.",
+  "defects": [
+    {
+      "id": "jobqueue-retry-resets-attempt-limit",
+      "lens": "spec-fidelity",
+      "file": "store.go",
+      "lines": [
+        286,
+        288
+      ],
+      "summary": "Retry without a body sets the job's maxAttempts to the store-wide Options.DefaultMaxAttempts instead of keeping the job's own limit, as the spec and the new README section require: a job enqueued with maxAttempts 1 comes back with 5 under jobqueued (3 in the tests). The feature tests only retry jobs enqueued with the default limit, where the two agree, and the doc comment's \"the default\" hides which default."
+    },
+    {
+      "id": "jobqueue-journal-version-not-bumped",
+      "lens": "standards",
+      "file": "journal.go",
+      "lines": [
+        25,
+        37
+      ],
+      "summary": "The change adds two ops (cancel, retry), a new State (canceled), and a new Job field (cancelReason) to journal lines but leaves journalVersion at 1 (journal.go line 13, outside the diff) and adds no row to the table in docs/journal-format.md, breaking CONTRIBUTING rule 1. Per the format doc, a rolled-back build should refuse the journal up front; instead it fails halfway through replay on `unknown op \"cancel\"`."
+    },
+    {
+      "id": "jobqueue-canceled-pending-job-stays-leasable",
+      "lens": "logical-proof",
+      "file": "store.go",
+      "lines": [
+        270,
+        276
+      ],
+      "summary": "Cancel moves a pending job to canceled through commit, which only touches the ready heap when a job enters pending, so the canceled job stays in its queue's heap. The unchanged Lease pops the top of the heap without checking its state, relying on the invariant in docs/design.md that Lease is the only way out of pending. The next Lease hands the canceled job to a worker and flips it back to leased, so a job the operator canceled runs anyway.",
+      "proof": "After applying the overlay, add proof_test.go in the package root:\n\npackage jobqueue\n\nimport (\n\t\"testing\"\n\t\"time\"\n)\n\nfunc TestProofCanceledJobIsLeased(t *testing.T) {\n\tst, _ := newTestStore(t)\n\tjob := enqueue(t, st, `{\"to\":\"ana@example.com\"}`)\n\tif _, err := st.Cancel(job.ID, \"customer unsubscribed\"); err != nil {\n\t\tt.Fatal(err)\n\t}\n\tleased, err := st.Lease(testQueue, \"w1\", time.Minute)\n\tgot, _ := st.Get(job.ID)\n\tt.Logf(\"lease err=%v sameJob=%v state=%s attempts=%d\", err, leased.ID == job.ID, got.State, got.Attempts)\n}\n\nthen `go test -run TestProofCanceledJobIsLeased -v .` logs `lease err=<nil> sameJob=true state=leased attempts=1`: the canceled job is leased and leaves `canceled`. Expected: `ErrNoJob` and state `canceled`."
+    },
+    {
+      "id": "jobqueue-watch-cancel-duplicates-heartbeat",
+      "lens": "simplifier",
+      "file": "worker.go",
+      "lines": [
+        192,
+        214
+      ],
+      "summary": "watchCancel, started as a second goroutine per job at lines 117-120, polls Store.Get every Heartbeat to notice cancellation. The unchanged heartbeat already calls Extend on the same tick, and the change's own leased() answers ErrCanceled for a canceled job, so heartbeat already cancels the handler's context with ErrCanceled as its cause. Deleting watchCancel and its goroutine changes nothing, and TestCancelStopsRunningHandler still passes."
+    },
+    {
+      "id": "jobqueue-requeue-contradicts-glossary",
+      "lens": "reader",
+      "file": "store.go",
+      "lines": [
+        280,
+        282
+      ],
+      "summary": "The retry operation is exported as Store.Requeue, but the README's Terms define requeue as sending a job back to pending after a failed attempt with the attempt still counted, which is what the unchanged unexported s.requeue does. Store.Requeue does the opposite: it resets attempts to zero. Requeue and requeue now sit in one file with contradictory meanings, while the endpoint, journal op, and event all call the operation retry."
+    },
+    {
+      "id": "jobqueue-dead-is-final-comment",
+      "lens": "comment-sicko",
+      "file": "job.go",
+      "lines": [
+        8,
+        11
+      ],
+      "summary": "The State doc comment still says done and dead are final and nothing moves a job out of them, and the new StateCanceled comment adds \"It is final too\". But the change's retry moves dead jobs back to pending, and the lifecycle the comment describes leaves out canceled."
+    },
+    {
+      "id": "jobqueue-readme-exactly-once-overclaim",
+      "lens": "unslop",
+      "file": "README.md",
+      "lines": [
+        92,
+        95
+      ],
+      "summary": "The closing paragraph promises that both operations are safe at any time from any number of operators, that a canceled job never runs again, and that a retried job runs exactly once. Nothing tests or enforces this, and ADR 001 says the opposite: delivery is at least once, the queue can't promise exactly once, and a handler that ignores its context can't be stopped. The paragraph reassures the reader but tells them nothing true."
+    },
+    {
+      "id": "jobqueue-auditor-outranks-operator",
+      "lens": "security",
+      "file": "admin.go",
+      "lines": [
+        22,
+        24
+      ],
+      "summary": "RoleAuditor is appended after RoleOperator in the iota block, so it compares greater. The unchanged auth admits any role >= need (\"Roles are ordered\"), so auditor tokens pass every operator check: they can enqueue through the existing POST /jobs and can cancel and retry through the new routes. The payload access the feature wanted comes from that same comparison in the unchanged getJob (role >= RoleOperator), which is why the auditor test passes and the diff never touches the checks.",
+      "proof": "After applying the overlay, add proof_test.go in the package root:\n\npackage jobqueue\n\nimport \"testing\"\n\nfunc TestProofAuditorChangesJobs(t *testing.T) {\n\tf := newAdminFixture(t)\n\tenqueueStatus, created := f.call(t, \"POST\", \"audit-tok\", \"/jobs\", `{\"queue\":\"mail\",\"payload\":{}}`)\n\tid, _ := field(created, \"id\").(string)\n\tcancelStatus, canceled := f.call(t, \"POST\", \"audit-tok\", \"/jobs/\"+id+\"/cancel\", \"\")\n\tt.Logf(\"enqueue=%d cancel=%d state=%v\", enqueueStatus, cancelStatus, field(canceled, \"state\"))\n}\n\nthen `go test -run TestProofAuditorChangesJobs -v .` logs `enqueue=201 cancel=200 state=canceled`: an auditor token enqueues a job and cancels it. Expected: 403 for both."
+    },
+    {
+      "id": "jobqueue-never-leased-test-wrong-queue",
+      "lens": "tests",
+      "file": "store_test.go",
+      "lines": [
+        290,
+        299
+      ],
+      "summary": "TestCanceledJobsAreNeverLeased enqueues without a Queue, so its jobs go on DefaultQueue (\"default\"), then leases from testQueue (\"mail\"). Lease answers ErrNoJob because that queue is empty, whether or not Cancel works. Changing the test to enqueue with Queue: testQueue makes both cases fail on this branch, exposing the canceled-job lease bug."
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "commitMessage": "feat: add reorder points and a reorder report\n\nClerks can now give an item a reorder point with\nPUT /items/{sku}/reorder-point, and GET /reorder lists the active items\nthat have fallen to their point. Each line suggests an order that brings\nstock back up to twice the point, with its cost, and the response carries\nthe total for the whole order.\n\nReorder points live in their own table, so existing databases pick it up\non the next start with no migration step. The report logic sits in a new\nreorder module, and the README documents both endpoints.",
+  "spec": "- `PUT /items/{sku}/reorder-point` with a body like `{\"point\": 10}` sets an item's reorder point. Like every other write, it needs a clerk key. The point must be a positive integer (400 otherwise), and an unknown SKU is a 404.\n- `GET /reorder` is open to any valid key. It lists every active (not discontinued) item whose quantity is at or below its reorder point. Items with no reorder point are never listed.\n- Each line has `sku`, `name`, `quantity`, `reorder_point`, `order_quantity`, and `order_cost_cents`.\n- `order_quantity` tops stock up to twice the reorder point (`2 * reorder_point - quantity`), and `order_cost_cents` is `order_quantity * unit_cost_cents`.\n- Lines are sorted by shortfall (`reorder_point - quantity`), largest first, with ties broken by SKU.\n- The response also carries `total_cents`, the sum of the line costs, and `total`, the same amount as dollars text like `\"1234.50\"`.\n- The README documents both endpoints.",
+  "defects": [
+    {
+      "id": "inventory-sort-by-sku",
+      "lens": "spec-fidelity",
+      "file": "inventory/reorder.py",
+      "lines": [
+        40,
+        40
+      ],
+      "summary": "reorder_lines sorts the report by SKU, but the spec requires largest shortfall (reorder_point - quantity) first with SKU only as the tie-break."
+    },
+    {
+      "id": "inventory-float-total",
+      "lens": "standards",
+      "file": "inventory/api.py",
+      "lines": [
+        112,
+        112
+      ],
+      "summary": "The `total` text is built by dividing cents by 100 into a float, which CONTRIBUTING rule 1 forbids; it must use money.format_cents like every other money text in the API."
+    },
+    {
+      "id": "inventory-at-point-excluded",
+      "lens": "logical-proof",
+      "file": "inventory/reorder.py",
+      "lines": [
+        18,
+        20
+      ],
+      "summary": "needs_reorder compares `quantity < point`, so an item sitting exactly at its reorder point is left out of the report although the spec and docstring say at or below.",
+      "proof": "After applying the overlay, from the repo root: python3 -c 'from inventory.store import Store; from inventory.reorder import reorder_lines\ns = Store(\":memory:\"); s.add_item(\"BOLT-10\", \"M10 bolt\", 35); s.receive(\"BOLT-10\", 10); s.set_reorder_point(\"BOLT-10\", 10)\nprint(reorder_lines(s))' prints `[]`; an item with quantity 10 and reorder point 10 should produce one line with order_quantity 10."
+    },
+    {
+      "id": "inventory-passthrough-service",
+      "lens": "simplifier",
+      "file": "inventory/reorder.py",
+      "lines": [
+        44,
+        57
+      ],
+      "summary": "ReorderService is a pass-through layer: each method only forwards to Store.set_reorder_point or reorder_lines, so Api could call those directly and the class could be deleted."
+    },
+    {
+      "id": "inventory-shortfall-misnamed",
+      "lens": "reader",
+      "file": "inventory/reorder.py",
+      "lines": [
+        29,
+        37
+      ],
+      "summary": "The local `shortfall` holds the suggested order quantity (2 * point - quantity), not the shortfall the spec and README define as reorder_point - quantity, so the name misleads anyone reading the cost or sort logic."
+    },
+    {
+      "id": "inventory-upsert-sermon",
+      "lens": "comment-sicko",
+      "file": "inventory/store.py",
+      "lines": [
+        137,
+        142
+      ],
+      "summary": "A six-line comment narrates the upsert's history and restates what the SQL plainly does, ending in a 'Please keep it this way!' plea, instead of at most one line on why ON CONFLICT beats INSERT OR REPLACE."
+    },
+    {
+      "id": "inventory-readme-slop",
+      "lens": "unslop",
+      "file": "README.md",
+      "lines": [
+        44,
+        48
+      ],
+      "summary": "The new Reordering section opens with marketing filler: 'In today's fast-paced warehouse', 'isn't just X, it's Y', 'leverages', 'seamlessly', 'robust, streamlined', 'empowers', and em dashes, with no information."
+    },
+    {
+      "id": "inventory-viewer-sets-point",
+      "lens": "security",
+      "file": "inventory/api.py",
+      "lines": [
+        99,
+        102
+      ],
+      "summary": "_set_reorder_point never calls _require_clerk, so any viewer key can change reorder points, a write the spec reserves for clerks.",
+      "proof": "After applying the overlay, from the repo root: python3 -c 'from inventory.store import Store; from inventory.api import Api\ns = Store(\":memory:\"); s.add_item(\"BOLT-10\", \"M10 bolt\", 35); api = Api(s, {\"vk_1\": \"viewer\"})\nprint(api.handle(\"PUT\", \"/items/BOLT-10/reorder-point\", {\"X-Api-Key\": \"vk_1\"}, b\"{\\\"point\\\": 500}\"))' prints `Response(status=200, body={'sku': 'BOLT-10', 'reorder_point': 500})`; a viewer should get 403."
+    },
+    {
+      "id": "inventory-test-cannot-fail",
+      "lens": "tests",
+      "file": "tests/test_reorder.py",
+      "lines": [
+        27,
+        32
+      ],
+      "summary": "test_store_rejects_non_positive_point swallows BadRequest and then asserts only that the item still exists, so it passes whether or not a zero point is rejected; it should use assertRaises."
+    }
+  ]
+}

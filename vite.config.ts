@@ -3,6 +3,7 @@ import { defineConfig } from "vite-plus";
 
 // Reference checkouts, runtime state, installed skills, vendored pstack support
 // files, vendored lint rules, and the projects evals copy for candidates are not application source.
+// Eval change overlays and planted-defect answer keys are fixtures too.
 const ignoredFiles = [
   ".repos/**",
   "agent/npm/**",
@@ -12,6 +13,8 @@ const ignoredFiles = [
   "agent/sessions/**",
   "agent/skills/*",
   "evals/*/fixtures/**",
+  "evals/*/changes/**",
+  "evals/*/defects/**",
   "evals/*/setup/**",
   "evals/*/results/**",
   "oxlint/anti-slop/**",

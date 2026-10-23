@@ -12,5 +12,12 @@
     "reason": "The process-kill test moved with the session runner to evals/lib/test/pi-run.test.ts, assertions intact.",
     "owner": "drsh4dow",
     "until": "2026-12-31"
+  },
+  {
+    "path": "evals/code-review/changes/inventory/tests/test_reorder.py",
+    "rule": "empty-catch",
+    "reason": "A planted defect: the code-review eval's answer key (defects/inventory.json) expects reviewers to flag this swallowed BadRequest.",
+    "owner": "drsh4dow",
+    "until": "2026-12-31"
   }
 ]

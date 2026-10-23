@@ -1,0 +1,100 @@
+{
+  "commitMessage": "feat: mid-period plan changes with proration\n\nCustomers keep asking support to move them to a bigger plan mid-month, and support has been\ndoing it by hand with a manual invoice. POST /subscriptions/:id/plan now does it. An upgrade\nswitches plan at once and issues a proration invoice: a credit for the unused days on the\nold plan and a charge for the same days on the new one. A downgrade waits for the next\nrenewal and shows as scheduledPlanId until then.\n\nProration counts a started day as a whole day, so daysBetween now rounds up. Invoices record\na billingReason and their lines a kind, and the subscription payload goes to v3 for\nscheduledPlanId. The subscription body parsers now share one field table, which also makes\nthem reject unknown fields.",
+  "spec": "- `POST /subscriptions/:id/plan` with `{ \"planId\": \"<plan id>\" }` moves a subscription to another plan. The subscription's customer and admins can call it; anyone else gets 404, as on the other subscription endpoints. It answers 200 with `{ subscription, invoice }`.\n- Only `trialing` and `active` subscriptions can change plan; others answer 409 `not_changeable` with their `status`. The target plan must be open for signup (else 422 `unknown_plan`) and bill on the same interval (else 422 `interval_mismatch`). Moving to the current plan answers 409 `same_plan`.\n- A move to a more expensive plan is an upgrade and takes effect immediately. An `active` subscription is invoiced for it right away: a credit line for the unused part of the current period on the old plan, then a charge line for the same days on the new plan, each the plan's price times remaining days over the days in the period. A day that has started counts as remaining. A `trialing` subscription switches plan immediately with no invoice, since trials are free.\n- Any other move is a downgrade: the subscription keeps its plan until the next renewal, which bills the new plan, and shows it as `scheduledPlanId` meanwhile. A later plan change replaces a scheduled downgrade.\n- The proration invoice is issued like a renewal invoice: numbered, announced with `invoice.finalized`, and charged. A failed charge leaves the subscription on the new plan, `past_due`. Every invoice carries a `billingReason`: `\"plan_change\"` for proration, `\"period\"` for signup and renewal invoices.\n- Subscription request bodies (`POST /subscriptions`, `PATCH /subscriptions/:id`, and the new endpoint) reject unknown fields with 400 `invalid_input` naming the field.\n- The README documents plan changes, and `docs/webhooks.md` documents `billingReason` and `scheduledPlanId`.",
+  "defects": [
+    {
+      "id": "billing-trial-upgrade-invoiced",
+      "lens": "spec-fidelity",
+      "file": "src/plan-changes.ts",
+      "lines": [
+        54,
+        56
+      ],
+      "summary": "changePlan accepts trialing subscriptions but runs every upgrade through the proration invoice and charge, so a trialing customer who upgrades is charged the price difference for trial days. The spec (and the README's \"Trials are free\") says a trialing subscription switches plan with no invoice; the feature tests only upgrade active subscriptions.",
+      "proof": "Run from the feature branch checkout: node --input-type=module -e 'import { makeDeps } from \"./test/helpers.ts\"; import { changePlan } from \"./src/plan-changes.ts\"; import { startSubscription } from \"./src/subscriptions.ts\"; const deps = makeDeps(); const subscription = startSubscription({ id: \"sub_1\", customerId: \"cus_alice\", plan: deps.plans.get(\"starter\"), at: deps.clock.now() }); deps.store.saveSubscription(subscription); const result = await changePlan(deps, { subscription, planId: \"pro\", at: deps.clock.now() }); console.log(subscription.status, result.value.kind, result.value.invoice.totalCents, deps.charges.map((charge) => charge.amountCents).join(\",\"));' prints `trialing upgrade 2310 2310`: a starter subscription still in its free trial is upgraded to pro, and a 2310-cent proration invoice (2100 plus 10% tax) is issued and charged."
+    },
+    {
+      "id": "billing-invoice-payload-version-not-bumped",
+      "lens": "standards",
+      "file": "src/payloads.ts",
+      "lines": [
+        27,
+        27
+      ],
+      "summary": "invoicePayload gains a `billingReason` field, but PAYLOAD_VERSIONS.invoice stays 1 and docs/webhooks.md gets no changelog line for it, breaking CONTRIBUTING rule 4 (any payload field change bumps the version and the changelog). The change follows the rule for the subscription payload (v3), which makes the skipped invoice bump easy to miss.",
+      "proof": "Run from the feature branch checkout: node --input-type=module -e 'import { makeDeps } from \"./test/helpers.ts\"; import { issueInvoice, periodInvoice } from \"./src/billing.ts\"; import { startSubscription } from \"./src/subscriptions.ts\"; const deps = makeDeps(); const plan = deps.plans.get(\"business\"); const subscription = startSubscription({ id: \"sub_1\", customerId: \"cus_alice\", plan, at: deps.clock.now() }); await issueInvoice(deps, periodInvoice(deps, subscription, plan, deps.clock.now()), deps.clock.now()); const event = deps.deliveries.find((delivery) => delivery.event.type === \"invoice.finalized\").event; console.log(event.version, JSON.stringify(event.data.billingReason));' prints `1 \"period\"`: an invoice.finalized event carries the new field under the old version 1, the same version main sends without it (`1 undefined` on main)."
+    },
+    {
+      "id": "billing-days-between-rounds-up-dunning",
+      "lens": "logical-proof",
+      "file": "src/periods.ts",
+      "lines": [
+        33,
+        39
+      ],
+      "summary": "daysBetween is changed from rounding down to rounding up to suit proration, but the untouched dunning check `daysBetween(pastDueSince, at) >= GRACE_DAYS` in src/dunning.ts relies on whole elapsed days, so past_due subscriptions are canceled and their invoices voided up to a day early, breaking the 14-days-to-the-hour promise in docs/dunning.md. The dunning tests use exact day multiples and still pass.",
+      "proof": "Run from the feature branch checkout: node --input-type=module -e 'import { makeDeps } from \"./test/helpers.ts\"; import { renewDue } from \"./src/billing.ts\"; import { runDunning } from \"./src/dunning.ts\"; import { startSubscription } from \"./src/subscriptions.ts\"; const deps = makeDeps(); deps.store.saveSubscription(startSubscription({ id: \"sub_1\", customerId: \"cus_alice\", plan: deps.plans.get(\"pro\"), at: new Date(\"2026-03-01T10:00:00.000Z\") })); deps.declining.value = true; await renewDue(deps, new Date(\"2026-03-15T10:00:00.000Z\")); const behind = deps.store.getSubscription(\"sub_1\"); console.log(behind.status, behind.pastDueSince.toISOString()); await runDunning(deps, new Date(\"2026-03-28T11:00:00.000Z\")); console.log(deps.store.getSubscription(\"sub_1\").status, deps.store.invoicesFor(\"sub_1\").map((invoice) => invoice.status).join(\",\"));' prints `past_due 2026-03-15T10:00:00.000Z` then `canceled void`: 13 days and 1 hour after falling behind, dunning cancels the subscription and voids its invoice. The same command on main prints `past_due open` on the second line."
+    },
+    {
+      "id": "billing-share-of-price-duplicates-scale-cents",
+      "lens": "simplifier",
+      "file": "src/proration.ts",
+      "lines": [
+        57,
+        62
+      ],
+      "summary": "shareOfPrice reimplements scaleCents from the unchanged src/money.ts line for line (positive-denominator guard, multiply then divide, round halves away from zero); the proration lines can call scaleCents(price, remainingDays, periodDays), as the feature's own tests already do."
+    },
+    {
+      "id": "billing-open-proration-invoice-returns-draft",
+      "lens": "reader",
+      "file": "src/proration.ts",
+      "lines": [
+        44,
+        55
+      ],
+      "summary": "openProrationInvoice returns a draft, unnumbered invoice, while the README defines an open invoice as one already finalized, numbered, and owed; the name tells a reader at the call site in plan-changes.ts that the invoice is already open. Something like draftProrationInvoice matches the domain terms."
+    },
+    {
+      "id": "billing-invoice-line-positive-comment",
+      "lens": "comment-sicko",
+      "file": "src/invoices.ts",
+      "lines": [
+        12,
+        12
+      ],
+      "summary": "The InvoiceLine doc comment still says amountCents is always positive and a subtotal is never below any of its lines, but the change adds `proration_credit` lines with negative amounts, so both claims are now false."
+    },
+    {
+      "id": "billing-readme-plan-change-guarantees",
+      "lens": "unslop",
+      "file": "README.md",
+      "lines": [
+        76,
+        78
+      ],
+      "summary": "The closing paragraph of \"Plan changes\" claims guarantees the code doesn't keep: the switch, invoice, and charge are separate steps (a declined charge leaves the subscription on the new plan, past_due, which the bullet above and a feature test say), and integrations get events at least once, not exactly once, per docs/webhooks.md. \"Safe to retry and need no reconciliation\" is unsupported."
+    },
+    {
+      "id": "billing-patch-sets-plan-id",
+      "lens": "security",
+      "file": "src/input.ts",
+      "lines": [
+        25,
+        28
+      ],
+      "summary": "parseSubscriptionUpdate now returns every shared subscription field, planId included, and the unchanged PATCH handler spreads the parsed body into the subscription through applyUpdate. A customer can PATCH their subscription onto any plan id with no proration, no charge, and no forSignup check, such as an archived plan, and later renewals bill that plan's price.",
+      "proof": "Run from the feature branch checkout: node --input-type=module -e 'import { renewDue } from \"./src/billing.ts\"; import { createBillingServer } from \"./src/http/server.ts\"; import { makeDeps } from \"./test/helpers.ts\"; const deps = makeDeps(); const server = createBillingServer(deps); await new Promise((resolve) => server.listen(0, resolve)); const call = (method, path, body) => fetch(\"http://127.0.0.1:\" + server.address().port + path, { method, headers: { authorization: \"Bearer alice\" }, body: body && JSON.stringify(body) }).then(async (response) => [response.status, await response.json()]); const [, created] = await call(\"POST\", \"/subscriptions\", { planId: \"business\" }); const id = created.subscription.id; const [status, patched] = await call(\"PATCH\", \"/subscriptions/\" + id, { planId: \"legacy-basic\" }); await renewDue(deps, new Date(\"2026-04-01T00:00:00.000Z\")); console.log(status, patched.planId, deps.store.invoicesFor(id).map((invoice) => invoice.subtotalCents).join(\",\")); server.close();' prints `200 legacy-basic 9300,400`: alice signs up for business (9300 cents), PATCHes her subscription to the archived 400-cent legacy-basic plan, and the next renewal bills 400. On main the same requests print `200 business 9300,9300`."
+    },
+    {
+      "id": "billing-started-day-test-vacuous",
+      "lens": "tests",
+      "file": "test/proration.test.ts",
+      "lines": [
+        49,
+        60
+      ],
+      "summary": "The table test named for the started-day rule (\"the day of the change included\") only uses changes at midnight, where the remaining time is a whole number of days and rounding up and rounding down agree. Remaining days computed with Math.floor still pass every proration and plan-change test, even though a change at 10:00 on Mar 21 then prorates 10 days instead of 11."
+    }
+  ]
+}

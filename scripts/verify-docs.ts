@@ -13,6 +13,8 @@ const files = execFileSync(
 )
   .split("\0")
   .filter(Boolean)
+  // An eval's change overlay is a partial tree: its links resolve only once it sits on its fixture.
+  .filter((path) => !/^evals\/[^/]+\/changes\//.test(path))
   .filter((path) => existsSync(resolve(root, path)));
 
 const errors: string[] = [];

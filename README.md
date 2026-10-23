@@ -362,6 +362,13 @@ design step runs through `architect` and `arena`. Thanks, Matt.
 Every skill whose name also appears in pstack is ported from it. See
 [pstack](#pstack).
 
+`code-review`, `prototype`, and `research` start from Matt Pocock's skills of
+the same names. `code-review` runs a panel of persona subagents. Its
+personas draw on pstack's comment sicko and on
+[Addy Osmani's agent-skills](https://github.com/addyosmani/agent-skills) (MIT):
+its code reviewer, security auditor, test engineer, and code simplification
+skill.
+
 `reflect` also covers Matt Pocock's `retro`: it can review any session and
 routes each lesson either to a skill or to the project's agent environment.
 
@@ -372,6 +379,7 @@ routes each lesson either to a skill or to the project's agent environment.
 - `background-terminals`
 - `benchmark-checklist`
 - `blast-radius`
+- `code-review`
 - `codebase-design`
 - `correct`
 - `create-formal-verification-skill`

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Stand-in for ssh: runs the remote command locally against the fake host
+# $STUB_HOSTS/HOST, with /srv/ paths mapped into it. Logs each call to $STUB_LOG.
+set -uo pipefail
+
+while (( $# > 0 )); do
+  case $1 in
+    -o | -p | -i | -l) shift 2 ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+host=${1#*@}
+shift
+command=$*
+printf 'ssh %s %s\n' "$host" "$command" >>"$STUB_LOG"
+
+root="$STUB_HOSTS/$host"
+if [[ ! -d $root || -e $root/.unreachable ]]; then
+  printf 'ssh: connect to host %s port 22: Connection refused\n' "$host" >&2
+  exit 255
+fi
+cd "$root" || exit 255
+exec bash -c "${command//\/srv\//$root/srv/}"

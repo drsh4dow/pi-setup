@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# shipit: build, upload, deploy, and roll back releases. See README.md.
+set -Eeuo pipefail
+
+SHIPIT_HOME=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# shellcheck source=lib/common.sh
+source "$SHIPIT_HOME/lib/common.sh"
+# shellcheck source=lib/config.sh
+source "$SHIPIT_HOME/lib/config.sh"
+# shellcheck source=lib/hosts.sh
+source "$SHIPIT_HOME/lib/hosts.sh"
+# shellcheck source=lib/remote.sh
+source "$SHIPIT_HOME/lib/remote.sh"
+# shellcheck source=lib/lock.sh
+source "$SHIPIT_HOME/lib/lock.sh"
+# shellcheck source=lib/releases.sh
+source "$SHIPIT_HOME/lib/releases.sh"
+# shellcheck source=lib/build.sh
+source "$SHIPIT_HOME/lib/build.sh"
+# shellcheck source=lib/upload.sh
+source "$SHIPIT_HOME/lib/upload.sh"
+# shellcheck source=lib/deploy.sh
+source "$SHIPIT_HOME/lib/deploy.sh"
+# shellcheck source=lib/rollback.sh
+source "$SHIPIT_HOME/lib/rollback.sh"
+# shellcheck source=lib/status.sh
+source "$SHIPIT_HOME/lib/status.sh"
+
+# Subcommands, in help order. Each NAME runs cmd_NAME.
+COMMANDS=(
+  "build|pack the build output into an artifact in dist/"
+  "upload|upload an artifact to the artifact store"
+  "deploy|deploy an artifact to every host of an environment"
+  "rollback|point an environment back at an older release"
+  "releases|list the releases on each host of an environment"
+)
+
+usage() {
+  local entry
+  printf 'usage: shipit COMMAND [ARG...]\n\ncommands:\n'
+  for entry in "${COMMANDS[@]}"; do
+    printf '  %-10s %s\n' "${entry%%|*}" "${entry#*|}"
+  done
+}
+
+is_command() {
+  local entry
+  for entry in "${COMMANDS[@]}"; do
+    if [[ ${entry%%|*} == "$1" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+main() {
+  local command=${1:-}
+  case $command in
+    "" | -h | --help | help)
+      usage
+      return 0
+      ;;
+  esac
+  is_command "$command" || die "$E_USAGE" "unknown command '$command' (see shipit help)"
+  shift
+  load_config "$(config_file)"
+  "cmd_$command" "$@"
+}
+
+trap 'shipit_failed $? "$BASH_COMMAND"' ERR
+main "$@"

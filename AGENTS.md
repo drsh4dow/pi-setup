@@ -16,6 +16,14 @@ submodule as read-only reference and keep application imports on the installed
 `effect` and `@effect/*` packages. If it is absent, initialize it with
 `git submodule update --init --recursive`.
 
+## Working tree
+
+The user commits to `main` in this checkout while agents work. Make changes in
+a worktree at `.worktrees/<branch>`
+(`git worktree add .worktrees/<branch> -b <branch>`). Before reporting or
+merging, run `git log HEAD..main` there, and rebase onto `main` when it moved,
+so the merge stays linear and keeps the user's commits.
+
 ## Agent skills
 
 The engineering skills read this repository's config record in `docs/agents/`.

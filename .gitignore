@@ -21,3 +21,4 @@ mcp-onboarding.json
 /agent/mcp.log.1
 /docs/research/
 /evals/*/results/
+.worktrees/

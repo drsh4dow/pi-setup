@@ -93,10 +93,36 @@ describe("the scripted user", () => {
     assert.equal(decision.kind, "stop");
   });
 
-  test("takes as merge-ready only the PRs named in a paragraph that says so", () => {
+  test("takes as merge-ready only the PRs a sentence says are ready now", () => {
     const text =
       "Opened #3 into the integration branch.\n\nThe final PR #9 is merge-ready: CI green, review threads resolved.\n\n- #4 still has a failing check.";
 
-    assert.deepEqual(mergeReadyClaims(text), [9]);
+    assert.deepEqual(
+      mergeReadyClaims(text).map((claim) => claim.pr),
+      [9],
+    );
+  });
+
+  test("a plan to reach merge-ready is not a claim", () => {
+    // The first two sentences made the smoke run's user merge both final PRs early.
+    const plans = [
+      "A PR writer (bt-27) is fixing those passages. The babysitter (bt-25) is still driving #5 to merge-ready.",
+      "- **Babysitter (bt-12) on #8:** checking that claim, replying with the disproof and resolving the thread, then confirming merge-ready.",
+      "- a babysitter (bt-25), taking #5 to merge-ready in drive mode;",
+      "#6 is not merge-ready yet: one thread is open.",
+      "I'll tell you when #7 is ready to merge.",
+    ];
+
+    assert.deepEqual(plans.flatMap(mergeReadyClaims), []);
+  });
+
+  test("a claim without a PR number in its sentence takes the number from its paragraph", () => {
+    const text =
+      "Final PR #12 has green CI and every thread resolved. It is now merge-ready, and merging is yours.";
+
+    assert.deepEqual(
+      mergeReadyClaims(text).map((claim) => claim.pr),
+      [12],
+    );
   });
 });

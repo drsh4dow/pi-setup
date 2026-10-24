@@ -26,21 +26,40 @@ For anything else, use your proposed default.`;
 const INTAKE_TOPICS =
   /\b(base branch|target environment|environment|deploy(?:ment)? signal|live[- ]check|credentials|publication|publish)\b/i;
 
-const MERGE_READY =
-  /merge[- ]ready|ready (?:for you )?to merge|ready for (?:your )?merge|please merge|ready for you to merge/i;
+// A claim states that a PR is ready now. "Driving #5 to merge-ready" or "merge once it is ready"
+// is a plan, not a claim.
+const MERGE_READY_CLAIM =
+  /\b(?:is|are|it's|now)\s+(?:now\s+)?(?:merge[- ]ready|ready (?:for you )?to merge|ready for (?:your )?merge)\b|\bplease merge\b|\byou can (?:now )?merge\b|^\W*merge[- ]ready\W*[:—]/im;
 
-/** The PR numbers a text calls merge-ready: `#12` or `/pull/12` on a line that says so. */
-export function mergeReadyClaims(text: string): number[] {
-  const claimed = new Set<number>();
-  const paragraphs = text.split(/\n\s*\n|\n(?=[-*\d])/);
+const NOT_YET =
+  /\bnot\b|n't\b|\b(?:until|once|before|when|if|after|toward|towards)\b|\bto merge[- ]ready\b/i;
 
-  for (const paragraph of paragraphs) {
-    if (!MERGE_READY.test(paragraph)) continue;
+export interface MergeReadyClaim {
+  readonly pr: number;
+  /** The sentence that made the claim, kept so a reader can audit every merge the user made. */
+  readonly sentence: string;
+}
 
-    for (const match of paragraph.matchAll(/(?:#|\/pull\/)(\d+)\b/g)) claimed.add(Number(match[1]));
+const prNumbers = (text: string) =>
+  [...text.matchAll(/(?:#|\/pull\/)(\d+)\b/g)].map((match) => Number(match[1]));
+
+/** The PRs a text calls merge-ready now: `#12` or `/pull/12` in the claiming sentence, or else in its paragraph. */
+export function mergeReadyClaims(text: string): MergeReadyClaim[] {
+  const claims = new Map<number, string>();
+
+  for (const paragraph of text.split(/\n\s*\n|\n(?=\s*[-*|\d])/)) {
+    for (const sentence of paragraph.split(/(?<=[.!?])\s+|\n/)) {
+      if (!MERGE_READY_CLAIM.test(sentence) || NOT_YET.test(sentence)) continue;
+
+      const named = prNumbers(sentence);
+
+      for (const pr of named.length > 0 ? named : prNumbers(paragraph)) {
+        if (!claims.has(pr)) claims.set(pr, sentence.trim().slice(0, 300));
+      }
+    }
   }
 
-  return [...claimed];
+  return [...claims].map(([pr, sentence]) => ({ pr, sentence }));
 }
 
 /** Text with its code and URLs removed, where a `?` is a query string rather than a question. */

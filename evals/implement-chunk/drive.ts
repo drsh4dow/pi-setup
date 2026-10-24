@@ -37,6 +37,8 @@ export const HumanMerge = Schema.Struct({
   at: Schema.String,
   pr: Schema.Int,
   ok: Schema.Boolean,
+  /** The orchestrator's sentence the user took as the merge-ready claim; absent in older records. */
+  claim: Schema.optionalKey(Schema.String),
   detail: Schema.String,
 });
 
@@ -126,7 +128,7 @@ class HumanMerger {
     const merged: number[] = [];
 
     texts.forEach((text, index) => {
-      for (const pr of mergeReadyClaims(text)) {
+      for (const { pr, sentence } of mergeReadyClaims(text)) {
         const key = `${pr}@${index}`;
 
         if (!open.has(pr) || this.#handled.has(key)) continue;
@@ -146,6 +148,7 @@ class HumanMerger {
           at: new Date().toISOString(),
           pr,
           ok,
+          claim: sentence,
           detail: (ok ? result.stdout : result.stderr).trim().slice(0, 500),
         });
 

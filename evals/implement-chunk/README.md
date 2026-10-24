@@ -95,8 +95,10 @@ No prompt and no ticket names a trap. Each one is a metric.
 - **Later stops.** A question about an intake fact gets the sheet again and counts as a
   **re-ask**. Any other question gets "use your proposed default". A stop without a question gets
   a nudge to carry on, which counts as a **status request**.
-- **Merging.** It merges only a final PR (base `main`) that the orchestrator's text has called
-  merge-ready, with `gh pr merge --merge` as actor `human`.
+- **Merging.** It merges only a final PR (base `main`) that a sentence of the orchestrator's text
+  calls merge-ready now, with `gh pr merge --merge` as actor `human`. A plan such as "driving #5
+  to merge-ready" is not a claim. Each merge records its claiming sentence in `drive.json`, so a
+  reader can audit it.
 
 Every reply counts as a human turn. A run is capped at `--max-turns` (10), `--timeout-minutes`
 (180), and `--max-cost-usd` (60, root plus children). At the cost cap, every process carrying the

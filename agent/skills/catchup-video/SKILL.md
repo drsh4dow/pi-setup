@@ -22,3 +22,5 @@ Show what came of each thing the user asked for, and whether it is done, still r
 ## Render
 
 Render one silent landscape video, such as an mp4, with motion between slides. Every frame is the slide itself, edge to edge. Make the frames from the slides, never by recording a screen. Hold each slide long enough to read its words, at least one second for each three words it adds. Words inside a screenshot do not count. Before you open the video, look at one frame from each slide in the rendered file, and count the words it adds against its hold in that file. Fix any slide you cannot read in that time, render again, and check again.
+
+Run `node <skill dir>/scripts/render.ts --help` for how to write the slides as a deck and render it. It renders the video, then checks it: it measures each slide's hold in the rendered file and writes one frame per slide next to the video.

@@ -55,10 +55,25 @@ export default defineConfig({
         "tsc --project agent/skills/statechart/scripts/tsconfig.json",
         "cd agent/skills/statechart/scripts && TLA2TOOLS=/nonexistent/tla2tools.jar node --test --test-reporter=dot test/statechart.test.ts",
       ],
-      "verify:catchup-scripts": [
-        "tsc --project agent/skills/catchup/scripts/tsconfig.json",
-        "node --test --test-reporter=dot agent/skills/catchup/scripts/test/*.test.ts",
-      ],
+      // The catchup-video tests launch Chromium, whose zygote crashes under automatic file
+      // tracking, so the cache fingerprints these inputs instead and restores no outputs.
+      "verify:catchup-scripts": {
+        command: [
+          "tsc --project agent/skills/catchup/scripts/tsconfig.json",
+          "node --test --test-reporter=dot agent/skills/catchup/scripts/test/*.test.ts",
+          "tsc --project agent/skills/catchup-video/scripts/tsconfig.json",
+          "node --test --test-reporter=dot agent/skills/catchup-video/scripts/test/*.test.ts",
+        ],
+        cache: {
+          input: [
+            "agent/skills/catchup/scripts/**",
+            "agent/skills/catchup-video/scripts/**",
+            "agent/skills/statechart/scripts/**",
+            "bun.lock",
+          ],
+          output: [],
+        },
+      },
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",

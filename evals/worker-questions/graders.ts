@@ -27,7 +27,15 @@ interface Tip {
 }
 
 function sh(dir: string, command: string) {
-  const result = spawnSync("sh", ["-c", command], { cwd: dir, encoding: "utf8", timeout: 120_000 });
+  // Under `node --test`, NODE_TEST_CONTEXT would make the gate's own `node --test` skip its files.
+  const { NODE_TEST_CONTEXT: _, ...env } = process.env;
+
+  const result = spawnSync("sh", ["-c", command], {
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 120_000,
+    env,
+  });
 
   return { exit: result.status, out: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() };
 }

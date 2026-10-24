@@ -146,7 +146,7 @@ export function prepareWorkdir({ scenario, armRoot, outputDir }: PrepareOptions)
     });
   }
 
-  if (scenario.fakeGitHub) preparePriorWatch(workdir, armRoot, outputDir);
+  if (scenario.fakeGitHub === "babysit-pr-42") preparePriorWatch(workdir, armRoot, outputDir);
 
   return workdir;
 }

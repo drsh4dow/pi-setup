@@ -123,7 +123,7 @@ function displayCommand(run: PlannedRun, args: readonly string[]): string {
 }
 
 function runEnv(run: PlannedRun): NodeJS.ProcessEnv {
-  if (!run.scenario.fakeGitHub) return candidateEnv();
+  if (run.scenario.fakeGitHub === null) return candidateEnv();
 
   return { ...candidateEnv(), ...fakeGitHubEnv(run.dir) };
 }
@@ -180,11 +180,12 @@ function prepare(run: PlannedRun): Prepared {
 function reap(run: PlannedRun, workdir: string) {
   if (workdir !== "") killProcessesIn(workdir);
 
-  if (run.scenario.fakeGitHub) killProcessesWithEnv("FAKEGH_STATE", fakeGitHubPaths(run.dir).state);
+  if (run.scenario.fakeGitHub === "babysit-pr-42")
+    killProcessesWithEnv("FAKEGH_STATE", fakeGitHubPaths(run.dir).state);
 }
 
 async function execute(run: PlannedRun, settings: Settings): Promise<RunRecord> {
-  if (run.scenario.fakeGitHub) installBabysitWatcher(run.arm.root);
+  if (run.scenario.fakeGitHub === "babysit-pr-42") installBabysitWatcher(run.arm.root);
 
   const { workdir, checks } = prepare(run);
 

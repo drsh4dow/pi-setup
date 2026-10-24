@@ -26,6 +26,9 @@ export type Project =
   | { readonly kind: "fixture"; readonly fixture: string }
   | { readonly kind: "clone" };
 
+/** The stand-in for GitHub on the run's PATH: the babysit fake serving PR #42 (fakegh.ts). */
+export type FakeGitHub = "babysit-pr-42";
+
 export interface Scenario {
   readonly id: ScenarioId;
   readonly project: Project;
@@ -39,8 +42,7 @@ export interface Scenario {
    * directory under ~/.local/state, whose path the repository name fixes.
    */
   readonly exclusive: string | null;
-  /** Puts the fake `gh` on the run's PATH, serving PR #42. */
-  readonly fakeGitHub: boolean;
+  readonly fakeGitHub: FakeGitHub | null;
   /** Paths under the working directory whose modification times setup records. */
   readonly watchedPaths: readonly string[];
   /**
@@ -64,7 +66,7 @@ const DEFAULTS = {
   timeoutMinutes: 20,
   trials: 3,
   exclusive: null,
-  fakeGitHub: false,
+  fakeGitHub: null,
   watchedPaths: [],
   endsByTimeout: false,
   byDefault: true,
@@ -147,7 +149,7 @@ const table: Record<ScenarioId, Omit<Scenario, "id">> = {
     setup: "cosmetic-wake.sh",
     timeoutMinutes: 15,
     exclusive: "babysit-state",
-    fakeGitHub: true,
+    fakeGitHub: "babysit-pr-42",
     endsByTimeout: true,
     // Every print-mode run ends on a final message, so "no message for a cosmetic item" never shows.
     byDefault: false,

@@ -100,6 +100,7 @@ export interface Mapping {
   group?(v: Vars, facts: Facts): unknown;
   detail?(v: Vars, facts: Facts): unknown;
   readonly readerActions?: readonly string[];
+  readonly codeWords?: readonly string[];
   readonly regionNames?: readonly string[];
   readonly groupColors?: Readonly<Record<string, string | null | undefined>>;
   readonly legend?: Readonly<Partial<Record<Status, string>>>;

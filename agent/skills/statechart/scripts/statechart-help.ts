@@ -12,19 +12,19 @@ export const usage = (lines: string[]) => `Usage: ${lines.join("\n       ")}`;
 const FROM_SPEC = `from-spec SPEC.tla
   Checks each INVARIANT in SPEC.cfg in a separate TLC run. TLC stops at the first rule that a state
   breaks, and the separate runs find the rest. Each run also has the rule as a CONSTRAINT, so TLC
-  stops each path at its first state that breaks the rule, and a rule that stays broken reports
-  only the step that broke it. SPEC.cfg has SPECIFICATION and one INVARIANT line per rule. Each
-  PROPERTY, a rule about whole behaviors, gets one TLC run too, and the charts do not draw it. TLC
-  checks a PROPERTY with no [], <>, or ~> only in the initial states, and the command says so. A
-  rule listed as both INVARIANT and PROPERTY is checked once, as an INVARIANT. After those runs
-  print their results, one more run dumps the state graph and checks every INVARIANT on every
-  state in it, and then the command draws the charts. TLC goes down from the next-state action
-  through each \\/, \\E, LET, and definition, and names each step after the last definition on that
-  path. It stops at any other expression, such as /\\, IF, or CASE, so a definition inside one names
-  no step. Give each kind of step its own definition, and join them with \\/ in the next-state
-  action. The command warns when steps carry the name of the whole next-state action. The command
-  prints the config that it checks each model with, and stops when a config does not exist, with
-  the configs beside the spec.
+  stops each path at its first state that breaks the rule, and a rule that stays broken reports only
+  the step that broke it. SPEC.cfg has SPECIFICATION, and INVARIANT lines that name the rules, one
+  or more on each line. Each PROPERTY, a rule about whole behaviors, gets one TLC run too, and the
+  charts do not draw it. TLC checks a PROPERTY with no [], <>, or ~> only in the initial states, and
+  the command says so. A rule listed as both INVARIANT and PROPERTY is checked once, as an
+  INVARIANT. After those runs print their results, one more run dumps the state graph and checks
+  every INVARIANT on every state in it, and then the command draws the charts. TLC goes down from
+  the next-state action through each \\/, \\E, LET, and definition, and names each step after the
+  last definition on that path. It stops at any other expression, such as /\\, IF, or CASE, so a
+  definition inside one names no step. Give each kind of step its own definition, and join them with
+  \\/ in the next-state action. The command warns when steps carry the name of the whole next-state
+  action. The command prints the config that it checks each model with, and stops when a config does
+  not exist, with the configs beside the spec.
 
   --config FILE      The config for SPEC.tla. Default: SPEC.cfg next to the spec.
   --fixed FIXED.tla  The model of the open fix. It is a copy of the spec in a different file, such
@@ -61,7 +61,10 @@ const FROM_SPEC = `from-spec SPEC.tla
                      mapping's readerActions are enabled. The command prints the states and
                      arrows that the overview leaves out. The counts of states that work or
                      break a rule still include the states it leaves out. When no step in
-                     TLC's graph is a reader action, the overview draws every state.
+                     TLC's graph is a reader action, the overview draws every state. So when the
+                     reader takes no action, list in readerActions the actions that may never
+                     happen, such as a kill or a crash. The overview also draws every state when
+                     it has parallel regions, so drop the ": " from the labels to use --cover.
 
   With --fixed or --against, SPEC.tla (and FIXED.tla) models the code, and the command finds each
   condition of an action that no comment ties to code with a file and line, as in \\* pay.ts:120.
@@ -181,18 +184,19 @@ Output
                      cannot count them. Then one line per broken PROPERTY with its sentence,
                      which comes only from its own spec file, the reader states that repeat
                      forever, if any, and the TLC output that has its counterexample.
-  summary.json       The counts behind the chart. Each bug has counterexamples, how many model
-                     states end it, each with its own TLC trace; lastSteps, the steps that lead
-                     into it, most common first; and startsHere, whether a start state is in it.
-                     brokenProperties has each broken PROPERTY, its rule sentence, the reader
-                     states that repeat forever as repeats, and its TLC output. mixedStatus
-                     lists the states that break a rule in some cases. chartGroups counts the
-                     drawn states of each group, and mixedGroups lists the states in more than
-                     one group. With --cover, cover lists the states and arrows that the
-                     overview leaves out. With --fixed or --against, uncited has the conditions
-                     with no file and line for each code model. With --against, second.listed
-                     has what each config beside AGREED.tla expects, and each bug has the
-                     configs that list it.
+  summary.json       The counts behind the chart. Each bug has readerSteps, the numbered steps of
+                     its path, whoever takes them; modelSteps, the steps of its TLC trace;
+                     counterexamples, how many model states end it, each with its own TLC trace;
+                     lastSteps, the steps that lead into it, most common first; and startsHere,
+                     whether a start state is in it. brokenProperties has each broken PROPERTY, its
+                     rule sentence, the reader states that repeat forever as repeats, and its TLC
+                     output. mixedStatus lists the states that break a rule in some cases.
+                     chartGroups counts the drawn states of each group, and mixedGroups lists the
+                     states in more than one group. With --cover, cover lists the states and arrows
+                     that the overview leaves out. With --fixed or --against, uncited has the
+                     conditions with no file and line for each code model. With --against,
+                     second.listed has what each config beside AGREED.tla expects, and each bug has
+                     the configs that list it.
   tlc/               The config and the TLC output of each run. When the overview has regions,
                      from-spec also writes tlc/regions-all.mmd, the regions with every arrow, and
                      tlc/regions-proof.mmd, every state and step of TLC's graph in one region.

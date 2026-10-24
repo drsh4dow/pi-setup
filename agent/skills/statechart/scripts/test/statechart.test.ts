@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, posix, win32 } from "node:path";
+import { basename, delimiter, dirname, join, posix, resolve, win32 } from "node:path";
 import { test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1701,8 +1701,12 @@ const tools = (() => {
 const needsTlc = { skip: tools ? false : "cannot find TLC" };
 
 const realEntry = pathToFileURL(join(cacheDir(), "entry.mjs")).href;
-const lib = await loadRenderer().catch(() => null);
-const needsPng = { skip: lib ? false : "cannot install Pele and resvg" };
+let rendererError = "";
+const lib = await loadRenderer().catch((e: Error) => {
+  rendererError = `: ${e.message}`;
+  return null;
+});
+const needsPng = { skip: lib ? false : `cannot install Pele and resvg${rendererError}` };
 
 function fakeRenderer() {
   const xdg = mkdtempSync(join(tmpdir(), "xdg-"));
@@ -1865,6 +1869,14 @@ echo "mise ERROR $2 is not installed" >&2
 exit 1
 `;
 
+// mise installs the jar as tla2tools.jar in its tool folder, which the fake mise prints for where.
+// TLA2TOOLS can name a jar with any file name, so link it there under that name.
+function tlaplusHome() {
+  const home = mkdtempSync(join(tmpdir(), "tlaplus-home-"));
+  symlinkSync(resolve(tools!.jar), join(home, "tla2tools.jar"));
+  return home;
+}
+
 function outsideRepoWithoutTlc() {
   const root = mkdtempSync(join(tmpdir(), "statechart-outside-"));
   const at = join(root, "skill", "scripts");
@@ -1965,7 +1977,7 @@ test(
   needsTlc,
   () => {
     const { at, dir, env, calls } = outsideRepoWithoutTlc();
-    const tlcEnv = { ...env, TLAPLUS_HOME: dirname(tools!.jar), TLC_JAVA: tools!.java };
+    const tlcEnv = { ...env, TLAPLUS_HOME: tlaplusHome(), TLC_JAVA: tools!.java };
     writeFileSync(join(dir, "upload.mmd"), fixture("upload.mmd"));
     const first = node("statechart.ts", ["from-chart", "upload.mmd"], dir, tlcEnv, at);
     assert.equal(first.status, 0, first.stderr);
@@ -1986,7 +1998,7 @@ test(
     const { at, dir, env, calls } = outsideRepoWithoutTlc();
     const tlcEnv = {
       ...env,
-      TLAPLUS_HOME: dirname(tools!.jar),
+      TLAPLUS_HOME: tlaplusHome(),
       TLC_JAVA: tools!.java,
       FAIL_AFTER_INSTALL: "1",
     };
@@ -2008,7 +2020,7 @@ test(
     const specs = join(dir, "specs");
     mkdirSync(specs);
     writeFileSync(join(specs, "upload.mmd"), fixture("upload.mmd"));
-    const tlcEnv = { ...env, TLAPLUS_HOME: dirname(tools!.jar), TLC_JAVA: tools!.java };
+    const tlcEnv = { ...env, TLAPLUS_HOME: tlaplusHome(), TLC_JAVA: tools!.java };
     const r = node("statechart.ts", ["from-chart", "upload.mmd"], specs, tlcEnv, at);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stderr, INSTALLING);
@@ -4231,8 +4243,29 @@ ${uncitedWarning}`;
     assert.equal(coded.status, 0, coded.stderr);
     assert.match(
       coded.stdout,
-      /These labels or causes read like code\. Write them in the reader's words in code\.map\.mjs:\n {2}retryCount hit maxRetries\n/,
+      /These labels or causes read like code\. Write them in the reader's words in code\.map\.mjs, or list each code name that the reader knows in its codeWords:\n {2}retryCount hit maxRetries\n/,
     );
+    writeFileSync(
+      join(dir, "known.map.mjs"),
+      `${readFileSync(join(dir, "code.map.mjs"), "utf8")}\nexport const codeWords = ["retryCount"];\n`,
+    );
+    const half = run("--map", "known.map.mjs", "--expect-broken", "NoFalseSaved");
+    assert.equal(half.status, 0, half.stderr);
+    assert.match(half.stdout, /read like code[^]*\n {2}retryCount hit maxRetries\n/);
+    writeFileSync(
+      join(dir, "known.map.mjs"),
+      `${readFileSync(join(dir, "code.map.mjs"), "utf8")}\nexport const codeWords = ["retryCount", "maxRetries"];\n`,
+    );
+    const allKnown = run("--map", "known.map.mjs", "--expect-broken", "NoFalseSaved");
+    assert.equal(allKnown.status, 0, allKnown.stderr);
+    assert.doesNotMatch(allKnown.stdout, /read like code/);
+    writeFileSync(
+      join(dir, "known.map.mjs"),
+      `${readFileSync(join(dir, "code.map.mjs"), "utf8")}\nexport const codeWords = "maxRetries";\n`,
+    );
+    const wrong = run("--map", "known.map.mjs", "--expect-broken", "NoFalseSaved");
+    assert.equal(wrong.status, 2, wrong.stderr);
+    assert.match(wrong.stderr, /codeWords must be a list of names/);
 
     writeFileSync(
       join(dir, "rev.map.mjs"),

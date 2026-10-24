@@ -72,6 +72,11 @@ if (typeof mapping.state !== "function")
   throw new Error("the mapping module must export state(vars)");
 if (args.view !== "customer" && typeof mapping.detail !== "function")
   throw new Error(`--view ${args.view} needs detail(vars) in the mapping module`);
+if (
+  mapping.codeWords !== undefined &&
+  (!Array.isArray(mapping.codeWords) || mapping.codeWords.some((w) => typeof w !== "string" || !w))
+)
+  throw new Error("the mapping module's codeWords must be a list of names, such as [\"runPi\"]");
 
 const rules = new Map<string, string>();
 const ruleReads = new Map<string, Set<string>>();
@@ -705,13 +710,19 @@ if (args.story) {
   });
   fs.writeFileSync(args.story, lines.join("\n"));
 }
+// A name that the reader knows from the code, such as a function an engineer maintains, is the
+// reader's word, so the check reads each label without the mapping's codeWords.
+const knownCode = (mapping.codeWords ?? []).map(
+  (w) => new RegExp(`(?<!\\w)${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\w)`, "g"),
+);
+const withoutCodeWords = (t: string) => knownCode.reduce((s, word) => s.replace(word, " "), t);
 const CODE_LIKE = /\b[a-z]{2,}[A-Z][a-z]|\b\w+_\w+\b|\b[A-Za-z_]\w*\(|\b[A-Z][a-z]+[A-Z][a-z]/;
 const codeLike = [
   ...new Set([
     ...(args.view === "customer" ? [...sorted, ...drawnLabels] : []),
     ...classes.map((c) => c.cause).filter(Boolean),
   ]),
-].filter((t) => CODE_LIKE.test(t));
+].filter((t) => CODE_LIKE.test(withoutCodeWords(t)));
 const secondOf = (c: ChartBug) =>
   c.introduced
     ? role === "fix"

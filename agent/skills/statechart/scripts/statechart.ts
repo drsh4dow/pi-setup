@@ -292,7 +292,7 @@ function readModel(spec: string, cfgFile: string, flag: string, inputs: Inputs):
       `${rel(cfgFile)} does not exist. Pass ${flag} with the config to check ${path.basename(spec)} with. ${
         beside.length
           ? `The configs beside it: ${beside.join(", ")}.`
-          : "A config has SPECIFICATION and one INVARIANT line per rule."
+          : "A config has SPECIFICATION and INVARIANT lines that name the rules, one or more on each line."
       }`,
     );
   }
@@ -558,7 +558,7 @@ async function draw({ now, other, uncited, map, work, out, title, comparing, cov
     );
   if (summary.codeLike.length)
     console.log(
-      `These labels or causes read like code. Write them in the reader's words in ${rel(map)}:\n${summary.codeLike.map((t) => `  ${t}`).join("\n")}\n`,
+      `These labels or causes read like code. Write them in the reader's words in ${rel(map)}, or list each code name that the reader knows in its codeWords:\n${summary.codeLike.map((t) => `  ${t}`).join("\n")}\n`,
     );
   const stories = fs.readFileSync(files.stories, "utf8").trimEnd();
   console.log(

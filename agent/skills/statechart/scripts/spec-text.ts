@@ -66,8 +66,14 @@ export const SCAFFOLD = (name: string, spec: string) => {
 // The actions that the reader takes, by action name, when the chart separates what the reader does
 // from what happens around the reader. facts.settled is true when only these are enabled. With
 // --cover, the overview keeps only the shortest path to each settled state, plus every bug path.
-// Leave it empty when every action counts the same.
+// When the reader takes no action, list the actions that may never happen, such as a kill or a
+// crash, so that a state where only those are left counts as settled. Otherwise leave it empty
+// when every action counts the same.
 export const readerActions = [];
+
+// Names from the code that the reader reads there, such as the functions that an engineer
+// maintains. The check for labels that read like code leaves these names out.
+// export const codeWords = ["runPi", "TERM_GRACE"];
 
 // The label for one model state. facts.enabled is the set of actions the state enables,
 // including steps that change no variable. A label "context: progress", such as

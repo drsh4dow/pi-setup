@@ -67,6 +67,8 @@ The update is done when the check exits 0, or when it fails only on a finding yo
   - **Real bug.** Every step is possible in the code, in that order. Report it as steps in the code's terms, such as "the terminal settles while `agent_settled` handlers run, so Pi defers its completion".
 - **`holds, expected violated`.** The known finding no longer reproduces. Confirm which change fixed it, then update [Known findings](#known-findings) and the config's `\* expect:` line.
 
+Read every result with the **statechart** skill, which says how to chart a broken PROPERTY, such as `CompletionWakesAgent`, as an invariant over settled states. In a scratch copy of the spec, `System` is the disjunction of the actions in `Fairness`. `CompactionHoldsNotification.cfg` breaks the invariant form of `NotificationReachesAgent`. `CompletionDeferredBehindRun.cfg` does not break the invariant form of `CompletionWakesAgent`, because its counterexample loops back to an earlier state, so give its TLC trace instead of a chart.
+
 ## What the model assumes
 
 - **One event loop.** Each action runs without interruption. `Effect.runFork` runs `delivery.flush` before `queue` returns. Between the model's answer and the next request, Pi awaits other extensions' `agent_end` and `agent_settled` handlers, so terminal events can land there. Only this extension handles `agent_before_settle`.

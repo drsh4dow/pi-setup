@@ -67,6 +67,8 @@ The update is done when the check exits 0, or when it fails only on a finding yo
   - **Real bug.** Every step is possible in the code, in that order. Report it as steps in the code's terms, such as "the launcher reads no `started`, then the pane child writes `started`".
 - **`holds, expected violated`.** The known finding no longer reproduces. Confirm which change fixed it, then update [Known findings](#known-findings) and the config's `\* expect:` line.
 
+Read every result with the **statechart** skill, which says how to chart a broken PROPERTY as an invariant over settled states. `NoProcessOutlivesLauncher`, `KillEndsRun`, and `NoRunLeftBehind` are properties. In a scratch copy of the spec, `System` is the disjunction of the actions in `Fairness`, and the invariant for `NoProcessOutlivesLauncher` is `Settled /\ launcher = "gone" => RunProcessesGone`. No reader takes an action here, so list the kills and Pi's own steps in `readerActions`.
+
 ## What the model assumes
 
 - **Process group.** Pi and the descendant stay in the pane child's process group, the group whose id is in `started`. A process that leaves it, such as a background terminal's job, is outside the model.

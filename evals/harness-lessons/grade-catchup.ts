@@ -3,11 +3,12 @@
 // what happened after the user's last message and lay out the three calls waiting on them; the
 // video run should also render a short silent video in the state folder and open it
 // (grade-catchup-video.ts). The gh and xdg-open stubs (catchup-stubs.ts) log what the run asked
-// of GitHub and the desktop.
+// of GitHub and the desktop. The run's paths name the live state folder; its files are read from
+// the copy the runner kept.
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, posix } from "node:path";
+import { join, posix } from "node:path";
 import { Schema } from "effect";
 import { argument, type Session } from "../lib/session.ts";
 import { catchupStubPaths, GhCall, OpenCall } from "./catchup-stubs.ts";
@@ -15,12 +16,12 @@ import { gitMaybe } from "./inspect.ts";
 import { judged } from "./judge.ts";
 import { all, flag, outcome, type FlagMetric, type Graded } from "./metrics.ts";
 import type { GradeInput } from "./record.ts";
+import { GIFT_REGISTRY_STATE } from "./scenarios.ts";
+import { liveStateFolder } from "./state-folder.ts";
 import { refsOf } from "./workdir.ts";
 
-/** The state folder of a run in `workdir`: the repository has no remote, so it is named after it. */
-export function stateFolder(workdir: string): string {
-  return join(homedir(), ".local", "state", "pi-agent", basename(workdir));
-}
+/** The state folder as the run saw it: the paths its tool calls name. */
+export const LIVE_STATE = liveStateFolder(GIFT_REGISTRY_STATE);
 
 const PRS = [51, 52, 53] as const;
 
@@ -81,7 +82,6 @@ interface ReadOnlyRules {
 /** What the run changed outside its state folder, or asked GitHub or the desktop to do. */
 function changesMade(input: GradeInput, { video }: ReadOnlyRules) {
   const { run, session, setup, outputDir } = input;
-  const folder = stateFolder(run.workdir);
   const problems: string[] = [];
   const allowed: string[] = [];
 
@@ -90,7 +90,7 @@ function changesMade(input: GradeInput, { video }: ReadOnlyRules) {
       const path = absolute(argument(operation, "path") ?? "", run.workdir);
       const line = `${operation.tool} ${path}`;
 
-      (isUnder(path, folder) ? allowed : problems).push(line);
+      (isUnder(path, LIVE_STATE) ? allowed : problems).push(line);
     }
 
     if (operation.tool === "bg_start") {
@@ -111,7 +111,7 @@ function changesMade(input: GradeInput, { video }: ReadOnlyRules) {
     const line = `xdg-open ${call.argv.join(" ")}`;
 
     const inFolder =
-      targets.length > 0 && targets.every((arg) => isUnder(absolute(arg, call.cwd), folder));
+      targets.length > 0 && targets.every((arg) => isUnder(absolute(arg, call.cwd), LIVE_STATE));
 
     (video && inFolder ? allowed : problems).push(line);
   }

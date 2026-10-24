@@ -1,9 +1,10 @@
 // The catchup-video scenario's video metrics: the newest mp4 in the state folder, probed,
-// opened, cut into its still slides, and whether the run looked at its frames.
+// opened, cut into its still slides, and whether the run looked at its frames. The files come from
+// the copy of the state folder the runner kept; the run's paths name the live one.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { basename, join, relative } from "node:path";
 import { Option, Schema } from "effect";
 import { argument, type Session } from "../lib/session.ts";
 import { catchupStubPaths } from "./catchup-stubs.ts";
@@ -13,8 +14,8 @@ import {
   callsDecidable,
   decodeOpenCall,
   jsonLines,
+  LIVE_STATE,
   readOnly,
-  stateFolder,
 } from "./grade-catchup.ts";
 import {
   all,
@@ -27,6 +28,7 @@ import {
   type Unknown,
 } from "./metrics.ts";
 import type { GradeInput } from "./record.ts";
+import { keptStateFolder } from "./state-folder.ts";
 
 /** Every mp4 under `folder`, newest first. */
 function videosIn(folder: string): string[] {
@@ -110,6 +112,7 @@ function videoRendered(video: string | undefined, folder: string, session: Sessi
   );
 }
 
+/** Whether the run opened `video`, given as the path the run wrote it at. */
 function opened(video: string | undefined, outputDir: string): FlagMetric {
   const calls = jsonLines(catchupStubPaths(outputDir).open, decodeOpenCall);
 
@@ -119,8 +122,7 @@ function opened(video: string | undefined, outputDir: string): FlagMetric {
 
   if (video === undefined) return flag(false, `no video; ${shown}`);
 
-  const targets = new Set([video, realpathSync(video)]);
-  const hit = calls.some((call) => call.argv.some((arg) => targets.has(absolute(arg, call.cwd))));
+  const hit = calls.some((call) => call.argv.some((arg) => absolute(arg, call.cwd) === video));
 
   return flag(hit, shown);
 }
@@ -242,18 +244,38 @@ function framesLooked(video: string | undefined, session: Session): FlagMetric {
   );
 }
 
+/** The metrics read from the newest mp4 in the state folder the runner kept. */
+function videoMetrics({ session, outputDir }: GradeInput) {
+  const kept = keptStateFolder(outputDir);
+
+  if (!existsSync(kept)) {
+    const none = unknown(`the runner kept no copy of the state folder at ${kept}`);
+
+    return { rendered: none, open: none, stills: none, looked: none };
+  }
+
+  const video = videosIn(kept)[0];
+  const written = video === undefined ? undefined : join(LIVE_STATE, relative(kept, video));
+
+  return {
+    rendered: videoRendered(video, kept, session),
+    open: opened(written, outputDir),
+    stills: slides(video, outputDir),
+    looked: framesLooked(video, session),
+  };
+}
+
 export async function catchupVideo(input: GradeInput): Promise<Graded> {
   const ask = asker(input);
-  const folder = stateFolder(input.run.workdir);
-  const video = videosIn(folder)[0];
   const reply = input.session.finalText;
+  const video = videoMetrics(input);
 
   const metrics = {
-    videoRendered: videoRendered(video, folder, input.session),
-    opened: opened(video, input.outputDir),
+    videoRendered: video.rendered,
+    opened: video.open,
     readOnlyExceptVideo: readOnly(input, { video: true }),
-    slides: slides(video, input.outputDir),
-    framesLooked: framesLooked(video, input.session),
+    slides: video.stills,
+    framesLooked: video.looked,
     replyLayout: await ask(
       "Is the final message shaped as one opening sentence naming what waits on the user, a link to the video file, one line naming work left that the agent can do itself, and then the calls waiting on the user, with no summary of what happened and no pictures or diagrams besides the video?",
     ),

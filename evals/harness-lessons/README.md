@@ -44,10 +44,16 @@ drives the babysit watcher of
 it launches Pi. A run whose setup check fails is recorded with the problems and is not
 launched.
 
-Each run reaps the background processes setup started in its working directory. The
-`cosmetic-wake` runs share the babysit state directory
-`~/.local/state/pi-agent/gift-registry/`, so they run one at a time, and each setup
-recreates that directory.
+Each run reaps the background processes setup started in its working directory.
+
+The harness names a run's state folder after the repository name of `origin`. A scenario
+names the state folder its runs write (`stateFolder` in `scenarios.ts`). `cosmetic-wake`,
+`catchup`, and `catchup-video` name `gift-registry`, so their runs share
+`~/.local/state/pi-agent/gift-registry/` and run one at a time. Once a run's Pi process ends,
+the runner moves that folder into the run's `state-folder/`, left empty when the run wrote
+none. The next run starts without it, and the grade reads the copy. A dry run whose checks
+all pass moves it too. The `cosmetic-wake` setup writes its babysit state there before the
+run.
 
 ## concurrent-main
 
@@ -110,8 +116,10 @@ in passing.
 
 [`setup/catchup.sh`](setup/catchup.sh) builds the repository the chat describes from the
 `gift-registry` fixture: the branches `fix-split-cent`, `page-size-50`, and `search-index`,
-one commit each, HEAD on `page-size-50`, and the screenshots untracked in `evidence/`. The
-repository has no remote, so the state folder is named after the working directory.
+one commit each, HEAD on `page-size-50`, and the screenshots untracked in `evidence/`. Its
+`origin` is a local bare repository, `<temp dir>/gift-registry.git`, holding `main` and the
+three branches as the chat's pushes left them. A push reaches no network, and the state
+folder is `~/.local/state/pi-agent/gift-registry/`.
 [`catchup-bin/`](catchup-bin/) goes first on PATH. Its `gh` serves the three PRs
 ([`catchup-prs.ts`](catchup-prs.ts)): #51 approved by priya-k, #52 unreviewed, and #53
 failing `lint`. A call that would change GitHub fails with a read-only token error. Its
@@ -135,8 +143,11 @@ The primary verdict wants `readOnly`, `namesEveryPr`, `callsDecidable`, and `win
 ## catchup-video
 
 The same chat, setup, and stubs, with the prompt `/skill:catchup-video` and a 30-minute
-timeout. The grade takes the newest mp4 in the state folder
-`~/.local/state/pi-agent/<working directory name>/`.
+timeout. The grade takes the newest mp4 in the run's `state-folder/`, the state folder as the
+runner kept it. The run's own paths name `~/.local/state/pi-agent/gift-registry/`, so
+`opened` and `readOnlyExceptVideo` match them against that path. A run graded without a kept
+copy, from before the runner kept one, leaves `videoRendered`, `opened`, `slides`, and
+`framesLooked` unknown.
 
 - `videoRendered`: `ffprobe` finds one video stream, no audio, and a landscape frame. The
   evidence gives the size, the duration, and the bytes.

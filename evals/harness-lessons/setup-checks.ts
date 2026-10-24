@@ -10,11 +10,11 @@ import { Schema } from "effect";
 import { parseSession } from "../lib/session.ts";
 import { PAGE_SIZE_TEST_OUTPUT } from "./catchup-chat.ts";
 import { catchupStubEnv, catchupStubPaths } from "./catchup-stubs.ts";
-import { stateFolder } from "./grade-catchup.ts";
 import { probeRetryOption } from "./grade-conduct.ts";
 import { gitMaybe, isAncestor } from "./inspect.ts";
 import { BOT_EDIT_TEXT } from "./fakegh-state.ts";
-import type { Scenario, ScenarioId } from "./scenarios.ts";
+import { GIFT_REGISTRY_STATE, type Scenario, type ScenarioId } from "./scenarios.ts";
+import { liveStateFolder } from "./state-folder.ts";
 import {
   BABYSIT_STATE,
   attentionBatch,
@@ -159,13 +159,25 @@ function catchupChecks(context: CheckContext): SetupCheck[] {
     gitMaybe(context.workdir, ["show", "search-index:migrations/0042_gifts_registry_id.sql"]) ?? "";
 
   const status = readFileSync(join(context.outputDir, "setup-status.txt"), "utf8");
+  const origin = git(context, ["remote", "get-url", "origin"]);
+  const heads = git(context, ["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads"]);
+
+  const pushed = git(context, ["ls-remote", "--heads", "origin"])
+    .split("\n")
+    .map((line) => line.replace("\t", " "))
+    .join("\n");
 
   return [
     onBranch(context, "page-size-50"),
     ...["fix-split-cent", "page-size-50", "search-index"].map((branch) =>
       ahead(context, `main..${branch}`, 1),
     ),
-    check("the repository has no remote", git(context, ["remote"]) === ""),
+    check(
+      "origin is a local repository named gift-registry",
+      origin.startsWith("/") && origin.endsWith(`/${GIFT_REGISTRY_STATE}.git`),
+      origin,
+    ),
+    check("origin holds every branch at its local head", pushed === heads, pushed),
     check(
       "the index migration on search-index has no trailing newline",
       migration.startsWith("CREATE INDEX") && !migration.endsWith("\n"),
@@ -218,8 +230,8 @@ function catchupChecks(context: CheckContext): SetupCheck[] {
     ),
     check(
       "the run's state folder does not exist yet",
-      !existsSync(stateFolder(context.workdir)),
-      stateFolder(context.workdir),
+      !existsSync(liveStateFolder(GIFT_REGISTRY_STATE)),
+      liveStateFolder(GIFT_REGISTRY_STATE),
     ),
   ];
 }

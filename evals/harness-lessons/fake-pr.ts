@@ -5,12 +5,14 @@
 
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { Option, Schema } from "effect";
 import { gitOutput, writeAtomically } from "../lib/pi-run.ts";
 import type { FakeGitHub } from "./fakegh-state.ts";
 import { initialFakeGitHub, withBotEdit } from "./fakegh-state.ts";
+import { GIFT_REGISTRY_STATE } from "./scenarios.ts";
+import { liveStateFolder } from "./state-folder.ts";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
 
@@ -36,7 +38,7 @@ export function fakeGitHubEnv(outputDir: string): NodeJS.ProcessEnv {
 }
 
 /** Every babysit state of the fake repository, cleared before each run. */
-export const BABYSIT_ROOT = join(homedir(), ".local", "state", "pi-agent", "gift-registry");
+export const BABYSIT_ROOT = liveStateFolder(GIFT_REGISTRY_STATE);
 
 /** The state directory the babysit skill names for one PR: `<repo>/babysit/<pr>`. */
 export const BABYSIT_STATE = join(BABYSIT_ROOT, "babysit", "42");

@@ -37,6 +37,7 @@ import { scenarios, type Scenario } from "./scenarios.ts";
 import { catchupStubEnv } from "./catchup-stubs.ts";
 import { fakeGitHubEnv, fakeGitHubPaths } from "./fake-pr.ts";
 import { dryRunChecks, setupChecks, type SetupCheck } from "./setup-checks.ts";
+import { keepStateFolder, liveStateFolder } from "./state-folder.ts";
 import { killProcessesWithEnv, prepareWorkdir, snapshot } from "./workdir.ts";
 
 export interface Arm {
@@ -209,6 +210,12 @@ function reap(run: PlannedRun, workdir: string) {
     killProcessesWithEnv("FAKEGH_STATE", fakeGitHubPaths(run.dir).state);
 }
 
+/** Moves the state folder the run owns into its output directory, so the next run starts clean. */
+function keepState(run: PlannedRun) {
+  if (run.scenario.stateFolder !== null)
+    keepStateFolder({ live: liveStateFolder(run.scenario.stateFolder), outputDir: run.dir });
+}
+
 async function execute(run: PlannedRun, settings: Settings): Promise<RunRecord> {
   if (run.scenario.fakeGitHub === "babysit-pr-42") installBabysitWatcher(run.arm.root);
 
@@ -253,6 +260,7 @@ async function execute(run: PlannedRun, settings: Settings): Promise<RunRecord> 
   );
 
   reap(run, workdir);
+  keepState(run);
 
   const session = sessionFile(sessionDir);
 
@@ -278,6 +286,9 @@ async function dryRun(run: PlannedRun, settings: Settings): Promise<boolean> {
   reap(run, workdir);
 
   const all = [...checks, ...slow];
+
+  // A failed check may be a state folder this run did not write; it stays where it is.
+  if (all.every((check) => check.ok)) keepState(run);
   const command = displayCommand(run, piArgs(run, settings, "<session-dir>", workdir));
   const timeout = settings.timeoutMinutes ?? run.scenario.timeoutMinutes;
 
@@ -409,7 +420,7 @@ async function main() {
     let failed = 0;
 
     await runPool(plan, concurrency, async (run) => {
-      const ok = await exclusively(run.scenario.exclusive, () => dryRun(run, settings));
+      const ok = await exclusively(run.scenario.stateFolder, () => dryRun(run, settings));
 
       if (!ok) failed += 1;
     });
@@ -427,7 +438,7 @@ async function main() {
   let finished = 0;
 
   await runPool(plan, concurrency, async (run) => {
-    const record = await exclusively(run.scenario.exclusive, () => execute(run, settings));
+    const record = await exclusively(run.scenario.stateFolder, () => execute(run, settings));
 
     writeAtomically(join(run.dir, "run.json"), `${JSON.stringify(record, null, 2)}\n`);
     finished += 1;

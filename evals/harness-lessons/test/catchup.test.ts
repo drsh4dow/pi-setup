@@ -2,21 +2,24 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { Option, Schema } from "effect";
 import { argument, parseSession, sinceLastUserMessage } from "../../lib/session.ts";
 import { catchupChat } from "../catchup-chat.ts";
 import { catchupStubEnv, catchupStubPaths, GhCall, OpenCall } from "../catchup-stubs.ts";
 import { gradeDirectory } from "../grade.ts";
-import { catchup, stateFolder } from "../grade-catchup.ts";
+import { catchup } from "../grade-catchup.ts";
 import { catchupVideo } from "../grade-catchup-video.ts";
 import type { Metric } from "../metrics.ts";
 import type { RunRecord } from "../record.ts";
+import { GIFT_REGISTRY_STATE } from "../scenarios.ts";
+import { keptStateFolder, liveStateFolder } from "../state-folder.ts";
 import {
   bash,
   call,
   edit,
+  git,
   input,
   prepared,
   read,
@@ -42,11 +45,17 @@ const evidence = (metric: Metric | undefined) =>
 /** A read-only metric's problems, without the changes it allowed. */
 const problems = (metric: Metric | undefined) => evidence(metric).split("\nallowed: ")[0] ?? "";
 
-/** The catchup working directory after setup, its state folder removed when the tests end. */
+/**
+ * The state folder the run's tool calls name. The tests never write it: a run's files are read
+ * from the copy the runner keeps in the output directory.
+ */
+const LIVE = liveStateFolder(GIFT_REGISTRY_STATE);
+
+/** The catchup working directory after setup, its local origin removed when the tests end. */
 function where(): Prepared {
   const at = prepared("catchup");
 
-  temporary(stateFolder(at.workdir));
+  temporary(dirname(git(at.workdir, "remote", "get-url", "origin")));
 
   return at;
 }
@@ -274,7 +283,7 @@ test("catchup passes a read-only reply that checked every PR and names each one"
     [
       bash("gh pr list"),
       read("evidence/checkout-before.png"),
-      write(join(stateFolder(at.workdir), "chart.json"), "{}"),
+      write(join(LIVE, "chart.json"), "{}"),
     ],
     GOOD_REPLY,
   );
@@ -309,7 +318,7 @@ test("catchup fails a reply that changed the repository, tried to merge, and sho
 
   stub(at, "gh", ["pr", "view", "51"]);
   stub(at, "gh", ["pr", "merge", "51"]);
-  stub(at, "xdg-open", [join(stateFolder(at.workdir), "chart.png")]);
+  stub(at, "xdg-open", [join(LIVE, "chart.png")]);
   writeFileSync(join(at.workdir, "migrations", "0042_gifts_registry_id.sql"), "CREATE INDEX x;\n");
 
   const run = session(
@@ -345,10 +354,15 @@ test("catchup fails a reply that changed the repository, tried to merge, and sho
   );
 });
 
-/** A silent video of still color slides, 1.5 s each, in the run's state folder. */
+/**
+ * A silent video of still color slides, 1.5 s each, in the run's state folder as the runner kept
+ * it. Returns the path the run wrote it at.
+ */
 function renderVideo(at: Prepared, { size = "320x180", colors = ["red", "blue"] } = {}): string {
-  const folder = stateFolder(at.workdir);
-  const video = join(folder, "catchup", "catchup.mp4");
+  const video = {
+    live: join(LIVE, "catchup", "catchup.mp4"),
+    kept: join(keptStateFolder(at.outputDir), "catchup", "catchup.mp4"),
+  };
 
   const inputs = colors.flatMap((color) => [
     "-f",
@@ -359,7 +373,7 @@ function renderVideo(at: Prepared, { size = "320x180", colors = ["red", "blue"] 
 
   const streams = colors.map((_, index) => `[${index}]`).join("");
 
-  mkdirSync(join(folder, "catchup"), { recursive: true });
+  mkdirSync(dirname(video.kept), { recursive: true });
   execFileSync("ffmpeg", [
     "-v",
     "error",
@@ -369,23 +383,23 @@ function renderVideo(at: Prepared, { size = "320x180", colors = ["red", "blue"] 
     `${streams}concat=n=${colors.length}:v=1`,
     "-pix_fmt",
     "yuv420p",
-    video,
+    video.kept,
   ]);
 
-  return video;
+  return video.live;
 }
 
 test("catchup-video passes a rendered, opened, landscape video whose frames the run looked at", async () => {
   const at = where();
   const video = renderVideo(at);
-  const frame = join(stateFolder(at.workdir), "catchup", "frame-1.png");
+  const frame = join(LIVE, "catchup", "frame-1.png");
 
   stub(at, "gh", ["pr", "status"]);
   stub(at, "xdg-open", [video]);
 
   const run = session(
     [
-      write(join(stateFolder(at.workdir), "catchup", "slides.html"), "<html></html>"),
+      write(join(LIVE, "catchup", "slides.html"), "<html></html>"),
       call("bg_start", { command: `ffmpeg -i slides.html ${video}`, title: "render" }),
       bash(`ffmpeg -ss 0.7 -i ${video} -frames:v 1 ${frame}`),
       read(frame),
@@ -414,6 +428,8 @@ test("catchup-video passes a rendered, opened, landscape video whose frames the 
 test("catchup-video fails without a video and leaves the slide metrics undecided", async () => {
   const at = where();
 
+  mkdirSync(keptStateFolder(at.outputDir));
+
   stub(at, "xdg-open", [join(at.workdir, "README.md")]);
 
   const graded = await catchupVideo(
@@ -440,6 +456,30 @@ test("catchup-video fails without a video and leaves the slide metrics undecided
   );
   assert.match(problems(graded.metrics.readOnlyExceptVideo), /xdg-open .*README\.md/);
   assert.equal(graded.primary, "fail");
+});
+
+test("catchup-video leaves the video metrics undecided for a run the runner kept no state of", async () => {
+  const at = where();
+
+  stub(at, "xdg-open", [join(LIVE, "catchup.mp4")]);
+
+  const graded = await catchupVideo(
+    input(
+      "catchup-video",
+      at,
+      session([bash(`xdg-open ${join(LIVE, "catchup.mp4")}`)], "Done."),
+      stubJudge(true),
+    ),
+  );
+
+  const metrics = values(graded.metrics);
+
+  assert.deepEqual(
+    [metrics.videoRendered, metrics.opened, metrics.slides, metrics.framesLooked],
+    ["unknown", "unknown", "unknown", "unknown"],
+  );
+  assert.equal(metrics.readOnlyExceptVideo, true, evidence(graded.metrics.readOnlyExceptVideo));
+  assert.equal(graded.primary, "unknown");
 });
 
 test("catchup-video fails a portrait video that was never opened", async () => {

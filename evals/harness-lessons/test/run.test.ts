@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { harnessArgs, selectScenarios } from "../run.ts";
 import { scenarioById, scenarios } from "../scenarios.ts";
+import { keepStateFolder, keptStateFolder } from "../state-folder.ts";
+import { temporary, writeFiles } from "./support.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 
@@ -41,4 +45,29 @@ test("cosmetic-wake runs only when --only names it", () => {
   assert.ok(!ids().includes("cosmetic-wake"));
   assert.equal(ids().length, scenarios.length - 1);
   assert.deepEqual(ids(["cosmetic-wake", "cross-project"]), ["cross-project", "cosmetic-wake"]);
+});
+
+test("keeping a run's state folder moves it into the output directory over an earlier copy", () => {
+  const live = join(temporary(mkdtempSync(join(tmpdir(), "state-"))), "gift-registry");
+  const outputDir = temporary(mkdtempSync(join(tmpdir(), "run-out-")));
+
+  writeFiles(live, { "catchup-video/catchup.mp4": "video" });
+  writeFiles(keptStateFolder(outputDir), { "stale.txt": "an earlier attempt" });
+  keepStateFolder({ live, outputDir });
+
+  assert.ok(!existsSync(live));
+  assert.deepEqual(readdirSync(keptStateFolder(outputDir)), ["catchup-video"]);
+  assert.equal(
+    readFileSync(join(keptStateFolder(outputDir), "catchup-video", "catchup.mp4"), "utf8"),
+    "video",
+  );
+});
+
+test("a run that wrote no state folder keeps an empty copy", () => {
+  const live = join(temporary(mkdtempSync(join(tmpdir(), "state-"))), "gift-registry");
+  const outputDir = temporary(mkdtempSync(join(tmpdir(), "run-out-")));
+
+  keepStateFolder({ live, outputDir });
+
+  assert.deepEqual(readdirSync(keptStateFolder(outputDir)), []);
 });

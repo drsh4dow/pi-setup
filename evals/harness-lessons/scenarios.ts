@@ -44,10 +44,11 @@ export interface Scenario {
   readonly timeoutMinutes: number;
   readonly trials: number;
   /**
-   * Runs naming the same resource never overlap. The cosmetic-wake runs share the babysit state
-   * directory under ~/.local/state, whose path the repository name fixes.
+   * The state folder the runs write (state-folder.ts), named by the repository name of the
+   * working directory's `origin`, or none. Runs naming the same folder never overlap, and the
+   * runner moves the folder into each run's output directory once the run ends.
    */
-  readonly exclusive: string | null;
+  readonly stateFolder: string | null;
   readonly fakeGitHub: FakeGitHub | null;
   /**
    * The chat the run continues instead of starting fresh, as session JSONL for the working
@@ -72,11 +73,17 @@ const fixture = (name: string): Project => ({ kind: "fixture", fixture: name });
 
 const clone: Project = { kind: "clone" };
 
+/**
+ * The state folder of the gift-registry scenarios: their `origin` names the repository
+ * gift-registry, as the story's `acme/gift-registry` does.
+ */
+export const GIFT_REGISTRY_STATE = "gift-registry";
+
 const DEFAULTS = {
   setup: null,
   timeoutMinutes: 20,
   trials: 3,
-  exclusive: null,
+  stateFolder: null,
   fakeGitHub: null,
   seededChat: null,
   watchedPaths: [],
@@ -160,7 +167,7 @@ const table: Record<ScenarioId, Omit<Scenario, "id">> = {
     project: fixture("gift-registry"),
     setup: "cosmetic-wake.sh",
     timeoutMinutes: 15,
-    exclusive: "babysit-state",
+    stateFolder: GIFT_REGISTRY_STATE,
     fakeGitHub: "babysit-pr-42",
     endsByTimeout: true,
     // Every print-mode run ends on a final message, so "no message for a cosmetic item" never shows.
@@ -185,6 +192,7 @@ const table: Record<ScenarioId, Omit<Scenario, "id">> = {
     ...DEFAULTS,
     project: fixture("gift-registry"),
     setup: "catchup.sh",
+    stateFolder: GIFT_REGISTRY_STATE,
     fakeGitHub: "catchup-prs",
     seededChat: catchupChat,
     prompt: "/skill:catchup",
@@ -194,6 +202,7 @@ const table: Record<ScenarioId, Omit<Scenario, "id">> = {
     project: fixture("gift-registry"),
     setup: "catchup.sh",
     timeoutMinutes: 30,
+    stateFolder: GIFT_REGISTRY_STATE,
     fakeGitHub: "catchup-prs",
     seededChat: catchupChat,
     prompt: "/skill:catchup-video",

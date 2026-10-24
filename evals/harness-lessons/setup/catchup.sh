@@ -2,8 +2,9 @@
 # The gift-registry repository as the seeded chat left it (see catchup-chat.ts): main has split
 # gifts, registry pages, and search; fix-split-cent, page-size-50, and search-index hold the
 # commits behind PRs #51, #52, and #53; the two screenshots of the split-gift page sit untracked
-# in evidence/; HEAD is on page-size-50, where the chat last ran the tests. The repository has no
-# remote, so the run's state folder is named after the working directory.
+# in evidence/; HEAD is on page-size-50, where the chat last ran the tests. origin is a local bare
+# repository named gift-registry holding main and the three branches, as the chat's pushes left
+# it, so nothing reaches the network and the run's state folder is named gift-registry.
 set -euo pipefail
 
 HERE="$(dirname "$(readlink -f "$0")")"
@@ -180,6 +181,12 @@ sed -i 's/PAGE_SIZE = 20/PAGE_SIZE = 50/' src/registry.js
 sed -i 's/shows 20 gifts/shows 50 gifts/; s/length, 20)/length, 50)/' test/registry.test.js
 git add -A
 commit "2026-10-24T14:47:00Z" "Show 50 gifts per registry page"
+
+origin="$(mktemp -d)/gift-registry.git"
+git init -q --bare -b main "$origin"
+git remote add origin "$origin"
+git push -q -u origin main fix-split-cent search-index page-size-50
+git remote set-head origin main
 
 mkdir -p evidence
 cp "$HERE/catchup/checkout-before.png" "$HERE/catchup/checkout-after.png" evidence/

@@ -1,0 +1,9 @@
+{
+  "name": "gift-registry",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

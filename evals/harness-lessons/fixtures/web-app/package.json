@@ -1,0 +1,11 @@
+{
+  "name": "web-app",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "bash scripts/verify.sh",
+    "seed": "node scripts/seed.ts",
+    "report": "node scripts/report.ts"
+  }
+}

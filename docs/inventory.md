@@ -112,8 +112,9 @@ The agent loads these on its own when the trigger matches.
 - `handoff`: compact the conversation into a message for a fresh agent
 - `implement-chunk`: orchestrate a ticket and its sub-tickets through
   subagents to merge-ready PRs, then verify them live after merge
-- `restate-sharpened`: load the sharpen skill and restate the user's goals and
-  problem
+- `restate-sharpened`: rewrite a short task the way an expert would approach
+  it, list the decisions you need to make with a pick for each, and offer the
+  full plan
 
 ### Installed extensions
 

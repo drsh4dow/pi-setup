@@ -1,9 +1,10 @@
 # Pi setup
 
-My global configuration for [Pi](https://github.com/earendil-works/pi). You
-and the agent agree on what to build, and agents build it ticket by ticket.
-Then they test it on the running app, before the merge and again after
-deploy. Clone it to `~/.pi` and Pi loads it as is.
+My global configuration for [Pi](https://github.com/earendil-works/pi). For a
+small task, you describe it in a sentence and the agent turns it into a plan.
+For a bigger feature, you and the agent agree on what to build, and agents
+build it ticket by ticket. Then they test it on the running app, before the
+merge and again after deploy. Clone it to `~/.pi` and Pi loads it as is.
 
 ## Install
 
@@ -21,6 +22,22 @@ issues live, where the domain docs are, and which checks the code must pass.
 Web search needs `PERPLEXITY_API_KEY` and `EXA_API_KEY`.
 
 ## Workflow
+
+### Short tasks
+
+When the work fits in one session, describe it in a sentence or two and run
+`/restate-sharpened <task>`. The agent tells you what it thinks you want and
+why. Then it rewrites your task the way an expert would approach it. It says
+what the expert would do that you didn't ask for, what source material they
+would start from, which tools they would use, and how you could check the
+result without taking the agent's word for it.
+
+At the end it lists the decisions you need to make, numbered, with its pick
+for each, and offers to write the full plan. Reply by number, like
+`1. agree. 2. drop it.`, ask for the plan, and it does the work. If the plan
+needs a spec or more than one PR, use the feature workflow below instead.
+
+### Features
 
 1. **Agree on the problem.** Alternate `/skill:grill-with-docs` with
    prototypes until you and the agent describe the problem the same

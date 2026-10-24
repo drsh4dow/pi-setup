@@ -49,6 +49,12 @@ export default defineConfig({
         "tsc --project agent/skills/babysit/scripts/tsconfig.json",
         "cd agent/skills/babysit/scripts && vp exec bun test --only-failures",
       ],
+      // TLA2TOOLS names a jar that does not exist, so the tests that need TLC skip instead of
+      // installing it with mise. Run them by hand as the statechart skill's AGENTS.md says.
+      "verify:statechart-scripts": [
+        "tsc --project agent/skills/statechart/scripts/tsconfig.json",
+        "cd agent/skills/statechart/scripts && TLA2TOOLS=/nonexistent/tla2tools.jar node --test --test-reporter=dot test/statechart.test.ts",
+      ],
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
@@ -81,6 +87,7 @@ export default defineConfig({
           "verify:gates",
           "verify:terminal-delivery-citations",
           "verify:babysit-scripts",
+          "verify:statechart-scripts",
           "test:extensions",
           "test:dumpfile",
           "test:evals",

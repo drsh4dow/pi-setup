@@ -61,6 +61,7 @@ theme needs a line here.
 | `improve-codebase-architecture`      | you   | Find modules that expose more than they do               |
 | `create-formal-verification-skill`   | you   | Model-check or prove the code where a bug costs the most |
 | `maintain-formal-verification-skill` | you   | Update the model when the code changes                   |
+| `statechart`                         | both  | Draw a TLA+ model's states, with each bug as a path      |
 | `correct`                            | you   | Turn a repeated agent mistake into a type, lint, or test |
 | `teach`                              | you   | Explain a body of work so a person understands it        |
 | `domain-modeling`                    | agent | Sharpen terms in `GLOSSARY.md` and record ADRs           |

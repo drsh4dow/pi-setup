@@ -60,7 +60,8 @@ To keep the codebase easy to work in:
 - `/skill:create-formal-verification-skill` writes a formal model of a state
   machine, a retry loop, or a race, and checks every order of events.
   `/skill:maintain-formal-verification-skill` updates the model when the code
-  changes.
+  changes. `/skill:statechart` draws the model as a chart, with each bug it
+  finds as a numbered path of states.
 - `/skill:correct` turns a mistake agents keep making into a type, lint rule,
   or test.
 - `/skill:reflect` turns what a session taught into skill edits.

@@ -26,5 +26,12 @@
     "reason": "verify:poteto-scripts type-checked agent/scripts, which is deleted; verify:babysit-scripts covers the one script that survived.",
     "owner": "drsh4dow",
     "until": "2026-12-31"
+  },
+  {
+    "path": "agent/skills/statechart/scripts/test/statechart.test.ts",
+    "rule": "empty-catch",
+    "reason": "Verbatim upstream pstack line: loadRenderer().catch(() => null) turns a renderer that cannot install into the explicit skip \"cannot install Pele and resvg\". Changing it would break the port that scripts/statechart-upstream-diff.ts checks.",
+    "owner": "drsh4dow",
+    "until": "2026-12-31"
   }
 ]

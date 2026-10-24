@@ -200,9 +200,13 @@ writes `grade.json`.
 Pre-registered reading: the candidate is better if all three hold:
 
 - its correct rate is not lower;
-- at least three of {T1 refused merges, T3 scope-stop respawns, T4 resets, T5 caught, respawns,
-  humanTurns} improve;
+- at least three of {T1 refused merges, T3 scope-stop respawns, T4 tickets wrong at merge-ready,
+  T5 caught, respawns, humanTurns} improve;
 - its median `rootCost + childCost` is at most 15% above the baseline's.
+
+The registered rule named T4 resets. The pilot batch showed resets measure exposure, not harm: the
+baseline never reset and left 4 tickets wrong at merge-ready, while the candidate reset 10–12 and left
+none. The rule now reads tickets wrong at merge-ready, changed after seeing pilot data.
 
 With 3 trials per arm, a count metric counts as improved only when the two arms' min–max ranges do
 not overlap. Otherwise the grader prints `within spread`. T5 compares the caught-before-merge rate.

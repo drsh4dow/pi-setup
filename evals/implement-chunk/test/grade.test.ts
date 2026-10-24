@@ -293,7 +293,7 @@ function armWith(
     Record<
       | "t1RefusedMerges"
       | "t3Respawns"
-      | "t4Resets"
+      | "t4WrongAtMergeReady"
       | "respawns"
       | "humanTurns"
       | "rootCost"
@@ -311,7 +311,7 @@ function armWith(
       correct: known(true),
       t1RefusedMerges: metric("t1RefusedMerges"),
       t3Respawns: metric("t3Respawns"),
-      t4Resets: metric("t4Resets"),
+      t4WrongAtMergeReady: metric("t4WrongAtMergeReady"),
       respawns: metric("respawns"),
       humanTurns: metric("humanTurns"),
       rootCost: metric("rootCost"),
@@ -337,7 +337,7 @@ describe("the pre-registered reading", () => {
     {
       t1RefusedMerges: [2, 3, 2],
       t3Respawns: [2, 2, 3],
-      t4Resets: [6, 8, 7],
+      t4WrongAtMergeReady: [6, 8, 7],
       respawns: [5, 6, 5],
       humanTurns: [4, 5, 4],
       rootCost: [8, 9, 8],
@@ -352,7 +352,7 @@ describe("the pre-registered reading", () => {
       {
         t1RefusedMerges: [0, 0, 1],
         t3Respawns: [0, 1, 0],
-        t4Resets: [0, 0, 0],
+        t4WrongAtMergeReady: [0, 0, 0],
         respawns: [5, 6, 5],
         humanTurns: [4, 4, 5],
         rootCost: [9, 9, 9],
@@ -368,7 +368,7 @@ describe("the pre-registered reading", () => {
       result.comparisons
         .filter((comparison) => comparison.verdict === "better")
         .map((comparison) => comparison.name),
-      ["T1 refused merges", "T3 scope-stop respawns", "T4 resets"],
+      ["T1 refused merges", "T3 scope-stop respawns", "T4 tickets wrong at merge-ready"],
     );
   });
 
@@ -378,7 +378,7 @@ describe("the pre-registered reading", () => {
       {
         t1RefusedMerges: [0, 1, 3],
         t3Respawns: [0, 1, 0],
-        t4Resets: [0, 0, 0],
+        t4WrongAtMergeReady: [0, 0, 0],
         respawns: [5, 6, 5],
         humanTurns: [4, 4, 5],
         rootCost: [8, 9, 8],
@@ -399,7 +399,7 @@ describe("the pre-registered reading", () => {
       {
         t1RefusedMerges: [0, 0, 0],
         t3Respawns: [0, 0, 0],
-        t4Resets: [0, 0, 0],
+        t4WrongAtMergeReady: [0, 0, 0],
         respawns: [5, 6, 5],
         humanTurns: [4, 4, 5],
         rootCost: [12, 12, 12],

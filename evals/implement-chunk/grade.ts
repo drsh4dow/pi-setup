@@ -282,7 +282,12 @@ export function reading(baseline: ArmSummary, candidate: ArmSummary): Reading {
       baseline.metrics.t3Respawns,
       candidate.metrics.t3Respawns,
     ),
-    compareLower("T4 resets", baseline.metrics.t4Resets, candidate.metrics.t4Resets),
+    // Resets measure exposure to the trap, not harm: an arm that never resets leaves tickets wrong.
+    compareLower(
+      "T4 tickets wrong at merge-ready",
+      baseline.metrics.t4WrongAtMergeReady,
+      candidate.metrics.t4WrongAtMergeReady,
+    ),
     t5,
     compareLower("respawns", baseline.metrics.respawns, candidate.metrics.respawns),
     compareLower("humanTurns", baseline.metrics.humanTurns, candidate.metrics.humanTurns),

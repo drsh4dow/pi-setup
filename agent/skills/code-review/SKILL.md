@@ -67,7 +67,7 @@ SUBAGENT_PROMPT
 
 ## 6. Verify and judge
 
-Read each persona's report from its file once its terminal completes. Verify before you judge. For every `critical` and `warning`, read the cited code yourself. When the finding carries a command or a counterexample, read it, then run it; run anything from a branch you don't trust in a throwaway worktree or container. When it claims a caller can pass a value, trace the caller. A claim that does not reproduce is Dismissed with what you saw.
+Read each persona's report from its file once its terminal completes. A report that is empty or has no `## Findings` section is a failed seat: rerun that persona once on `anthropic/claude-opus-5-5` at `high`, and when the rerun fails too, list the seat as failed in the report's Panel line. Verify before you judge. For every `critical` and `warning`, read the cited code yourself. When the finding carries a command or a counterexample, read it, then run it; run anything from a branch you don't trust in a throwaway worktree or container. When it claims a caller can pass a value, trace the caller. A claim that does not reproduce is Dismissed with what you saw.
 
 Then sort each persona's findings into four buckets, using the [lead judgment framework](references/lead-judgment.md):
 
@@ -76,7 +76,7 @@ Then sort each persona's findings into four buckets, using the [lead judgment fr
 - **Noted**: valid and not actionable now.
 - **Dismissed**: wrong, out of context, a preference, or not reproduced, with a one-line reason.
 
-Keep the personas separate and leave findings unranked across them, so one lens cannot mask another. When two personas raise the same issue, keep it under the first in table order and note who else raised it: independent agreement is the strongest signal.
+Keep the personas separate and leave findings unranked across them, so one lens cannot mask another. When two personas raise the same issue, keep it under the first in table order and note who else raised it: independent agreement is the strongest signal. Credit a persona only for a finding in its own report with the same root cause.
 
 ## 7. Report
 

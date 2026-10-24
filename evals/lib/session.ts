@@ -141,6 +141,24 @@ function toolOperations(lines: readonly SessionLine[]): ToolOperation[] {
   return result;
 }
 
+const UserLine = Schema.Struct({
+  type: Schema.Literal("message"),
+  message: Schema.Struct({ role: Schema.Literal("user") }),
+});
+
+const decodeUserLine = Schema.decodeUnknownOption(Schema.fromJsonString(UserLine));
+
+/**
+ * The session from its last user message on: the turn a `pi -p` run added to a session it
+ * continued, without the chat it was seeded with.
+ */
+export function sinceLastUserMessage(jsonl: string): string {
+  const lines = jsonl.split("\n").filter((line) => line.trim() !== "");
+  const last = lines.findLastIndex((line) => Option.isSome(decodeUserLine(line)));
+
+  return lines.slice(Math.max(last, 0)).join("\n");
+}
+
 export function parseSession(jsonl: string): Session {
   const lines = jsonl
     .split("\n")

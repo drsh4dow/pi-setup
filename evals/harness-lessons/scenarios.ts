@@ -43,6 +43,11 @@ export interface Scenario {
    */
   readonly exclusive: string | null;
   readonly fakeGitHub: FakeGitHub | null;
+  /**
+   * The chat the run continues instead of starting fresh, as session JSONL for the working
+   * directory's real path. The run's own turn starts at the prompt, its last user message.
+   */
+  readonly seededChat: ((cwd: string) => string) | null;
   /** Paths under the working directory whose modification times setup records. */
   readonly watchedPaths: readonly string[];
   /**
@@ -67,6 +72,7 @@ const DEFAULTS = {
   trials: 3,
   exclusive: null,
   fakeGitHub: null,
+  seededChat: null,
   watchedPaths: [],
   endsByTimeout: false,
   byDefault: true,

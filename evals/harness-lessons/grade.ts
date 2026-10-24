@@ -10,7 +10,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseArgs } from "node:util";
-import { parseSession, type Session } from "../lib/session.ts";
+import { parseSession, sinceLastUserMessage, type Session } from "../lib/session.ts";
 import { runPool } from "../lib/pool.ts";
 import { graders } from "./graders.ts";
 import { cachedJudge, piJudge, redactingJudge, type Judge } from "./judge.ts";
@@ -73,8 +73,12 @@ export async function gradeDirectory(
   const scenario = scenarioById(run.scenario);
   const sessionPath = join(dir, "session.jsonl");
 
+  // A run that continued a seeded chat is graded on its own turn only.
+  const own = (jsonl: string) =>
+    scenario.seededChat === null ? jsonl : sinceLastUserMessage(jsonl);
+
   const session = existsSync(sessionPath)
-    ? parseSession(readFileSync(sessionPath, "utf8"))
+    ? parseSession(own(readFileSync(sessionPath, "utf8")))
     : undefined;
 
   const status = validity(run, session, scenario);

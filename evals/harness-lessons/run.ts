@@ -10,7 +10,15 @@
 //     [--timeout-minutes <n>] [--dry-run]
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -90,6 +98,11 @@ export function harnessArgs({
   return [...args, "--skill", join(workdir, ".agents", "skills")];
 }
 
+/** The seeded chat's file in the run's session directory, named as Pi names its sessions. */
+export function seededSessionPath(sessionDir: string): string {
+  return join(sessionDir, "2026-10-24T14-02-00-000Z_seeded-chat.jsonl");
+}
+
 function piArgs(
   run: PlannedRun,
   settings: Settings,
@@ -104,6 +117,7 @@ function piArgs(
     settings.thinking,
     "--session-dir",
     sessionDir,
+    ...(run.scenario.seededChat === null ? [] : ["--session", seededSessionPath(sessionDir)]),
     ...harnessArgs({ scenario: run.scenario, armRoot: run.arm.root, workdir }),
     run.scenario.prompt,
   ];
@@ -213,6 +227,10 @@ async function execute(run: PlannedRun, settings: Settings): Promise<RunRecord> 
 
   const sessionDir = mkdtempSync(join(tmpdir(), "pi-sessions-"));
   const timeoutMs = (settings.timeoutMinutes ?? run.scenario.timeoutMinutes) * 60_000;
+
+  if (run.scenario.seededChat !== null)
+    writeFileSync(seededSessionPath(sessionDir), run.scenario.seededChat(realpathSync(workdir)));
+
   const started = Date.now();
 
   const result = await runPi(

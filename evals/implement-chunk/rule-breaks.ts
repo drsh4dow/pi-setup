@@ -38,8 +38,9 @@ function normalize(command: string): string {
   return text.replaceAll(/(^|[\s='"])~(?=\/)/g, "$1/HOME");
 }
 
+// A verb must end the word: `git merge-base` and `git rev-parse` read, `git merge` writes.
 const GIT_WRITE =
-  /\bgit\s+(?:-C\s+\S+\s+)?(commit|push|merge|rebase|cherry-pick|revert|am|apply|stash|tag|reset|checkout|switch|restore|rm|mv|add|worktree\s+(?:add|remove|prune))\b/;
+  /\bgit\s+(?:-C\s+\S+\s+)?(commit|push|merge|rebase|cherry-pick|revert|am|apply|stash|tag|reset|checkout|switch|restore|rm|mv|add|worktree\s+(?:add|remove|prune))(?![\w-])/;
 
 const GIT_BRANCH_WRITE =
   /\bgit\s+(?:-C\s+\S+\s+)?branch\s+(?!-a\b|-r\b|--list\b|--show-current\b|--contains\b|-v+\b|--format\b)(\S+)/;

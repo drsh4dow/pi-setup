@@ -115,23 +115,31 @@ export type Role =
   | "reviewer"
   | "other";
 
+// First match wins, so a "review fixes" unit is an implementer and a "PR body fixes" unit a PR writer.
 const ROLE_PATTERNS: readonly (readonly [Role, RegExp])[] = [
   ["live-verifier", /\blive[- ]verif/i],
   ["babysitter", /\bbabysit/i],
   [
     "pr-writer",
-    /\bpr writer\b|\bfinal pr\b.*\b(open|write|edit)|\b(open|write|edit)\b.*\bfinal pr\b/i,
+    /\bpr[- ]writer\b|\bopen (?:the )?(?:\w+ )?final PR\b|\bPR #?\d+ (?:title|body|text)\b|\bfinal PR (?:title|body|text)\b/i,
   ],
-  ["merger", /\bmerger\b|\bmerge\b|\bintegration branch\b|\brebase\b|\bretarget/i],
+  ["implementer", /\bimplement|\bfix(?:es)?\b|\bpolish\b|\bgrammar\b|\bprose\b|\bdocs?\b/i],
+  ["reviewer", /\bcode-review\b|\breview(?:er)?\b|\bexpert read|\breader\b|\bpersona\b/i],
   ["verifier", /\bverif|\bverdict\b/i],
-  ["reviewer", /\breview\b|\bpersona\b|\blens\b/i],
+  [
+    "merger",
+    /\bmerger?\b|\bintegration branch\b|\brebase|\bretarget|\bcleanup\b|\bdelete\b[^\n]{0,40}\bbranch/i,
+  ],
   ["explorer", /\bexplor/i],
-  ["implementer", /\bimplement|\bfix\b|\bTAL-\d+\b/i],
 ];
 
 /** The role a child session played, read from its name first and its assignment second. */
 export function roleOf(session: Pick<SessionFacts, "name" | "assignment">): Role {
-  for (const text of [session.name, session.assignment.slice(0, 600)]) {
+  // The name (`subagent: <id> <what>`) says the role; the brief's opening says it when the name does not.
+  for (const text of [
+    session.name.replace(/^subagent:\s*/, ""),
+    session.assignment.slice(0, 300),
+  ]) {
     for (const [role, pattern] of ROLE_PATTERNS) {
       if (pattern.test(text)) return role;
     }

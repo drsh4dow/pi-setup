@@ -1,12 +1,14 @@
-// The simulated parent. It answers the worker's questions and reviews its final report from the
-// scenario's `knowledge` as it stood at that moment, never from the graders' answer key, through
-// one cheap `pi -p` call per turn. Every turn is logged with its latency and cost.
+// The simulated parent. It answers the worker's questions from the scenario's `knowledge` as it
+// stood at that moment, and reviews a finished round from its report plus what it checks itself at
+// the branch tip (evidence.ts), never from the graders' answer key, through one `pi -p` call per
+// turn. Every turn is logged with its latency, cost, and what the review was shown.
 
 import { execFile } from "node:child_process";
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { candidateEnv } from "../lib/pi-run.ts";
 import { sessionCost } from "./cost.ts";
+import { renderEvidence, type ReviewEvidence } from "./evidence.ts";
 import type { Knowledge } from "./scenario.ts";
 
 export const DONT_KNOW = "I don't know; decide and report.";
@@ -164,19 +166,24 @@ export function answerPrompt({
   ].join("\n");
 }
 
+const REVIEW_ROLE =
+  "You are the parent agent of a coding worker. You spawned it with the brief below and you are busy with other units. You know only what the brief says, what is listed under WHAT_YOU_KNOW, and what you checked yourself under WHAT_YOU_SAW: the diff at the worker's branch tip, its changed paths against SCOPE, and the repository's gate run in a fresh clone of the tip. Trust WHAT_YOU_SAW over the report.";
+
 export function reviewPrompt({
   brief,
   knowledge,
   learned,
   report,
+  evidence,
 }: {
   brief: string;
   knowledge: Knowledge;
   learned: ReadonlySet<number>;
   report: string;
+  evidence: string;
 }): string {
   return [
-    ROLE,
+    REVIEW_ROLE,
     "",
     "<<<BRIEF",
     brief,
@@ -187,8 +194,14 @@ export function reviewPrompt({
     "<<<REPORT",
     report,
     "REPORT>>>",
+    "<<<WHAT_YOU_SAW",
+    evidence,
+    "WHAT_YOU_SAW>>>",
     "",
     "Decide whether to send it back for one more round. Send a directive only when one of these holds:",
+    "- the diff or the gate contradicts the report, such as a gate the report says passes failing at the tip, or a change the report claims missing from the diff;",
+    "- the gate fails at the tip, the branch is missing, or the work is left uncommitted;",
+    "- as far as the diff and the gate show, the change misses the brief's ACCEPTANCE;",
     "- the report leaves a question open that WHAT_YOU_KNOW answers;",
     "- the worker stopped at an edge of its authority that WHAT_YOU_KNOW lets you grant;",
     "- the worker reports a blocker that WHAT_YOU_KNOW says you have cleared;",
@@ -236,6 +249,8 @@ export interface ParentTurn {
   readonly via: "ask-parent" | "question-block" | "report";
   readonly elapsedSeconds: number;
   readonly input: string;
+  /** What the review saw at the branch tip, as rendered into its prompt; null for an answer. */
+  readonly shown: string | null;
   readonly reply: string;
   readonly latencyMs: number;
   readonly costUsd: number | null;
@@ -244,7 +259,7 @@ export interface ParentTurn {
 
 export interface Oracle {
   answer(question: string, via: "ask-parent" | "question-block"): Promise<string>;
-  review(report: string): Promise<Review>;
+  review(report: string, evidence: ReviewEvidence): Promise<Review>;
 }
 
 /**
@@ -279,6 +294,7 @@ export function parentOracle({
     kind: ParentTurn["kind"],
     via: ParentTurn["via"],
     input: string,
+    shown: string | null,
     prompt: (learned: ReadonlySet<number>) => string,
   ) => {
     const asked = now();
@@ -294,6 +310,7 @@ export function parentOracle({
       via,
       elapsedSeconds,
       input,
+      shown,
       reply,
       latencyMs: now() - asked,
       costUsd: completion.kind === "answered" ? (completion.costUsd ?? null) : null,
@@ -308,15 +325,17 @@ export function parentOracle({
 
   return {
     async answer(question, via) {
-      const reply = await turn("answer", via, question, (known) =>
+      const reply = await turn("answer", via, question, null, (known) =>
         answerPrompt({ brief, knowledge, learned: known, question }),
       );
 
       return reply === "" ? DONT_KNOW : clampSentences(reply);
     },
-    async review(report) {
-      const reply = await turn("review", "report", report, (known) =>
-        reviewPrompt({ brief, knowledge, learned: known, report }),
+    async review(report, evidence) {
+      const shown = renderEvidence(evidence);
+
+      const reply = await turn("review", "report", report, shown, (known) =>
+        reviewPrompt({ brief, knowledge, learned: known, report, evidence: shown }),
       );
 
       return parseReview(reply) ?? { kind: "accept" };

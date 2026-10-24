@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import {
   count,
   flag,
@@ -66,6 +66,8 @@ const ParentTurnSchema = Schema.Struct({
   via: Schema.Literals(["ask-parent", "question-block", "report"]),
   elapsedSeconds: Schema.Finite,
   input: Schema.String,
+  // Logs from before reviews saw the branch tip have no `shown`.
+  shown: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   reply: Schema.String,
   latencyMs: Schema.Finite,
   costUsd: Schema.NullOr(Schema.Finite),

@@ -19,14 +19,14 @@ export interface Condition {
 }
 
 /** The branch tip checked out alone, with the base as its `main`, as CI would see it. */
-interface Tip {
+export interface Tip {
   readonly dir: string;
   readonly baseSha: string;
   /** The round's fake GitHub, when the scenario has one. */
   readonly ghState: string | undefined;
 }
 
-function sh(dir: string, command: string) {
+export function sh(dir: string, command: string) {
   // Under `node --test`, NODE_TEST_CONTEXT would make the gate's own `node --test` skip its files.
   const { NODE_TEST_CONTEXT: _, ...env } = process.env;
 
@@ -68,8 +68,11 @@ function equals(tip: Tip, expression: string, expected: string | number | boolea
   return { name: `${expression} is ${wanted}`, ok: actual === wanted, detail: `got ${actual}` };
 }
 
+/** The repository's gate run at the tip: its exit status and combined output. */
+export const runGate = (tip: Tip) => sh(tip.dir, "sh scripts/check.sh");
+
 function gate(tip: Tip): Condition {
-  const result = sh(tip.dir, "sh scripts/check.sh");
+  const result = runGate(tip);
 
   return {
     name: "the gate passes at the branch tip",
@@ -276,9 +279,9 @@ export interface RoundState {
 }
 
 /** Runs `use` on a clone of the brief's branch tip, or answers absent when the branch does not exist. */
-function onTip<T>(
+export function onTip<T>(
   state: RoundState,
-  scenario: Scenario,
+  scenario: Pick<Scenario, "brief">,
   baseSha: string,
   use: (tip: Tip) => T,
 ): T | undefined {
@@ -364,7 +367,8 @@ export function followsWrongBelief({
   );
 }
 
-const covers = (entry: string, path: string) =>
+/** Whether a SCOPE entry, a path or a directory ending in `/`, covers `path`. */
+export const covers = (entry: string, path: string) =>
   path === entry || (entry.endsWith("/") && path.startsWith(entry));
 
 /**

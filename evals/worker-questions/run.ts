@@ -36,6 +36,7 @@ import {
   type PlannedRun,
   type Settings,
 } from "./launch.ts";
+import { reviewEvidence } from "./evidence.ts";
 import { parentOracle, piParent, type Oracle } from "./oracle.ts";
 import { questionBlock, serveQuestions } from "./protocol.ts";
 import type { RoundRecord, RunRecord } from "./record.ts";
@@ -165,7 +166,7 @@ async function answerQuestions(
 }
 
 async function converse(context: RunContext, brief: string): Promise<RunRecord["review"]> {
-  const { run, oracle } = context;
+  const { run, oracle, prepared } = context;
 
   let round = await launchRound(context, {
     prompt: brief,
@@ -177,7 +178,14 @@ async function converse(context: RunContext, brief: string): Promise<RunRecord["
 
   if (crashed(round)) return null;
 
-  const review = await oracle.review(round.finalText);
+  const review = await oracle.review(
+    round.finalText,
+    reviewEvidence({
+      brief: run.scenario.brief,
+      baseSha: prepared.baseSha,
+      workdir: prepared.workdir,
+    }),
+  );
 
   if (review.kind === "accept") return review;
 

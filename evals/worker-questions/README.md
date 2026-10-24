@@ -38,8 +38,20 @@ It never sees the grader's answer key. It answers in at most three sentences. Wh
 know, it says "I don't know; decide and report." A user-only call gets "That's the user's call;
 pick the reversible default and report it."
 
-As reviewer, it returns ACCEPT or one directive. A directive starts at most one follow-up round.
-Every turn is logged to `parent-log.jsonl` with its input, reply, latency, and cost.
+As reviewer, it sees what implement-chunk's parent checks for itself before it trusts a report.
+[`evidence.ts`](evidence.ts) computes it at the brief's branch tip, in a fresh clone with the base
+as `main`:
+
+- `git diff --stat main..HEAD`, and the diff cut at 400 lines with a truncation marker;
+- the changed paths outside the brief's SCOPE;
+- the exit status of `sh scripts/check.sh` and the last 40 lines of its output;
+- `git status --short` of the working directory, for work left uncommitted.
+
+The review never sees a grader condition. It returns ACCEPT or one directive, and sends a
+directive when the diff or the gate contradicts the report, or the change misses the brief's
+ACCEPTANCE as far as they show. A directive starts at most one follow-up round. Every turn is logged
+to `parent-log.jsonl` with its input, reply, latency, and cost. A review turn also records under
+`shown` what it saw at the tip.
 
 ### Arms
 
@@ -177,6 +189,11 @@ The spec left these open or got them wrong for this design. Each was decided her
   sentence: when AUTHORITY or a skill says a step needs the parent's answer, use the channel and
   carry on. The hardened AUTHORITY says "needs the parent's answer … by whatever channel your run
   gives you", so the wording is neutral across C, R, and L.
+- **The review reads the tip, not only the report.** A parent that judged the report alone accepted
+  a worker that misreported. That hurt A and C most, since they depend on the review round. The
+  review now sees the diff and the gate's result. It sees no grader condition: probed module
+  behavior and fake-`gh` state stay hidden, because a parent learns them only by reading code it
+  has not read.
 - **Graded on the branch, not the report.** Rounds are graded on the branch tip in a fresh clone, never on
   the report. A timed-out round still counts, graded as it stood.
 - **S7 unblocks on contact.** In `s7-expiry`, any parent contact counts as the operator logging
@@ -198,7 +215,7 @@ The spec left these open or got them wrong for this design. Each was decided her
 | `run.ts`, `launch.ts`                                                    | the runner, and how one round launches           |
 | `workdir.ts`                                                             | run setup, the worker environment, and snapshots |
 | `timeline.ts`                                                            | mid-run triggers                                 |
-| `oracle.ts`                                                              | the simulated parent                             |
+| `oracle.ts`, `evidence.ts`                                               | the simulated parent, and what its review sees   |
 | `protocol.ts`, `ask-parent.ts`, `bin/`                                   | the ask channel and `QUESTION:` parsing          |
 | `push-extension.ts`                                                      | the push channel                                 |
 | `fake-gh.ts`, `fake-aws.ts`, `tools-state.ts`                            | the fake tools                                   |

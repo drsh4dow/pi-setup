@@ -55,6 +55,10 @@ export default defineConfig({
         "tsc --project agent/skills/statechart/scripts/tsconfig.json",
         "cd agent/skills/statechart/scripts && TLA2TOOLS=/nonexistent/tla2tools.jar node --test --test-reporter=dot test/statechart.test.ts",
       ],
+      "verify:catchup-scripts": [
+        "tsc --project agent/skills/catchup/scripts/tsconfig.json",
+        "node --test --test-reporter=dot agent/skills/catchup/scripts/test/*.test.ts",
+      ],
       "test:extensions": {
         command:
           "node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
@@ -88,6 +92,7 @@ export default defineConfig({
           "verify:terminal-delivery-citations",
           "verify:babysit-scripts",
           "verify:statechart-scripts",
+          "verify:catchup-scripts",
           "test:extensions",
           "test:dumpfile",
           "test:evals",

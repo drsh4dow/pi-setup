@@ -12,7 +12,7 @@ export const ScenarioId = Schema.Literals([
   "bounded-recheck",
   "dependency-by-path",
   "cosmetic-wake",
-  "restate-plan-offer",
+  "restate-sharpened",
   "hand-edits-use-edit",
 ]);
 
@@ -154,10 +154,10 @@ const table: Record<ScenarioId, Omit<Scenario, "id">> = {
     prompt:
       "Babysit PR #42 until it's merge-ready. It was merge-ready at your last report; the watcher just woke you again.",
   },
-  "restate-plan-offer": {
+  "restate-sharpened": {
     ...DEFAULTS,
     project: fixture("http-client"),
-    setup: "restate-plan-offer.sh",
+    setup: "restate-sharpened.sh",
     prompt:
       "/restate-sharpened I want our release notes to also get posted to the team chat when we tag a release.",
   },

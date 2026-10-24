@@ -9,7 +9,7 @@ import {
   cosmeticWake,
   endsWithRecommendedDecisions,
   handEditsUseEdit,
-  restatePlanOffer,
+  restateSharpened,
   skillTuningMethod,
 } from "../grade-conduct.ts";
 import type { Metric } from "../metrics.ts";
@@ -193,51 +193,75 @@ test("cosmetic-wake leaves the primary undecided when the judge cannot run", asy
   assert.equal(graded.primary, "unknown");
 });
 
-const PLAN_REPLY = `Here is the sharpened request: post the release notes to the team chat on every tag.
+const SHARPENED_REPLY = `**What you're after.** Release notes should reach the team without anyone copying them over.
 
-Decisions:
+**Added.**
+- Post only on release tags, not every tag.
 
-1. Which chat? I recommend the #releases channel.
+**Approach.**
+1. Find where tags are pushed. Check: a test tag shows up in the workflow log.
+2. Post the notes from that step. Check: a dry run prints the message.
+
+**Decisions.**
+
+1. Which chat? My pick: the #releases channel.
 2. Post the full notes or a link?
-   Recommendation: a link with the first three entries.
+   Recommendation: a link with the first three entries.`;
 
-Want me to lay out the full executable plan?`;
-
-test("restate-plan-offer passes a reply ending in recommended decisions and a full-plan offer", async () => {
-  const graded = await restatePlanOffer(
+test("restate-sharpened passes an approach that ends in recommended decisions and changes no file", async () => {
+  const graded = await restateSharpened(
     input(
-      "restate-plan-offer",
-      preparedScratch("restate-plan-offer", scratchRepo({ "a.md": "a\n" })),
-      session([], PLAN_REPLY),
-    ),
-  );
-
-  assert.deepEqual(values(graded.metrics), {
-    offersFullPlan: true,
-    numberedDecisionsWithRecommendation: true,
-  });
-  assert.equal(graded.primary, "pass");
-  assert.deepEqual(
-    graded.crossChecks.map((check) => check.signal),
-    [true],
-  );
-});
-
-test("restate-plan-offer fails a reply whose decisions carry no recommendation and no plan offer", async () => {
-  const reply = "Decisions:\n\n1. Which chat?\n2. Full notes or a link?\n\nLet me know.";
-
-  const graded = await restatePlanOffer(
-    input(
-      "restate-plan-offer",
-      preparedScratch("restate-plan-offer", scratchRepo({ "a.md": "a\n" })),
-      session([], reply),
+      "restate-sharpened",
+      preparedScratch("restate-sharpened", scratchRepo({ "a.md": "a\n" })),
+      session([], SHARPENED_REPLY),
       stubJudge(false),
     ),
   );
 
   assert.deepEqual(values(graded.metrics), {
-    offersFullPlan: false,
+    defersPlan: false,
+    addedAndApproachSections: true,
+    numberedDecisionsWithRecommendation: true,
+    leavesTaskUnstarted: true,
+  });
+  assert.equal(graded.primary, "pass");
+  assert.deepEqual(
+    graded.crossChecks.map((check) => check.signal),
+    [false],
+  );
+});
+
+test("restate-sharpened fails a reply that offers the plan later", async () => {
+  const reply = `${SHARPENED_REPLY}\n\nShall I present the full executable plan?`;
+
+  const graded = await restateSharpened(
+    input(
+      "restate-sharpened",
+      preparedScratch("restate-sharpened", scratchRepo({ "a.md": "a\n" })),
+      session([], reply),
+      stubJudge(true),
+    ),
+  );
+
+  assert.equal(values(graded.metrics).defersPlan, true);
+  assert.equal(graded.primary, "fail");
+});
+
+test("restate-sharpened fails a reply that starts the task and leaves its decisions open", async () => {
+  const reply = "Done. Decisions:\n\n1. Which chat?\n2. Full notes or a link?\n\nLet me know.";
+  const where = preparedScratch("restate-sharpened", scratchRepo({ "a.md": "a\n" }));
+
+  writeFileSync(join(where.workdir, "notify.sh"), "#!/bin/sh\n");
+
+  const graded = await restateSharpened(
+    input("restate-sharpened", where, session([], reply), stubJudge(false)),
+  );
+
+  assert.deepEqual(values(graded.metrics), {
+    defersPlan: false,
+    addedAndApproachSections: false,
     numberedDecisionsWithRecommendation: false,
+    leavesTaskUnstarted: false,
   });
   assert.equal(graded.primary, "fail");
 });

@@ -14,7 +14,7 @@ const ARM_ROOT = "/home/dev/.pi/.worktrees/candidate-arm";
 
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
-    scenario: "restate-plan-offer",
+    scenario: "restate-sharpened",
     arm: "candidate",
     armRoot: ARM_ROOT,
     armHead: "0000000",
@@ -47,13 +47,10 @@ function jsonl(text: string, stopReason = "stop") {
 const scenario = (id: ScenarioId) => scenarioById(id);
 
 test("a run that exited 0 and ended its turn is valid", () => {
-  assert.deepEqual(
-    validity(record(), parseSession(jsonl("done")), scenario("restate-plan-offer")),
-    {
-      kind: "valid",
-      note: null,
-    },
-  );
+  assert.deepEqual(validity(record(), parseSession(jsonl("done")), scenario("restate-sharpened")), {
+    kind: "valid",
+    note: null,
+  });
 });
 
 test("timeouts, non-zero exits, missing sessions, other stop reasons, and failed setup are invalid", () => {
@@ -69,7 +66,7 @@ test("timeouts, non-zero exits, missing sessions, other stop reasons, and failed
   ];
 
   for (const [run, session, reason] of cases) {
-    const result = validity(run, session, scenario("restate-plan-offer"));
+    const result = validity(run, session, scenario("restate-sharpened"));
 
     assert.equal(result.kind, "invalid");
     assert.match(result.kind === "invalid" ? result.reason : "", reason);
@@ -94,12 +91,12 @@ test("a cosmetic-wake run that timed out waiting on its watcher after ending its
   );
 });
 
-const REPLY = `Sharpened: post the notes from ${ARM_ROOT} to chat.\n\n1. Which chat? I recommend #releases.\n\nShall I present the full executable plan?`;
+const REPLY = `**Added.** Post from ${ARM_ROOT} only on release tags.\n\n**Approach.** Post the notes from the release job.\n\n1. Which chat? I recommend #releases.`;
 
 function runDirectory(overrides: Partial<RunRecord> = {}, text = REPLY): string {
   const workdir = scratchRepo({ "a.md": "a\n" });
   const dir = temporary(mkdtempSync(join(tmpdir(), "grade-run-")));
-  const where = preparedScratch("restate-plan-offer", workdir);
+  const where = preparedScratch("restate-sharpened", workdir);
 
   writeFileSync(join(dir, "run.json"), JSON.stringify(record({ workdir, ...overrides })));
   writeFileSync(join(dir, "setup.json"), JSON.stringify(where.setup));
@@ -110,7 +107,7 @@ function runDirectory(overrides: Partial<RunRecord> = {}, text = REPLY): string 
 
 test("grading keeps the final text, caches judge answers, and hides the arm's root from the judge", async () => {
   const dir = runDirectory();
-  const first = stubJudge(true);
+  const first = stubJudge(false);
   const graded = await gradeDirectory(dir, "judge-model", first.judge);
 
   assert.equal(graded.primary, "pass");
@@ -119,7 +116,7 @@ test("grading keeps the final text, caches judge answers, and hides the arm's ro
   assert.doesNotMatch(first.requests[0]?.finalText ?? "", /candidate-arm/);
   assert.ok(existsSync(join(dir, "judge.json")));
 
-  const second = stubJudge(false);
+  const second = stubJudge(true);
   const regraded = await gradeDirectory(dir, "judge-model", second.judge);
 
   assert.equal(second.requests.length, 0);
@@ -131,7 +128,7 @@ test("a judge that could not run leaves its metric and the primary undecided, an
   const down = stubJudge("unavailable");
   const graded = await gradeDirectory(dir, "judge-model", down.judge);
 
-  assert.equal(graded.metrics.offersFullPlan?.kind, "unknown");
+  assert.equal(graded.metrics.defersPlan?.kind, "unknown");
   assert.equal(graded.primary, "unknown");
   assert.equal(existsSync(join(dir, "judge.json")), false);
 
@@ -165,9 +162,7 @@ function gradedRun(arm: string, primary: GradedRun["primary"], valid = true): Gr
     run: record({ arm }),
     validity: valid ? { kind: "valid", note: null } : { kind: "invalid", reason: "timed out" },
     primary,
-    metrics: valid
-      ? { offersFullPlan: { kind: "flag", value: primary === "pass", evidence: "" } }
-      : {},
+    metrics: valid ? { defersPlan: { kind: "flag", value: primary === "pass", evidence: "" } } : {},
     disagreements: [],
     finalText: "",
     judgeAnswers: null,
@@ -184,5 +179,5 @@ test("the report gives valid runs over total, the primary rate over decided runs
 
   assert.match(markdown, /\| baseline \| 2\/2 \| 0\/1 \(\+1\?\) \| 0\/2 \|/);
   assert.match(markdown, /\| candidate \| 1\/2 \| 1\/1 \| 1\/1 \|/);
-  assert.match(markdown, /## Invalid runs\n\n- restate-plan-offer candidate .* timed out/);
+  assert.match(markdown, /## Invalid runs\n\n- restate-sharpened candidate .* timed out/);
 });

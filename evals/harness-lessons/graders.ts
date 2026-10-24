@@ -10,7 +10,7 @@ import { newGate, vacuousPass } from "./grade-checks.ts";
 import {
   cosmeticWake,
   handEditsUseEdit,
-  restatePlanOffer,
+  restateSharpened,
   skillTuningMethod,
 } from "./grade-conduct.ts";
 import { concurrentMain, liveReaderRebase, liveRunVerify } from "./grade-live-checkout.ts";
@@ -27,6 +27,6 @@ export const graders: Record<ScenarioId, Grader> = {
   "bounded-recheck": boundedRecheck,
   "dependency-by-path": dependencyByPath,
   "cosmetic-wake": cosmeticWake,
-  "restate-plan-offer": restatePlanOffer,
+  "restate-sharpened": restateSharpened,
   "hand-edits-use-edit": handEditsUseEdit,
 };

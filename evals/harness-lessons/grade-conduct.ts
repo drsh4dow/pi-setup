@@ -1,5 +1,5 @@
 // Scenarios graded on how the run worked: measuring a skill change, reporting a cosmetic wake,
-// closing a restated request, and making hand edits.
+// sharpening a request before starting it, and making hand edits.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -267,8 +267,8 @@ function numberedLists(lines: readonly string[]): NumberedList[] {
 }
 
 /**
- * Whether the reply ends with a numbered list of decisions in which every item recommends an
- * option. A few lines after the list, such as the closing offer, still count as ending with it.
+ * Whether the reply ends with a numbered list of decisions in which every item recommends or picks
+ * an option. A few lines after the list, such as a closing line, still count as ending with it.
  */
 export function endsWithRecommendedDecisions(reply: string): FlagMetric {
   const lines = reply.trimEnd().split("\n");
@@ -277,7 +277,7 @@ export function endsWithRecommendedDecisions(reply: string): FlagMetric {
   if (last === undefined) return flag(false, "no numbered list");
 
   const trailing = lines.slice(last.end + 1).filter((line) => line.trim() !== "").length;
-  const unrecommended = last.items.filter((item) => !/recommend/i.test(item));
+  const unrecommended = last.items.filter((item) => !/recommend|\bpick/i.test(item));
 
   return flag(
     unrecommended.length === 0 && trailing <= 5,
@@ -285,26 +285,38 @@ export function endsWithRecommendedDecisions(reply: string): FlagMetric {
   );
 }
 
-export async function restatePlanOffer(input: GradeInput): Promise<Graded> {
+export async function restateSharpened(input: GradeInput): Promise<Graded> {
   const reply = input.session.finalText;
 
-  const offers = judged(
+  const defers = judged(
     await input.judge({
       question:
-        "Does the reply close by offering to present a full, executable plan? The offer may come just before a closing numbered list of decisions.",
+        "Does the reply hold its plan back for a later reply, for example by offering to present the full plan next?",
       finalText: reply,
       artifacts: [],
     }),
   );
 
+  const sections = flag(
+    /\bAdded\b/.test(reply) && /\bApproach\b/.test(reply),
+    "looked for Added and Approach headings",
+  );
+
   const numbered = endsWithRecommendedDecisions(reply);
+  const changed = changedFiles(input).map((file) => file.path);
+  const unstarted = flag(changed.length === 0, changed.join(", ") || "no files changed");
 
   return {
-    metrics: { offersFullPlan: offers, numberedDecisionsWithRecommendation: numbered },
-    primary: all(outcome(offers), outcome(numbered)),
+    metrics: {
+      defersPlan: defers,
+      addedAndApproachSections: sections,
+      numberedDecisionsWithRecommendation: numbered,
+      leavesTaskUnstarted: unstarted,
+    },
+    primary: all(not(outcome(defers)), outcome(sections), outcome(numbered), outcome(unstarted)),
     crossChecks: [
       {
-        judged: "offersFullPlan",
+        judged: "defersPlan",
         signal: /\b(?:full|complete|executable|detailed)\b[^.\n]{0,30}\bplan\b/i.test(
           reply.slice(-3000),
         ),

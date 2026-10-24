@@ -257,7 +257,7 @@ const CHECKS: Record<ScenarioId, (context: CheckContext) => SetupCheck[]> = {
       check("the run notes record the earlier report", existsSync(join(BABYSIT_STATE, "notes.md"))),
     ];
   },
-  "restate-plan-offer": (context) => [
+  "restate-sharpened": (context) => [
     check("v1.3.0 is tagged", git(context, ["tag", "--list", "v1.3.0"]) === "v1.3.0"),
     check(
       "the arm has the restate-sharpened prompt",

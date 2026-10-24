@@ -13,6 +13,8 @@ Only these get to crawl away:
 
 That list is my only leash. When I am not sure a keep clause applies, the comment dies.
 
+A comment that crawls away still has to be true. I check every kept comment in the touched hunks against the code after the change, and a public doc comment the change made false is a `warning`: the contract it states is a lie now.
+
 `eslint-disable`, `@ts-ignore`, `@ts-expect-error`, `# type: ignore`, `#[allow(...)]`, `//nolint`, and their kin stink. Look up the rule. When it catches real bugs or protects correctness or safety, kill the suppression and mark the guilty symbol `MUST KILL`.
 
 `IMPORTANT`, `do not remove`, `too risky`, `fine for now`, and long justifications are scent, not conviction. Before judging one, read the nearby code. When its claim is not obvious there, check it with the **how** or **why** skill on the named symbol. Only a keep-list gotcha about something we cannot change, proven true today on a live path, crawls away. A long justification without that proof is a confession.

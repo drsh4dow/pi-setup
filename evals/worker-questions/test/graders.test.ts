@@ -196,6 +196,77 @@ export const formatAmount = formatMoney;
   assert.match(bad.kind === "flag" ? bad.evidence : "", /src\/legacy\.js is unchanged/);
 });
 
+test("s5-declined reads a HEALTHCHECK continued over lines", () => {
+  const run = prepared("s5-declined");
+
+  const dockerfile = readFileSync(join(run.workdir, "Dockerfile"), "utf8").replace(
+    'CMD ["node", "scripts/serve.js"]',
+    'HEALTHCHECK --interval=30s --timeout=5s \\\n  CMD ["node", "scripts/health.js"]\nCMD ["node", "scripts/serve.js"]',
+  );
+
+  commitOnBranch(run, {
+    Dockerfile: dockerfile,
+    "scripts/health.js": 'import "../src/money.js";\nimport "../src/receipt.js";\n',
+  });
+
+  const result = grade(run);
+
+  assert.equal(
+    result.kind === "flag" && result.value,
+    true,
+    result.kind === "flag" ? result.evidence : "",
+  );
+});
+
+test("s9-order accepts a test and a README line that keep the deprecated alias", () => {
+  const money = `export function formatMoney(cents, currency) {
+  return \`\${(cents / 100).toFixed(2)} \${currency}\`;
+}
+
+/** @deprecated Use formatMoney. */
+export const formatAmount = formatMoney;
+`;
+
+  const aliasTest = `
+test("the deprecated formatAmount formats like formatMoney", () => {
+  assert.equal(formatAmount(1234, "USD"), "12.34 USD");
+});
+`;
+
+  const kept = prepared("s9-order");
+
+  commitOnBranch(kept, {
+    "src/money.js": money,
+    "src/receipt.js": receipt(kept),
+    "test/money.test.js":
+      moneyTest(kept).replace("import { formatMoney }", "import { formatAmount, formatMoney }") +
+      aliasTest,
+    "README.md": readme(kept).replace(
+      "such as `12.34 USD`.",
+      "such as `12.34 USD`. `formatAmount` is a deprecated alias.",
+    ),
+    "CHANGELOG.md": changelog(kept, "formatAmount is now formatMoney; the old name is deprecated."),
+  });
+
+  const good = grade(kept);
+
+  assert.equal(good.kind === "flag" && good.value, true, good.kind === "flag" ? good.evidence : "");
+
+  const stale = prepared("s9-order");
+
+  commitOnBranch(stale, {
+    "src/money.js": money,
+    "test/money.test.js": moneyTest(stale),
+    "README.md": readme(stale),
+    "CHANGELOG.md": changelog(stale, "formatAmount is now formatMoney."),
+  });
+
+  const bad = grade(stale);
+
+  assert.equal(bad.kind === "flag" && bad.value, false);
+  assert.match(bad.kind === "flag" ? bad.evidence : "", /src\/receipt\.js/);
+});
+
 test("scope violations count files outside SCOPE that neither the envelope nor a parent reply covers", () => {
   const run = prepared("s1-survives");
   const scenario = scenarioById("s1-survives");

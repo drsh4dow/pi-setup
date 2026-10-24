@@ -17,6 +17,7 @@ const TRANSITION_FRAMES = 12;
 const MIN_HOLD = 2;
 const SLACK = 0.5; // seconds a default hold adds past the word rule
 const MIN_DIAGRAM_TEXT = 28; // font pixels; smaller diagram text is hard to read in a video
+const EXAMPLE = path.join(import.meta.dirname, "example");
 
 const HELP = `Render a catchup video: a silent ${WIDTH}x${HEIGHT} mp4 of slides, then check it.
   node render.ts DECK --out OUT.mp4                render, then check
@@ -38,7 +39,8 @@ Each slide keeps the previous slide's picture. put adds a layer, or changes only
 fields it names on a layer that exists (null drops a field; a new kind replaces it).
 remove takes layers out. clear: true starts a new picture. Later layers draw on top.
 
-Every layer has kind and at: [x, y, width, height] in slide pixels.
+Every layer has kind and at: [x, y, width, height] in slide pixels. dim: true fades a
+layer, and dim: null brings it back.
   text       text, size (32 to 140, default 44). Write \\n for a line break.
   image      src (a PNG), fit: contain (default) or cover, crop: [x, y, w, h] in its
              pixels. at defaults to the whole slide.
@@ -52,6 +54,18 @@ on: ID puts a text, highlight, or arrow on image ID. Its at is then in that imag
 pixels, and it moves and scales with the image; a text keeps its width, height, and size.
 colors gives each meaning one hue: red, amber, green, blue, or violet. A layer's color
 names a meaning; without one it is ink.
+
+A deck that reads well, like the one in ${EXAMPLE}:
+  - One picture for the whole video: a column of cards, one per item, on every slide.
+    Dim the cards a slide is not about and put its point beside the card it is about.
+  - A title on every slide that says its point.
+  - Crop a screenshot to the part that changed and draw it at least 1000 pixels wide,
+    before above after, each labeled. Ring what changed with on.
+  - A choice gets one box per option side by side, the pick ringed and labeled.
+  - Anything you told the user earlier that turned out wrong goes on the slide of its
+    item, with what you said and what is true.
+  - The last slide brings every card back, with an arrow to what each waits on you for.
+Start from it: cp -r ${EXAMPLE} DIR, then edit DIR/deck.json.
 
 Words in text, bars, and diagrams count; words inside a screenshot do not. A slide holds
 max(${MIN_HOLD} s, 1 s per 3 words it adds) + ${SLACK} s. hold: SECONDS may lengthen it,
@@ -251,7 +265,7 @@ async function diagrams(deck: Deck): Promise<Map<string, string>> {
 function htmlLayer(p: Placed, svgs: Map<string, string>): string {
   const r = p.rect;
   const id = escapeHtml(p.id);
-  const box = `position:absolute;left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;color:${p.color};`;
+  const box = `position:absolute;left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px;color:${p.color};${p.dim ? "opacity:0.3;" : ""}`;
   switch (p.kind) {
     case "text":
       return `<div data-layer="${id}" data-fit style="${box}font-size:${p.size}px;line-height:1.2;white-space:pre-line"><span data-words>${escapeHtml(p.text)}</span></div>`;
@@ -272,7 +286,7 @@ function htmlLayer(p: Placed, svgs: Map<string, string>): string {
       const head = Math.min(30, length / 2);
       const [bx, by] = [x2 - ux * head, y2 - uy * head];
       const wing = head * 0.55;
-      return `<svg data-layer="${id}" style="position:absolute;left:${left}px;top:${top}px;width:${Math.max(1, Math.abs(r.w))}px;height:${Math.max(1, Math.abs(r.h))}px;overflow:visible;color:${p.color}"><path d="M${x1} ${y1}L${bx + ux * 2} ${by + uy * 2}" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><polygon points="${x2},${y2} ${bx - uy * wing},${by + ux * wing} ${bx + uy * wing},${by - ux * wing}" fill="currentColor"/></svg>`;
+      return `<svg data-layer="${id}" style="position:absolute;left:${left}px;top:${top}px;width:${Math.max(1, Math.abs(r.w))}px;height:${Math.max(1, Math.abs(r.h))}px;overflow:visible;color:${p.color};${p.dim ? "opacity:0.3" : ""}"><path d="M${x1} ${y1}L${bx + ux * 2} ${by + uy * 2}" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><polygon points="${x2},${y2} ${bx - uy * wing},${by + ux * wing} ${bx + uy * wing},${by - ux * wing}" fill="currentColor"/></svg>`;
     }
     case "mermaid":
       return `<div data-layer="${id}" data-mermaid style="${box}">${svgs.get(p.source) ?? ""}</div>`;

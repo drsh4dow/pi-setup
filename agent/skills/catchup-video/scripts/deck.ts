@@ -19,8 +19,9 @@ const isHue = (v: unknown): v is keyof typeof HUES => typeof v === "string" && O
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Bar = { label: string; value: number; color: string };
-// color is a hex value; the deck names meanings and parsing looks them up.
-export type Layer = { color: string } & (
+// color is a hex value; the deck names meanings and parsing looks them up. dim fades the layer
+// so the layer in focus stands out while the rest of the picture stays in place.
+export type Layer = { color: string; dim: boolean } & (
   | { kind: "text"; text: string; size: number }
   | { kind: "image"; file: string; size: [number, number]; fit: "contain" | "cover"; crop: Rect }
   | { kind: "highlight" }
@@ -58,7 +59,7 @@ const isFields = (v: unknown): v is Fields => typeof v === "object" && v !== nul
 const isNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const show = (v: unknown) => JSON.stringify(v) ?? String(v);
 const not = (v: unknown) => (v === undefined ? "" : `, not ${show(v)}`);
-const COMMON = ["kind", "at", "color", "on"];
+const COMMON = ["kind", "at", "color", "on", "dim"];
 const FIELDS = {
   text: ["text", "size"],
   image: ["src", "fit", "crop"],
@@ -122,7 +123,8 @@ function parseLayer(o: Fields, at: string, dir: string, meanings: Map<string, st
     if (kind !== "text" && kind !== "highlight" && kind !== "arrow") bad(`${at}.on`, "only a text, highlight, or arrow goes on an image");
     else on = text(o.on, `${at}.on`);
   }
-  const base = { color: color(o.color, `${at}.color`) };
+  if (o.dim !== undefined && typeof o.dim !== "boolean") bad(`${at}.dim`, `is true or false${not(o.dim)}`);
+  const base = { color: color(o.color, `${at}.color`), dim: o.dim === true };
   let layer: Layer;
   let at4: Rect | null = null;
   switch (kind) {

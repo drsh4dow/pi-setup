@@ -50,6 +50,7 @@ describe("a deck that renders", () => {
             flow: { kind: "mermaid", source: "flowchart LR\n  a[Search] --> b[Every gift]:::broken", at: [60, 60, 800, 300] },
           },
         },
+        { put: { shot: { dim: true }, ring: { dim: true } } },
       ],
     });
     // A 400x300 light grey screenshot, so a red ring on it is easy to find.
@@ -60,7 +61,7 @@ describe("a deck that renders", () => {
   test("exits 0 with a passing line for each slide and a frame per slide", () => {
     assert.equal(result.status, 0, result.stderr);
     const lines = result.stdout.trim().split("\n");
-    assert.equal(lines.length, 2);
+    assert.equal(lines.length, 3);
     for (const [i, line] of lines.entries()) {
       const frame = path.join(dir, `out.slide-0${i + 1}.png`);
       assert.ok(line.startsWith(frame) && line.endsWith("PASS"), line);
@@ -91,6 +92,11 @@ describe("a deck that renders", () => {
     assert.ok(!isRed(pixel(second, 203, 300)), "slide 2 still shows the ring where the shot was");
   });
 
+  test("dim fades a layer and keeps it in place", () => {
+    const [r, g] = pixel(path.join(dir, "out.slide-03.png"), 1103, 550);
+    assert.ok(r - g > 15 && g > 120, `slide 3 ring: ${[r, g]}`);
+  });
+
   test("the check fails a video whose frames do not show the deck's slides", () => {
     const flipped = path.join(dir, "flipped.mp4");
     tool("ffmpeg", ["-v", "error", "-i", path.join(dir, "out.mp4"), "-vf", "hflip", "-c:v", "libx264", "-pix_fmt", "yuv420p", flipped]);
@@ -118,14 +124,21 @@ test("an invalid deck exits 1 and lists every problem", () => {
   const dir = scratch({
     colors: { broken: "red", failed: "red" },
     slides: [
-      { put: { a: { kind: "text", text: "Hi", at: [60, 60, 900, 80], color: "fixed" } } },
+      { put: { a: { kind: "text", text: "Hi", at: [60, 60, 900, 80], color: "fixed", dim: "yes" } } },
       { put: { b: { kind: "text", at: [60, 300, 900, 80] }, c: { kind: "circle" } }, remove: ["gone"] },
     ],
   });
   const r = render(dir, "out.mp4");
   assert.equal(r.status, 1, r.stderr);
-  for (const where of ["colors.failed", "slide 1, a.color", "slide 2, b.text", "slide 2, c.kind", "slide 2.remove"])
+  for (const where of ["colors.failed", "slide 1, a.color", "slide 1, a.dim", "slide 2, b.text", "slide 2, c.kind", "slide 2.remove"])
     assert.ok(r.stderr.includes(`${where}:`), `missing ${where} in:\n${r.stderr}`);
+});
+
+test("the example deck that --help points at renders and passes its check", () => {
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "catchup-video-")), "example.mp4");
+  const r = spawnSync(process.execPath, [SCRIPT, path.join(path.dirname(SCRIPT), "example"), "--out", out], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(spawnSync(process.execPath, [SCRIPT, "--help"], { encoding: "utf8" }).stdout, /example/);
 });
 
 test("exits 2 when ffmpeg is missing", () => {

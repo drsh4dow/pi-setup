@@ -157,7 +157,9 @@ copy, from before the runner kept one, leaves `videoRendered`, `opened`, `slides
 - `slides`: ffmpeg's `freezedetect` finds each still hold of half a second or more. Each
   hold counts as one slide, and 1 to 10 slides pass. One frame per slide goes to the run's
   `slides/` directory for review, and the evidence gives each hold.
-- `framesLooked`: an `ffmpeg` command named the mp4, and the run read an image after it.
+- `framesLooked`: the run read an image after an `ffmpeg` command that named the mp4, or read
+  one of the renderer's slide frames (`<video>.slide-NN.png`) after the `render.ts` command
+  that named it.
 - Judged: `replyLayout`, the reply catchup-video asks for, and `callsDecidable`.
 
 The primary verdict wants `videoRendered`, `opened`, `readOnlyExceptVideo`, and

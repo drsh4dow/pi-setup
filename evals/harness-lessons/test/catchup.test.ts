@@ -425,6 +425,47 @@ test("catchup-video passes a rendered, opened, landscape video whose frames the 
   assert.equal(graded.primary, "pass");
 });
 
+const RENDER = `cd ${join(LIVE, "catchup")} && node /harness/agent/skills/catchup-video/scripts/render.ts deck.json --out catchup.mp4`;
+
+test("catchup-video counts the renderer's slide frames read after rendering as frames looked", async () => {
+  const at = where();
+
+  renderVideo(at);
+
+  const run = session(
+    [bash(RENDER), read(join(LIVE, "catchup", "catchup.slide-01.png"))],
+    "Three calls wait on you.",
+  );
+
+  const graded = await catchupVideo(input("catchup-video", at, run, stubJudge(true)));
+
+  assert.equal(values(graded.metrics).framesLooked, true, evidence(graded.metrics.framesLooked));
+});
+
+test("catchup-video does not count a slide frame read before rendering or another image after", async () => {
+  const at = where();
+
+  renderVideo(at);
+
+  const run = session(
+    [
+      read(join(LIVE, "catchup", "catchup.slide-01.png")),
+      bash(RENDER),
+      read("evidence/checkout-after.png"),
+      read(join(LIVE, "catchup", "other.slide-01.png")),
+    ],
+    "Three calls wait on you.",
+  );
+
+  const graded = await catchupVideo(input("catchup-video", at, run, stubJudge(true)));
+
+  assert.equal(values(graded.metrics).framesLooked, false);
+  assert.match(
+    evidence(graded.metrics.framesLooked),
+    /the renderer on catchup\.mp4: .*\nimages read after it: none/,
+  );
+});
+
 test("catchup-video fails without a video and leaves the slide metrics undecided", async () => {
   const at = where();
 

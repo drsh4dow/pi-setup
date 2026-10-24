@@ -219,28 +219,57 @@ function slides(video: string | undefined, outputDir: string): FlagMetric {
 
 const IMAGE = /\.(?:png|jpe?g|webp)$/i;
 
-/** Whether the run pulled frames out of its rendered video and then looked at them. */
+/** Whether `path` is a frame the catchup-video renderer wrote for `video`: `OUT.slide-NN.png`. */
+function isRendererFrame(path: string, video: string): boolean {
+  const frame = /^(.*)\.slide-\d+\.png$/.exec(basename(path));
+
+  return frame?.[1] === basename(video).replace(/\.mp4$/i, "");
+}
+
+/**
+ * Whether the run pulled frames out of its rendered video and then looked at them: images read
+ * after an ffmpeg command naming the video, or the renderer's own slide frames read after the
+ * command that rendered it.
+ */
 function framesLooked(video: string | undefined, session: Session): FlagMetric {
   if (video === undefined) return unknown("no video to look at");
 
   const name = basename(video);
+  const naming = shellCommands(session).filter((command) => command.command.includes(name));
+  const reads = session.operations.filter((operation) => operation.tool === "read");
 
-  const first = shellCommands(session).find(
-    (command) => /\bffmpeg\b/.test(command.command) && command.command.includes(name),
-  );
+  const routes = [
+    {
+      by: "ffmpeg",
+      command: naming.find((command) => /\bffmpeg\b/.test(command.command)),
+      shows: (path: string) => IMAGE.test(path),
+    },
+    {
+      by: "the renderer",
+      command: naming.find((command) => /\brender\.ts\b/.test(command.command)),
+      shows: (path: string) => isRendererFrame(path, video),
+    },
+  ].flatMap(({ command, ...route }) => {
+    if (command === undefined) return [];
 
-  if (first === undefined) return flag(false, `no ffmpeg command read ${name}`);
+    const looks = reads
+      .filter((operation) => operation.step > command.step)
+      .map((operation) => argument(operation, "path") ?? "")
+      .filter(route.shows);
 
-  const looks = session.operations.filter(
-    (operation) =>
-      operation.tool === "read" &&
-      operation.step > first.step &&
-      IMAGE.test(argument(operation, "path") ?? ""),
-  );
+    return [{ ...route, command, looks }];
+  });
+
+  if (routes.length === 0) return flag(false, `no ffmpeg or renderer command named ${name}`);
 
   return flag(
-    looks.length > 0,
-    `ffmpeg on ${name}: ${first.command.slice(0, 200)}\nimages read after it: ${looks.map((operation) => argument(operation, "path")).join(", ") || "none"}`,
+    routes.some((route) => route.looks.length > 0),
+    routes
+      .map(
+        (route) =>
+          `${route.by} on ${name}: ${route.command.command.slice(0, 200)}\nimages read after it: ${route.looks.join(", ") || "none"}`,
+      )
+      .join("\n"),
   );
 }
 

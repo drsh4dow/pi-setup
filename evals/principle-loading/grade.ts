@@ -5,12 +5,11 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { Schema } from "effect";
+import { parseSession, skillLoads, type LoadChannel } from "../lib/session.ts";
 
 export const PrincipleName = Schema.TemplateLiteral(["principle-", Schema.String]);
 
 export type PrincipleName = typeof PrincipleName.Type;
-
-export type LoadChannel = "read" | "codemode read" | "bash";
 
 export interface PrincipleLoad {
   readonly principle: PrincipleName;
@@ -29,210 +28,29 @@ export interface SessionGrade {
   readonly finalText: string;
 }
 
-// Only the argument fields grading reads. Struct decoding ignores the rest.
-const ToolArgs = Schema.Struct({
-  path: Schema.optionalKey(Schema.String),
-  command: Schema.optionalKey(Schema.String),
-});
-
-const ToolCallPart = Schema.Struct({
-  type: Schema.Literal("toolCall"),
-  id: Schema.String,
-  name: Schema.String,
-  arguments: ToolArgs,
-});
-
-const TextPart = Schema.Struct({ type: Schema.Literal("text"), text: Schema.String });
-
-const OtherPart = Schema.Struct({ type: Schema.String });
-
-const AssistantLine = Schema.Struct({
-  type: Schema.Literal("message"),
-  message: Schema.Struct({
-    role: Schema.Literal("assistant"),
-    content: Schema.Array(Schema.Union([ToolCallPart, TextPart, OtherPart])),
-    stopReason: Schema.optionalKey(Schema.String),
-  }),
-});
-
-const ToolResultLine = Schema.Struct({
-  type: Schema.Literal("message"),
-  message: Schema.Struct({
-    role: Schema.Literal("toolResult"),
-    toolCallId: Schema.String,
-    isError: Schema.optionalKey(Schema.Boolean),
-    details: Schema.optionalKey(Schema.Unknown),
-  }),
-});
-
-const OtherLine = Schema.Struct({ type: Schema.String });
-
-const decodeSessionLine = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Union([AssistantLine, ToolResultLine, OtherLine])),
-);
-
-// Codemode records each tool call its script made. It truncates long argument JSON, so the
-// arguments stay a string: a skill path sits near the start, where truncation cannot reach it.
-const decodeCodemodeDetails = Schema.decodeUnknownSync(
-  Schema.Struct({
-    calls: Schema.Array(
-      Schema.Struct({ name: Schema.String, args: Schema.String, status: Schema.String }),
-    ),
-  }),
-);
-
 const decodePrincipleName = Schema.decodeUnknownSync(PrincipleName);
-
-interface Operation {
-  readonly tool: string;
-  /** The read path or bash command, or a nested call's raw argument JSON. */
-  readonly argumentText: string;
-  readonly succeeded: boolean;
-  readonly nested: boolean;
-}
-
-const SKILL_FILE = /skills\/(principle-[a-z0-9-]+)\/SKILL\.md/g;
-
-// A bash command counts as a load only when it prints the file, not when it lists or greps it.
-const BASH_FILE_PRINTER = /\b(cat|head|sed|bat|less)\b/;
 
 const MUTATING_TOOLS = new Set(["edit", "write"]);
 
-type SessionLine = ReturnType<typeof decodeSessionLine>;
-
-/** The session's tool operations in execution order, with codemode scripts expanded. */
-function operations(lines: readonly SessionLine[]): Operation[] {
-  const calls = new Map<string, typeof ToolCallPart.Type>();
-  const result: Operation[] = [];
-
-  for (const line of lines) {
-    if (Schema.is(AssistantLine)(line)) {
-      for (const part of line.message.content) {
-        if (Schema.is(ToolCallPart)(part)) calls.set(part.id, part);
-      }
-
-      continue;
-    }
-
-    if (!Schema.is(ToolResultLine)(line)) continue;
-
-    const call = calls.get(line.message.toolCallId);
-
-    if (!call) continue;
-
-    if (call.name !== "codemode") {
-      result.push({
-        tool: call.name,
-        argumentText: directArgumentText(call),
-        succeeded: line.message.isError !== true,
-        nested: false,
-      });
-
-      continue;
-    }
-
-    // A script that failed before calling any tool records no details.
-    const details = line.message.details;
-
-    const nestedCalls =
-      details === undefined || details === null ? [] : decodeCodemodeDetails(details).calls;
-
-    for (const nested of nestedCalls) {
-      result.push({
-        tool: nested.name,
-        argumentText: nested.args,
-        succeeded: nested.status === "ok",
-        nested: true,
-      });
-    }
-  }
-
-  return result;
-}
-
-function directArgumentText(call: typeof ToolCallPart.Type): string {
-  if (call.name === "read") return call.arguments.path ?? "";
-
-  return call.arguments.command ?? "";
-}
-
-/** The text an operation exposes skill paths through: a read's path, or a printing bash command. */
-function loadingText(operation: Operation): string {
-  if (!operation.succeeded) return "";
-
-  if (operation.tool === "read") return operation.argumentText;
-
-  if (operation.tool === "bash" && BASH_FILE_PRINTER.test(operation.argumentText)) {
-    return operation.argumentText;
-  }
-
-  return "";
-}
-
-function channelOf(operation: Operation): LoadChannel {
-  if (operation.tool === "bash") return "bash";
-
-  return operation.nested ? "codemode read" : "read";
-}
-
-function loadedPrinciples(operation: Operation): PrincipleName[] {
-  return [...loadingText(operation).matchAll(SKILL_FILE)].map((match) =>
-    decodePrincipleName(match[1]),
-  );
-}
-
-function finalAssistantText(lines: readonly SessionLine[]): string {
-  for (const line of lines.toReversed()) {
-    if (!Schema.is(AssistantLine)(line)) continue;
-
-    const texts = line.message.content.flatMap((part) =>
-      Schema.is(TextPart)(part) ? [part.text] : [],
-    );
-
-    if (texts.length > 0) return texts.join("\n");
-  }
-
-  return "";
-}
-
 export function gradeSession(jsonl: string): SessionGrade {
-  const lines = jsonl
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map((line) => decodeSessionLine(line));
+  const session = parseSession(jsonl);
 
-  const ops = operations(lines);
-  const loads: PrincipleLoad[] = [];
-  let firstMutationStep: number | undefined;
-
-  for (const [step, operation] of ops.entries()) {
-    for (const principle of loadedPrinciples(operation)) {
-      if (!loads.some((load) => load.principle === principle)) {
-        loads.push({ principle, step, channel: channelOf(operation) });
-      }
-    }
-
-    if (
-      firstMutationStep === undefined &&
-      operation.succeeded &&
-      MUTATING_TOOLS.has(operation.tool)
-    ) {
-      firstMutationStep = step;
-    }
-  }
-
-  const stopReasons = lines.flatMap((line) =>
-    Schema.is(AssistantLine)(line) && line.message.stopReason !== undefined
-      ? [line.message.stopReason]
+  const loads = skillLoads(session.operations).flatMap((load) =>
+    Schema.is(PrincipleName)(load.skill)
+      ? [{ principle: decodePrincipleName(load.skill), step: load.step, channel: load.channel }]
       : [],
+  );
+
+  const firstMutation = session.operations.find(
+    (operation) => operation.succeeded && MUTATING_TOOLS.has(operation.tool),
   );
 
   return {
     loads,
-    firstMutationStep,
-    steps: ops.length,
-    lastStopReason: stopReasons.at(-1),
-    finalText: finalAssistantText(lines),
+    firstMutationStep: firstMutation?.step,
+    steps: session.operations.length,
+    lastStopReason: session.lastStopReason,
+    finalText: session.finalText,
   };
 }
 

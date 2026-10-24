@@ -4,6 +4,8 @@ Global Pi configuration: system prompt, vendored TypeScript extensions, skills,
 themes, and prompts. Pi loads [`agent/SYSTEM.md`](agent/SYSTEM.md) as the system
 prompt for every model.
 
+The configuration in this repo affects all projects, so they should not be overfitted to the repo.
+
 Use `vp` for package management and scripts. Run
 `vp run verify` before reporting a code or tooling change.
 

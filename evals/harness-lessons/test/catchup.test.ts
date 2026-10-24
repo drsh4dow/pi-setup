@@ -9,7 +9,8 @@ import { argument, parseSession, sinceLastUserMessage } from "../../lib/session.
 import { catchupChat } from "../catchup-chat.ts";
 import { catchupStubEnv, catchupStubPaths, GhCall, OpenCall } from "../catchup-stubs.ts";
 import { gradeDirectory } from "../grade.ts";
-import { catchup, catchupVideo, stateFolder } from "../grade-catchup.ts";
+import { catchup, stateFolder } from "../grade-catchup.ts";
+import { catchupVideo } from "../grade-catchup-video.ts";
 import type { Metric } from "../metrics.ts";
 import type { RunRecord } from "../record.ts";
 import {

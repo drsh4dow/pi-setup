@@ -6,7 +6,8 @@ import {
   crossProject,
   dependencyByPath,
 } from "./grade-artifacts.ts";
-import { catchup, catchupVideo } from "./grade-catchup.ts";
+import { catchup } from "./grade-catchup.ts";
+import { catchupVideo } from "./grade-catchup-video.ts";
 import { newGate, vacuousPass } from "./grade-checks.ts";
 import {
   cosmeticWake,

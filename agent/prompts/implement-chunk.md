@@ -1,5 +1,5 @@
 ---
-description: Orchestrate a ticket and its sub-tickets end to end through subagents, to merge-ready PRs, babysat to merge and verified live on the deployed environment.
+description: Orchestrate a task chunk end to end through subagents, to merge-ready PRs, babysat to merge and verified live on the deployed environment.
 argument-hint: "<ticket reference> [base branch] [target environment]"
 ---
 
@@ -31,7 +31,7 @@ Launch every subagent per the **subagents** skill: a self-contained assignment, 
 | explorer      | delegate | `how explorer`                                        | Exploration notes for later briefs, saved in the state folder.                                                                 |
 | implementer   | delegate | `feature, refactoring`, `bug-fix`, or `hardest tasks` | One ticket, or one fix scope, delivered as one intermediate PR.                                                                |
 | verifier      | delegate | `cross-family reviewer`                               | A verdict for one PR at one head SHA.                                                                                          |
-| merger        | delegate | `feature, refactoring`, thinking `low`                | Creates integration branches, merges intermediate PRs, resolves conflicts, rebases and retargets. The only writer of topology. |
+| merger        | delegate | `feature, refactoring`                | Creates integration branches, merges intermediate PRs, resolves conflicts, rebases and retargets. The only writer of topology. |
 | PR writer     | delegate | `judgment and prose`                                  | Opens and edits final PRs.                                                                                                     |
 | babysitter    | owner    | `feature, refactoring`                                | Runs the **babysit** skill on a final PR or stack to merge-ready.                                                              |
 | live verifier | delegate | `swarm workers`                                       | Drives the deployed environment after a merge.                                                                                 |

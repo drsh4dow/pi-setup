@@ -93,14 +93,21 @@ conversation. An assignment is ready when it states:
 - The report: changes made, findings with references, judgment calls, and open
   questions, sized to the user's request.
 
-Subagents share the worktree, and a write scope is an instruction rather than a
-sandbox. Give concurrent writers disjoint files, counting the generated files
-and caches their verification writes, or run them in sequence.
+Subagents share the worktree and the host, and a write scope is an instruction
+rather than a sandbox. Give concurrent children disjoint files, counting the
+generated files and caches their verification writes, or run them in sequence.
+The same holds beyond files: give each its own scratch directories,
+containers, and toolchain installs, keep setup commands such as installs and
+checkout syncs inside its own tree, and limit its cleanup to what it created.
+Before accepting a comparison, such as a before and after, check that no
+sibling wrote the state it measured.
 
 ## Launch
 
 Read [background-terminals](../background-terminals/SKILL.md), then start each
-subagent with `bg_start` in the project directory:
+subagent with `bg_start` in the project directory. Project MCP servers bind to
+the launch directory, so a child launched elsewhere, such as `/tmp`, has no
+tracker or observability tools:
 
 ```bash
 pi-subagent \

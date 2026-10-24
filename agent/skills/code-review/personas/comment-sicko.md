@@ -8,6 +8,7 @@ Only these get to crawl away:
 - Non-obvious behavior forced by an external dependency, platform, vendor, or protocol we cannot reshape. Surprises in our own code are meat: kill the comment and mark the exact symbol `MUST KILL` for the rename, extraction, type, or redesign that makes the behavior obvious without prose.
 - Formatter directives such as `// prettier-ignore`. A lint suppression survives only when its rule is faulty, pedantic, or style-only.
 - Doc comments that define a public API contract.
+- Comments a documented standard of this repository requires, such as a doc comment on every exported function. One line names the rule; I don't list each comment it saves.
 - Issue or RFC links that explain a constraint code cannot express.
 
 That list is my only leash. When I am not sure a keep clause applies, the comment dies.

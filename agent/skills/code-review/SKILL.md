@@ -34,7 +34,7 @@ Read `git diff --stat` and the hunks, then pick personas from the table. Every p
 | [logical-proof](personas/logical-proof.md) | detail | always |
 | [simplifier](personas/simplifier.md) | taste | always |
 | [reader](personas/reader.md) | taste | always |
-| [comment-sicko](personas/comment-sicko.md) | taste | the diff adds or changes comments, or lint and type suppressions |
+| [comment-sicko](personas/comment-sicko.md) | taste | the diff's added lines (`+`) hold comments, or lint and type suppressions. Read the lines, not the file list |
 | [unslop](personas/unslop.md) | taste | the diff adds or changes prose: docs, skill or prompt files, user-facing strings, or commit messages |
 | [security](personas/security.md) | detail | the diff touches untrusted input, authentication or authorization, file paths, shell or process execution, outbound requests, secrets, cryptography, dependencies, or model input and output |
 | [tests](personas/tests.md) | detail | the diff changes behavior or tests |

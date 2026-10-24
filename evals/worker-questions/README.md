@@ -24,8 +24,8 @@ the worker's questions and reviews its final report. Hidden graders then judge t
 ### Simulated parent
 
 [`oracle.ts`](oracle.ts) runs the parent as one `pi -p` call with no tools per turn. The default
-model is `anthropic/claude-haiku-5-5` at thinking `medium`, and each turn waits a fixed latency
-first (default 60 s) to model a busy parent.
+model is `anthropic/claude-opus-5-5` at thinking `high`, the model the real orchestrator runs, and
+each turn waits a fixed latency first (default 60 s) to model a busy parent.
 
 The parent knows only what the scenario's `knowledge` holds:
 
@@ -154,7 +154,7 @@ on `s9-order`.
 node evals/worker-questions/run.ts --out <dir> [--only s1-survives,...] [--arms A,C,R,L,C+push] \
   [--trials 3] [--models anthropic/claude-opus-5-5] [--thinking medium] [--concurrency 4] \
   [--timeout-minutes <n>] [--harness <checkout>] [--latency-seconds 60] \
-  [--parent-model anthropic/claude-haiku-5-5] [--parent-thinking medium] \
+  [--parent-model anthropic/claude-opus-5-5] [--parent-thinking high] \
   [--ask-timeout-minutes 10] [--dry-run]
 node evals/worker-questions/grade.ts <dir> [--judge-model anthropic/claude-opus-5-5] [--concurrency 4]
 ```
@@ -169,8 +169,8 @@ node evals/worker-questions/grade.ts <dir> [--judge-model anthropic/claude-opus-
 - **Cleanup:** each run reaps the processes it started.
 
 A full pilot is 53 cells × 3 trials = 159 runs. In the smoke batch, a worker run on `s1-survives` or
-`s9-order` cost $0.17 to $0.26, and a parent turn cost about $0.001. Other scenarios were not
-measured.
+`s9-order` cost $0.17 to $0.26, and a parent turn on `anthropic/claude-haiku-5-5` cost about
+$0.001. Other scenarios, and parent turns on the current default, were not measured.
 
 ## Judgment calls
 
@@ -194,6 +194,9 @@ The spec left these open or got them wrong for this design. Each was decided her
   review now sees the diff and the gate's result. It sees no grader condition: probed module
   behavior and fake-`gh` state stay hidden, because a parent learns them only by reading code it
   has not read.
+- **The parent runs the orchestrator's model.** The default parent was
+  `anthropic/claude-haiku-5-5`, which understated review and answer quality. It is now
+  `anthropic/claude-opus-5-5` at `high`, so a parent turn costs more than the earlier $0.001.
 - **Graded on the branch, not the report.** Rounds are graded on the branch tip in a fresh clone, never on
   the report. A timed-out round still counts, graded as it stood.
 - **S7 unblocks on contact.** In `s7-expiry`, any parent contact counts as the operator logging

@@ -7,7 +7,7 @@
 //   node evals/worker-questions/run.ts --out <dir> [--only s1-survives,...] [--arms A,C,R,L,C+push]
 //     [--trials 3] [--models anthropic/claude-opus-5-5] [--thinking medium] [--concurrency 4]
 //     [--timeout-minutes <n>] [--harness <checkout>] [--latency-seconds 60]
-//     [--parent-model anthropic/claude-haiku-5-5] [--parent-thinking medium]
+//     [--parent-model anthropic/claude-opus-5-5] [--parent-thinking high]
 //     [--ask-timeout-minutes 10] [--dry-run]
 
 import {
@@ -437,8 +437,8 @@ async function main() {
       "timeout-minutes": { type: "string" },
       harness: { type: "string", default: resolve(HERE, "..", "..") },
       "latency-seconds": { type: "string", default: "60" },
-      "parent-model": { type: "string", default: "anthropic/claude-haiku-5-5" },
-      "parent-thinking": { type: "string", default: "medium" },
+      "parent-model": { type: "string", default: "anthropic/claude-opus-5-5" },
+      "parent-thinking": { type: "string", default: "high" },
       "ask-timeout-minutes": { type: "string", default: "10" },
       "dry-run": { type: "boolean", default: false },
     },

@@ -11,7 +11,7 @@ import { Schema } from "effect";
 import { candidateEnv } from "../lib/pi-run.ts";
 import { initialFakeGitHub } from "./gh-state.ts";
 import { writeGitHub, type GhPaths } from "./fakegh.ts";
-import { prepareRunHome, type RunHome } from "./home.ts";
+import { prepareRunHome, runHomeEnv, type RunHome } from "./home.ts";
 import { SEED_TICKETS } from "./tickets.ts";
 import { seedTracker, writeTrackerState, type TrackerPaths } from "./tracker.ts";
 
@@ -87,8 +87,7 @@ export function runEnv({
 }): NodeJS.ProcessEnv {
   return {
     ...candidateEnv(),
-    HOME: home.home,
-    XDG_STATE_HOME: home.state,
+    ...runHomeEnv(home),
     PATH: `${join(HERE, "bin")}${delimiter}${process.env.PATH ?? ""}`,
     FAKEGH_STATE: gh.state,
     FAKEGH_LOG: gh.log,

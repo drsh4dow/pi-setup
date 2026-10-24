@@ -3,10 +3,10 @@
 // carries the arm's harness, and the deploy serves main.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ARM_ENTRIES } from "./home.ts";
+import { harnessDigest, LIVE_ROOT_ENTRIES } from "./home.ts";
 import { branchOid } from "./gh-git.ts";
 import type { World } from "./world.ts";
 
@@ -21,9 +21,10 @@ function inWorld(
   command: string,
   args: readonly string[],
   extraEnv: NodeJS.ProcessEnv = {},
+  cwd = world.workdir,
 ) {
   const result = spawnSync(command, args, {
-    cwd: world.workdir,
+    cwd,
     env: { ...world.env, ...extraEnv },
     encoding: "utf8",
     timeout: 120_000,
@@ -72,12 +73,29 @@ export function worldChecks(world: World, armRoot: string): SetupCheck[] {
   const home = inWorld(world, "node", ["-p", "require('node:os').homedir()"]);
   const whichGh = inWorld(world, "sh", ["-c", "command -v gh"]);
 
-  const harness = ARM_ENTRIES.map((entry) => {
-    const seen = join(world.home.agentDir, entry);
-    const expected = join(armRoot, "agent", entry);
+  const links = world.home.armEntries.filter((entry) =>
+    lstatSync(join(world.home.agentDir, entry)).isSymbolicLink(),
+  );
 
-    return existsSync(seen) && realpathSync(seen) === realpathSync(expected);
-  });
+  const copied =
+    links.length === 0 &&
+    harnessDigest(world.home.agentDir, world.home.armEntries) ===
+      harnessDigest(join(armRoot, "agent"), world.home.armEntries);
+
+  // A git that finds a repository from inside the run home reaches the arm or the live checkout.
+  const repos = [
+    join(world.home.home, ".pi"),
+    world.home.agentDir,
+    join(world.home.agentDir, "skills"),
+    join(world.home.agentDir, "extensions"),
+    ...LIVE_ROOT_ENTRIES.map((entry) => join(world.home.home, ".pi", entry)),
+  ]
+    .filter((dir) => existsSync(dir) && lstatSync(realpathSync(dir)).isDirectory())
+    .flatMap((dir) => {
+      const found = inWorld(world, "git", ["rev-parse", "--show-toplevel"], {}, dir);
+
+      return found.ok ? [`${dir} -> ${found.out}`] : [];
+    });
 
   return [
     check("fixture passes its own check at main", fixture.ok, fixture.out),
@@ -91,9 +109,16 @@ export function worldChecks(world: World, armRoot: string): SetupCheck[] {
     check("origin resolves to the bare repository", remote.out.startsWith(mainOid), remote.out),
     check("the run's processes see the run's home", home.out === world.home.home, home.out),
     check(
-      "the run's home links the arm's SYSTEM.md, skills, and prompts",
-      harness.every(Boolean),
-      harness.join(","),
+      "the run's home holds copies of the arm's SYSTEM.md, skills, and prompts",
+      copied,
+      links.length > 0
+        ? `links, not copies: ${links.join(", ")}`
+        : "the copy's digest differs from the arm's",
+    ),
+    check(
+      "no git repository is reachable from the run's home",
+      repos.length === 0,
+      repos.join("; "),
     ),
   ];
 }

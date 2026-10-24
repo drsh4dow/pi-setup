@@ -20,7 +20,15 @@ import { runAcceptance, type CheckOutcome } from "./acceptance.ts";
 import { buildCommit, Deployer, serve, stopProcess, waitForVersion } from "./deploy.ts";
 import { drive, type DriveRecord } from "./drive.ts";
 import { branchOid } from "./gh-git.ts";
-import { armChecks, watcherCheck, worldChecks, writeChecks, type SetupCheck } from "./setup.ts";
+import { readSources, runIntegrity, type Sources } from "./integrity.ts";
+import {
+  armChecks,
+  liveHarnessRoot,
+  watcherCheck,
+  worldChecks,
+  writeChecks,
+  type SetupCheck,
+} from "./setup.ts";
 import { PARENT_KEY } from "./tickets.ts";
 import { freePort, prepareWorld, type World } from "./world.ts";
 
@@ -94,20 +102,18 @@ function installWatcher(root: string) {
   installed.add(root);
 }
 
-/** Copies the arm's harness files into the run, so grading compares sessions against what ran. */
-function snapshotHarness(arm: Arm, dir: string) {
+/** Copies the run's harness files into its records, so grading compares sessions against what ran. */
+function snapshotHarness(world: World, dir: string) {
   const target = join(dir, "harness");
+  const agent = world.home.agentDir;
 
   mkdirSync(join(target, "subagents"), { recursive: true });
-  cpSync(join(arm.root, "agent", "SYSTEM.md"), join(target, "SYSTEM.md"));
-  cpSync(join(arm.root, "agent", "skills", "subagents"), join(target, "subagents"), {
+  cpSync(join(agent, "SYSTEM.md"), join(target, "SYSTEM.md"));
+  cpSync(join(agent, "skills", "subagents"), join(target, "subagents"), {
     recursive: true,
     filter: (source) => !source.includes("node_modules"),
   });
-  cpSync(
-    join(arm.root, "agent", "prompts", "implement-chunk.md"),
-    join(target, "implement-chunk.md"),
-  );
+  cpSync(join(agent, "prompts", "implement-chunk.md"), join(target, "implement-chunk.md"));
   // The live appendices as they were during the run, which the grader tells apart from the arm's.
   cpSync(join(homedir(), ".pi", "agent", "skills", "subagents"), join(target, "live-subagents"), {
     recursive: true,
@@ -256,6 +262,15 @@ async function execute(run: PlannedRun, settings: Settings) {
   const { world, deployer, checks } = await prepare(run, settings);
   const handle = { world, deployer };
 
+  const sources: Sources = {
+    armRoot: run.arm.root,
+    liveRoot: liveHarnessRoot(),
+    agentDir: world.home.agentDir,
+    armEntries: world.home.armEntries,
+  };
+
+  const before = readSources(sources);
+
   active.add(handle);
 
   const problems = checks
@@ -263,7 +278,7 @@ async function execute(run: PlannedRun, settings: Settings) {
     .map((check) => `${check.name}: ${check.detail}`);
 
   const base = {
-    arm: armRecord(run.arm),
+    arm: { ...armRecord(run.arm), harnessDigest: before.copyDigest },
     trial: run.trial,
     name: world.name,
     agentDir: world.home.agentDir,
@@ -274,7 +289,7 @@ async function execute(run: PlannedRun, settings: Settings) {
   };
 
   writeChecks(join(run.dir, "setup.json"), checks);
-  snapshotHarness(run.arm, run.dir);
+  snapshotHarness(world, run.dir);
 
   let driven: DriveRecord | null = null;
   let finalMain: Awaited<ReturnType<typeof acceptanceOnMain>> = { commit: null, outcomes: [] };
@@ -304,6 +319,9 @@ async function execute(run: PlannedRun, settings: Settings) {
     active.delete(handle);
   }
 
+  // Every process of the run is gone, so nothing changes the sources after this reading.
+  const integrity = { armEntries: world.home.armEntries, before, after: readSources(sources) };
+
   writeAtomically(
     join(run.dir, "acceptance.json"),
     `${JSON.stringify({ finalMain, live }, null, 2)}\n`,
@@ -312,6 +330,9 @@ async function execute(run: PlannedRun, settings: Settings) {
 
   return {
     ...base,
+    integrity,
+    integrityProblems: runIntegrity({ runDir: run.dir, record: integrity, scratch: world.scratch })
+      .problems,
     setupProblems: problems,
     stop: driven?.stop ?? null,
     wallMs: driven?.wallMs ?? 0,
@@ -430,8 +451,13 @@ async function main() {
         ? `setup failed: ${record.setupProblems.join("; ")}`
         : `stopped: ${record.stop ?? "?"}`;
 
+    const integrity =
+      record.integrityProblems.length > 0
+        ? `; INVALID: ${record.integrityProblems.join("; ")}`
+        : "; arm and live harness untouched";
+
     console.log(
-      `${run.arm.name} t${run.trial}: ${status}, ${Math.round((Date.now() - started) / 60_000)} min`,
+      `${run.arm.name} t${run.trial}: ${status}, ${Math.round((Date.now() - started) / 60_000)} min${integrity}`,
     );
   });
 }

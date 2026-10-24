@@ -3,7 +3,7 @@
 // what the records cannot settle as unknown, and applies the pre-registered reading.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -16,201 +16,19 @@ import {
   type GradedRun,
 } from "../grade.ts";
 import { initialFakeGitHub } from "../gh-state.ts";
-import { isChangelogScopeStop, known, unknown, type RunMetrics } from "../metrics.ts";
+import { isChangelogScopeStop, known, runMetrics, unknown, type RunMetrics } from "../metrics.ts";
 import { ruleBreaks } from "../rule-breaks.ts";
+import {
+  ARM_APPENDIX,
+  LIVE_APPENDIX,
+  mergedPullRequest,
+  sessionJsonl,
+  writeRun,
+} from "./run-dir.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "ic-grade-test-"));
 
 after(() => rmSync(scratch, { recursive: true, force: true }));
-
-const ARM_PROMPT = "You are the arm's harness.";
-
-const ARM_APPENDIX = "# Subagent run\nThe arm's appendix.";
-
-const LIVE_APPENDIX = "# Subagent run\nThe live appendix.";
-
-interface SessionSpec {
-  readonly cwd: string;
-  readonly agentDir: string;
-  readonly preamble?: string;
-  readonly addendum?: string;
-  readonly name?: string;
-  readonly cost?: number;
-  readonly calls?: readonly { readonly name: string; readonly arguments: Record<string, string> }[];
-  readonly texts?: readonly string[];
-}
-
-function sessionJsonl(spec: SessionSpec): string {
-  const lines: unknown[] = [
-    { type: "session", version: 3, id: "s", timestamp: "2026-10-24T10:00:00.000Z", cwd: spec.cwd },
-    {
-      type: "message",
-      message: {
-        role: "system",
-        sections: {
-          preamble: spec.preamble ?? ARM_PROMPT,
-          addendum: spec.addendum ?? "",
-          skills: `<location>${spec.agentDir}/skills/subagents/SKILL.md</location>`,
-        },
-      },
-    },
-  ];
-
-  if (spec.name !== undefined) lines.push({ type: "session_info", name: spec.name });
-
-  lines.push({
-    type: "message",
-    message: { role: "user", content: [{ type: "text", text: spec.name ?? "Implement chunk" }] },
-  });
-
-  for (const [index, call] of (spec.calls ?? []).entries()) {
-    lines.push({
-      type: "message",
-      message: {
-        role: "assistant",
-        content: [
-          { type: "toolCall", id: `c${index}`, name: call.name, arguments: call.arguments },
-        ],
-        usage: { cost: { total: 0 } },
-      },
-    });
-    lines.push({
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolCallId: `c${index}`,
-        content: [{ type: "text", text: "" }],
-        isError: false,
-      },
-    });
-  }
-
-  for (const text of spec.texts ?? ["Done."]) {
-    lines.push({
-      type: "message",
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text }],
-        stopReason: "stop",
-        usage: { cost: { total: spec.cost ?? 0 } },
-      },
-    });
-  }
-
-  return `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`;
-}
-
-interface RunSpec {
-  readonly arm: string;
-  readonly trial: number;
-  readonly childAddendum: string;
-  readonly humanTurns: readonly ("intake" | "nudge" | "re-ask")[];
-  readonly resets: number;
-}
-
-/** Writes a finished run directory the way `run.ts` leaves one, minus the archived origin. */
-function writeRun(out: string, spec: RunSpec): string {
-  const dir = join(out, spec.arm, `t${spec.trial}`);
-  const runScratch = join(scratch, `${spec.arm}-${spec.trial}`);
-  const cwd = join(runScratch, "tally");
-  const agentDir = join(runScratch, "home", ".pi", "agent");
-
-  mkdirSync(join(dir, "harness", "subagents"), { recursive: true });
-  mkdirSync(join(dir, "harness", "live-subagents"), { recursive: true });
-  mkdirSync(join(dir, "sessions", "child"), { recursive: true });
-  writeFileSync(join(dir, "harness", "SYSTEM.md"), ARM_PROMPT);
-  writeFileSync(join(dir, "harness", "subagents", "unattended.md"), ARM_APPENDIX);
-  writeFileSync(join(dir, "harness", "live-subagents", "unattended.md"), LIVE_APPENDIX);
-  writeFileSync(
-    join(dir, "run.json"),
-    JSON.stringify({
-      arm: { name: spec.arm, root: "/arm", head: "abc" },
-      trial: spec.trial,
-      agentDir,
-    }),
-  );
-  writeFileSync(
-    join(dir, "root.jsonl"),
-    sessionJsonl({
-      cwd,
-      agentDir,
-      cost: 2,
-      calls: [
-        {
-          name: "bg_start",
-          arguments: {
-            command: "pi-subagent --append-system-prompt unattended.md 'Implement TAL-2'",
-          },
-        },
-        { name: "write", arguments: { path: join(cwd, "src", "app.mjs"), content: "x" } },
-      ],
-    }),
-  );
-  writeFileSync(
-    join(dir, "sessions", "child", "a.jsonl"),
-    sessionJsonl({
-      cwd: join(runScratch, "wt", "u1"),
-      agentDir,
-      addendum: spec.childAddendum,
-      name: "implement TAL-2",
-      cost: 3,
-    }),
-  );
-  writeFileSync(
-    join(dir, "gh-state.json"),
-    JSON.stringify(
-      initialFakeGitHub({
-        owner: "acme",
-        repo: "tally",
-        bare: "/nonexistent",
-        ciDelayMs: 0,
-        botDelayMs: 0,
-      }),
-    ),
-  );
-
-  const tracker = Array.from({ length: spec.resets }, (_, index) => [
-    {
-      at: `2026-10-24T10:0${index}:00.000Z`,
-      actor: "github",
-      argv: ["pr-merged", "1"],
-      changes: [{ key: "TAL-2", from: "In Progress", to: "Done" }],
-      error: null,
-    },
-    {
-      at: `2026-10-24T10:0${index}:30.000Z`,
-      actor: "agent",
-      argv: ["state", "TAL-2", "In Progress"],
-      changes: [{ key: "TAL-2", from: "Done", to: "In Progress" }],
-      error: null,
-    },
-  ]).flat();
-
-  writeFileSync(
-    join(dir, "tracker-log.jsonl"),
-    tracker.map((entry) => JSON.stringify(entry)).join("\n"),
-  );
-  writeFileSync(
-    join(dir, "drive.json"),
-    JSON.stringify({
-      startedAt: "2026-10-24T10:00:00.000Z",
-      endedAt: "2026-10-24T11:00:00.000Z",
-      wallMs: 3_600_000,
-      stop: "max turns",
-      piTurns: [],
-      humanTurns: spec.humanTurns.map((reason) => ({
-        at: "2026-10-24T10:30:00.000Z",
-        reason,
-        answering: "",
-        reply: "",
-      })),
-      humanMerges: [],
-      rootSession: null,
-    }),
-  );
-
-  return dir;
-}
 
 describe("grade.ts", () => {
   const out = join(scratch, "out");
@@ -242,6 +60,94 @@ describe("grade.ts", () => {
     );
     assert.equal(summaries[0].n, 1);
     assert.equal(summaries[0].invalid, 1);
+  });
+
+  test("drops a run whose arm repository gained a branch, naming the branch", async () => {
+    const dir = join(scratch, "out-branch");
+
+    writeRun(dir, {
+      arm: "candidate",
+      trial: 1,
+      childAddendum: ARM_APPENDIX,
+      humanTurns: [],
+      resets: 0,
+    });
+    writeRun(dir, {
+      arm: "candidate",
+      trial: 2,
+      childAddendum: ARM_APPENDIX,
+      humanTurns: [],
+      resets: 0,
+      addedBranches: ["implement-chunk-tracker-linking"],
+    });
+
+    const { runs, summaries } = await gradeDirectory(dir);
+    const tainted = runs.find((run) => run.trial === 2);
+
+    assert.equal(runs.find((run) => run.trial === 1)?.integrity.ok, true);
+    assert.equal(tainted?.integrity.ok, false);
+    assert.match(tainted?.integrity.problems.join() ?? "", /implement-chunk-tracker-linking/);
+    assert.deepEqual([summaries[0].n, summaries[0].invalid], [1, 1]);
+  });
+
+  test("drops a run whose child edited the arm's checkout, and one with no integrity record", async () => {
+    const dir = join(scratch, "out-writes");
+
+    writeRun(dir, {
+      arm: "candidate",
+      trial: 1,
+      childAddendum: ARM_APPENDIX,
+      humanTurns: [],
+      resets: 0,
+      childCalls: [
+        {
+          name: "edit",
+          arguments: { path: "/home/u/.pi/.worktrees/revise/agent/prompts/implement-chunk.md" },
+        },
+      ],
+    });
+    writeRun(dir, {
+      arm: "candidate",
+      trial: 2,
+      childAddendum: ARM_APPENDIX,
+      humanTurns: [],
+      resets: 0,
+      noIntegrity: true,
+    });
+
+    const { runs } = await gradeDirectory(dir);
+
+    const problems = (trial: number) =>
+      runs.find((run) => run.trial === trial)?.integrity.problems.join() ?? "";
+
+    assert.match(problems(1), /wrote outside the run: .*implement-chunk\.md/);
+    assert.match(problems(2), /no integrity record/);
+  });
+
+  test("counts as final PRs only the chunk's own, not one opened after the close", async () => {
+    const dir = writeRun(join(scratch, "out-scope"), {
+      arm: "candidate",
+      trial: 1,
+      childAddendum: ARM_APPENDIX,
+      humanTurns: [],
+      resets: 0,
+      chunkFinalPrs: [5],
+    });
+
+    const github = initialFakeGitHub({
+      owner: "acme",
+      repo: "tally",
+      bare: "/b",
+      ciDelayMs: 0,
+      botDelayMs: 0,
+    });
+
+    writeFileSync(
+      join(dir, "gh-state.json"),
+      JSON.stringify({ ...github, prs: [mergedPullRequest(5), mergedPullRequest(8)] }),
+    );
+
+    assert.deepEqual((await runMetrics(dir)).finalPRs, known(1));
   });
 
   test("flags a session whose system prompt is not the arm's", () => {
@@ -413,7 +319,13 @@ function armWith(
       t5: known(t5[index]),
     };
 
-    return { arm, trial: index + 1, isolation: { ok: true, sessions: 1, bad: [] }, metrics };
+    return {
+      arm,
+      trial: index + 1,
+      isolation: { ok: true, sessions: 1, bad: [] },
+      integrity: { ok: true, problems: [] },
+      metrics,
+    };
   });
 
   return summarize(arm, runs);

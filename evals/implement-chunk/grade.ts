@@ -16,6 +16,7 @@ import {
   sessionFiles,
   type SessionHarness,
 } from "./isolation.ts";
+import { IntegrityRecord, runIntegrity, type Integrity } from "./integrity.ts";
 import { runMetrics, type Measured, type RunMetrics } from "./metrics.ts";
 import { readSessionFacts } from "./sessions.ts";
 
@@ -23,6 +24,7 @@ const RunRecord = Schema.Struct({
   arm: Schema.Struct({ name: Schema.String, root: Schema.String, head: Schema.String }),
   trial: Schema.Int,
   agentDir: Schema.optionalKey(Schema.String),
+  integrity: Schema.optionalKey(IntegrityRecord),
 });
 
 const decodeRun = Schema.decodeUnknownOption(Schema.fromJsonString(RunRecord));
@@ -31,6 +33,13 @@ export interface Isolation {
   readonly ok: boolean;
   readonly sessions: number;
   readonly bad: readonly SessionHarness[];
+}
+
+/** The run's scratch directory: the root of its home, or the parent of the root's checkout. */
+function runScratch(runDir: string, agentDir: string | undefined): string {
+  return agentDir === undefined
+    ? dirname(readSessionFacts(join(runDir, "root.jsonl")).cwd)
+    : dirname(dirname(dirname(agentDir)));
 }
 
 /** Whether the root and every child session of a run loaded the arm's harness, not the live one. */
@@ -52,8 +61,7 @@ export function runIsolation(runDir: string, agentDir: string | undefined): Isol
       ],
     };
 
-  const runAgentDir =
-    agentDir ?? join(dirname(readSessionFacts(rootFile).cwd), "home", ".pi", "agent");
+  const runAgentDir = agentDir ?? join(runScratch(runDir, undefined), "home", ".pi", "agent");
 
   const liveSnapshot = join(harness, "live-subagents");
 
@@ -85,8 +93,13 @@ export interface GradedRun {
   readonly arm: string;
   readonly trial: number;
   readonly isolation: Isolation;
+  /** Whether the run left the arm and the live harness as it found them. */
+  readonly integrity: Integrity;
   readonly metrics: RunMetrics;
 }
+
+/** A run counts toward its arm only when it ran the arm's harness and changed neither source. */
+export const isValid = (run: GradedRun) => run.isolation.ok && run.integrity.ok;
 
 type NumericKey = {
   [K in keyof RunMetrics]: RunMetrics[K] extends Measured<number> ? K : never;
@@ -153,7 +166,7 @@ export function spread(values: readonly Measured<number>[]): Spread | null {
 export interface ArmSummary {
   readonly arm: string;
   readonly n: number;
-  /** Runs dropped because a session loaded the wrong harness. */
+  /** Runs dropped because a session loaded the wrong harness or the run changed a source. */
   readonly invalid: number;
   readonly correct: { readonly yes: number; readonly known: number };
   readonly t5: Readonly<Record<string, number>>;
@@ -161,7 +174,7 @@ export interface ArmSummary {
 }
 
 export function summarize(arm: string, runs: readonly GradedRun[]): ArmSummary {
-  const valid = runs.filter((run) => run.isolation.ok);
+  const valid = runs.filter(isValid);
   const metrics: Partial<Record<NumericKey, Spread>> = {};
 
   for (const key of NUMERIC) {
@@ -321,11 +334,13 @@ function runLines(run: GradedRun): string[] {
   const { metrics } = run;
 
   const lines = [
-    `-- ${run.arm} t${run.trial}: stop "${metrics.stop}", isolation ${run.isolation.ok ? "ok" : "WRONG HARNESS"} (${run.isolation.sessions} sessions)`,
+    `-- ${run.arm} t${run.trial}: stop "${metrics.stop}", isolation ${run.isolation.ok ? "ok" : "WRONG HARNESS"} (${run.isolation.sessions} sessions), integrity ${run.integrity.ok ? "ok" : "INVALID"}`,
   ];
 
   for (const bad of run.isolation.bad)
     lines.push(`   ! ${bad.name ?? bad.file}: ${bad.problems.join("; ")}`);
+
+  for (const problem of run.integrity.problems) lines.push(`   ! integrity: ${problem}`);
 
   lines.push(`   correct: ${format(metrics.correct)}`);
 
@@ -393,6 +408,13 @@ export async function gradeDirectory(
       arm,
       trial: record.trial,
       isolation: runIsolation(dir, record.agentDir),
+      integrity: existsSync(join(dir, "root.jsonl"))
+        ? runIntegrity({
+            runDir: dir,
+            record: record.integrity ?? null,
+            scratch: runScratch(dir, record.agentDir),
+          })
+        : { ok: false, problems: ["no root session to check"] },
       metrics: await runMetrics(dir),
     })),
   );
@@ -452,8 +474,11 @@ async function main() {
 
   if (graded.runs.length === 0) lines.push(`no finished runs (run.json) under ${out}`);
 
-  if (graded.runs.some((run) => !run.isolation.ok))
-    lines.push("", "WARNING: runs marked WRONG HARNESS are excluded from the arm summaries.");
+  if (graded.runs.some((run) => !isValid(run)))
+    lines.push(
+      "",
+      "WARNING: runs marked WRONG HARNESS or INVALID are excluded from the arm summaries.",
+    );
 
   console.log(lines.join("\n"));
 }

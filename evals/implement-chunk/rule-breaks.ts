@@ -68,36 +68,80 @@ function words(text: string): string[] {
   return out;
 }
 
-function commandBreaks(raw: string, scope: Scope): string[] {
+export interface CommandWrites {
+  /** The git verb of a command that writes a repository, such as `commit` or `branch`. */
+  readonly git: string | null;
+  /**
+   * Each git write with the directory it runs in: its `-C` operand, else the last `cd` before it,
+   * else null for the caller's working directory.
+   */
+  readonly gitWrites: readonly { readonly verb: string; readonly dir: string | null }[];
+  readonly gh: readonly string[];
+  /** The files a redirect or an in-place `sed`/`perl` writes. `~` reads as `/HOME`. */
+  readonly files: readonly {
+    readonly kind: "redirect" | "in-place edit";
+    readonly target: string;
+  }[];
+}
+
+/** What one shell command writes, read from its text with heredoc bodies dropped. */
+export function commandWrites(raw: string): CommandWrites {
   const command = normalize(raw).replaceAll(SCRATCH_WORKTREE, "");
-  const out: string[] = [];
   const git = GIT_WRITE.exec(command) ?? GIT_BRANCH_WRITE.exec(command);
+  const files: { kind: "redirect" | "in-place edit"; target: string }[] = [];
 
-  if (git !== null) out.push(`git ${git[1]}`);
-
-  for (const pattern of GH_WRITES) {
-    const hit = pattern.exec(command);
-
-    if (hit !== null) out.push(hit[0].slice(0, 80));
-  }
-
-  // Single-quoted strings, and one a truncated codemode argument leaves open, are blanked so a `>`
-  // inside them is not read as a redirect; neither is an arrow `->`.
+  // Quoted strings, and one a truncated codemode argument leaves open, are blanked so a `>` inside
+  // them (a grep pattern, a message) is not read as a redirect; neither is an arrow `->`. A double
+  // quote right after `>` opens the redirect's own target and stays.
   for (const match of command
     .replaceAll(/'[^']*(?:'|$)/g, "''")
+    .replaceAll(/(?<!>\s*)"[^"]*(?:"|$)/g, '""')
     .matchAll(/(?<![0-9&<=-])>>?\s*("?)(?<target>[^\s"&|;)]+)\1/g)) {
-    const target = match.groups?.target ?? "";
-
-    if (!allowed(target, scope)) out.push(`redirect to ${target}`);
+    files.push({ kind: "redirect", target: match.groups?.target ?? "" });
   }
 
   for (const match of command.matchAll(/\b(?:sed|perl)\s+-i\S*\s+/g)) {
     const target = words(command.slice(match.index + match[0].length)).pop() ?? "";
 
-    if (!allowed(target, scope)) out.push(`in-place edit of ${target}`);
+    files.push({ kind: "in-place edit", target });
   }
 
-  return out;
+  const cds = [...command.matchAll(/(?:^|[\s;&|({])cd\s+("?)([^\s"&|;)]+)\1/g)];
+
+  const gitWrites = [
+    ...command.matchAll(new RegExp(GIT_WRITE.source, "g")),
+    ...command.matchAll(new RegExp(GIT_BRANCH_WRITE.source, "g")),
+  ].map((match) => {
+    const own = /^git\s+-C\s+("?)([^\s"]+)\1/.exec(match[0])?.[2];
+    const cd = cds.findLast((candidate) => candidate.index < match.index)?.[2];
+
+    return { verb: match[1], dir: own ?? cd ?? null };
+  });
+
+  return {
+    git: git === null ? null : git[1],
+    gitWrites,
+    gh: GH_WRITES.flatMap((pattern) => {
+      const hit = pattern.exec(command);
+
+      return hit === null ? [] : [hit[0].slice(0, 80)];
+    }),
+    files,
+  };
+}
+
+function commandBreaks(raw: string, scope: Scope): string[] {
+  const writes = commandWrites(raw);
+
+  return [
+    ...(writes.git === null ? [] : [`git ${writes.git}`]),
+    ...writes.gh,
+    ...writes.files.flatMap(({ kind, target }) =>
+      allowed(target, scope)
+        ? []
+        : [`${kind === "redirect" ? "redirect to" : "in-place edit of"} ${target}`],
+    ),
+  ];
 }
 
 /** Every write the root made outside its allowance, as `<tool>: <what>`. */

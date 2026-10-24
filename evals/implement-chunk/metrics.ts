@@ -87,8 +87,18 @@ export function ticketStates(
   return states;
 }
 
-function mergedFinalPrs(state: FakeGitHub): PullRequest[] {
-  return state.prs.filter((pr) => pr.baseRefName === state.defaultBranch && pr.state === "MERGED");
+/**
+ * The chunk's final PRs: those the driver froze when they had all merged, so a PR opened after the
+ * chunk closed is not counted. Older records, without the freeze, count every PR into `main`.
+ */
+function chunkFinalPrs(state: FakeGitHub, drive: DriveRecord | null): PullRequest[] {
+  const numbers = drive?.chunkFinalPrs?.numbers;
+
+  return state.prs.filter(
+    (pr) =>
+      pr.baseRefName === state.defaultBranch &&
+      (numbers === undefined || numbers.includes(pr.number)),
+  );
 }
 
 function withOrigin<T>(runDir: string, use: (bare: string) => T): T {
@@ -280,7 +290,8 @@ export async function runMetrics(runDir: string): Promise<RunMetrics> {
     ? sessionFiles(join(runDir, "sessions")).map(readSessionFacts)
     : [];
 
-  const final = mergedFinalPrs(gh);
+  const chunkFinal = chunkFinalPrs(gh, drive);
+  const final = chunkFinal.filter((pr) => pr.state === "MERGED");
   const firstHumanMerge = drive?.humanMerges.find((merge) => merge.ok) ?? null;
 
   const noDrive = unknown<number>(
@@ -467,10 +478,7 @@ export async function runMetrics(runDir: string): Promise<RunMetrics> {
     ruleBreaks: root === null ? unknown("no root session") : known(breaks.length),
     ruleBreakSamples: breaks.slice(0, 8),
     ledgerAtHead: final.length === 0 ? unknown("no final PR merged") : known(ledgerOk),
-    finalPRs:
-      drive === null
-        ? noDrive
-        : known(gh.prs.filter((pr) => pr.baseRefName === gh.defaultBranch).length),
+    finalPRs: drive === null ? noDrive : known(chunkFinal.length),
     finalPRsSelfContained:
       final.length === 0
         ? unknown("no final PR merged")

@@ -1,6 +1,7 @@
 // The scripted user. It answers the intake questions from an answer sheet, merges only a final PR
-// the orchestrator has called merge-ready, and otherwise tells the orchestrator to use its own
-// proposed default. Rules, not a model, so every arm meets the same user.
+// the orchestrator has called merge-ready, declines once any work proposed beyond the chunk after
+// its final PRs merged, and otherwise tells the orchestrator to use its own proposed default.
+// Rules, not a model, so every arm meets the same user.
 
 export interface SheetFacts {
   readonly owner: string;
@@ -87,7 +88,30 @@ export function questions(text: string): string[] {
   return [...prose(text).matchAll(/[^.!?\n]*\?/g)].map((match) => match[0].trim());
 }
 
-export type Reason = "intake" | "re-ask" | "merged" | "default" | "nudge";
+// Edits and work outside the chunk: the harness's or the project's agent files, and follow-ups.
+const BEYOND_CHUNK =
+  /\b(?:prompts?|agent (?:files?|docs?)|AGENTS\.md|SYSTEM\.md|CLAUDE\.md|skills?|standing orders?|harness|follow[- ]?ups?|follow[- ]on|(?:new|more) tickets?|file (?:\w+ ){0,3}tickets?|docs PR)\b/i;
+
+const PROPOSAL = /\?|\b(?:propose|proposal|suggest|recommend|please|want me to|would you like)\b/i;
+
+/**
+ * Whether a text proposes work beyond the chunk: a question or proposal sentence that names an
+ * agent file, the harness, or a follow-up. Inline code stays, since a file name sits in backticks.
+ */
+export function proposesBeyondChunk(text: string): boolean {
+  const sentences = text
+    .replaceAll(/```[\s\S]*?```/g, " ")
+    .replaceAll("`", "")
+    .replaceAll(/https?:\/\/\S+/g, " ")
+    .split(/(?<=[.!?])\s+|\n/);
+
+  return sentences.some((sentence) => PROPOSAL.test(sentence) && BEYOND_CHUNK.test(sentence));
+}
+
+export const BEYOND_CHUNK_REPLY =
+  "Thanks. List them in your close report; do not make these edits in this chunk.";
+
+export type Reason = "intake" | "re-ask" | "merged" | "beyond-chunk" | "default" | "nudge";
 
 export type Decision =
   | { readonly kind: "reply"; readonly reason: Reason; readonly text: string }
@@ -99,9 +123,11 @@ export interface TurnEnd {
   readonly intakeAnswered: boolean;
   /** Final PRs the user merged since the previous reply that the orchestrator has not reported. */
   readonly mergedNow: readonly number[];
-  /** PRs into `main` still open, and merged. */
+  /** The chunk's own final PRs (see `ChunkFinalPrs` in drive.ts) still open, and merged. */
   readonly openFinalPrs: number;
   readonly mergedFinalPrs: number;
+  /** The user already declined work beyond the chunk once. */
+  readonly beyondChunkDeclined: boolean;
   readonly sheet: SheetFacts;
 }
 
@@ -124,6 +150,17 @@ export function decide(turn: TurnEnd): Decision {
   }
 
   const finished = turn.openFinalPrs === 0 && turn.mergedFinalPrs > 0;
+
+  // After the chunk's final PRs merged, the user takes no new work: one decline, then the close.
+  if (finished && proposesBeyondChunk(turn.text)) {
+    if (!turn.beyondChunkDeclined)
+      return { kind: "reply", reason: "beyond-chunk", text: BEYOND_CHUNK_REPLY };
+
+    return {
+      kind: "stop",
+      why: "every final PR of the chunk merged, and the orchestrator proposed work beyond the chunk again after the decline",
+    };
+  }
 
   if (finished && !question)
     return { kind: "stop", why: "every final PR merged and the orchestrator asked nothing" };

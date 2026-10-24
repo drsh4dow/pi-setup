@@ -13,7 +13,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { candidateEnv, runPi, writeAtomically } from "../lib/pi-run.ts";
 import { killProcessesWithEnv } from "../harness-lessons/workdir.ts";
-import { prepareRunHome } from "./home.ts";
+import { prepareRunHome, runHomeEnv } from "./home.ts";
 import { checkSession, differingAppendices, sessionFiles } from "./isolation.ts";
 
 const MODEL = "anthropic/claude-haiku-5-5";
@@ -48,7 +48,7 @@ async function main() {
   execFileSync("git", ["init", "-q"], { cwd: project });
 
   const rootSessions = join(scratch, "root-session");
-  const env = { ...candidateEnv(), HOME: home.home, XDG_STATE_HOME: home.state };
+  const env = { ...candidateEnv(), ...runHomeEnv(home) };
 
   const result = await runPi(
     project,

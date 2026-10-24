@@ -21,10 +21,21 @@ revised worktree. A third arm is more configuration. The grader reads every othe
 
 Each run gets its own home directory (`home.ts`), and every process of the run, the root and every
 `pi-subagent` child, gets `HOME` pointed there. The fake home links every entry of the real home
-except `.pi` and `.local`. Its `.pi/agent` links the live agent directory's entries (auth, settings,
-extensions, the built `pi-subagent`) but takes `SYSTEM.md`, `skills/`, and `prompts/` from the arm,
-and has a fresh `sessions/`. `.local/state` is fresh, so the orchestrator's state folder and the
-babysit watcher's state belong to the run.
+except `.pi` and `.local`. Its `.pi/agent` holds copies, not links: `SYSTEM.md`, `skills/`,
+`prompts/`, and any file only the arm has come from the arm, and the live agent directory's other
+entries (settings, extensions, MCP servers) from the live one. Only `auth.json` and `mcp-auth.json`
+stay links, so a token the run refreshes reaches the real file. `sessions/` is fresh. Outside
+`agent/`, the home's `.pi` has only what Pi needs: links to the live checkout's `.build/`
+(`pi-subagent`, `emit-to-pi`, which `build-bin-path.ts` finds next to the copied extensions),
+`node_modules/` (the extensions' packages), and `package.json`. It has no `.git`, and
+`GIT_CEILING_DIRECTORIES` stops a git started inside those links from climbing into the live
+repository. `.local/state` is fresh, so the orchestrator's state folder and the babysit watcher's
+state belong to the run.
+
+The 2026-10-24 batch shows why. Its home linked the arm's `skills/` and `prompts/` and mirrored the
+real `~/.pi`, `.git` included. Candidate t1 followed a link to the arm's worktree, added a worktree
+and the branch `implement-chunk-tracker-linking` to the real repository, and committed there.
+Candidate t2 edited the arm's real `agent/prompts/implement-chunk.md`, which the next run loaded.
 
 **Departure from the spec: isolation through `HOME`, not `checkoutHarnessArgs`.** `pi-subagent`
 launches each child as `pi --print` with the parent's environment, not its command-line arguments.
@@ -44,6 +55,28 @@ same check (`isolation.ts`) on the root and every child session of every run:
 - no subagent appendix may carry the live text where the arm's text differs.
 
 A run that fails is marked `WRONG HARNESS` and dropped from the arm's summary.
+
+**Integrity is checked after every run, and again by the grader** (`integrity.ts`). The runner reads
+the sources before the first turn and after it kills the run's processes, and records both readings
+in `run.json` under `integrity`, with the arm's HEAD and `harnessDigest`, a content hash of the
+copied harness. A run is `INVALID`, with the reason, and dropped from the arm's summary when:
+
+- the arm's HEAD moved, its `git status` changed, or its harness files changed;
+- a branch was added to the arm's repository or the live one (a worktree arm shares the live
+  repository's branches);
+- the live checkout's `git status -- agent` changed;
+- the run changed its own copy of the harness;
+- a root or child session wrote outside the run: an edit, a write, a redirect, or an in-place
+  `sed` outside the run's scratch directory, into the copied harness, or through a link of the
+  home into the real home; or a git write whose `cd` or `-C` directory lies outside the run.
+  Writes to `/tmp` outside every `/tmp/ic-eval-*` directory are allowed, because `mktemp` lands
+  there;
+- `run.json` has no integrity record, as in runs from before the check.
+
+Other agents add branches to the live repository while a batch runs, and the user commits there.
+A new branch then marks a run invalid it did not touch, so the reason names the branch. To avoid
+it, run arms from a clone (`git clone ~/.pi /tmp/ic-candidate`) rather than a worktree. The check
+reads the live checkout's `agent/` status, not its HEAD, so a commit to `main` passes.
 
 ## Fixture
 
@@ -99,6 +132,17 @@ No prompt and no ticket names a trap. Each one is a metric.
   calls merge-ready now, with `gh pr merge --merge` as actor `human`. A plan such as "driving #5
   to merge-ready" is not a claim. Each merge records its claiming sentence in `drive.json`, so a
   reader can audit it.
+- **After the close.** The chunk's final PRs are the PRs into `main` that the orchestrator's
+  `plan.md` names by number or head branch, or every PR into `main` when it names none. Once all of
+  them have merged, the set is frozen and recorded in `drive.json` as `chunkFinalPrs`. From then
+  on, the user merges nothing. When the orchestrator proposes work beyond the chunk, such as an
+  edit to the prompt or the agent files or a follow-up ticket, the user answers once: "Thanks. List
+  them in your close report; do not make these edits in this chunk." That reply counts as a human
+  turn with reason `beyond-chunk`. A second such proposal ends the run. An in-chunk question after
+  the close still gets "use your proposed default".
+- **Stop.** The run stops at the first turn end after every final PR of the chunk has merged
+  whose text asks nothing. A PR opened after the close neither keeps the run going nor counts in
+  `finalPRs`, `ledgerAtHead`, or `finalPRsSelfContained`.
 
 Every reply counts as a human turn. A run is capped at `--max-turns` (10), `--timeout-minutes`
 (180), and `--max-cost-usd` (60, root plus children). At the cost cap, every process carrying the
@@ -139,7 +183,8 @@ settle is `unknown`, with the reason.
   outside the run's scratch directory, because the repository itself lives under `/tmp`.
 - **`ledgerAtHead`.** Every merged final PR has a row in the orchestrator's `ledger.tsv` at its
   head SHA, and a `live-deployed-verified` or `live-failed` row at its merge commit.
-- **`finalPRs`**, and **`finalPRsSelfContained`**: each merged final PR's head passed CI.
+- **`finalPRs`**, the chunk's own final PRs (`chunkFinalPrs` in `drive.json`; every PR into `main`
+  in older records), and **`finalPRsSelfContained`**: each merged final PR's head passed CI.
 
 **T5 reading.** The first commit the user merged into `main` is built and served. If it already
 answers TAL-2's acceptance requests, the defect was caught before the final merge, or never
@@ -175,14 +220,16 @@ node evals/implement-chunk/probe-isolation.ts --arm <checkout> --out <dir> [--ma
 ```
 
 `--dry-run` prepares a world per arm without launching a model. It checks the arm, the fixture's own `npm run check`, the origin,
-the fake `gh` and tracker on `PATH`, the home links, and the deploy serving `main`. It also drives
+the fake `gh` and tracker on `PATH`, that the home holds copies of the arm's harness and reaches no
+git repository, and the deploy serving `main`. It also drives
 the arm's babysit watcher against the fake `gh`. Results go to `<out>/<arm>/t<n>/`. A rerun skips
 runs that have a `run.json`. After each run, the runner:
 
 1. kills every process carrying the run's `HOME`, and anything under its scratch directory, on exit
    or on SIGINT and SIGTERM;
-2. archives the sessions, the state folder, the origin bundle, and the worktree list;
-3. removes the scratch directory.
+2. reads the sources again and records the integrity check in `run.json`;
+3. archives the sessions, the state folder, the origin bundle, and the worktree list;
+4. removes the scratch directory.
 
 ## Known gaps
 

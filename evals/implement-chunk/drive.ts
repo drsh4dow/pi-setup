@@ -3,8 +3,12 @@
 // `pi --session <file> -p`. Meanwhile a side loop reads the root session and merges each final PR
 // the orchestrator has called merge-ready, because Pi waits on the orchestrator's until-merged
 // watcher and the merge must happen while it waits.
+//
+// The run is about the chunk's own final PRs: those the orchestrator's plan.md names when they
+// have all merged. From that moment the set is frozen, the user merges nothing more, and a PR
+// opened later is work beyond the chunk, which neither keeps the run going nor counts.
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Option, Schema } from "effect";
 import { runPi, sessionFile, writeAtomically, type PiResult } from "../lib/pi-run.ts";
@@ -27,7 +31,7 @@ export interface DriveSettings {
 
 export const HumanTurn = Schema.Struct({
   at: Schema.String,
-  reason: Schema.Literals(["intake", "re-ask", "merged", "default", "nudge"]),
+  reason: Schema.Literals(["intake", "re-ask", "merged", "beyond-chunk", "default", "nudge"]),
   /** The end of the orchestrator text the reply answers. */
   answering: Schema.String,
   reply: Schema.String,
@@ -51,6 +55,16 @@ export const PiTurn = Schema.Struct({
   durationMs: Schema.Finite,
 });
 
+export const ChunkFinalPrs = Schema.Struct({
+  numbers: Schema.Array(Schema.Int),
+  /** `plan.md` when the plan named them, else every PR into `main` at the time they had all merged. */
+  source: Schema.Literals(["plan.md", "every PR into main"]),
+  /** When the last of them merged; null while one is open. */
+  closedAt: Schema.NullOr(Schema.String),
+});
+
+export type ChunkFinalPrs = typeof ChunkFinalPrs.Type;
+
 export const DriveRecord = Schema.Struct({
   startedAt: Schema.String,
   endedAt: Schema.String,
@@ -60,6 +74,8 @@ export const DriveRecord = Schema.Struct({
   humanTurns: Schema.Array(HumanTurn),
   humanMerges: Schema.Array(HumanMerge),
   rootSession: Schema.NullOr(Schema.String),
+  /** Absent in records from before the chunk scope. */
+  chunkFinalPrs: Schema.optionalKey(ChunkFinalPrs),
 });
 
 export type DriveRecord = typeof DriveRecord.Type;
@@ -95,14 +111,73 @@ export function assistantTexts(jsonl: string): string[] {
   });
 }
 
-function finalPrs(world: World) {
-  const state = readGitHub(world.gh.state);
-  const final = state.prs.filter((pr) => pr.baseRefName === state.defaultBranch);
+/** Every plan.md in the run's state folder, joined: the orchestrator's partition into final PRs. */
+export function planText(stateDir: string): string {
+  const root = join(stateDir, "pi-agent");
 
-  return {
-    open: final.filter((pr) => pr.state === "OPEN").map((pr) => pr.number),
-    merged: final.filter((pr) => pr.state === "MERGED").length,
-  };
+  if (!existsSync(root)) return "";
+
+  return readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name === "plan.md")
+    .map((entry) => readFileSync(join(entry.parentPath, entry.name), "utf8"))
+    .join("\n");
+}
+
+interface PrSummary {
+  readonly number: number;
+  readonly headRefName: string;
+}
+
+const escape = (text: string) => text.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The PRs into `main` the plan names, by number or head branch; every one when it names none. */
+export function chunkFinalPrs(
+  prs: readonly PrSummary[],
+  plan: string,
+): { readonly numbers: number[]; readonly source: ChunkFinalPrs["source"] } {
+  const named = prs.filter(
+    (pr) =>
+      new RegExp(`(?:#|/pull/)${pr.number}\\b`).test(plan) ||
+      new RegExp(`(?<![\\w/.-])${escape(pr.headRefName)}(?![\\w/-])`).test(plan),
+  );
+
+  return named.length > 0
+    ? { numbers: named.map((pr) => pr.number), source: "plan.md" }
+    : { numbers: prs.map((pr) => pr.number), source: "every PR into main" };
+}
+
+/** Tracks the chunk's final PRs until they have all merged, then holds them fixed. */
+export class ChunkScope {
+  #frozen: ChunkFinalPrs | null = null;
+  readonly #ghState: string;
+  readonly #stateDir: string;
+
+  /** `ghState` is the fake GitHub's state file; `stateDir` the run's `~/.local/state`. */
+  constructor({ ghState, stateDir }: { ghState: string; stateDir: string }) {
+    this.#ghState = ghState;
+    this.#stateDir = stateDir;
+  }
+
+  /** The chunk's final PRs now, open and merged; freezes them once every one has merged. */
+  observe() {
+    const state = readGitHub(this.#ghState);
+    const intoMain = state.prs.filter((pr) => pr.baseRefName === state.defaultBranch);
+    const scope = this.#frozen ?? chunkFinalPrs(intoMain, planText(this.#stateDir));
+    const mine = intoMain.filter((pr) => scope.numbers.includes(pr.number));
+    const open = mine.filter((pr) => pr.state === "OPEN").map((pr) => pr.number);
+    const merged = mine.filter((pr) => pr.state === "MERGED").length;
+
+    if (this.#frozen === null && open.length === 0 && merged > 0)
+      this.#frozen = { ...scope, closedAt: new Date().toISOString() };
+
+    const record: ChunkFinalPrs = this.#frozen ?? { ...scope, closedAt: null };
+
+    return { open, merged, record };
+  }
+
+  get closed(): boolean {
+    return this.#frozen !== null;
+  }
 }
 
 class HumanMerger {
@@ -117,14 +192,24 @@ class HumanMerger {
     this.#sessionDir = sessionDir;
   }
 
-  /** Merges every open final PR a root message has called merge-ready. Returns those merged now. */
-  sweep(): number[] {
+  /**
+   * Merges every open final PR a root message has called merge-ready, until the chunk closed.
+   * Returns those merged now.
+   */
+  sweep(scope: ChunkScope): number[] {
     const session = sessionFile(this.#sessionDir);
 
-    if (session === undefined) return [];
+    if (session === undefined || scope.closed) return [];
 
     const texts = assistantTexts(readFileSync(session, "utf8"));
-    const open = new Set(finalPrs(this.#world).open);
+    const state = readGitHub(this.#world.gh.state);
+
+    const open = new Set(
+      state.prs
+        .filter((pr) => pr.baseRefName === state.defaultBranch && pr.state === "OPEN")
+        .map((pr) => pr.number),
+    );
+
     const merged: number[] = [];
 
     texts.forEach((text, index) => {
@@ -193,19 +278,22 @@ export async function drive(
   const deadline = started + settings.timeoutMs;
   const sessionDir = join(world.scratch, "root-session");
   const merger = new HumanMerger(world, sessionDir);
+  const scope = new ChunkScope({ ghState: world.gh.state, stateDir: world.home.state });
   const piTurns: PiResult[] = [];
   const durations: number[] = [];
   const humanTurns: (typeof HumanTurn.Type)[] = [];
   const sheet = { owner: OWNER, repo: world.name, port: world.deploy.port };
   const pendingMerges: number[] = [];
   let intakeAnswered = false;
+  let beyondChunkDeclined = false;
 
   mkdirSync(sessionDir, { recursive: true });
 
   let overBudget = false;
 
   const poll = setInterval(() => {
-    pendingMerges.push(...merger.sweep());
+    pendingMerges.push(...merger.sweep(scope));
+    scope.observe();
 
     if (runCost(world, sessionDir) <= settings.maxCostUsd) return;
 
@@ -248,13 +336,13 @@ export async function drive(
 
     piTurns.push(result);
     durations.push(Date.now() - turnStarted);
-    pendingMerges.push(...merger.sweep());
+    pendingMerges.push(...merger.sweep(scope));
 
     if (overBudget) return "cost cap";
 
     if (result.timedOut) return "wall cap";
 
-    const prs = finalPrs(world);
+    const prs = scope.observe();
     const text = lastText(sessionDir);
 
     const decision = decide({
@@ -263,6 +351,7 @@ export async function drive(
       mergedNow: pendingMerges.filter((pr) => !acknowledgesMerge(text, pr)),
       openFinalPrs: prs.open.length,
       mergedFinalPrs: prs.merged,
+      beyondChunkDeclined,
       sheet,
     });
 
@@ -273,6 +362,8 @@ export async function drive(
     if (turn === settings.maxTurns) return "turn cap";
 
     if (decision.reason === "intake") intakeAnswered = true;
+
+    if (decision.reason === "beyond-chunk") beyondChunkDeclined = true;
 
     humanTurns.push({
       at: new Date().toISOString(),
@@ -311,6 +402,7 @@ export async function drive(
     humanTurns,
     humanMerges: merger.merges,
     rootSession: session === undefined ? null : rootCopy,
+    chunkFinalPrs: scope.observe().record,
   };
 
   writeAtomically(join(outDir, "drive.json"), `${JSON.stringify(record, null, 2)}\n`);

@@ -26,15 +26,13 @@ Web search needs `PERPLEXITY_API_KEY` and `EXA_API_KEY`.
 ### Short tasks
 
 When the work fits in one session, describe it in a sentence or two and run
-`/restate-sharpened <task>`. The agent tells you what it thinks you want and
-why. Then it rewrites your task the way an expert would approach it. It says
-what the expert would do that you didn't ask for, what source material they
-would start from, which tools they would use, and how you could check the
-result without taking the agent's word for it.
+`/restate-sharpened <task>`. The agent says in a few sentences what you're
+after, then works out what an expert would do that you didn't ask for. It
+replies with what it added, how it would do the task, and the decisions that
+are yours, numbered, each with its pick. It doesn't start until you answer.
 
-At the end it lists the decisions you need to make, numbered, with its pick
-for each, and offers to write the full plan. Reply by number, like
-`1. agree. 2. drop it.`, ask for the plan, and it does the work. If the plan
+Reply by number, like `1. agree. 2. drop it.`, and it does the work. Run it
+with no task to sharpen the approach already in the chat. If the approach
 needs a spec or more than one PR, use the feature workflow below instead.
 
 ### Features

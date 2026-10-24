@@ -20,7 +20,6 @@ theme needs a line here.
 | `to-spec`              | you   | Turn the conversation into a spec ticket                        |
 | `to-tickets`           | you   | Split the spec into tickets under it, with blocking edges       |
 | `grilling`             | agent | Question a plan hard when you say "grill me"                    |
-| `sharpen`              | agent | Make a task deeper, not bigger                                  |
 | `writing-good-tickets` | agent | Write one ticket an agent can take to one PR                    |
 
 #### Build it
@@ -112,9 +111,10 @@ The agent loads these on its own when the trigger matches.
 - `handoff`: compact the conversation into a message for a fresh agent
 - `implement-chunk`: orchestrate a ticket and its sub-tickets through
   subagents to merge-ready PRs, then verify them live after merge
-- `restate-sharpened`: rewrite a short task the way an expert would approach
-  it, list the decisions you need to make with a pick for each, and offer the
-  full plan
+- `restate-sharpened`: restate a short task, sharpen it into a deeper
+  approach, and list the decisions that are yours, before any work starts
+- `sharpen-prompt`: rewrite a prompt so it asks for a deeper version of the
+  task, not a bigger one
 
 ### Installed extensions
 

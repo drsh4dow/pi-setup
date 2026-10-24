@@ -14,7 +14,6 @@ Then rewrite my prompt to ask for exactly that.
 
 Leave choices that are mine to make open instead of deciding them.
 
-
 <prompt>
   $ARGUMENTS
 </prompt>

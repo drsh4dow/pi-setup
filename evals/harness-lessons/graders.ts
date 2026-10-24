@@ -6,6 +6,7 @@ import {
   crossProject,
   dependencyByPath,
 } from "./grade-artifacts.ts";
+import { catchup, catchupVideo } from "./grade-catchup.ts";
 import { newGate, vacuousPass } from "./grade-checks.ts";
 import {
   cosmeticWake,
@@ -29,4 +30,6 @@ export const graders: Record<ScenarioId, Grader> = {
   "cosmetic-wake": cosmeticWake,
   "restate-sharpened": restateSharpened,
   "hand-edits-use-edit": handEditsUseEdit,
+  catchup,
+  "catchup-video": catchupVideo,
 };

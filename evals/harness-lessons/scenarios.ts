@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { catchupChat } from "./catchup-chat.ts";
 
 export const ScenarioId = Schema.Literals([
   "live-reader-rebase",
@@ -14,6 +15,8 @@ export const ScenarioId = Schema.Literals([
   "cosmetic-wake",
   "restate-sharpened",
   "hand-edits-use-edit",
+  "catchup",
+  "catchup-video",
 ]);
 
 export type ScenarioId = typeof ScenarioId.Type;
@@ -26,8 +29,11 @@ export type Project =
   | { readonly kind: "fixture"; readonly fixture: string }
   | { readonly kind: "clone" };
 
-/** The stand-in for GitHub on the run's PATH: the babysit fake serving PR #42 (fakegh.ts). */
-export type FakeGitHub = "babysit-pr-42";
+/**
+ * The stand-in for GitHub on the run's PATH: the babysit fake serving PR #42 (fakegh.ts), or the
+ * catchup stubs serving PRs #51 to #53 with an `xdg-open` that opens nothing (catchup-stubs.ts).
+ */
+export type FakeGitHub = "babysit-pr-42" | "catchup-prs";
 
 export interface Scenario {
   readonly id: ScenarioId;
@@ -174,6 +180,23 @@ const table: Record<ScenarioId, Omit<Scenario, "id">> = {
     project: fixture("http-client"),
     prompt:
       "Three changes to the retry option: in src/config.ts change the default retryCount from 3 to 5; in src/client.ts make a negative retryCount throw a RangeError with the message 'retryCount must be >= 0'; in README.md update the options table so retryCount's default is 5 and its description says negative values throw.",
+  },
+  catchup: {
+    ...DEFAULTS,
+    project: fixture("gift-registry"),
+    setup: "catchup.sh",
+    fakeGitHub: "catchup-prs",
+    seededChat: catchupChat,
+    prompt: "/skill:catchup",
+  },
+  "catchup-video": {
+    ...DEFAULTS,
+    project: fixture("gift-registry"),
+    setup: "catchup.sh",
+    timeoutMinutes: 30,
+    fakeGitHub: "catchup-prs",
+    seededChat: catchupChat,
+    prompt: "/skill:catchup-video",
   },
 };
 

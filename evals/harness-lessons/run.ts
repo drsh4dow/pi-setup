@@ -34,6 +34,7 @@ import {
 import { runPool } from "../lib/pool.ts";
 import type { RunRecord } from "./record.ts";
 import { scenarios, type Scenario } from "./scenarios.ts";
+import { catchupStubEnv } from "./catchup-stubs.ts";
 import { fakeGitHubEnv, fakeGitHubPaths } from "./fake-pr.ts";
 import { dryRunChecks, setupChecks, type SetupCheck } from "./setup-checks.ts";
 import { killProcessesWithEnv, prepareWorkdir, snapshot } from "./workdir.ts";
@@ -136,10 +137,20 @@ function displayCommand(run: PlannedRun, args: readonly string[]): string {
   return `pi ${shown.join(" ")}`;
 }
 
-function runEnv(run: PlannedRun): NodeJS.ProcessEnv {
-  if (run.scenario.fakeGitHub === null) return candidateEnv();
+function runEnv(run: PlannedRun, workdir: string): NodeJS.ProcessEnv {
+  switch (run.scenario.fakeGitHub) {
+    case null:
+      return candidateEnv();
+    case "babysit-pr-42":
+      return { ...candidateEnv(), ...fakeGitHubEnv(run.dir) };
+    case "catchup-prs":
+      return { ...candidateEnv(), ...catchupStubEnv(run.dir, workdir) };
+    default: {
+      const exhaustive: never = run.scenario.fakeGitHub;
 
-  return { ...candidateEnv(), ...fakeGitHubEnv(run.dir) };
+      return exhaustive;
+    }
+  }
 }
 
 const installed = new Set<string>();
@@ -238,7 +249,7 @@ async function execute(run: PlannedRun, settings: Settings): Promise<RunRecord> 
     piArgs(run, settings, sessionDir, workdir),
     run.dir,
     timeoutMs,
-    runEnv(run),
+    runEnv(run, workdir),
   );
 
   reap(run, workdir);

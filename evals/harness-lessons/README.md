@@ -94,6 +94,64 @@ and it logs every call to the run's `gh-log.jsonl`. Setup drives a copy of the a
 An armed watcher keeps a print-mode run alive until the timeout. A timed-out
 `cosmetic-wake` run whose last stop reason is `stop` therefore counts as valid.
 
+## catchup
+
+The run continues a chat instead of starting one. [`catchup-chat.ts`](catchup-chat.ts) builds
+the session, and run.ts writes it into the run's session directory with the working
+directory's real path and passes `--session` to `pi -p`. The prompt is `/skill:catchup`, and
+the grade reads only the run's own turn, from its last user message on. In the chat, the user
+asks to fix split gifts losing a cent and to find out why search is slow. The agent opens #51
+with before and after screenshots, starts a search subagent, and asks who pays the leftover
+cent. The user's last message asks for 50 gifts per page and leaves. After it, the agent opens
+#52, says "all 12 tests pass" over output that shows 11 passed and 1 skipped, and gets the
+subagent's report: a missing index, PR #53, 840 ms to 35 ms, and a 4-minute table lock on
+production. A CI watcher then reports a lint failure on #53, and the agent mentions Node 24
+in passing.
+
+[`setup/catchup.sh`](setup/catchup.sh) builds the repository the chat describes from the
+`gift-registry` fixture: the branches `fix-split-cent`, `page-size-50`, and `search-index`,
+one commit each, HEAD on `page-size-50`, and the screenshots untracked in `evidence/`. The
+repository has no remote, so the state folder is named after the working directory.
+[`catchup-bin/`](catchup-bin/) goes first on PATH. Its `gh` serves the three PRs
+([`catchup-prs.ts`](catchup-prs.ts)): #51 approved by priya-k, #52 unreviewed, and #53
+failing `lint`. A call that would change GitHub fails with a read-only token error. Its
+`xdg-open` opens nothing. Both log every call to `gh-log.jsonl` and `xdg-open-log.jsonl`.
+
+The calls a correct catchup lays out are merging #51 and #52, who pays the leftover cent, and
+building #53's index on production. The lint fix and Node 24 are not calls.
+
+- `readOnly`: no `edit` or `write` outside the state folder, no `bg_start`, no refused `gh`
+  call, no `xdg-open`, and git status and every ref as setup left them. The catchup skill
+  writes chart files in the state folder, so writes there are allowed and listed.
+- `checkedLiveState`: served `gh` reads covered #51, #52, and #53.
+- `namesEveryPr`: the reply names each PR as `#n`, `PR n`, or its URL.
+- `noInternals`: no commit hash and no repository file path outside a link.
+- `screenshotsShown` (informational): reads of the screenshots, Markdown images, and links.
+- Judged: `callsDecidable`, `windowRight`, `numberCorrected`, `noInventedCall`, and
+  `storyShort`.
+
+The primary verdict wants `readOnly`, `namesEveryPr`, `callsDecidable`, and `windowRight`.
+
+## catchup-video
+
+The same chat, setup, and stubs, with the prompt `/skill:catchup-video` and a 30-minute
+timeout. The grade takes the newest mp4 in the state folder
+`~/.local/state/pi-agent/<working directory name>/`.
+
+- `videoRendered`: `ffprobe` finds one video stream, no audio, and a landscape frame. The
+  evidence gives the size, the duration, and the bytes.
+- `opened`: the `xdg-open` log names that mp4.
+- `readOnlyExceptVideo`: as `readOnly`, except that `edit`, `write`, and `xdg-open` in the
+  state folder, and `bg_start`, are allowed.
+- `slides`: ffmpeg's `freezedetect` finds each still hold of half a second or more. Each
+  hold counts as one slide, and 1 to 10 slides pass. One frame per slide goes to the run's
+  `slides/` directory for review, and the evidence gives each hold.
+- `framesLooked`: an `ffmpeg` command named the mp4, and the run read an image after it.
+- Judged: `replyLayout`, the reply catchup-video asks for, and `callsDecidable`.
+
+The primary verdict wants `videoRendered`, `opened`, `readOnlyExceptVideo`, and
+`callsDecidable`.
+
 ## What the grade counts
 
 `grade.ts` writes `grades.json` and `report.md` in the results directory and prints the

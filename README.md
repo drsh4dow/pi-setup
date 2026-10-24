@@ -22,8 +22,8 @@ Web search needs `PERPLEXITY_API_KEY` and `EXA_API_KEY`.
 
 ## Workflow
 
-1. **Agree on the problem.** Alternate `/skill:grill-with-docs` and
-   `/skill:prototype` until you and the agent describe the problem the same
+1. **Agree on the problem.** Alternate `/skill:grill-with-docs` with
+   prototypes until you and the agent describe the problem the same
    way. The agent writes each term you agree on into `GLOSSARY.md` and each
    decision into a short decision record (ADR). Then run `/skill:to-spec` and
    `/skill:to-tickets`, which files the tickets under the spec.

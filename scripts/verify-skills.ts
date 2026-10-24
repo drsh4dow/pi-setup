@@ -2,6 +2,7 @@
 
 import {
   DefaultResourceLoader,
+  parseFrontmatter,
   SettingsManager,
   type ResourceDiagnostic,
   type Skill,
@@ -94,6 +95,26 @@ function nameDirectoryMismatches(skills: readonly Skill[]) {
       `${relative(root, filePath)}: name "${name}" does not match its directory "${directoryName}"`,
     ];
   });
+}
+
+// Each skill in agent/skills states who can start it, so a reader of its SKILL.md needs neither
+// Pi's default for disable-model-invocation nor skill-visibility's for user-invokable.
+const INVOCATION_FLAGS = ["disable-model-invocation", "user-invokable"] as const;
+
+function missingInvocationFlags(skills: readonly Skill[]) {
+  const agentSkills = `${join(root, "agent", "skills")}/`;
+
+  return skills
+    .filter(({ filePath }) => filePath.startsWith(agentSkills))
+    .flatMap(({ filePath }) => {
+      const { frontmatter } = parseFrontmatter(readFileSync(filePath, "utf8"));
+
+      return INVOCATION_FLAGS.flatMap((flag) =>
+        frontmatter[flag] === true || frontmatter[flag] === false
+          ? []
+          : [`${relative(root, filePath)}: set "${flag}" to true or false`],
+      );
+    });
 }
 
 // The forms one document uses to send the agent to a skill: "the **how** skill", "the **a** and
@@ -193,6 +214,7 @@ const errors = [
   ...shebangScriptErrors(checkedScripts),
   ...diagnostics.map(diagnosticError),
   ...nameDirectoryMismatches(skills),
+  ...missingInvocationFlags(skills),
   ...danglingSkillPointers(skills),
 ];
 

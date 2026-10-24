@@ -1,8 +1,8 @@
 ---
 name: architect
-description: "Sketch types, signatures, and module structure before code, then stay in the loop while implementation fills in. Use for /skill:architect, 'architect this', 'design this', or non-trivial work where jumping to code would lock in the wrong shape."
+description: "Sketch types, signatures, and module structure before code, then stay in the loop while implementation fills in. Use for 'architect this', 'design this', or non-trivial work where jumping to code would lock in the wrong shape."
 disable-model-invocation: false
-user-invokable: true
+user-invokable: false
 ---
 
 # Architect
@@ -57,7 +57,7 @@ Merge findings that name the same problem, and note which models raised each: a 
 
 Default: proceed directly to implementation with the synthesized design. No human checkpoint. Record the Consider findings under the rationale's "Open questions and risks".
 
-Opt in to a checkpoint when the invoker explicitly asks: "/skill:architect with checkpoint," "stop and show me before implementing," or similar. Then surface the synthesized design and apply the **grilling** skill to it. The Consider findings and the decisions the sketch opened form the first frontier. Decisions settled earlier in the session stay settled. Implement once the frontier is empty and the human signs off.
+Opt in to a checkpoint when the invoker explicitly asks: "architect this with a checkpoint," "stop and show me before implementing," or similar. Then surface the synthesized design and apply the **grilling** skill to it. The Consider findings and the decisions the sketch opened form the first frontier. Decisions settled earlier in the session stay settled. Implement once the frontier is empty and the human signs off.
 
 The synthesis can ship as its own commit either way, as the "scaffold first" step of the **sequence-verifiable-units** principle skill. Each fill-in unit still ends in a passing check, per the same principle.
 

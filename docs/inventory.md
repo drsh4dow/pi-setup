@@ -15,8 +15,8 @@ theme needs a line here.
 | Skill                  | Who   | Use it to                                                       |
 | ---------------------- | ----- | --------------------------------------------------------------- |
 | `grill-with-docs`      | you   | Get interviewed hard, and write the glossary and ADRs as you go |
-| `prototype`            | both  | Build a throwaway that settles a design question                |
-| `research`             | both  | Answer a question from primary sources in a background agent    |
+| `prototype`            | agent | Build a throwaway that settles a design question                |
+| `research`             | agent | Answer a question from primary sources in a background agent    |
 | `to-spec`              | you   | Turn the conversation into a spec ticket                        |
 | `to-tickets`           | you   | Split the spec into tickets under it, with blocking edges       |
 | `grilling`             | agent | Question a plan hard when you say "grill me"                    |
@@ -27,10 +27,10 @@ theme needs a line here.
 
 | Skill                       | Who   | Use it to                                            |
 | --------------------------- | ----- | ---------------------------------------------------- |
-| `architect`                 | both  | Sketch types and signatures, then stop for review    |
-| `arena`                     | both  | Run N candidates, keep the best, graft in the rest   |
+| `architect`                 | agent | Sketch types and signatures, then stop for review    |
+| `arena`                     | agent | Run N candidates, keep the best, graft in the rest   |
 | `code-review`               | both  | Review a branch with one persona subagent per lens   |
-| `babysit`                   | both  | Answer review threads and fix CI until merge-ready   |
+| `babysit`                   | agent | Answer review threads and fix CI until merge-ready   |
 | `subagents`                 | agent | Delegate, with the model for each role               |
 | `swarm`                     | agent | Fan out parallel workers and merge one report        |
 | `background-terminals`      | agent | Run services, watchers, and subagents alongside work |
@@ -50,8 +50,8 @@ theme needs a line here.
 | ----------------------------- | ----- | --------------------------------------------------------- |
 | `create-verification-skill`   | you   | Generate `verify-<app>`, which drives the app like a user |
 | `maintain-verification-skill` | you   | Bring `verify-<app>` back in line with the app            |
-| `benchmark-checklist`         | you   | Vet a performance number before you trust it              |
 | `agent-browser`               | agent | Drive a browser or Electron app                           |
+| `benchmark-checklist`         | agent | Vet a performance number before you trust it              |
 | `blast-radius`                | agent | Find what a change breaks outside the diff                |
 | `dumpfile`                    | agent | Publish screenshots and recordings as PR evidence         |
 

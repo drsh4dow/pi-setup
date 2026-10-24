@@ -69,7 +69,7 @@ Write the `## Agent skills` block into the agent file, or update it in place whe
 ## Agent skills
 
 The engineering skills read this repository's config record in `docs/agents/`.
-Rerun `/skill:setup-sh4dow-skills` when the tracker, the domain layout, or the
+Rerun the **setup-sh4dow-skills** skill when the tracker, the domain layout, or the
 guardrails change.
 
 - Issue tracker: [one-line summary]. See `docs/agents/issue-tracker.md`.

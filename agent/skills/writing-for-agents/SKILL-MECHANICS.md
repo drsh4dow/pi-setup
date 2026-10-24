@@ -6,12 +6,14 @@ The skill-specific branch of [`writing-for-agents`](SKILL.md): what changes when
 
 Two choices, trading the two loads:
 
-- A **model-invoked** skill keeps a `description`, so the agent can fire it autonomously, and other skills can reach it. You can still type its name: model-invocation always _includes_ user reach; a description only ever adds agent discovery, never removes the human's. The description is the skill's top-level context pointer, forced to stay loaded at all times: permanent context load in exchange for discoverability. A model-invoked skill whose content is all reference is also one home for shared reference: another skill can invoke it, so reference needed by several skills lives in one place. Mechanics: omit `disable-model-invocation`, and write a model-facing description carrying the trigger branches (the pointer-writing rules in `SKILL.md` apply in full).
-- A **user-invoked** skill strips the description from the agent's reach: only the human typing its name can invoke it by name. Zero context load, but it spends cognitive load: you are the index that must remember it exists. Mechanics: set `disable-model-invocation: true`; the `description` becomes human-facing: a one-line summary, trigger lists stripped.
+- A **model-invoked** skill keeps a `description`, so the agent can fire it autonomously, and other skills can reach it. You can still type its name: model-invocation always _includes_ user reach; a description only ever adds agent discovery, never removes the human's. The description is the skill's top-level context pointer, forced to stay loaded at all times: permanent context load in exchange for discoverability. A model-invoked skill whose content is all reference is also one home for shared reference: another skill can invoke it, so reference needed by several skills lives in one place. Mechanics: set `disable-model-invocation: false`, and write a model-facing description carrying the trigger branches (the pointer-writing rules in `SKILL.md` apply in full).
+- A **user-invoked** skill strips the description from the agent's reach: only the human typing its name can invoke it by name. Zero context load, but it spends cognitive load: you are the index that must remember it exists. Mechanics: set `disable-model-invocation: true` and `user-invokable: true`; the `description` becomes human-facing: a one-line summary, trigger lists stripped.
 
 Pick model-invocation only when the agent must reach the skill on its own. If it only ever fires by hand, make it user-invoked and pay no context load.
 
 Visibility is user configuration and changes per setup, so never rely on a skill being listed. When one skill depends on another, link the dependency by relative path, such as `[unslop](../unslop/SKILL.md)`. The agent reads the file at that path whether the skill is listed, hidden, or user-invoked, so shared reference can live in any skill or in a plain file outside the skill system.
+
+Every skill in `agent/skills` states both flags, `disable-model-invocation` and `user-invokable`, so a reader sees who can start it without knowing the defaults. `user-invokable: false` keeps a model-invoked skill out of `/skill:` autocomplete; set it when only the agent should start the skill.
 
 ## Splitting by invocation
 

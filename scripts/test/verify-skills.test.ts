@@ -23,8 +23,10 @@ function repository(t: TestContext, files: Record<string, string>) {
   return root;
 }
 
-function skillManifest(path: string, description: string) {
-  return `---\nname: ${basename(dirname(path))}\ndescription: ${description}\n---\n`;
+const INVOCATION_FLAGS = "disable-model-invocation: false\nuser-invokable: false\n";
+
+function skillManifest(path: string, description: string, flags = INVOCATION_FLAGS) {
+  return `---\nname: ${basename(dirname(path))}\ndescription: ${description}\n${flags}---\n`;
 }
 
 function run(cwd: string) {
@@ -46,7 +48,10 @@ test("requires the executable bit on shebang skill scripts in the index and on d
   const root = repository(t, {
     [scripts[0]]: "#!/usr/bin/env bash\n",
     [scripts[1]]: "#!/usr/bin/env node\n",
-    "agent/skills/example/SKILL.md": "---\nname: example\ndescription: An example skill.\n---\n",
+    "agent/skills/example/SKILL.md": skillManifest(
+      "agent/skills/example/SKILL.md",
+      "An example skill.",
+    ),
     ".agents/skills/verify-example/SKILL.md":
       "---\nname: verify-example\ndescription: Verify the example app.\n---\n",
     "agent/skills/example/scripts/data.tsv": "phase\tdecision\n",
@@ -83,7 +88,7 @@ test("fails on SKILL.md frontmatter that Pi drops or that names another director
     [unparsable[0]]: skillManifest(unparsable[0], unquotedColon),
     [unparsable[1]]: skillManifest(unparsable[1], unquotedColon),
     [misnamed]: "---\nname: verify-other\ndescription: Verify the example app.\n---\n",
-    "agent/skills/valid/SKILL.md": "---\nname: valid\ndescription: A valid skill.\n---\n",
+    "agent/skills/valid/SKILL.md": skillManifest("agent/skills/valid/SKILL.md", "A valid skill."),
   });
 
   mkdirSync(join(root, dirname(unparsable[2])));
@@ -142,10 +147,10 @@ test("fails on every skill pointer in Markdown that names a skill Pi does not lo
   const dangling = result.stderr.split("\n").filter((line) => line.includes("points to skill"));
   assert.deepEqual(dangling.toSorted(), [
     `${readme}:1: points to skill "figure-it-out", which Pi does not load`,
-    `${pointing}:7: points to skill "interrogate", which Pi does not load`,
-    `${pointing}:8: points to skill "principle-gone", which Pi does not load`,
-    `${pointing}:8: points to skill "show-me-your-work", which Pi does not load`,
-    `${pointing}:9: points to skill "principle-boundary-discipline", which Pi does not load`,
+    `${pointing}:10: points to skill "principle-gone", which Pi does not load`,
+    `${pointing}:10: points to skill "show-me-your-work", which Pi does not load`,
+    `${pointing}:11: points to skill "principle-boundary-discipline", which Pi does not load`,
+    `${pointing}:9: points to skill "interrogate", which Pi does not load`,
   ]);
 
   for (const name of ["interrogate", "show-me-your-work", "principle-gone", "figure-it-out"]) {
@@ -157,6 +162,40 @@ test("fails on every skill pointer in Markdown that names a skill Pi does not lo
   const boundary = "agent/skills/principle-boundary-discipline/SKILL.md";
   mkdirSync(join(root, dirname(boundary)));
   writeFileSync(join(root, boundary), skillManifest(boundary, "Validate at boundaries."));
+
+  const fixed = run(root);
+  assert.equal(fixed.status, 0, fixed.stderr);
+});
+
+test("fails on an agent/skills SKILL.md that leaves an invocation flag to its default", (t) => {
+  const unflagged = "agent/skills/unflagged/SKILL.md";
+  const halfFlagged = "agent/skills/half-flagged/SKILL.md";
+  const quoted = "agent/skills/quoted/SKILL.md";
+  const project = ".agents/skills/verify-example/SKILL.md";
+
+  const root = repository(t, {
+    [unflagged]: skillManifest(unflagged, "No flags.", ""),
+    [halfFlagged]: skillManifest(halfFlagged, "One flag.", "disable-model-invocation: true\n"),
+    [quoted]: skillManifest(
+      quoted,
+      "Quoted flags.",
+      'disable-model-invocation: "false"\nuser-invokable: false\n',
+    ),
+    [project]: skillManifest(project, "Project skills keep the defaults.", ""),
+  });
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(result.stderr.trim().split("\n").toSorted(), [
+    `${halfFlagged}: set "user-invokable" to true or false`,
+    `${quoted}: set "disable-model-invocation" to true or false`,
+    `${unflagged}: set "disable-model-invocation" to true or false`,
+    `${unflagged}: set "user-invokable" to true or false`,
+  ]);
+
+  for (const path of [unflagged, halfFlagged, quoted]) {
+    writeFileSync(join(root, path), skillManifest(path, "Flagged."));
+  }
 
   const fixed = run(root);
   assert.equal(fixed.status, 0, fixed.stderr);

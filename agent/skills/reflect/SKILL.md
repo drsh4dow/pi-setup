@@ -12,7 +12,7 @@ Mine a session for durable learnings, then route each to one of two layers:
 - **Harness**: a skill in the repository that holds this skill, which every project shares. Find it with `git -C <this skill's directory> rev-parse --show-toplevel`.
 - **Project**: the agent environment of the repository the session worked in. That is its agent file (`AGENTS.md` or `CLAUDE.md`), its config record in `docs/agents/` (the standards record especially), its guardrails (lint rules, hooks, CI jobs), and its docs.
 
-Invoke when the user says "reflect", "retro", or "/skill:reflect". Skip when the conversation is trivial, off-topic, or already covered by an existing skill the parent followed correctly. One-offs are not learnings.
+Invoke when the user says "reflect" or "retro". Skip when the conversation is trivial, off-topic, or already covered by an existing skill the parent followed correctly. One-offs are not learnings.
 
 ## 1. Locate the transcript
 

@@ -9,7 +9,7 @@ user-invokable: true
 
 Break a plan, spec, or conversation into a set of **tickets**: tracer-bullet vertical slices, each declaring the tickets that **block** it.
 
-Read the project's issue tracker record, `docs/agents/issue-tracker.md`. If it is missing, stop and tell the user to run `/skill:setup-sh4dow-skills`.
+Read the project's issue tracker record, `docs/agents/issue-tracker.md`. If it is missing, stop and tell the user to run the **setup-sh4dow-skills** skill.
 
 ## Process
 

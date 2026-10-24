@@ -21,7 +21,7 @@ Confirm it resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A
 ## 2. Gather the inputs
 
 - **Spec.** In order: issue references in the commit messages, fetched through the **Fetch** operation of the project's issue tracker record (`docs/agents/issue-tracker.md`); a path or issue the user passed; the PR description. Without a spec, state the intent in one paragraph from the commits and the code, and mark it as inferred.
-- **Standards.** The standards record, `docs/agents/standards.md`, with its standards sources and guardrail commands. When it is missing, search the repository for files that document how code is written (`CODING_STANDARDS.md` and `CONTRIBUTING.md` always count), find the check commands in its scripts and CI, and mention `/skill:setup-sh4dow-skills` in the report.
+- **Standards.** The standards record, `docs/agents/standards.md`, with its standards sources and guardrail commands. When it is missing, search the repository for files that document how code is written (`CODING_STANDARDS.md` and `CONTRIBUTING.md` always count), find the check commands in its scripts and CI, and mention the **setup-sh4dow-skills** skill in the report.
 
 ## 3. Pick the panel
 

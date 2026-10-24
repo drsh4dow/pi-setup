@@ -27,7 +27,7 @@ so the merge stays linear and keeps the user's commits.
 ## Agent skills
 
 The engineering skills read this repository's config record in `docs/agents/`.
-Rerun `/skill:setup-sh4dow-skills` when the tracker, the domain layout, or the
+Rerun the **setup-sh4dow-skills** skill when the tracker, the domain layout, or the
 guardrails change.
 
 - Issue tracker: GitHub issues in `drsh4dow/pi-setup`, through `gh`. See `docs/agents/issue-tracker.md`.

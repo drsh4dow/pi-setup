@@ -7,7 +7,7 @@ user-invokable: true
 
 This skill takes the current conversation context and codebase understanding and produces a spec. Do NOT interview the user; synthesize what you already know. The one question you ask is the seam check in step 2.
 
-Read the project's issue tracker record, `docs/agents/issue-tracker.md`. If it is missing, stop and tell the user to run `/skill:setup-sh4dow-skills`.
+Read the project's issue tracker record, `docs/agents/issue-tracker.md`. If it is missing, stop and tell the user to run the **setup-sh4dow-skills** skill.
 
 ## Process
 

@@ -1,0 +1,10 @@
+{
+  "name": "invoices",
+  "version": "1.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "check": "sh scripts/check.sh"
+  }
+}

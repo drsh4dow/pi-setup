@@ -1,0 +1,5 @@
+CREATE TABLE invoices (
+  id INTEGER PRIMARY KEY,
+  number TEXT NOT NULL UNIQUE,
+  total_cents INTEGER NOT NULL
+);

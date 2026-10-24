@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Print each problem in a PR or ticket body, one per line, as <body-file>:<line>: <problem>.
-// Exit: 0 clean, 1 problems, 64 bad argument or unreadable file.
+// A line that starts with "warning:" is a judgment call and leaves the exit code alone.
+// Exit: 0 clean or warnings only, 1 problems, 64 bad argument or unreadable file.
 
 // Without import statements the file runs as CommonJS or as an ES module, so a
 // copy of the skill under any package.json runs without a warning.
@@ -265,6 +266,21 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
 
   if (kind === "ticket") return findings;
 
+  const why = sectionNamed(body, ["why"]);
+
+  if (why !== undefined) {
+    const words = proseLines(why.lines)
+      .filter((line) => !ticketLine.test(line.text))
+      .flatMap((line) => line.text.split(/\s+/).filter(Boolean)).length;
+
+    if (words > whyWordCap) {
+      findings.push({
+        where: why.line,
+        message: `"## ${why.heading}" has ${words} words of prose, cut it to ${whyWordCap} or fewer`,
+      });
+    }
+  }
+
   const risk = sectionNamed(body, ["risk"]);
 
   if (risk !== undefined) {
@@ -302,6 +318,31 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
   }
 
   return findings;
+}
+
+// The "Closes #N", "Part of #N", and "Depends on #N" lines that end a Why.
+const ticketLine = /^\s*(Closes|Fixes|Resolves|Part of|Depends on|Refs:?)\s/i;
+
+// Two short paragraphs. The longest of three hand-written multi-ticket Whys ran 166 words.
+const whyWordCap = 180;
+
+// Words from a multi-PR run that only its orchestrator understands.
+const productionHistory =
+  /\b(intermediate PRs?|integration (branch|head|tip)|final PRs?|chunk branch)\b/i;
+
+function historyWarnings(body: Body): Finding[] {
+  return proseLines(body.lines).flatMap((line) => {
+    const match = line.text.match(productionHistory);
+
+    if (match === null) return [];
+
+    return [
+      {
+        where: line.number,
+        message: `warning: "${match[0]}" tells how the work was produced, describe the change at this head for a reader who has only the base, the diff, and the tickets`,
+      },
+    ];
+  });
 }
 
 function titleFindings(kind: Kind, title: string): Finding[] {
@@ -359,17 +400,18 @@ function main(): number {
   }
 
   const body = parseBody(text);
-  const findings = [
+  const problems = [
     ...(args.title === undefined ? [] : titleFindings(args.kind, args.title)),
     ...headingFindings(body, shape),
     ...contentFindings(args.kind, body),
-  ].sort((a, b) => order(a) - order(b));
+  ];
+  const warnings = args.kind === "pr" ? historyWarnings(body) : [];
 
-  for (const finding of findings) {
+  for (const finding of [...problems, ...warnings].sort((a, b) => order(a) - order(b))) {
     console.log(`${args.bodyFile}:${finding.where}: ${finding.message}`);
   }
 
-  return findings.length === 0 ? 0 : 1;
+  return problems.length === 0 ? 0 : 1;
 }
 
 process.exitCode = main();

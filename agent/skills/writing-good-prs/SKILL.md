@@ -9,7 +9,7 @@ user-invokable: false
 
 A PR body is the case a reviewer reads before the diff: what is wrong today, why this change fixes it, what it looks like, the proof that it works, and what it puts at risk. Write the Why the way the **writing-good-commits** skill writes a commit body. Write the Evidence for an expert in the field who must own this change after it merges. The test: that expert can retell the problem and the reason for the fix, and has every question they would ask about the proof answered in the PR, without cloning the branch.
 
-Edit the prose with the **unslop** skill. When the repository has a PR template, fill its sections and apply the rules below to the section that plays each role.
+Write it the way one engineer explains a change to another: plain words, one idea per sentence, and only terms the reader would not stop to ask about. Then edit it with the **unslop** skill. When the repository has a PR template, fill its sections and apply the rules below to the section that plays each role.
 
 ## Title
 
@@ -29,16 +29,18 @@ Follow the subject rules of **writing-good-commits**: `type(scope): subject`, im
 
 Start at `## Why` with no preamble. Drop `## Shape` only when the change fits in one sentence.
 
+Write for a reader who has only the base branch, this diff, and the tickets the PR links, and describe the change as it stands at this PR's head. How the work was produced, such as the earlier PRs that built it, the branches it passed through, who verified it, and the review rounds, belongs in the commit list and on the tickets. Name another PR only when this one needs it to merge, deploy, or make sense, by its number and with what it does.
+
 Everything the body points at is reachable by any developer with access to the repository: files linked on the default branch, issues, PRs, CI runs, and hosted media. Paths on your machine, such as your home directory, `/tmp`, a worktree, or an agent state folder, are reachable only by you. Paste what they hold instead. Say "before this PR" and "after this PR" rather than commit hashes.
 
 ### Why
 
-Two short paragraphs, about six sentences in all, walking the commit body's chain:
+Two short paragraphs, at most 180 words, walking the commit body's chain:
 
 1. **The problem as one story, in the present tense.** Who hits it, the trigger, what happens, and what it costs them. Then the cause, when it explains the fix. "A reviewer subagent that greps the code for `pi --print` is refused, so it cannot read the guard it is reviewing. The guard splits a command on `;` even inside quotes, so quoted search text looks like a launch."
 2. **The change, why it removes the cause, and the alternative a reviewer would propose**, with the fact that rules it out. Skip the alternative when no real one exists.
 
-Then `Closes #N` on its own line. Name behavior in plain words, and keep identifiers to the ones a reviewer needs to find the code. Leave the line-by-line how to the diff and the process out: commands you ran, review rounds, rebases.
+Then one line per ticket: `Closes #N` for a ticket this PR finishes, and `Part of #N (<what this PR does for it>)` for one it advances, with what that ticket still owes posted on the ticket. Add `Depends on #N` when another PR must merge first. Name behavior in plain words, and keep identifiers to the ones a reviewer needs to find the code. Leave the line-by-line how to the diff and the process out: commands you ran, review rounds, rebases.
 
 ### Shape
 
@@ -93,6 +95,7 @@ Evidence answers two things: does the change do what the Why claims, and what wo
   ```
 ````
 
+- Run each witness at this PR's head. A run on another PR's head proves that head, so rerun the check here or list the claim under Not checked.
 - Paste or link the observation. A sentence that reports a result is a claim. "The base leaves the Pi running and the head leaves nothing" becomes the process listing from both runs.
 - Show the counterfactual: the same check before and after this PR. For a new regression test, paste its failure without the fix, then its pass with it.
 - **A change a user can see or touch** opens Evidence with two witnesses, captured on the running product through the repository's `verify-*` skill:
@@ -125,7 +128,7 @@ Answer three labeled lines, each with the fact behind it:
 
 - **Blast radius.** Who or what is exposed if the change is wrong, what failure they would see, and how anyone would notice. "Every command a delegate runs goes through this parser. A wrong parse either stalls a subagent on a harmless command or lets a delegate start Pi, which nothing else would catch."
 - **Door.** Two-way when a revert undoes everything. One-way when something survives a revert: migrated data, a published package, a removed public API, a sent message, or a changed default that other machines pick up. Name the fact that decides it, and for a one-way door, how to recover.
-- **Merge condition.** What must be true before this merges, such as a regression found in Evidence being fixed. Write `none` when it can merge as is.
+- **Merge condition.** What must be true before this merges, such as a regression found in Evidence being fixed or `#N` merged first. Write `none` when it can merge as is.
 
 ## Example
 
@@ -184,7 +187,7 @@ fix(background-terminals): a notification reaches the model when its terminal en
 
 ## Why
 
-`delivery.terminalSettled(id)` deleted pending notifications. Now `batch("completion")` appends them and `bg_kill` lists them. Closes #73.
+`delivery.terminalSettled(id)` deleted pending notifications. Now `batch("completion")` appends them and `bg_kill` lists them. This is the final PR of the stack: it carries intermediate PRs #71 and #72, and final PR B adds the docs. Closes #73.
 
 ## Evidence
 
@@ -197,19 +200,20 @@ fix(background-terminals): a notification reaches the model when its terminal en
 Two-way door. Blast radius: background terminals.
 ```
 
-Its Why lists symbols instead of a story, so the reader never learns what the model loses, and it gives no reason for the approach. It has no Shape. Its Evidence reports results instead of showing them, names a branch instead of before and after, counts "passes" as proof, and leaves every expert question open. Its Risk names a door without the fact behind it and never says who would be hurt.
+Its Why lists symbols instead of a story, so the reader never learns what the model loses, and it gives no reason for the approach. It tells how the work was produced, which the reader of this diff cannot use, and names a PR by a letter only its author knows. It has no Shape. Its Evidence reports results instead of showing them, names a branch instead of before and after, counts "passes" as proof, and leaves every expert question open. Its Risk names a door without the fact behind it and never says who would be hurt.
 
 ## Check the body
 
 Write the body to a file and run both gates.
 
-1. **Structure.** Run `scripts/check-body.ts pr <body-file> --title "<title>"`, with `--template <path>` when the repository has a PR template. Fix each printed problem and rerun until it exits 0. Exit 0 means the headings and title parse. It says nothing about the case the body makes.
+1. **Structure.** Run `scripts/check-body.ts pr <body-file> --title "<title>"`, with `--template <path>` when the repository has a PR template. Fix each printed problem and rerun until it exits 0. Exit 0 means the headings, title, and Why length pass. It says nothing about the case the body makes. A `warning:` line leaves the exit code alone and marks a sentence about how the work was produced. Rewrite it for the reader of this diff, or keep it when that reader needs it to merge or deploy.
 2. **Expert read.** Give one subagent in the `cross-family reviewer` role, per the **subagents** skill, only the title and the body file, with no diff, ticket, or chat. Ask it to:
    1. Retell the problem as one story, and why this fix rather than the alternative.
    2. As an expert in this domain who must own the change, list every question it would need answered to trust the proof. For each, quote the line that answers it, or write `unanswered`.
    3. State the blast radius and the door, or write `unclear`.
+   4. Quote every sentence it could follow only by knowing how the work was produced, such as other PRs or branches named without what they do, or who checked what. Write `none` when there is none.
 
-   Run the read once. Answer every `unanswered` and `unclear` it reports with a witness, or list it under Not checked, then move on without a second read.
+   Run the read once. Answer every `unanswered` and `unclear` it reports with a witness, or list it under Not checked. Rewrite every quoted sentence as a fact about this PR's change. Then move on without a second read.
 
    A delegate launches no subagent, so it writes the body file and names this read in its report for its parent to run.
 

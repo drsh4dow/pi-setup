@@ -95,6 +95,37 @@ test("counts a Not checked line only outside pasted code, and a Risk line only w
   ]);
 });
 
+function prWithWhyOf(words: number) {
+  return goodPr.replace(
+    "A reviewer cannot tell whether a PR's proof ran. Closes #47.",
+    `${"word ".repeat(words).trim()}\n\n\`\`\`text\n${"pasted ".repeat(50)}\n\`\`\`\n\nCloses #47\nPart of #40\nDepends on #46`,
+  );
+}
+
+test("caps the Why at 180 words of prose, not counting pasted code or ticket lines", (t) => {
+  assert.deepEqual(check(t, prWithWhyOf(180), ["pr"]).lines, []);
+
+  const long = check(t, prWithWhyOf(181), ["pr"]);
+
+  assert.equal(long.status, 1);
+  assert.deepEqual(long.lines, ['1: "## Why" has 181 words of prose, cut it to 180 or fewer']);
+});
+
+test("warns on a sentence about how the work was produced, without failing the body", (t) => {
+  const body = goodPr
+    .replace("Closes #47.", "It carries two intermediate PRs. Closes #47.")
+    .replace("- **Door.**", "- **Door.** Two-way, like final PR B.\n- **Ignored.**")
+    .replace("## this line is inside a fence", "the integration branch, inside a fence");
+
+  const result = check(t, body, ["pr"]);
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.lines, [
+    '3: warning: "intermediate PRs" tells how the work was produced, describe the change at this head for a reader who has only the base, the diff, and the tickets',
+    '26: warning: "final PR" tells how the work was produced, describe the change at this head for a reader who has only the base, the diff, and the tickets',
+  ]);
+});
+
 test("reads a pasted body with its own fences as one block, not as sections", (t) => {
   const pasted = [
     "<details><summary>The ticket body</summary>",

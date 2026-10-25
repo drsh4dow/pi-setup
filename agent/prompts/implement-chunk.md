@@ -80,7 +80,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 1. Have a merger create each integration branch from the base branch. A final PR that depends on another one branches from that PR's integration branch instead.
 2. Use **implementers** to implement each frontier ticket, each in its own worktree on its own branch, run in the background for maximum concurrency. Admit each spawn against host capacity, up to ten implementers: read `/proc/loadavg` and `MemAvailable` in `/proc/meminfo`, counting every local process (personas, verifiers, builds, containers), and hold the spawn while the one-minute load exceeds `nproc` or free memory falls short of the unit's heaviest gate. Each implementer:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
-   - keeps ticket keys out of its branch name and PR title, so the tracker does not link the PR (step 4.2);
+   - keeps ticket keys out of its branch name, commit messages, PR title, and PR body, naming each ticket by its title, because the tracker moves any ticket a merged or closed PR names, whatever its base;
    - uses the **tdd** skill where the ticket has a cheap test target;
    - dogfoods the change on the real surface: the **agent-browser** skill for browser and Electron UIs, the **background-terminals** skill for CLIs and TUIs, or the repository's `verify-*` skill. "Inconclusive" or wrong-surface is not a pass;
    - merges the integration branch tip into its own branch before reporting done;
@@ -91,7 +91,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 ### 4. Verify and merge each intermediate PR
 
 1. Wait on CI yourself: arm `gh pr checks <pr> --watch` as a background terminal, and spawn the verifier, merger, or fixer only once checks settle, so no child spends its run polling. Record a verdict for the intermediate PR at its head SHA, per Verification. CI green is an input to a verdict, not a verdict.
-2. On a passing verdict, with every review comment on the PR answered per the **babysit** skill's rules, have a merger merge the intermediate PR into its integration branch with `--match-head-commit <verdict SHA>` and a method the repository allows, squash when allowed so the branch reads as one commit per unit. On a failing verdict, send the findings to a fresh implementer. A tracker integration such as Linear's moves a ticket when any PR naming its key merges or closes, whatever the base, so after each intermediate merge or close, re-read the unit's tickets and restore the state `units.tsv` recorded.
+2. On a passing verdict, with every review comment on the PR answered per the **babysit** skill's rules, have a merger merge the intermediate PR into its integration branch with `--match-head-commit <verdict SHA>` and a method the repository allows, squash when allowed so the branch reads as one commit per unit. On a failing verdict, send the findings to a fresh implementer. After each intermediate merge or close, re-read only the tickets that PR's unit names and the parent ticket, and restore the state `units.tsv` recorded.
 3. Track which tickets have merged into each integration branch yourself and compute the frontier from that. The tracker's blocked-by state only changes when a blocker closes, which is after the human merges.
 4. If the merge changes the frontier, kick off implementers for the new tickets.
 

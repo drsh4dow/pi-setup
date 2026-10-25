@@ -50,6 +50,39 @@ test("the subagents skill's launch block starts a delegate, which an owner may r
   );
 });
 
+test("the subagents skill's brief launcher is blocked for a delegate, as pi-subagent is", () => {
+  const block = skill.match(/## Launch from a brief[\s\S]*?```bash\n([\s\S]*?)```/)?.[1];
+  assert.ok(block, "subagents SKILL.md has a bash block under ## Launch from a brief");
+
+  const launch = block.replaceAll("$HOME", "/home/u");
+  const asDelegate = launch.replace("<delegate|owner>", "delegate");
+  const asOwner = launch.replace("<delegate|owner>", "owner");
+
+  assert.match(guardFor(delegateArgv)(asDelegate) ?? "", DELEGATE_BLOCK);
+  assert.match(guardFor(delegateArgv)(`${asDelegate} --dry-run`) ?? "", DELEGATE_BLOCK);
+  assert.equal(guardFor(ownerArgv)(asDelegate), undefined, "an owner may launch a delegate");
+  assert.match(guardFor(ownerArgv)(asOwner) ?? "", OWNER_BLOCK, "an owner may not launch an owner");
+});
+
+for (const command of [
+  "/home/u/.pi/agent/skills/subagents/scripts/launch.ts --kind delegate --brief b.md",
+  "node ~/.pi/agent/skills/subagents/scripts/launch.ts --kind=delegate --brief b.md",
+  "cd /tmp/app && timeout 900 ~/.pi/agent/skills/subagents/scripts/launch.ts --kind owner",
+]) {
+  test(`a delegate is blocked from a launcher run: ${command}`, () => {
+    assert.match(guardFor(delegateArgv)(command) ?? "", DELEGATE_BLOCK);
+  });
+}
+
+test("an owner's launcher run is judged by its last --kind", () => {
+  const ownerGuard = guardFor(ownerArgv);
+  const launcher = "~/.pi/agent/skills/subagents/scripts/launch.ts";
+
+  assert.equal(ownerGuard(`node ${launcher} --kind=delegate --brief b.md`), undefined);
+  assert.match(ownerGuard(`${launcher} --brief b.md`) ?? "", OWNER_BLOCK, "no --kind");
+  assert.match(ownerGuard(`${launcher} --kind delegate --kind owner`) ?? "", OWNER_BLOCK);
+});
+
 test("a process without unattended.md is a root and gets no guard", () => {
   assert.equal(spawnGuard(["node", "pi"]), undefined);
   assert.equal(
@@ -88,6 +121,9 @@ test("commands that are not pi print launches pass", () => {
     "rg -n pi-subagent agent",
     "grep -rn pi-subagent agent",
     "test -x .build/bin/pi-subagent",
+    "rg -n skills/subagents/scripts/launch.ts agent",
+    "cat ~/.pi/agent/skills/subagents/scripts/launch.ts",
+    "node --test agent/skills/subagents/scripts/test/launch.test.ts",
   ]) {
     assert.equal(delegateGuard(command), undefined, command);
     assert.equal(ownerGuard(command), undefined, command);

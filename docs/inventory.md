@@ -126,9 +126,9 @@ The agent loads these on its own when the trigger matches.
 - `build-bin-path`: puts `.build/bin` (`pi-subagent`, `emit-to-pi`, `dumpfile`)
   on the PATH of every command Pi runs, the `bash` tool included
 - `delegate-guard`: keeps subagents two tiers deep. A subagent launched without
-  `subagents/owner.md` is a delegate and may run no `pi --print` or `pi -p`
-  launch. An owner, a subagent a playbook hands a whole unit such as a PR, may
-  launch only delegates.
+  `subagents/owner.md` is a delegate and may run no `pi --print`, `pi -p`,
+  `pi-subagent`, or `subagents/scripts/launch.ts` launch. An owner, a subagent
+  a playbook hands a whole unit such as a PR, may launch only delegates.
   It checks `bash`, `bg_start`, and codemode alike
 - `fast-mode`: `/fast` and `Ctrl-Alt-M` toggle Fast mode for the models listed
   under `fastMode` in `agent/settings.json`, and the footer shows `⚡ Fast` while

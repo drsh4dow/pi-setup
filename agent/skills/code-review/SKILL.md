@@ -49,21 +49,23 @@ Each persona runs the model of its seat's role in the **subagents** skill's mode
 
 Write one assignment per persona, per the **subagents** skill. Each is a delegate whose write scope is nothing in the repository. Its assignment holds the diff command, the commits, the fixed point, the spec or inferred intent, the standards record or the files you found, the guardrail commands, and the done condition: every hunk in scope read through the persona's lens. Give a persona the artifact and the contract, never the journey: leave out your reasoning about the change and what you expect it to find. The contract includes the user's recorded decisions and the binding orders, marked as settled, so a persona grades against them instead of re-proposing a declined call. A reviewer handed your conclusions returns validation of them.
 
-The review's folder is `reviews/<branch>-<short-sha>/` in the state folder, as an absolute path. Start the personas all at once with `bg_start`, each appending its persona file and the shared finding format after the subagent prompts, and writing its report to `<persona>.md` in the review's folder. When the playbook running the review keeps a standing-orders file, append it as one more `--append-system-prompt`:
+The review's folder is `reviews/<branch>-<short-sha>/` in the state folder, as an absolute path. Write each assignment to `<persona>.brief.md` in the review's folder, then start the personas all at once with `bg_start`, through the **subagents** skill's launcher. Each launch appends its persona file and the shared finding format, passes the standing-orders file of the playbook running the review (or `none` when it keeps none), and writes its report to `<persona>.md` in the review's folder:
 
 ```bash
-pi-subagent \
+$HOME/.pi/agent/skills/subagents/scripts/launch.ts \
+  --kind delegate \
+  --role persona \
+  --brief "<review folder>/<persona>.brief.md" \
+  --orders "<orders file, or none>" \
+  --append "<this skill's directory>/personas/<persona>.md" \
+  --append "<this skill's directory>/references/finding-format.md" \
   --model <model> \
   --thinking <level> \
-  --append-system-prompt "$HOME/.pi/agent/skills/subagents/unattended.md" \
-  --append-system-prompt "$HOME/.pi/agent/skills/subagents/delegate.md" \
-  --append-system-prompt "<this skill's directory>/personas/<persona>.md" \
-  --append-system-prompt "<this skill's directory>/references/finding-format.md" \
   --name "subagent: code-review <persona>" \
-  > "<review folder>/<persona>.md" <<'SUBAGENT_PROMPT'
-<assignment>
-SUBAGENT_PROMPT
+  > "<review folder>/<persona>.md"
 ```
+
+An exit 2 means the launcher refused the assignment and started no persona: fix the cause it printed and launch that persona again.
 
 ## 6. Verify and judge
 

@@ -10,11 +10,13 @@ const OWNER_PROMPT = "skills/subagents/owner.md";
 
 const DELEGATE_PROMPT = "skills/subagents/delegate.md";
 
+const LAUNCHER = "skills/subagents/scripts/launch.ts";
+
 const DELEGATE_REASON =
   "Delegates spawn nothing. Finish your piece, and name in your report the helper your parent should spawn.";
 
 const OWNER_REASON =
-  "Owners launch only delegates. Append skills/subagents/delegate.md to every pi-subagent launch, per the subagents skill.";
+  "Owners launch only delegates. Append skills/subagents/delegate.md to every pi-subagent launch, and pass --kind delegate to skills/subagents/scripts/launch.ts, per the subagents skill.";
 
 const HEREDOC = /(?<!<)<<(-?)\s*(['"]?)([^\s'"<>;&|()]+)\2/g;
 
@@ -27,6 +29,7 @@ const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
   "env",
   "exec",
   "nice",
+  "node",
   "nohup",
   "setsid",
   "sh",
@@ -104,6 +107,11 @@ function isPiSubagent(word: string): boolean {
   return word === "pi-subagent" || word.endsWith("/pi-subagent");
 }
 
+// The brief launcher appends the kind file itself, named by its --kind flag.
+function isLauncher(word: string): boolean {
+  return word.endsWith(LAUNCHER);
+}
+
 // `pi-subagent` needs no flag to launch, so it counts only in command position.
 // Otherwise `rg pi-subagent` and `test -x .../pi-subagent` would read as launches.
 function isWrapperWord(word: string): boolean {
@@ -119,7 +127,8 @@ function piSubagentLaunch(argv: readonly string[]): PiLaunchArgv | undefined {
   const commandIndex = argv.findIndex((word) => !isWrapperWord(word));
   const commandWord = argv[commandIndex];
 
-  if (commandWord === undefined || !isPiSubagent(commandWord)) return undefined;
+  if (commandWord === undefined || !(isPiSubagent(commandWord) || isLauncher(commandWord)))
+    return undefined;
 
   return argv.slice(commandIndex);
 }
@@ -145,7 +154,21 @@ function subagentLaunches(command: string): PiLaunchArgv[] {
   });
 }
 
+function launcherKind(launch: PiLaunchArgv): string | undefined {
+  return launch
+    .flatMap((word, index) => {
+      if (word.startsWith("--kind=")) return [word.slice("--kind=".length)];
+
+      const next = launch[index + 1];
+
+      return word === "--kind" && next !== undefined ? [next] : [];
+    })
+    .at(-1);
+}
+
 function launchesDelegate(launch: PiLaunchArgv): boolean {
+  if (isLauncher(launch[0] ?? "")) return launcherKind(launch) === "delegate";
+
   const prompts = appendedPrompts(launch);
 
   return (

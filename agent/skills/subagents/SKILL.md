@@ -132,6 +132,60 @@ fast-mode extension reads it to apply each provider's `subagentsEnabled`
 setting. Pick a heredoc delimiter that does not occur as a standalone line in
 the assignment.
 
+## Launch from a brief
+
+A playbook that writes each assignment to a file, such as implement-chunk's
+briefs or code-review's persona assignments, launches it with
+[`scripts/launch.ts`](scripts/launch.ts) instead of the raw block above, in a
+`bg_start` command in the project directory:
+
+```bash
+$HOME/.pi/agent/skills/subagents/scripts/launch.ts \
+  --kind <delegate|owner> \
+  --role <role> \
+  --brief "<state folder>/<brief>.md" \
+  --orders "<state folder>/orders.md" \
+  --model <model> \
+  --thinking <level> \
+  --name "subagent: <short assignment>"
+```
+
+The launcher appends `unattended.md`, the kind's file, a heading that names
+the orders file, the orders file, and each `--append <file>` to the system
+prompt, and pipes the brief to `pi-subagent` as the prompt. Pi reads the appends when
+the child starts, so every spawn and resume carries the orders as they stand.
+Pass `--orders none` only when no standing-orders file exists.
+
+Before it starts Pi, it refuses with exit 2 and a `launch: refused:` line
+naming the cause:
+
+- a brief, orders file, or append that is missing or empty;
+- a brief that lacks a field its `--role` requires. The implement-chunk roles
+  need every template field (a merger needs STEPS in place of VERIFY), and a
+  brief whose first line starts with `COLLAPSED` needs only GOAL, SCOPE,
+  VERIFY, and REPORT named in its paragraph. `persona` and `assignment` need
+  no fields;
+- a KIND field that disagrees with `--kind`;
+- a placeholder outside fenced code, such as `undefined`, `NaN`,
+  `[object Object]`, `origin/origin/`, `${…}`, or `<sha>`, printed with its
+  line;
+- an input branch that the launch directory's `origin` lacks: each
+  `origin/<name>`, and the branch SCOPE names after "based on". Write a branch
+  the unit creates without `origin/`.
+
+While the one-minute load exceeds `--max-load` (default `nproc`) or
+`MemAvailable` is below `--min-mem-gib` (default 4), it holds and prints both
+with their limits every `--poll-seconds`.
+
+The child's report is the launcher's stdout. Exit 0 means the child reported,
+and 1 means it failed. Stderr names the session id. To resume the child, run
+the same command with `--resume <session id>` and a brief file holding the new
+directive, which needs no template fields. Pi sends a resumed child's current
+orders as a system update after the earlier text, so the launcher opens the
+directive with a note that the update is current. `--dry-run` runs every check, then
+prints the command, the content of every append with the orders' line count,
+and the prompt, and starts no Pi.
+
 ## Use the report
 
 Read an owner's todolist before its diff, and send back a skipped step its

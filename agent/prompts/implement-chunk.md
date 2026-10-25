@@ -21,7 +21,7 @@ You read, plan, spawn, triage, decide, and report. A **unit** is the scope of on
 
 You run read-only commands yourself: `gh` views, `git fetch`, `git log`, `git diff`, CI status, watchers, read-only probes of the deployed environment, and read-only probes of code in a detached scratch worktree under `/tmp` that you remove in the same command. You write only to the state folder and to the issue tracker (ticket comments, state restores, and closures).
 
-Launch every subagent per the **subagents** skill, at its role's model row, with `--append-system-prompt <state folder>/orders.md` after the kind file. Pi appends a missing path as literal text, so check the file with `test -s` in the same command. Pass context as pointers to the spec, tickets, notes, commits, and PRs, never as copies of them.
+Launch every subagent with the **subagents** skill's brief launcher, `~/.pi/agent/skills/subagents/scripts/launch.ts`, at its role's model row, with `--role` set to the role's name below (hyphenated, such as `pr-writer`) and `--orders <state folder>/orders.md`. Pass context as pointers to the spec, tickets, notes, commits, and PRs, never as copies of them.
 
 - **Own the work.** Review each subagent's diff and write your own summary rather than passing its report through.
 - **Fresh subagents by default.** Give new work, whether a fix round, a follow-up, a retry, or the next queue item, to a fresh subagent with consolidated scope: the original brief, every later directive, and the prior subagent's report and branch. Resume a session only when the work strictly needs state that lives in that session and is costly to move. Chained resumes silently drop directives.
@@ -42,7 +42,7 @@ You run the **code-review** skill yourself. It is a lead role: its personas are 
 
 Create `~/.local/state/pi-agent/<project>/implement-chunk/<chunk-id>/`. You are the only writer of every file in it.
 
-- `orders.md` holds the **standing orders**: numbered lines, one constraint each (base branch, target environment, live-check access, CI fallback, stack shape, verification bar, forbidden paths, escalation policy). Every subagent reads it at launch. When you catch yourself restating an instruction, append the line before you act. Tag each line with its source: `user` with its `decisions.md` entry for a user decision quoted verbatim, `verified at <ref>` for a repository fact, or `hypothesis` for your own inference, which a subagent checks before relying on it.
+- `orders.md` holds the **standing orders**: numbered lines, one constraint each (base branch, target environment, live-check access, CI fallback, stack shape, verification bar, forbidden paths, escalation policy). The launcher appends it to the system prompt of every spawn and resume, so each subagent reads the file as it stands when it starts. When you catch yourself restating an instruction, append the line before you act. Tag each line with its source: `user` with its `decisions.md` entry for a user decision quoted verbatim, `verified at <ref>` for a repository fact, or `hypothesis` for your own inference, which a subagent checks before relying on it.
 - `plan.md` holds the task graph, the Terms, the final-PR partition with its reasons, and the integration branch of each final PR.
 - `units.tsv` has one row per unit. `units.tsv` columns: `id ticket intake_state final_pr state branch intermediate_pr head_sha brief`. `intake_state` is the ticket's tracker state at intake, and `final_pr` is the final PR's number, `owner/repo#<n>`, or URL once it opens. Write it only with `chunk unit add <id> <column>=<value>...` and `chunk unit set <id> <column>=<value>...`, where `chunk` stands for `~/.pi/agent/prompts/implement-chunk/scripts/chunk.ts --state <state folder>`. Every `chunk` command exits 0 when clean, 1 on a violation, and 2 when it refused the input or could not run. On 2, fix what its message names and rerun.
 - `ledger.tsv` is the verification ledger, written only with `chunk ledger`, per Verification.
@@ -129,7 +129,7 @@ Intermediate PRs exist for your verification. Final PRs exist for the human's tr
 
 ## The brief
 
-Write each **brief** from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A field you cannot fill is a unit you have not scoped yet. In the command that spawns, check the brief: spawn only a brief whose every field holds a value with no placeholder left (`<…>`, `${…}`, `undefined`), and whose every branch and path resolves (`git ls-remote`, `test -e`).
+Write each **brief** from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A field you cannot fill is a unit you have not scoped yet. Save the brief as a file in the state folder and spawn it with the launcher, which is the brief check: it refuses with exit 2, and starts no subagent, a brief that is missing or empty, lacks a field its role needs, keeps a placeholder (`<…>`, `${…}`, `undefined`), or names an input branch that `origin` lacks. On exit 2, fix the brief it names and launch again. Check each path the brief names yourself (`test -e`). The launcher also holds the spawn while the host is saturated, per step 3.4: pass `--min-mem-gib` sized to the unit's heaviest gate.
 
 ## Verification
 

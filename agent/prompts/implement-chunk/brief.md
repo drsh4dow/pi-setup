@@ -4,7 +4,7 @@ Reference for the `/implement-chunk` prompt. Pi loads only the direct `.md` chil
 
 ## The template
 
-Every field ends filled, or reads `none` with the reason. Size the brief to the unit: a one-command unit collapses the template to a paragraph that still names the goal, the scope, the verify command, and the report shape.
+Every field ends filled, or reads `none` with the reason. Size the brief to the unit: a one-command unit collapses the template to a paragraph that still names the goal, the scope, the verify command, and the report shape. Start that paragraph with `COLLAPSED` and write GOAL, SCOPE, VERIFY, and REPORT in it, so the launcher checks those four fields.
 
 ```
 GOAL         one sentence, the outcome, executable by a stranger with no chat access

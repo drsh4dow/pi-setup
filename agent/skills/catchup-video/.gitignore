@@ -1,0 +1,4 @@
+__pycache__/
+# Renders of the worked story (node scripts/video.ts draft example/story.py)
+example/*.build/
+example/*.mp4

@@ -56,7 +56,7 @@ needs a spec or more than one PR, use the feature workflow below instead.
 When you come back to a long run, `/skill:catchup` tells you in plain words
 what changed since your last message and lists every call waiting on you,
 each with its pick, evidence, and risk. `/skill:catchup-video` shows the same
-catch-up as a short silent video of slides.
+catch-up as a short narrated video.
 
 To keep the codebase easy to work in:
 

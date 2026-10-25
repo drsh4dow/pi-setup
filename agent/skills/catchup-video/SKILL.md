@@ -1,26 +1,26 @@
 ---
 name: catchup-video
-description: "Catch the user up like /skill:catchup, with a short silent video of slides for what happened and the waiting calls as text under it. Use for /skill:catchup-video."
+description: "Catch the user up like /skill:catchup, with a short narrated video of what happened and the waiting calls as text under it. Use for /skill:catchup-video."
 disable-model-invocation: true
 user-invokable: true
 ---
 
 # Catchup video
 
-Follow [`/skill:catchup`](../catchup/SKILL.md), but show what happened in a short silent video instead of its summary and visuals. Its window starts at the last message the user wrote before `/skill:catchup-video`, not before any earlier `/skill:catchup`. Writing and rendering the video in the state folder, then opening it with `xdg-open`, is the one exception to its read-only rule. The reply is catchup's opening sentence, a link to the video file, one line naming any work left that you can do yourself, and the action items. When the video shows a call's options, call each option by the name the video gives it. If the render fails, say so in one line and give only the calls.
+Follow [`/skill:catchup`](../catchup/SKILL.md), but show what happened in a short narrated video instead of its summary and visuals. Its window starts at the last message the user wrote before `/skill:catchup-video`, not before any earlier `/skill:catchup`. Writing and rendering the video in the state folder, then opening it with `xdg-open`, is the one exception to its read-only rule. The reply is catchup's opening sentence, a link to the video file, one line naming any work left that you can do yourself, and the action items. When the video shows a call's options, call each option by the name the video gives it. If the video has no voice, say so in one line with the reason the check printed. If the render fails, say so in one line and give only the calls.
 
-## Slides
+## The script
 
-Use the screenshots, recordings, diffs, and data the work produced, not the chat's prose about them. Before you draw, write the one sentence the user should leave with and one line per slide. Drop each slide that does not change what the user knows. Use at most 10 slides, and fewer is better. Neither note goes in the reply.
+Use the screenshots, recordings, diffs, and data the work produced, not the chat's prose about them. Before you write, name the one sentence the user should leave with. Then write the narration as beats, one idea each, in the words a person would say aloud: short sentences, numbers as they are spoken. Open with what waits on the user, give each thing they asked for a chapter, and close with the calls in the order of the reply. The whole video stays under two minutes; drop each beat that does not change what the user knows.
 
-Each slide makes one point. Build the slides on one picture and change it from slide to slide, rather than cut to an unrelated one. A color or shape means the same thing on every slide. Show the work in pictures, such as how a system works, a PR stack with each PR's state, a before and after of a fix, or options side by side. Point at what changed with arrows, highlights, and motion. A slide is never a bullet list, a status list, a table, or boxes with nothing connecting them.
+Say what came of each thing the user asked for, and whether it is done, still running, failed, or not checked. Never call something done that still waits on the user. Say any bug found and fixed on the way. When something you told the user earlier turned out wrong, say what you said and what is true. Give each call its options with what each one gains and costs, and your pick. Never invent a number, and never draw a screen you did not capture; when a visible change has no screenshot, say so.
 
-Keep text to the minimum. Put each label on the thing it names, in plain words a person would say, not tags like "Tests: pass". Never caption what a picture shows, and never give a fact twice, across slides or in the text under them.
+## The picture
 
-Show what came of each thing the user asked for, and whether it is done, still running, failed, or not checked. Never show something done that still waits on the user. Show any bug found and fixed on the way. If a visible change has no screenshot, say so on its slide and name what changed on screen. Draw only from facts you have. Never invent a number, and never draw a screen you did not capture.
+Put one picture on stage first and change it for the rest of the video rather than cut to unrelated ones. For PRs that is the branch graph: dive into a PR for its chapter and pull back at the end, marking its state. Show the work itself: the code change animating in place, the arithmetic of a bug becoming the arithmetic of its fix, a number ticking to its new value, a real screenshot with what changed outlined, data as bars or tiles, options side by side with the pick outlined. A color means the same thing for the whole video. A picture is never a bullet list, a status list, a table, or boxes with nothing connecting them.
+
+The narration carries the words, so keep text on screen to labels on the things they name and the numbers that matter. Never write on screen what the voice is saying, apart from the captions.
 
 ## Render
 
-Render one silent landscape video, such as an mp4, with motion between slides. Every frame is the slide itself, edge to edge. Make the frames from the slides, never by recording a screen. Hold each slide long enough to read its words, at least one second for each three words it adds. Words inside a screenshot do not count. Before you open the video, look at one frame from each slide in the rendered file, and count the words it adds against its hold in that file. Fix any slide you cannot read in that time, render again, and check again.
-
-Run `node <skill dir>/scripts/render.ts --help` for how to write the slides as a deck and render it. It renders the video, then checks it: it measures each slide's hold in the rendered file and writes one frame per slide next to the video.
+The toolkit is `node <skill dir>/scripts/video.ts`. Run `video.ts --help` and `video.ts primitives` first: they list the commands, the primitives, and a worked story to read. Write the story in the state folder with `video.ts new`, draft it, look at its frames, fix what is wrong, then `video.ts render`, which synthesizes the voice, renders, and checks. Look at every frame it writes before you open the video, and fix any beat where something is hard to read, overlaps, sits idle while the voice moves on, or shows something the voice does not say. Render again after each fix. Open the video only when the check exits 0.

@@ -79,7 +79,7 @@ theme needs a line here.
 | `automate-me`         | you   | Capture your working style as a skill                    |
 | `recall`              | agent | Look up an earlier chat or what came before compaction   |
 | `catchup`             | you   | Hear what changed since your last message, and each call |
-| `catchup-video`       | you   | Watch the catchup as a short silent video of slides      |
+| `catchup-video`       | you   | Watch the catchup as a short narrated video              |
 | `writing-for-agents`  | agent | Write skills and `AGENTS.md`                             |
 | `wizard`              | agent | Generate a bash wizard for steps only a human can do     |
 | `mailbox`             | agent | Read and send email through Himalaya                     |

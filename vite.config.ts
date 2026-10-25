@@ -49,6 +49,10 @@ export default defineConfig({
         "tsc --project agent/skills/babysit/scripts/tsconfig.json",
         "cd agent/skills/babysit/scripts && vp exec bun test --only-failures",
       ],
+      "verify:implement-chunk-scripts": [
+        "tsc --project agent/prompts/implement-chunk/scripts/tsconfig.json",
+        "node --test --test-reporter=dot agent/prompts/implement-chunk/scripts/test/*.test.ts",
+      ],
       // TLA2TOOLS names a jar that does not exist, so the tests that need TLC skip instead of
       // installing it with mise. Run them by hand as the statechart skill's AGENTS.md says.
       "verify:statechart-scripts": [
@@ -106,6 +110,7 @@ export default defineConfig({
           "verify:gates",
           "verify:terminal-delivery-citations",
           "verify:babysit-scripts",
+          "verify:implement-chunk-scripts",
           "verify:statechart-scripts",
           "verify:catchup-scripts",
           "test:extensions",
@@ -205,6 +210,7 @@ export default defineConfig({
         files: [
           "**/test/**",
           "scripts/**",
+          "agent/prompts/*/scripts/**",
           "evals/**",
           "agent/extensions/background-terminals/bin/**",
           "agent/extensions/subagents/bin/**",

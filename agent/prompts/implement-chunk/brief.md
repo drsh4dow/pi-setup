@@ -64,18 +64,18 @@ The implementer, babysitter, explorer, and live verifier use the template as wri
 
 Label each `ledger.tsv` row with exactly one of these. Any other label is wrong.
 
-| Outcome                     | Means                                                                                                    |
-| --------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `live-deployed-verified`    | Passed on the deployed environment.                                                                      |
-| `live-ui-verified`          | Passed by driving the change in a running UI outside the deployed environment.                           |
-| `unit-test-verified`        | Passed by tests that reach the changed path.                                                             |
-| `type-check-only`           | Only the type check ran. Behavioral work needs better than this.                                         |
-| `not-applicable`            | The lane has nothing to witness in this change, such as a behavior lane on a lock-only diff. Give why.   |
-| `fails-identically-at-base` | The check fails the same way at base, so the diff did not cause it. Cite both runs and file a follow-up. |
-| `accepted-gap`              | A check that cannot run, accepted by a `decisions.md` entry the row cites.                               |
-| `isolated-pass-flake`       | Fails in the full run, passes alone. Cite the isolated command and its output.                           |
-| `verifier-blocked`          | The verifier could not reach a verdict. Not a pass: respawn when the environment heals.                  |
-| `verifier-failed`           | Failed. It gets a fix unit, not a re-verify.                                                             |
-| `live-failed`               | Failed on the deployed environment.                                                                      |
+| Outcome                     | Merge-ready   | Means                                                                                                    |
+| --------------------------- | ------------- | -------------------------------------------------------------------------------------------------------- |
+| `live-deployed-verified`    | yes           | Passed on the deployed environment.                                                                      |
+| `live-ui-verified`          | yes           | Passed by driving the change in a running UI outside the deployed environment.                           |
+| `unit-test-verified`        | yes           | Passed by tests that reach the changed path.                                                             |
+| `type-check-only`           | lead sign-off | Only the type check ran. Behavioral work needs better than this.                                         |
+| `not-applicable`            | if cited      | The lane has nothing to witness in this change, such as a behavior lane on a lock-only diff. Give why.   |
+| `fails-identically-at-base` | if cited      | The check fails the same way at base, so the diff did not cause it. Cite both runs and file a follow-up. |
+| `accepted-gap`              | if cited      | A check that cannot run, accepted by a `decisions.md` entry the row cites.                               |
+| `isolated-pass-flake`       | if cited      | Fails in the full run, passes alone. Cite the isolated command and its output.                           |
+| `verifier-blocked`          | no            | The verifier could not reach a verdict. Not a pass: respawn when the environment heals.                  |
+| `verifier-failed`           | no            | Failed. It gets a fix unit, not a re-verify.                                                             |
+| `live-failed`               | no            | Failed on the deployed environment.                                                                      |
 
 An implementer may self-report a row. A verifier's row overrides it on the same key.

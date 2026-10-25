@@ -44,8 +44,8 @@ Create `~/.local/state/pi-agent/<project>/implement-chunk/<chunk-id>/`. You are 
 
 - `orders.md` holds the **standing orders**: numbered lines, one constraint each (base branch, target environment, live-check access, CI fallback, stack shape, verification bar, forbidden paths, escalation policy). Every subagent reads it at launch. When you catch yourself restating an instruction, append the line before you act. Tag each line with its source: `user` with its `decisions.md` entry for a user decision quoted verbatim, `verified at <ref>` for a repository fact, or `hypothesis` for your own inference, which a subagent checks before relying on it.
 - `plan.md` holds the task graph, the Terms, the final-PR partition with its reasons, and the integration branch of each final PR.
-- `units.tsv` has one row per unit: id, ticket, the ticket's tracker state at intake, final PR, state, branch, intermediate PR, head SHA, brief path.
-- `ledger.tsv` is the verification ledger, per Verification.
+- `units.tsv` has one row per unit. `units.tsv` columns: `id ticket intake_state final_pr state branch intermediate_pr head_sha brief`. `intake_state` is the ticket's tracker state at intake, and `final_pr` is the final PR's number, `owner/repo#<n>`, or URL once it opens. Write it only with `chunk unit add <id> <column>=<value>...` and `chunk unit set <id> <column>=<value>...`, where `chunk` stands for `~/.pi/agent/prompts/implement-chunk/scripts/chunk.ts --state <state folder>`. Every `chunk` command exits 0 when clean, 1 on a violation, and 2 when it refused the input or could not run. On 2, fix what its message names and rerun.
+- `ledger.tsv` is the verification ledger, written only with `chunk ledger`, per Verification.
 - `decisions.md` records each judgment call with its evidence.
 - `notes/` holds contract notes and exploration notes. `evidence/` holds screenshots, logs, and receipts.
 
@@ -101,7 +101,7 @@ Start once every ticket of a final PR has merged into its integration branch. Ev
 
 1. Spawn one babysitter per final PR, or one per stack with `--stack`. It runs the **babysit** skill in `drive` mode, sends each fix to a delegate, and reports conflicts and stale bases to you instead of rebasing. Hand each such report to a merger.
 2. A babysit push creates a new head SHA, which voids the verdict unless its tree is unchanged. Have a verifier record a fresh verdict at the merge-ready head before you call the PR merge-ready: one verifier for a minor fix, the full step 5 verdict for new behavior.
-3. Tell the user each final PR is merge-ready, with its link, its verdict, and any bot review dismissal the babysitter names. Merging is the user's call.
+3. Run `chunk report` and paste its output to the user, with any bot review dismissal the babysitter names. Call a final PR merge-ready only where the report's Merge-ready column says `yes`. Merging is the user's call.
 4. Arm the babysit skill's `until-merged` watcher yourself as a background terminal: `~/.pi/agent/skills/babysit/scripts/watch-pr --until-merged --state ~/.local/state/pi-agent/<project>/babysit/<pr>` with explicit `--owner`, `--repo`, and `--pr`. Exit 0 means merged or closed. On exit 8, read the batch file, spawn a fresh babysitter with consolidated scope for its feedback and blockers, and rearm with one `--ack <id>` per item handed off.
 
 ### 7. Verify live after merge
@@ -137,7 +137,7 @@ Scale verification to the unit. When VERIFY is a single cheap command, the imple
 
 A **witness** runs the artifact the deploy builds, on the deploy's runtime, with an input shown to reach the changed path. A dev server, a read of framework source, or a count over requests that never reached the change is not one. A lane records `not run` only with your sign-off in `decisions.md`.
 
-`ledger.tsv` has one row per **verdict**, keyed by PR number plus head SHA, labelled only with an outcome from the brief reference's Ledger outcomes. A new head SHA voids the row, unless its tree equals a verified SHA's tree (`git rev-parse <sha>^{tree}`), as after a squash merge of a PR that had merged the integration tip. Then record the row again at the new SHA with `carried from <sha>` as its evidence. Record each verdict you overrule in `decisions.md`, and when a ruling recurs, fix the verifier brief before the next verifier spawns. The ledger answers "was this verified", not memory and not the transcript.
+`ledger.tsv` has one row per **verdict**, keyed by PR plus head SHA, labelled only with an outcome from the brief reference's Ledger outcomes. `ledger.tsv` columns: `pr head_sha outcome evidence recorded_at`. Record each verdict with `chunk ledger record <pr> <sha> <outcome> <evidence>`, which refuses any other label. The last row on a key stands. A new head SHA voids the row, unless its tree equals a verified SHA's tree, as after a squash merge of a PR that had merged the integration tip. Then run `chunk ledger carry <pr> <new-sha> <from-sha> -C <checkout>`: it compares the trees, records the row again at the new SHA with `carried from <sha>` as its evidence, and exits 1 when the trees differ. An outcome whose Merge-ready is `if cited` counts only when its evidence names its `decisions.md` entry or its run logs under `evidence/`. Record each verdict you overrule in `decisions.md`, and when a ruling recurs, fix the verifier brief before the next verifier spawns. The ledger answers "was this verified", not memory and not the transcript.
 
 ## Liveness and failure
 
@@ -156,4 +156,4 @@ End every message to the user with each open ask restated in full until it is an
 
 ## Reply
 
-At merge-ready and at close: each ticket mapped to its final PR, each final PR's link, head SHA, and verdict, the live verdict per merged PR, what was abandoned and why, the questions awaiting the user (the only asks), and the state folder path. Numbers come from `units.tsv` and `ledger.tsv`, not narrative.
+At merge-ready and at close, paste the output of `chunk report`: one row per ticket in merge order, with its final PR's link, head SHA, verdict at that head, requested reviewers, merge state, merge readiness, and live verdict. A PR the report marks other than `yes` or `merged` is not merge-ready, whatever the transcript says. Then add what was abandoned and why, the questions awaiting the user (the only asks), and the state folder path.

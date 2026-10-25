@@ -79,7 +79,7 @@ The tickets form a **task graph** of blocking edges, not a list of steps. Its **
 1. Have a merger create each integration branch from the base branch. A final PR that depends on another one branches from that PR's integration branch instead.
 2. Have **implementers** take the frontier tickets, each in its own worktree on its own branch, each to the Definition of Done in the brief reference. Each delivers an **intermediate PR** against its integration branch.
 3. When four or more tickets are ready at once, spawn one first as a **pilot**, and fan out once its intermediate PR has a passing verdict. Fix the brief template or the contract notes from what the pilot showed before the rest spawn.
-4. Keep a rolling window of up to ten implementers: when one finishes, spawn the next ready ticket in the same turn you record the completion. In the command that spawns, read `/proc/loadavg` and `MemAvailable` in `/proc/meminfo`, which count every local process (personas, verifiers, builds, containers), and hold the spawn while the one-minute load exceeds `nproc` or free memory falls short of the unit's heaviest gate.
+4. Keep a rolling window of up to ten implementers: when one finishes, spawn the next ready ticket in the same turn you record the completion. The launcher holds each spawn while the one-minute load exceeds `nproc` or `MemAvailable` falls below `--min-mem-gib`, which you size to the unit's heaviest gate. Both count every local process: personas, verifiers, builds, and containers.
 5. A worktree holds only what git tracks, so tests that read gitignored fixtures, local databases, or credentials can silently skip there. Verify a ticket that depends on untracked material in the main checkout, one unit at a time.
 
 ### 4. Verify and merge each intermediate PR
@@ -129,7 +129,7 @@ Intermediate PRs exist for your verification. Final PRs exist for the human's tr
 
 ## The brief
 
-Write each **brief** from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A field you cannot fill is a unit you have not scoped yet. Save the brief as a file in the state folder and spawn it with the launcher, which is the brief check: it refuses with exit 2, and starts no subagent, a brief that is missing or empty, lacks a field its role needs, keeps a placeholder (`<…>`, `${…}`, `undefined`), or names an input branch that `origin` lacks. On exit 2, fix the brief it names and launch again. Check each path the brief names yourself (`test -e`). The launcher also holds the spawn while the host is saturated, per step 3.4: pass `--min-mem-gib` sized to the unit's heaviest gate.
+Write each **brief** from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A field you cannot fill is a unit you have not scoped yet. Save the brief as a file in the state folder and spawn it with the launcher, which is the brief check: it refuses with exit 2, and starts no subagent, a brief that is missing or empty, lacks a field its role needs, keeps a placeholder (`<…>`, `${…}`, `undefined`), or names an input branch that `origin` lacks. On exit 2, fix the brief it names and launch again. Check each path the brief names yourself (`test -e`). It also holds the spawn while the host is saturated, per step 3.4.
 
 ## Verification
 

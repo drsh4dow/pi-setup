@@ -60,21 +60,35 @@ export default defineConfig({
         "tsc --project agent/skills/statechart/scripts/tsconfig.json",
         "cd agent/skills/statechart/scripts && TLA2TOOLS=/nonexistent/tla2tools.jar node --test --test-reporter=dot test/statechart.test.ts",
       ],
-      // The catchup-video tests launch Chromium, whose zygote crashes under automatic file
+      // The catchup tests launch Chromium, whose zygote crashes under automatic file
       // tracking, so the cache fingerprints these inputs instead and restores no outputs.
       "verify:catchup-scripts": {
         command: [
           "tsc --project agent/skills/catchup/scripts/tsconfig.json",
           "node --test --test-reporter=dot agent/skills/catchup/scripts/test/*.test.ts",
+        ],
+        cache: {
+          input: [
+            "agent/skills/catchup/scripts/**",
+            "agent/skills/statechart/scripts/**",
+            "bun.lock",
+          ],
+          output: [],
+        },
+      },
+      // The tests render through Manim, installed on first run into ~/.cache/catchup-video from
+      // the uv lockfile, so the cache fingerprints the sources that shape a render.
+      "verify:catchup-video-scripts": {
+        command: [
           "tsc --project agent/skills/catchup-video/scripts/tsconfig.json",
           "node --test --test-reporter=dot agent/skills/catchup-video/scripts/test/*.test.ts",
         ],
         cache: {
           input: [
-            "agent/skills/catchup/scripts/**",
             "agent/skills/catchup-video/scripts/**",
-            "agent/skills/statechart/scripts/**",
-            "bun.lock",
+            "agent/skills/catchup-video/python/**",
+            "agent/skills/catchup-video/fonts/**",
+            "agent/skills/catchup-video/example/story.py",
           ],
           output: [],
         },
@@ -114,6 +128,7 @@ export default defineConfig({
           "verify:subagent-scripts",
           "verify:statechart-scripts",
           "verify:catchup-scripts",
+          "verify:catchup-video-scripts",
           "test:extensions",
           "test:dumpfile",
           "test:evals",

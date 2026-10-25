@@ -13,6 +13,12 @@ jobs:
         with:
           run-install: false
           cache: true
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # ffmpeg for the videos; cairo, pango, and pkg-config build the Manim wheels uv installs
+      # for the catchup-video tests.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: agent/skills/catchup-video/python/uv.lock
       - run: vp install --frozen-lockfile
       - run: vp run verify

@@ -78,7 +78,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 ### 3. Implement
 
 1. Have a merger create each integration branch from the base branch. A final PR that depends on another one branches from that PR's integration branch instead.
-2. Use **implementers** to implement each frontier ticket, each in its own worktree on its own branch, run in the background for maximum concurrency. Admit each spawn against host capacity, up to ten implementers: read `/proc/loadavg` and `MemAvailable` in `/proc/meminfo`, counting every local process (personas, verifiers, builds, containers), and hold the spawn while the one-minute load exceeds `nproc` or free memory falls short of the unit's heaviest gate. Each implementer:
+2. Use **implementers** to implement each frontier ticket, each in its own worktree on its own branch, run in the background for maximum concurrency. Admit spawns against host capacity, up to ten implementers: once per wave of spawns you launch together, read `/proc/loadavg` and `MemAvailable` in `/proc/meminfo`, counting every local process (personas, verifiers, builds, containers), and hold or shrink the wave while the one-minute load exceeds `nproc` or free memory falls short of its units' heaviest gates combined. Each implementer:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
    - keeps ticket keys out of its branch name, commit messages, PR title, and PR body, naming each ticket by its title, because the tracker moves any ticket a merged or closed PR names, whatever its base;
    - uses the **tdd** skill where the ticket has a cheap test target;
@@ -137,7 +137,7 @@ What a reviewer pays in context grows with the largest PR times the number of PR
 
 Your prompts to agents are your only product. Every spawn carries all of it. A field you cannot fill is a unit you have not scoped yet.
 
-Write each brief from the template and its role variant in the brief reference, `~/.pi/agent/prompts/implement-chunk/brief.md`. Spawn only when every field of the variant holds a value with no placeholder left (`<…>`, `${…}`, `undefined`), and every branch and path it names resolves (`git ls-remote`, `test -e`).
+Write each brief from the template and its role variant in the brief reference, `~/.pi/agent/prompts/implement-chunk/brief.md`. Once per wave of spawns you launch together, check every brief in it: spawn only a brief whose every field of the variant holds a value with no placeholder left (`<…>`, `${…}`, `undefined`), and whose every branch and path resolves (`git ls-remote`, `test -e`), all in one command.
 
 ## Verification
 

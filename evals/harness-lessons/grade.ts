@@ -5,7 +5,8 @@
 //
 //   node evals/harness-lessons/grade.ts <results-dir> [--judge-model anthropic/claude-opus-5-5] [--concurrency 4]
 //
-// Judge answers are cached in each run's judge.json; delete it to rejudge a run.
+// Judge answers are cached in each run's judge.json; delete it to rejudge a run. A judge model
+// named gemini-api/<model> is called through the Gemini API (GEMINI_API_KEY) instead of pi.
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -13,7 +14,7 @@ import { parseArgs } from "node:util";
 import { parseSession, sinceLastUserMessage, type Session } from "../lib/session.ts";
 import { runPool } from "../lib/pool.ts";
 import { graders } from "./graders.ts";
-import { cachedJudge, piJudge, redactingJudge, type Judge } from "./judge.ts";
+import { cachedJudge, judgeFor, redactingJudge, type Judge } from "./judge.ts";
 import { disagreements, type Metric, type Outcome } from "./metrics.ts";
 import { decodeRunRecord, type RunRecord } from "./record.ts";
 import { scenarioById, scenarios, type Scenario } from "./scenarios.ts";
@@ -271,7 +272,7 @@ async function main() {
     process.exit(2);
   }
 
-  const judge = piJudge(values["judge-model"]);
+  const judge = judgeFor(values["judge-model"]);
   const graded: GradedRun[] = [];
 
   await runPool(runDirectories(resultsDir), Number(values.concurrency), async (dir) => {

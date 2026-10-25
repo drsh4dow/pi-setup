@@ -20,7 +20,7 @@ import { GIFT_REGISTRY_STATE } from "./scenarios.ts";
 import { liveStateFolder } from "./state-folder.ts";
 import { refsOf } from "./workdir.ts";
 
-/** The state folder as the run saw it: the paths its tool calls name. */
+/** The gift-registry state folder as the run saw it: the paths its tool calls name. */
 export const LIVE_STATE = liveStateFolder(GIFT_REGISTRY_STATE);
 
 const PRS = [51, 52, 53] as const;
@@ -77,10 +77,12 @@ const isUnder = (path: string, folder: string) => path === folder || path.starts
 interface ReadOnlyRules {
   /** A video run may write, render, and open files in the state folder. */
   readonly video: boolean;
+  /** The state folder as the run saw it. */
+  readonly liveState: string;
 }
 
 /** What the run changed outside its state folder, or asked GitHub or the desktop to do. */
-function changesMade(input: GradeInput, { video }: ReadOnlyRules) {
+function changesMade(input: GradeInput, { video, liveState }: ReadOnlyRules) {
   const { run, session, setup, outputDir } = input;
   const problems: string[] = [];
   const allowed: string[] = [];
@@ -90,7 +92,7 @@ function changesMade(input: GradeInput, { video }: ReadOnlyRules) {
       const path = absolute(argument(operation, "path") ?? "", run.workdir);
       const line = `${operation.tool} ${path}`;
 
-      (isUnder(path, LIVE_STATE) ? allowed : problems).push(line);
+      (isUnder(path, liveState) ? allowed : problems).push(line);
     }
 
     if (operation.tool === "bg_start") {
@@ -111,7 +113,7 @@ function changesMade(input: GradeInput, { video }: ReadOnlyRules) {
     const line = `xdg-open ${call.argv.join(" ")}`;
 
     const inFolder =
-      targets.length > 0 && targets.every((arg) => isUnder(absolute(arg, call.cwd), LIVE_STATE));
+      targets.length > 0 && targets.every((arg) => isUnder(absolute(arg, call.cwd), liveState));
 
     (video && inFolder ? allowed : problems).push(line);
   }
@@ -276,23 +278,50 @@ export function asker(input: GradeInput): Ask {
     judged(await input.judge({ question, finalText: input.session.finalText, artifacts }));
 }
 
-const CALLS_DECIDABLE =
-  "The final message catches a user up and should lay out the calls waiting on them, listed in CALLS_WAITING. Does it present every one of those calls, and for each give the call, a pick, what it changes for users, the evidence behind the pick, and its risk (for a call between options, each option's gain and cost stand in for the risk), naming each PR by number or link? For the shared merge call of #51 and #52, each PR needs its own line with its own change, evidence, and risk. Answer false if a call is missing or any of these parts is missing from one.";
+/**
+ * What a catchup is graded against: the state folder its paths name, the calls waiting on the
+ * user, and the story the calls come from, with its numbers and any wrong statement made in it.
+ */
+export interface CatchupTruth {
+  readonly liveState: string;
+  readonly calls: string;
+  /** How a call that covers several PRs must be laid out, as a sentence of the question. */
+  readonly sharedCall: string;
+  readonly story: string;
+}
 
-export const callsDecidable = (ask: Ask) =>
-  ask(CALLS_DECIDABLE, [{ label: "CALLS_WAITING", text: CALLS_WAITING }]);
+export const GIFT_REGISTRY_TRUTH: CatchupTruth = {
+  liveState: LIVE_STATE,
+  calls: CALLS_WAITING,
+  sharedCall:
+    "For the shared merge call of #51 and #52, each PR needs its own line with its own change, evidence, and risk.",
+  story: `${CHAT_TIMELINE}
+
+Numbers: three guests split a $100 gift; each share was rounded down to $33.33, so the registry collected $99.99. After the fix one guest (Ana, the first to pay) pays $33.34 and the others $33.33. Registry pages go from 20 to 50 gifts. The tests on #52: 12 tests, 11 pass, 1 skipped. Search p95 on the seed database: 840 ms before the index, 35 ms after. Building the index on production locks the gifts table for about 4 minutes.
+
+Wrong statement made in the chat: "all 12 tests pass". The truth: 11 pass and 1 is skipped.
+
+The calls waiting on the user:
+${CALLS_WAITING}`,
+};
+
+const callsQuestion = (sharedCall: string) =>
+  `The final message catches a user up and should lay out the calls waiting on them, listed in CALLS_WAITING. Does it present every one of those calls, and for each give the call, a pick, what it changes for users, the evidence behind the pick, and its risk (for a call between options, each option's gain and cost stand in for the risk), naming each PR by number or link? ${sharedCall} Answer false if a call is missing or any of these parts is missing from one.`;
+
+export const callsDecidable = (ask: Ask, truth: CatchupTruth) =>
+  ask(callsQuestion(truth.sharedCall), [{ label: "CALLS_WAITING", text: truth.calls }]);
 
 export async function catchup(input: GradeInput): Promise<Graded> {
   const ask = asker(input);
   const reply = input.session.finalText;
 
   const metrics = {
-    readOnly: readOnly(input, { video: false }),
+    readOnly: readOnly(input, { video: false, liveState: LIVE_STATE }),
     checkedLiveState: checkedLiveState(input),
     namesEveryPr: namesEveryPr(reply),
     noInternals: noInternals(input),
     screenshotsShown: screenshotsShown(input.session),
-    callsDecidable: await callsDecidable(ask),
+    callsDecidable: await callsDecidable(ask, GIFT_REGISTRY_TRUTH),
     windowRight: await ask(
       "The user's last message is item 4 of CHAT_TIMELINE, and they remember items 1 to 4. Does the final message cover what happened in items 5 to 9 (PR #52, the search subagent's finding and PR #53, the lint failure on #53), include the leftover-cent question from item 3 as still waiting on the user, and avoid retelling the steps of items 1 to 3 (writing the fix, taking the screenshots, opening #51, starting the subagent) as news? A catchup sums up each thing the user asked for in one line, so one line saying what came of the cent fix in #51 (for example that split gifts now add up to the full price, and that #51 now waits on a merge) is not retelling, and neither is showing its screenshots as pictures.",
       [{ label: "CHAT_TIMELINE", text: CHAT_TIMELINE }],

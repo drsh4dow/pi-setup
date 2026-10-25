@@ -1,27 +1,21 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
 import { Option, Schema } from "effect";
 import { argument, parseSession, sinceLastUserMessage } from "../../lib/session.ts";
 import { catchupChat } from "../catchup-chat.ts";
-import { catchupStubEnv, catchupStubPaths, GhCall, OpenCall } from "../catchup-stubs.ts";
+import { catchupStubPaths, GhCall, OpenCall } from "../catchup-stubs.ts";
 import { gradeDirectory } from "../grade.ts";
 import { catchup } from "../grade-catchup.ts";
-import { catchupVideo } from "../grade-catchup-video.ts";
-import type { Metric } from "../metrics.ts";
 import type { RunRecord } from "../record.ts";
-import { GIFT_REGISTRY_STATE } from "../scenarios.ts";
-import { keptStateFolder, liveStateFolder } from "../state-folder.ts";
+import { evidence, LIVE, problems, stub, values, where } from "./catchup-support.ts";
 import {
   bash,
   call,
   edit,
-  git,
   input,
-  prepared,
   read,
   session,
   stubJudge,
@@ -29,45 +23,6 @@ import {
   write,
   type Prepared,
 } from "./support.ts";
-
-function values(metrics: Readonly<Record<string, Metric>>) {
-  return Object.fromEntries(
-    Object.entries(metrics).map(([name, metric]) => [
-      name,
-      metric.kind === "unknown" ? "unknown" : metric.value,
-    ]),
-  );
-}
-
-const evidence = (metric: Metric | undefined) =>
-  metric?.kind === "unknown" ? metric.reason : (metric?.evidence ?? "");
-
-/** A read-only metric's problems, without the changes it allowed. */
-const problems = (metric: Metric | undefined) => evidence(metric).split("\nallowed: ")[0] ?? "";
-
-/**
- * The state folder the run's tool calls name. The tests never write it: a run's files are read
- * from the copy the runner keeps in the output directory.
- */
-const LIVE = liveStateFolder(GIFT_REGISTRY_STATE);
-
-/** The catchup working directory after setup, its local origin removed when the tests end. */
-function where(): Prepared {
-  const at = prepared("catchup");
-
-  temporary(dirname(git(at.workdir, "remote", "get-url", "origin")));
-
-  return at;
-}
-
-/** Runs a stub as the run would, with the catchup stubs first on PATH. */
-function stub(at: Prepared, command: string, args: readonly string[]) {
-  return spawnSync(command, args, {
-    cwd: at.workdir,
-    encoding: "utf8",
-    env: { ...process.env, ...catchupStubEnv(at.outputDir, at.workdir) },
-  });
-}
 
 const logLines = (path: string) =>
   existsSync(path)
@@ -352,215 +307,4 @@ test("catchup fails a reply that changed the repository, tried to merge, and sho
     graded.crossChecks.map((check) => check.signal),
     [true, false],
   );
-});
-
-/**
- * A silent video of still color slides, 1.5 s each, in the run's state folder as the runner kept
- * it. Returns the path the run wrote it at.
- */
-function renderVideo(at: Prepared, { size = "320x180", colors = ["red", "blue"] } = {}): string {
-  const video = {
-    live: join(LIVE, "catchup", "catchup.mp4"),
-    kept: join(keptStateFolder(at.outputDir), "catchup", "catchup.mp4"),
-  };
-
-  const inputs = colors.flatMap((color) => [
-    "-f",
-    "lavfi",
-    "-i",
-    `color=c=${color}:s=${size}:d=1.5:r=25`,
-  ]);
-
-  const streams = colors.map((_, index) => `[${index}]`).join("");
-
-  mkdirSync(dirname(video.kept), { recursive: true });
-  execFileSync("ffmpeg", [
-    "-v",
-    "error",
-    "-y",
-    ...inputs,
-    "-filter_complex",
-    `${streams}concat=n=${colors.length}:v=1`,
-    "-pix_fmt",
-    "yuv420p",
-    video.kept,
-  ]);
-
-  return video.live;
-}
-
-test("catchup-video passes a rendered, opened, landscape video whose frames the run looked at", async () => {
-  const at = where();
-  const video = renderVideo(at);
-  const frame = join(LIVE, "catchup", "frame-1.png");
-
-  stub(at, "gh", ["pr", "status"]);
-  stub(at, "xdg-open", [video]);
-
-  const run = session(
-    [
-      write(join(LIVE, "catchup", "slides.html"), "<html></html>"),
-      call("bg_start", { command: `ffmpeg -i slides.html ${video}`, title: "render" }),
-      bash(`ffmpeg -ss 0.7 -i ${video} -frames:v 1 ${frame}`),
-      read(frame),
-      bash(`xdg-open ${video}`),
-    ],
-    `Three calls wait on you.\n\n[Video](${video})\n\nWork left: the lint fix on #53.\n\n1. Merge #51 and #52.`,
-  );
-
-  const graded = await catchupVideo(input("catchup-video", at, run, stubJudge(true)));
-
-  assert.deepEqual(values(graded.metrics), {
-    videoRendered: true,
-    opened: true,
-    readOnlyExceptVideo: true,
-    slides: true,
-    framesLooked: true,
-    replyLayout: true,
-    callsDecidable: true,
-  });
-  assert.match(evidence(graded.metrics.videoRendered), /320x180, 3\.0\d* s/);
-  assert.match(evidence(graded.metrics.slides), /^2 slides/);
-  assert.ok(existsSync(join(at.outputDir, "slides", "slide-02.png")));
-  assert.equal(graded.primary, "pass");
-});
-
-const RENDER = `cd ${join(LIVE, "catchup")} && node /harness/agent/skills/catchup-video/scripts/render.ts deck.json --out catchup.mp4`;
-
-test("catchup-video counts the renderer's slide frames read after rendering as frames looked", async () => {
-  const at = where();
-
-  renderVideo(at);
-
-  const run = session(
-    [bash(RENDER), read(join(LIVE, "catchup", "catchup.slide-01.png"))],
-    "Three calls wait on you.",
-  );
-
-  const graded = await catchupVideo(input("catchup-video", at, run, stubJudge(true)));
-
-  assert.equal(values(graded.metrics).framesLooked, true, evidence(graded.metrics.framesLooked));
-});
-
-test("catchup-video does not count a slide frame read before rendering or another image after", async () => {
-  const at = where();
-
-  renderVideo(at);
-
-  const run = session(
-    [
-      read(join(LIVE, "catchup", "catchup.slide-01.png")),
-      bash(RENDER),
-      read("evidence/checkout-after.png"),
-      read(join(LIVE, "catchup", "other.slide-01.png")),
-    ],
-    "Three calls wait on you.",
-  );
-
-  const graded = await catchupVideo(input("catchup-video", at, run, stubJudge(true)));
-
-  assert.equal(values(graded.metrics).framesLooked, false);
-  assert.match(
-    evidence(graded.metrics.framesLooked),
-    /the renderer on catchup\.mp4: .*\nimages read after it: none/,
-  );
-});
-
-test("catchup-video fails without a video and leaves the slide metrics undecided", async () => {
-  const at = where();
-
-  mkdirSync(keptStateFolder(at.outputDir));
-
-  stub(at, "xdg-open", [join(at.workdir, "README.md")]);
-
-  const graded = await catchupVideo(
-    input(
-      "catchup-video",
-      at,
-      session([bash("node render.mjs > /tmp/out.mp4")], "Render failed."),
-      stubJudge(true),
-    ),
-  );
-
-  assert.deepEqual(values(graded.metrics), {
-    videoRendered: false,
-    opened: false,
-    readOnlyExceptVideo: false,
-    slides: "unknown",
-    framesLooked: "unknown",
-    replyLayout: true,
-    callsDecidable: true,
-  });
-  assert.match(
-    evidence(graded.metrics.videoRendered),
-    /mp4 paths in the run's commands: \/tmp\/out\.mp4/,
-  );
-  assert.match(problems(graded.metrics.readOnlyExceptVideo), /xdg-open .*README\.md/);
-  assert.equal(graded.primary, "fail");
-});
-
-test("catchup-video leaves the video metrics undecided for a run the runner kept no state of", async () => {
-  const at = where();
-
-  stub(at, "xdg-open", [join(LIVE, "catchup.mp4")]);
-
-  const graded = await catchupVideo(
-    input(
-      "catchup-video",
-      at,
-      session([bash(`xdg-open ${join(LIVE, "catchup.mp4")}`)], "Done."),
-      stubJudge(true),
-    ),
-  );
-
-  const metrics = values(graded.metrics);
-
-  assert.deepEqual(
-    [metrics.videoRendered, metrics.opened, metrics.slides, metrics.framesLooked],
-    ["unknown", "unknown", "unknown", "unknown"],
-  );
-  assert.equal(metrics.readOnlyExceptVideo, true, evidence(graded.metrics.readOnlyExceptVideo));
-  assert.equal(graded.primary, "unknown");
-});
-
-test("catchup-video fails a portrait video that was never opened", async () => {
-  const at = where();
-
-  renderVideo(at, { size: "180x320" });
-
-  const graded = await catchupVideo(
-    input("catchup-video", at, session([], "Done."), stubJudge(true)),
-  );
-
-  assert.equal(values(graded.metrics).videoRendered, false);
-  assert.match(evidence(graded.metrics.videoRendered), /180x320/);
-  assert.equal(values(graded.metrics).opened, false);
-  assert.equal(values(graded.metrics).framesLooked, false);
-});
-
-test("catchup-video counts more than ten slides as too many", async () => {
-  const at = where();
-
-  const colors = [
-    "red",
-    "blue",
-    "green",
-    "white",
-    "black",
-    "yellow",
-    "cyan",
-    "magenta",
-    "gray",
-    "orange",
-    "purple",
-  ];
-
-  renderVideo(at, { colors });
-
-  const graded = await catchupVideo(
-    input("catchup-video", at, session([], "Done."), stubJudge(true)),
-  );
-
-  assert.equal(values(graded.metrics).slides, false);
-  assert.match(evidence(graded.metrics.slides), /^11 slides/);
 });

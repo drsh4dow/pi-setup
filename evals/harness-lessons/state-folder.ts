@@ -19,14 +19,16 @@ export function keptStateFolder(outputDir: string): string {
 
 /**
  * Moves the state folder at `live` into the run's output directory, replacing an earlier copy
- * there. The copy exists afterwards, empty when the run wrote no state folder.
+ * there. The copy exists afterwards, empty when the run wrote no state folder. It keeps each
+ * file's modification time, which the grade reads as when the run wrote it.
  */
 export function keepStateFolder({ live, outputDir }: { live: string; outputDir: string }) {
   const kept = keptStateFolder(outputDir);
 
   rmSync(kept, { recursive: true, force: true });
 
-  if (existsSync(live)) cpSync(live, kept, { recursive: true, verbatimSymlinks: true });
+  if (existsSync(live))
+    cpSync(live, kept, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
   else mkdirSync(kept, { recursive: true });
 
   rmSync(live, { recursive: true, force: true });

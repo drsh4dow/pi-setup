@@ -1,89 +1,52 @@
-// The catchup-video scenario's video metrics: the newest mp4 in the state folder, probed,
-// opened, cut into its still slides, and whether the run looked at its frames. The files come from
-// the copy of the state folder the runner kept; the run's paths name the live one.
+// The catchup-video scenarios' metrics for a narrated video. The grade trusts nothing the
+// video's own toolkit reports: it probes the file, times the run from its session, transcribes the
+// audio with Gemini (or reads the captions off frames for a silent video) and checks what it says
+// against the story, and shows frames to a vision-capable judge. The files come from the copy of
+// the state folder the runner kept; the run's paths name the live one.
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, join, relative } from "node:path";
 import { Option, Schema } from "effect";
-import { argument, type Session } from "../lib/session.ts";
+import { argument, sinceLastUserMessage, type Session } from "../lib/session.ts";
 import { catchupStubPaths } from "./catchup-stubs.ts";
 import {
   absolute,
   asker,
   callsDecidable,
   decodeOpenCall,
+  GIFT_REGISTRY_TRUTH,
   jsonLines,
-  LIVE_STATE,
   readOnly,
+  type CatchupTruth,
 } from "./grade-catchup.ts";
+import { judged, type JudgeRequest } from "./judge.ts";
 import {
   all,
+  count,
   flag,
   outcome,
   shellCommands,
   unknown,
+  type CountMetric,
   type FlagMetric,
   type Graded,
   type Unknown,
 } from "./metrics.ts";
 import type { GradeInput } from "./record.ts";
+import { renderKind, runTiming, type RunTiming } from "./run-timing.ts";
 import { keptStateFolder } from "./state-folder.ts";
+import {
+  describe,
+  frames,
+  probe,
+  transcript,
+  videosIn,
+  type Transcript,
+  type VideoFacts,
+} from "./video-file.ts";
 
-/** Every mp4 under `folder`, newest first. */
-function videosIn(folder: string): string[] {
-  if (!existsSync(folder)) return [];
-
-  return readdirSync(folder, { recursive: true })
-    .map((entry) => join(folder, String(entry)))
-    .filter((path) => /\.mp4$/i.test(path) && statSync(path).isFile())
-    .toSorted((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-}
-
-const Probe = Schema.Struct({
-  streams: Schema.Array(
-    Schema.Struct({
-      codec_type: Schema.String,
-      width: Schema.optionalKey(Schema.Int),
-      height: Schema.optionalKey(Schema.Int),
-    }),
-  ),
-  format: Schema.Struct({
-    duration: Schema.optionalKey(Schema.String),
-    size: Schema.optionalKey(Schema.String),
-  }),
-});
-
-const decodeProbe = Schema.decodeUnknownOption(Schema.fromJsonString(Probe));
-
-type Probed = { readonly kind: "probed" } & typeof Probe.Type;
-
-function probe(video: string): Probed | Unknown {
-  const result = spawnSync(
-    "ffprobe",
-    [
-      "-v",
-      "error",
-      "-show_entries",
-      "stream=codec_type,width,height:format=duration,size",
-      "-of",
-      "json",
-      video,
-    ],
-    { encoding: "utf8" },
-  );
-
-  if (result.error !== undefined) return unknown(`ffprobe could not run: ${result.error.message}`);
-
-  const parsed = decodeProbe(result.stdout);
-
-  return Option.isSome(parsed)
-    ? { kind: "probed", ...parsed.value }
-    : unknown(`ffprobe failed: ${result.stderr.trim().slice(0, 300)}`);
-}
-
-function videoRendered(video: string | undefined, folder: string, session: Session): FlagMetric {
-  if (video === undefined) {
+function videoRendered(facts: VideoFacts | Unknown | undefined, folder: string, session: Session) {
+  if (facts === undefined) {
     const mentioned = [
       ...new Set(
         shellCommands(session).flatMap((command) =>
@@ -98,17 +61,47 @@ function videoRendered(video: string | undefined, folder: string, session: Sessi
     );
   }
 
-  const facts = probe(video);
+  if (facts.kind === "unknown") return facts;
+
+  return flag(facts.videoStreams === 1 && facts.width > facts.height, describe(facts));
+}
+
+const VoiceRecord = Schema.Struct({
+  provider: Schema.String,
+  model: Schema.optionalKey(Schema.String),
+  voice: Schema.optionalKey(Schema.String),
+});
+
+const decodeVoice = Schema.decodeUnknownOption(Schema.fromJsonString(VoiceRecord));
+
+/** The voice path the run's timing files name: provider, model, and voice of each. */
+export function voicePaths(folder: string): string[] {
+  if (!existsSync(folder)) return [];
+
+  return readdirSync(folder, { recursive: true })
+    .map((entry) => join(folder, String(entry)))
+    .filter((path) => /\.json$/i.test(path) && statSync(path).size < 5_000_000)
+    .flatMap((path) => {
+      const voice = decodeVoice(readFileSync(path, "utf8"));
+
+      if (Option.isNone(voice)) return [];
+
+      const { provider, model = "?", voice: name = "?" } = voice.value;
+
+      return [`${relative(folder, path)}: ${provider} ${model} ${name}`];
+    });
+}
+
+function narrated(facts: VideoFacts | Unknown | undefined, kept: string): FlagMetric {
+  if (facts === undefined) return unknown("no video");
 
   if (facts.kind === "unknown") return facts;
 
-  const videoStreams = facts.streams.filter((stream) => stream.codec_type === "video");
-  const audio = facts.streams.filter((stream) => stream.codec_type === "audio").length;
-  const { width = 0, height = 0 } = videoStreams[0] ?? {};
+  const voices = voicePaths(kept);
 
   return flag(
-    videoStreams.length === 1 && audio === 0 && width > height,
-    `${video}: ${videoStreams.length} video stream, ${audio} audio, ${width}x${height}, ${facts.format.duration ?? "?"} s, ${facts.format.size ?? "?"} bytes`,
+    facts.audioCodec !== undefined,
+    `${facts.audioCodec === undefined ? "no audio stream" : `audio stream ${facts.audioCodec}`}; voice path in timing files: ${voices.join("; ") || "none names a provider"}`,
   );
 }
 
@@ -127,188 +120,259 @@ function opened(video: string | undefined, outputDir: string): FlagMetric {
   return flag(hit, shown);
 }
 
-export interface Slide {
-  readonly start: number;
-  readonly hold: number;
+/** The run's own turn from its session file, or why it has none. */
+function ownTiming(outputDir: string): RunTiming | Unknown {
+  const path = join(outputDir, "session.jsonl");
+
+  if (!existsSync(path)) return unknown(`no session file at ${path}`);
+
+  return runTiming(sinceLastUserMessage(readFileSync(path, "utf8")));
 }
 
-/** The still stretches of a video, at least half a second each: one per slide. */
-export function stillHolds(
-  video: string,
-  duration: number,
-): { readonly kind: "holds"; readonly slides: readonly Slide[] } | Unknown {
-  const result = spawnSync(
-    "ffmpeg",
-    [
-      "-hide_banner",
-      "-nostats",
-      "-i",
-      video,
-      "-map",
-      "0:v:0",
-      "-vf",
-      "freezedetect=n=0.003:d=0.5",
-      "-f",
-      "null",
-      "-",
-    ],
-    { encoding: "utf8" },
+const seconds = (ms: number) => Math.round(ms / 100) / 10;
+
+/** A copy that lost its file times dates every file after the run's last session entry. */
+const COPY_SLACK_MS = 60_000;
+
+function timeMetrics(input: GradeInput, videos: readonly string[]) {
+  const timing = ownTiming(input.outputDir);
+
+  const wallSeconds = count(
+    seconds(input.run.durationMs),
+    `run.json durationMs ${input.run.durationMs}`,
   );
 
-  if (result.error !== undefined || result.status !== 0)
-    return unknown(
-      `ffmpeg freezedetect failed: ${result.error?.message ?? result.stderr.slice(-300)}`,
+  if (timing.kind === "unknown") {
+    return {
+      wallSeconds,
+      costUsd: timing,
+      secondsToFirstVideo: timing,
+      renders: timing,
+      renderSeconds: timing,
+    };
+  }
+
+  const renders = timing.commands.flatMap((command) => {
+    const kind = renderKind(command.command);
+
+    return kind === undefined ? [] : [{ ...command, kind }];
+  });
+
+  const timed = renders.filter((render) => render.endMs !== undefined);
+  const spent = timed.reduce((sum, render) => sum + ((render.endMs ?? 0) - render.startMs), 0);
+  const drafts = renders.filter((render) => render.kind === "draft").length;
+
+  const lines = renders.map(
+    (render) =>
+      `${render.kind}${render.nested ? " (in codemode)" : ""} ${render.endMs === undefined ? "never ended" : `${seconds(render.endMs - render.startMs)} s`}: ${render.command.slice(0, 160)}`,
+  );
+
+  const firstVideoMs = Math.min(...videos.map((video) => statSync(video).mtimeMs));
+
+  const toFirstVideo = ((): CountMetric => {
+    if (videos.length === 0) return unknown("no mp4 in the state folder");
+
+    if (timing.firstCallMs === undefined) return unknown("the run made no tool call");
+
+    if (timing.lastEntryMs !== undefined && firstVideoMs > timing.lastEntryMs + COPY_SLACK_MS)
+      return unknown("the kept state folder has copy times, not the times the run wrote its files");
+
+    return count(
+      seconds(firstVideoMs - timing.firstCallMs),
+      `first tool call ${new Date(timing.firstCallMs).toISOString()}, first mp4 written ${new Date(firstVideoMs).toISOString()}`,
     );
-
-  const starts = [...result.stderr.matchAll(/freeze_start: ([\d.]+)/g)].map((match) =>
-    Number(match[1]),
-  );
-
-  const ends = [...result.stderr.matchAll(/freeze_end: ([\d.]+)/g)].map((match) =>
-    Number(match[1]),
-  );
+  })();
 
   return {
-    kind: "holds",
-    slides: starts.map((start, index) => ({ start, hold: (ends[index] ?? duration) - start })),
+    wallSeconds,
+    costUsd: count(
+      Math.round(timing.costUsd * 1000) / 1000,
+      "sum of the own turn's reported assistant costs, USD",
+    ),
+    secondsToFirstVideo: toFirstVideo,
+    renders: count(
+      renders.length,
+      `${drafts} draft, ${renders.length - drafts} final\n${lines.join("\n")}`,
+    ),
+    renderSeconds:
+      timed.length === 0
+        ? unknown("no render command with a known end")
+        : count(
+            seconds(spent),
+            `${timed.length} of ${renders.length} renders timed; a render in codemode counts the script's time`,
+          ),
   };
 }
 
-function slides(video: string | undefined, outputDir: string): FlagMetric {
-  if (video === undefined) return unknown("no video to count slides in");
+const NOT_THE_REPLY = "(Not part of this question: judge the attached material only.)";
 
-  const facts = probe(video);
-  const duration = facts.kind === "unknown" ? Number.NaN : Number(facts.format.duration);
+const SAYS = {
+  saysCalls:
+    "TRANSCRIPT is what the video says (its narration, or for a silent video its captions read off frames). STORY is the ground truth. Does TRANSCRIPT name every call waiting on the user that STORY lists? One sentence that names several calls counts for each.",
+  numbersRight:
+    "Is every number TRANSCRIPT states consistent with STORY? The transcriber may write numbers as digits or words, and speech rounds as people do ('thirty-three thirty-three' for $33.33). Answer false if any stated number is wrong or attached to the wrong thing; a number left out is not wrong.",
+  correctsWrongStatement:
+    "STORY names a wrong statement made earlier in the chat. Does TRANSCRIPT correct it with the right figure? If STORY names no wrong statement, answer true.",
+  inventsNothing:
+    "Does TRANSCRIPT avoid stating any fact, number, PR, or call that STORY does not support? Summaries and rewording are fine, and so are transcription slips such as a homophone ('scent' for 'cent') or a misspelled name.",
+} as const;
 
-  if (!Number.isFinite(duration)) return unknown(`no duration for ${video}`);
+const LOOKS = {
+  readableText:
+    "The images are frames of a catchup video meant to play at 1920x1080. Is every piece of text in them (captions, labels, numbers, code) large and sharp enough to read comfortably at 1080p on a laptop screen? Answer false if any text a viewer needs is too small or blurred.",
+  nothingOverlaps:
+    "Does every frame keep its elements apart and inside the frame: no text or shape drawn over another so that either becomes hard to read, and nothing cut off at an edge? Frames named with 'scene' were taken at a cut and may catch an animation mid-move; judge those only on elements at rest.",
+  onePicture:
+    "Do the frames, in time order, show one picture that builds and changes (objects stay on screen, move, and transform into the next idea), rather than a run of unrelated slides that each replace the last?",
+  colorMeaning:
+    "Does the video use a small, restrained palette in which each color keeps one meaning across the frames (for example one color always marks a problem and another always a fix)?",
+  explainerLook:
+    "Does the video look like a 3Blue1Brown explainer (dark background, animated diagrams, equations, or code drawn as part of the picture, calm captions) rather than a slide deck or a web page?",
+} as const;
 
-  const found = stillHolds(video, duration);
+type Question = (question: string) => Promise<FlagMetric>;
 
-  if (found.kind === "unknown") return found;
-
-  const holds = found.slides;
-
-  const frames = join(outputDir, "slides");
-
-  mkdirSync(frames, { recursive: true });
-
-  const lines = holds.map((slide, index) => {
-    const frame = join(frames, `slide-${String(index + 1).padStart(2, "0")}.png`);
-
-    spawnSync("ffmpeg", [
-      "-v",
-      "error",
-      "-y",
-      "-ss",
-      String(slide.start + slide.hold / 2),
-      "-i",
-      video,
-      "-frames:v",
-      "1",
-      frame,
-    ]);
-
-    return `${index + 1}: held ${slide.hold.toFixed(1)} s from ${slide.start.toFixed(1)} s${existsSync(frame) ? "" : " (no frame extracted)"}`;
-  });
-
-  return flag(
-    holds.length >= 1 && holds.length <= 10,
-    `${holds.length} slides (still holds of 0.5 s or more) in ${duration.toFixed(1)} s; frames in ${frames}\n${lines.join("\n")}`,
-  );
+/** A question about `material` alone, or `missing` for every question when there is none. */
+function about(
+  input: GradeInput,
+  material: Omit<JudgeRequest, "question" | "finalText">,
+): Question {
+  return async (question) =>
+    judged(await input.judge({ question, finalText: NOT_THE_REPLY, ...material }));
 }
 
-const IMAGE = /\.(?:png|jpe?g|webp)$/i;
+const undecided =
+  (reason: Unknown): Question =>
+  async () =>
+    reason;
 
-/** Whether `path` is a frame the catchup-video renderer wrote for `video`: `OUT.slide-NN.png`. */
-function isRendererFrame(path: string, video: string): boolean {
-  const frame = /^(.*)\.slide-\d+\.png$/.exec(basename(path));
+async function says(input: GradeInput, heard: Transcript | Unknown, truth: CatchupTruth) {
+  const ask =
+    "kind" in heard
+      ? undecided(heard)
+      : about(input, {
+          artifacts: [
+            { label: "TRANSCRIPT", text: `(${heard.source}, ${heard.model})\n${heard.text}` },
+            { label: "STORY", text: truth.story },
+          ],
+        });
 
-  return frame?.[1] === basename(video).replace(/\.mp4$/i, "");
+  return {
+    saysCalls: await ask(SAYS.saysCalls),
+    numbersRight: await ask(SAYS.numbersRight),
+    correctsWrongStatement: await ask(SAYS.correctsWrongStatement),
+    inventsNothing: await ask(SAYS.inventsNothing),
+  };
+}
+
+async function looks(input: GradeInput, images: readonly string[]) {
+  const ask =
+    images.length === 0
+      ? undecided(unknown("no frames to look at"))
+      : about(input, { artifacts: [], images });
+
+  return {
+    readableText: await ask(LOOKS.readableText),
+    nothingOverlaps: await ask(LOOKS.nothingOverlaps),
+    onePicture: await ask(LOOKS.onePicture),
+    colorMeaning: await ask(LOOKS.colorMeaning),
+    explainerLook: await ask(LOOKS.explainerLook),
+  };
 }
 
 /**
- * Whether the run pulled frames out of its rendered video and then looked at them: images read
- * after an ffmpeg command naming the video, or the renderer's own slide frames read after the
- * command that rendered it.
+ * Whether the run looked at every frame of its last final render, as the skill asks: each contact
+ * sheet the toolkit wrote beside the video (STORY.build/final/frames/sheet-N.png), or each beat
+ * frame, read after the last command that rendered a final.
  */
-function framesLooked(video: string | undefined, session: Session): FlagMetric {
+export function framesLooked(video: string | undefined, session: Session): FlagMetric | Unknown {
   if (video === undefined) return unknown("no video to look at");
 
-  const name = basename(video);
-  const naming = shellCommands(session).filter((command) => command.command.includes(name));
-  const reads = session.operations.filter((operation) => operation.tool === "read");
+  const finalFrames = join(`${basename(video, ".mp4")}.build`, "final", "frames");
+  const dir = join(dirname(video), finalFrames);
+  const written = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".png")) : [];
+  const sheets = written.filter((name) => /^sheet-\d+\.png$/.test(name));
+  const beats = written.filter((name) => /^beat-\d+-(?:mid|end)\.png$/.test(name));
 
-  const routes = [
-    {
-      by: "ffmpeg",
-      command: naming.find((command) => /\bffmpeg\b/.test(command.command)),
-      shows: (path: string) => IMAGE.test(path),
-    },
-    {
-      by: "the renderer",
-      command: naming.find((command) => /\brender\.ts\b/.test(command.command)),
-      shows: (path: string) => isRendererFrame(path, video),
-    },
-  ].flatMap(({ command, ...route }) => {
-    if (command === undefined) return [];
+  if (sheets.length === 0 && beats.length === 0)
+    return unknown(`the toolkit wrote no final frames at ${dir}`);
 
-    const looks = reads
-      .filter((operation) => operation.step > command.step)
+  const render = shellCommands(session).findLast(
+    (command) => renderKind(command.command) === "final",
+  );
+
+  if (render === undefined) return unknown("no command that rendered a final");
+
+  const read = new Set(
+    session.operations
+      .filter((operation) => operation.tool === "read" && operation.step > render.step)
       .map((operation) => argument(operation, "path") ?? "")
-      .filter(route.shows);
+      .filter((path) => dirname(path).endsWith(finalFrames))
+      .map((path) => basename(path)),
+  );
 
-    return [{ ...route, command, looks }];
-  });
-
-  if (routes.length === 0) return flag(false, `no ffmpeg or renderer command named ${name}`);
+  const missed = (names: readonly string[]) => names.filter((name) => !read.has(name));
+  const every = [sheets, beats].some((names) => names.length > 0 && missed(names).length === 0);
 
   return flag(
-    routes.some((route) => route.looks.length > 0),
-    routes
-      .map(
-        (route) =>
-          `${route.by} on ${name}: ${route.command.command.slice(0, 200)}\nimages read after it: ${route.looks.join(", ") || "none"}`,
-      )
-      .join("\n"),
+    every,
+    `read ${sheets.length - missed(sheets).length} of ${sheets.length} contact sheets and ${beats.length - missed(beats).length} of ${beats.length} beat frames after the last final render`,
   );
 }
 
-/** The metrics read from the newest mp4 in the state folder the runner kept. */
-function videoMetrics({ session, outputDir }: GradeInput) {
-  const kept = keptStateFolder(outputDir);
+/** The video the run delivered: the mp4 it opened, or else the newest one. */
+function delivered(
+  videos: readonly string[],
+  kept: string,
+  input: GradeInput,
+  truth: CatchupTruth,
+) {
+  const openedPaths = new Set(
+    jsonLines(catchupStubPaths(input.outputDir).open, decodeOpenCall).flatMap((call) =>
+      call.argv.map((arg) => absolute(arg, call.cwd)),
+    ),
+  );
 
-  if (!existsSync(kept)) {
-    const none = unknown(`the runner kept no copy of the state folder at ${kept}`);
-
-    return { rendered: none, open: none, stills: none, looked: none };
-  }
-
-  const video = videosIn(kept)[0];
-  const written = video === undefined ? undefined : join(LIVE_STATE, relative(kept, video));
-
-  return {
-    rendered: videoRendered(video, kept, session),
-    open: opened(written, outputDir),
-    stills: slides(video, outputDir),
-    looked: framesLooked(video, session),
-  };
+  return (
+    videos.find((video) => openedPaths.has(join(truth.liveState, relative(kept, video)))) ??
+    videos[0]
+  );
 }
 
-export async function catchupVideo(input: GradeInput): Promise<Graded> {
+export async function gradeNarratedVideo(input: GradeInput, truth: CatchupTruth): Promise<Graded> {
   const ask = asker(input);
   const reply = input.session.finalText;
-  const video = videoMetrics(input);
+  const kept = keptStateFolder(input.outputDir);
+  const hasCopy = existsSync(kept);
+  const videos = videosIn(kept);
+  const video = delivered(videos, kept, input, truth);
+  const facts = video === undefined ? undefined : probe(video);
+  const known = facts?.kind === "facts" ? facts : undefined;
+  const noCopy = unknown(`the runner kept no copy of the state folder at ${kept}`);
+  const noVideo = unknown("no video to look at");
+  const heard = known === undefined ? noVideo : await transcript(known, input.outputDir);
+  const images = known === undefined ? [] : frames(known, input.outputDir);
 
   const metrics = {
-    videoRendered: video.rendered,
-    opened: video.open,
-    readOnlyExceptVideo: readOnly(input, { video: true }),
-    slides: video.stills,
-    framesLooked: video.looked,
+    ...timeMetrics(input, videos),
+    videoSeconds:
+      known === undefined ? noVideo : count(Math.round(known.seconds * 10) / 10, describe(known)),
+    videoRendered: hasCopy ? videoRendered(facts, kept, input.session) : noCopy,
+    narrated: hasCopy ? narrated(facts, kept) : noCopy,
+    opened: hasCopy
+      ? opened(
+          video === undefined ? undefined : join(truth.liveState, relative(kept, video)),
+          input.outputDir,
+        )
+      : noCopy,
+    framesLooked: framesLooked(video, input.session),
+    readOnlyExceptVideo: readOnly(input, { video: true, liveState: truth.liveState }),
+    ...(await says(input, heard, truth)),
+    ...(await looks(input, images)),
     replyLayout: await ask(
       "Is the final message shaped as one opening sentence naming what waits on the user, a link to the video file, one line naming work left that the agent can do itself, and then the calls waiting on the user, with no summary of what happened and no pictures or diagrams besides the video?",
     ),
-    callsDecidable: await callsDecidable(ask),
+    callsDecidable: await callsDecidable(ask, truth),
   };
 
   return {
@@ -317,6 +381,8 @@ export async function catchupVideo(input: GradeInput): Promise<Graded> {
       outcome(metrics.videoRendered),
       outcome(metrics.opened),
       outcome(metrics.readOnlyExceptVideo),
+      outcome(metrics.saysCalls),
+      outcome(metrics.inventsNothing),
       outcome(metrics.callsDecidable),
     ),
     crossChecks: [
@@ -328,3 +394,5 @@ export async function catchupVideo(input: GradeInput): Promise<Graded> {
     ],
   };
 }
+
+export const catchupVideo = (input: GradeInput) => gradeNarratedVideo(input, GIFT_REGISTRY_TRUTH);

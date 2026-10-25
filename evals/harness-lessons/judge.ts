@@ -8,9 +8,10 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { Option, Schema } from "effect";
 import { candidateEnv, writeAtomically } from "../lib/pi-run.ts";
+import { gemini, type GeminiPart } from "./gemini.ts";
 import { flag, truncate, unknown, type FlagMetric } from "./metrics.ts";
 
 export interface JudgeRequest {
@@ -18,6 +19,8 @@ export interface JudgeRequest {
   readonly finalText: string;
   /** Only the material the question needs, each under a label. */
   readonly artifacts: readonly { readonly label: string; readonly text: string }[];
+  /** PNG files the judge looks at, in the order the prompt lists them. */
+  readonly images?: readonly string[];
 }
 
 export type JudgeAnswer =
@@ -33,8 +36,16 @@ export function judgePrompt(request: JudgeRequest): string {
     ({ label, text }) => `<<<${label}\n${truncate(text, ARTIFACT_LIMIT)}\n${label}>>>`,
   );
 
+  const images = request.images ?? [];
+
   return [
     "You grade one run of a coding agent against a single yes-or-no question. Judge only from the material below, not from what the agent should have done.",
+    ...(images.length === 0
+      ? []
+      : [
+          "",
+          `${images.length} images are attached, in this order: ${images.map((path, index) => `${index + 1}. ${basename(path)}`).join(", ")}.`,
+        ]),
     "",
     `Question: ${request.question}`,
     "",
@@ -88,6 +99,7 @@ export function piJudge(model: string): Judge {
           model,
           "--thinking",
           "low",
+          ...(request.images ?? []).map((path) => `@${path}`),
           judgePrompt(request),
         ],
         {
@@ -116,6 +128,30 @@ export function piJudge(model: string): Judge {
     });
 }
 
+/** The judge as one call to the Gemini API per question, with the images inline. */
+export function geminiJudge(model: string): Judge {
+  return async (request) => {
+    const images: GeminiPart[] = (request.images ?? []).map((path) => ({
+      inlineData: { mimeType: "image/png", data: readFileSync(path).toString("base64") },
+    }));
+
+    const reply = await gemini(model, [...images, { text: judgePrompt(request) }]);
+
+    return reply.kind === "text"
+      ? parseAnswer(reply.text)
+      : { kind: "unavailable", reason: `gemini failed: ${reply.reason}` };
+  };
+}
+
+/** The models `GEMINI_PREFIX` names go straight to the Gemini API; the rest go through `pi -p`. */
+export const GEMINI_PREFIX = "gemini-api/";
+
+export function judgeFor(model: string): Judge {
+  return model.startsWith(GEMINI_PREFIX)
+    ? geminiJudge(model.slice(GEMINI_PREFIX.length))
+    : piJudge(model);
+}
+
 const Cache = Schema.Record(
   Schema.String,
   Schema.Struct({
@@ -142,11 +178,11 @@ export function cachedJudge({
   file: string;
 }): Judge {
   return async (request) => {
-    const key = createHash("sha256")
-      .update(model)
-      .update("\0")
-      .update(judgePrompt(request))
-      .digest("hex");
+    const hash = createHash("sha256").update(model).update("\0").update(judgePrompt(request));
+
+    for (const image of request.images ?? []) hash.update("\0").update(readFileSync(image));
+
+    const key = hash.digest("hex");
 
     const cache = existsSync(file) ? decodeCache(readFileSync(file, "utf8")) : {};
     const hit = cache[key];
@@ -176,6 +212,7 @@ export function redactingJudge(judge: Judge, secret: string, replacement: string
       question: request.question,
       finalText: redact(request.finalText),
       artifacts: request.artifacts.map(({ label, text }) => ({ label, text: redact(text) })),
+      images: request.images,
     });
 }
 

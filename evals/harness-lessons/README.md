@@ -143,27 +143,66 @@ The primary verdict wants `readOnly`, `namesEveryPr`, `callsDecidable`, and `win
 ## catchup-video
 
 The same chat, setup, and stubs, with the prompt `/skill:catchup-video` and a 30-minute
-timeout. The grade takes the newest mp4 in the run's `state-folder/`, the state folder as the
-runner kept it. The run's own paths name `~/.local/state/pi-agent/gift-registry/`, so
-`opened` and `readOnlyExceptVideo` match them against that path. A run graded without a kept
-copy, from before the runner kept one, leaves `videoRendered`, `opened`, `slides`, and
-`framesLooked` unknown.
+timeout. The skill makes a narrated explainer video in the style of 3Blue1Brown. The grade
+([`grade-catchup-video.ts`](grade-catchup-video.ts)) trusts nothing the skill's toolkit
+reports about its own video: it probes the file, times the run from its session, and has
+Gemini listen to the video and a judge look at it.
 
-- `videoRendered`: `ffprobe` finds one video stream, no audio, and a landscape frame. The
-  evidence gives the size, the duration, and the bytes.
+The grade takes the mp4 the run opened, or else the newest one, in the run's `state-folder/`,
+the state folder as the runner kept it. Manim's `partial_movie_files/` do not count. The run's
+own paths name `~/.local/state/pi-agent/gift-registry/`, so `opened` and `readOnlyExceptVideo`
+match them against that path. A run graded without a kept copy leaves the video metrics
+unknown.
+
+Time and money, read from the run's own turn in `session.jsonl` ([`run-timing.ts`](run-timing.ts)):
+
+- `wallSeconds`: the run's duration from `run.json`.
+- `costUsd`: the sum of the turn's reported assistant costs.
+- `secondsToFirstVideo`: from the turn's first tool call to the mtime of the first mp4 in the
+  kept folder. The runner keeps file times when it moves the folder. A file dated more than a
+  minute after the turn's last entry has copy times, and the metric is unknown.
+- `renders`: the shell commands that render, `manim … <file>.py` or the toolkit's `video.ts`
+  (or `catchup-video`) with `draft`, `render`, or `final`. The evidence splits them into draft
+  (`draft`, `-ql`/`-qm`, `480p`/`720p`) and final and gives each one's time. The toolkit's
+  command names are a guess made before the toolkit landed; check them against its `--help`.
+- `renderSeconds`: the summed time of those renders. A bash call ends with its result. A
+  background terminal ends at the elapsed time its results message reports. A render inside a
+  codemode script counts the whole script's time.
+
+The file:
+
+- `videoSeconds`: its duration. The evidence gives every ffprobe fact: video streams and
+  codec, size, frame rate, audio codec, duration, and bytes.
+- `videoRendered`: one video stream and a landscape frame. With no mp4, the evidence lists the
+  mp4 paths the run's commands named.
+- `narrated` (informational): the file has an audio stream. The evidence names the provider,
+  model, and voice from any timing JSON file in the state folder.
 - `opened`: the `xdg-open` log names that mp4.
 - `readOnlyExceptVideo`: as `readOnly`, except that `edit`, `write`, and `xdg-open` in the
   state folder, and `bg_start`, are allowed.
-- `slides`: ffmpeg's `freezedetect` finds each still hold of half a second or more. Each
-  hold counts as one slide, and 1 to 10 slides pass. One frame per slide goes to the run's
-  `slides/` directory for review, and the evidence gives each hold.
-- `framesLooked`: the run read an image after an `ffmpeg` command that named the mp4, or read
-  one of the renderer's slide frames (`<video>.slide-NN.png`) after the `render.ts` command
-  that named it.
-- Judged: `replyLayout`, the reply catchup-video asks for, and `callsDecidable`.
 
-The primary verdict wants `videoRendered`, `opened`, `readOnlyExceptVideo`, and
-`callsDecidable`.
+What it says. The audio goes to `gemini-3.5-transcribe`. For a silent video,
+`gemini-3.8-flash` reads the captions off a frame every 2 seconds instead. The transcript is
+kept in the run's `transcript.json` and reused while the file is the same. Both calls need
+`GEMINI_API_KEY`; without it, these metrics are unknown. A judge then compares the transcript
+with the story (the chat timeline, its numbers, the wrong statement, and the calls):
+
+- `saysCalls`: it names every call waiting on the user.
+- `numbersRight`: every number it states matches the story.
+- `correctsWrongStatement`: it corrects "all 12 tests pass" to 11 passed and 1 skipped.
+- `inventsNothing`: it states nothing the story does not support.
+
+What it shows. Ten frames at even intervals and up to eight at cuts (ffmpeg's scene score) go
+to the run's `frames/` directory, for the judge and for a reviewer. The judge sees them as
+images:
+
+- `readableText`, `nothingOverlaps`, `onePicture` (one picture that builds, not a run of
+  slides), `colorMeaning` (a small palette, one meaning per color), and `explainerLook`.
+
+The reply, judged: `replyLayout`, the reply catchup-video asks for, and `callsDecidable`.
+
+The primary verdict wants `videoRendered`, `opened`, `readOnlyExceptVideo`, `saysCalls`,
+`inventsNothing`, and `callsDecidable`.
 
 ## What the grade counts
 
@@ -187,8 +226,10 @@ The grade follows these rules:
   exited non-zero, it left no session, or it ended on a stop reason other than `stop`.
 - A metric that needs judgment asks one `pi -p --no-tools --no-skills --no-session` call
   (`anthropic/claude-opus-5-5`, thinking `low`). The call answers `{"pass": bool, "why": "..."}`.
-  The judge sees the question, the final text, and only the artifacts the question needs.
-  The arm's root path is redacted. Answers are cached in each run's `judge.json`.
+  The judge sees the question, the final text, and only the artifacts and images the question
+  needs. The arm's root path is redacted. Answers are cached in each run's `judge.json`, keyed
+  by the prompt and the images' bytes. `--judge-model gemini-api/<model>` asks the Gemini API
+  directly instead, with `GEMINI_API_KEY`.
 - A judge that could not run, or answered something else, makes its metric **unknown**. An
   unknown metric is neither a pass nor a fail, and it is not cached.
 - Metrics computed from the working directory read `workdir` from `run.json`, so grade

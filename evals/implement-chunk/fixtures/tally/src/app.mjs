@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { messages } from "./messages.mjs";
 
 const versionFile = new URL("./version.json", import.meta.url);
 
@@ -15,5 +16,5 @@ export async function handle(url) {
 
   if (url.pathname === "/version") return { status: 200, body: await version() };
 
-  return { status: 404, body: { error: "not found" } };
+  return { status: 404, body: { error: messages["unknown-path"] } };
 }

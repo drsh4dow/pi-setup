@@ -88,8 +88,12 @@ the bare repository. The repository name is unique per run, so its state folder 
 - **Tracker.** [`tracker.ts`](tracker.ts) is a small Linear-like CLI named `tracker`, which the
   fixture's `docs/agents/issue-tracker.md` documents. It has commands for view, list, comment,
   state, and close. [`tickets.ts`](tickets.ts) seeds parent TAL-1 and three sub-tickets. TAL-3 and
-  TAL-4 are blocked by TAL-2. The parent pins no base branch, environment, live-check access, or
-  deploy signal.
+  TAL-4 are blocked by TAL-2 and not by each other, so both are on the frontier once TAL-2 lands.
+  The parent pins no base branch, environment, live-check access, or deploy signal.
+- **Domain docs.** The fixture has a `GLOSSARY.md`, one ADR
+  (`docs/adr/0001-lengths-are-never-negative.md`), and a `docs/agents/domain.md` in the shape
+  `setup-sh4dow-skills` writes, which `AGENTS.md` points to. `AGENTS.md` also keeps every error
+  message in `src/messages.mjs`, under an id.
 - **GitHub.** [`fakegh.ts`](fakegh.ts), [`gh-pr.ts`](gh-pr.ts), [`gh-ops.ts`](gh-ops.ts), [`gh-api.ts`](gh-api.ts), and
   [`gh-views.ts`](gh-views.ts) make a fake `gh` on `PATH`, backed by the bare origin. It has
   `repo view` (merge settings) and `pr create/view/list/edit/checks/merge/close/ready/comment/review/diff`.
@@ -109,14 +113,48 @@ the bare repository. The repository name is unique per run, so its state folder 
 
 No prompt and no ticket names a trap. Each one is a metric.
 
-| Id  | Planted as                                                                                                                                                                                                            | Metric                                                                        |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| T1  | The fake GitHub allows merge commits only. `gh pr merge --squash`/`--rebase` and the GraphQL equivalents are refused, and `repo view` reports it.                                                                     | `t1RefusedMerges`, `t1RecoverySpawns`                                         |
-| T2  | `AGENTS.md` forbids code comments. TAL-4 asks that "a reader of the conversion code learns why the cap is 6".                                                                                                         | `t2CommentLines` (comment lines the final `main` adds to code), `t2FixSpawns` |
-| T3  | CI fails a PR that changes `src/` without changing `CHANGELOG.md`. The changelog lies outside any narrow ticket scope.                                                                                                | `t3ChangelogCiFailures`, `t3ScopeStops`, `t3Respawns`                         |
-| T4  | The tracker moves every ticket whose key is in a PR's branch, title, or body to Done when that PR merges or closes, into any base (Linear's GitHub integration).                                                      | `t4AutoDone`, `t4Resets`, `t4WrongAtMergeReady`, `t4WrongAtClose`             |
-| T5  | `npm run build` copies only `src/*.mjs` plus the assets listed in `build.config.json`, which starts empty. `src/units.json` (TAL-2) works under `npm run dev` and the tests, but the built artifact fails without it. | `t5`: `caught-before-merge`, `live-failed`, or `missed`                       |
-| T6  | The bot's two-review shape, one review with an empty body.                                                                                                                                                            | `t6ReviewToMergeReadyMinutes`; `t6WatcherErrors` stays unknown (see below)    |
+| Id  | Planted as                                                                                                                                                                                                            | Metric                                                                                            |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| T1  | The fake GitHub allows merge commits only. `gh pr merge --squash`/`--rebase` and the GraphQL equivalents are refused, and `repo view` reports it.                                                                     | `t1RefusedMerges`, `t1RecoverySpawns`                                                             |
+| T2  | `AGENTS.md` forbids code comments. TAL-4 asks that "a reader of the conversion code learns why the cap is 6".                                                                                                         | `t2CommentLines` (comment lines the final `main` adds to code), `t2FixSpawns`                     |
+| T3  | CI fails a PR that changes `src/` without changing `CHANGELOG.md`. The changelog lies outside any narrow ticket scope.                                                                                                | `t3ChangelogCiFailures`, `t3ScopeStops`, `t3Respawns`                                             |
+| T4  | The tracker moves every ticket whose key is in a PR's branch, title, or body to Done when that PR merges or closes, into any base (Linear's GitHub integration).                                                      | `t4AutoDone`, `t4Resets`, `t4WrongAtMergeReady`, `t4WrongAtClose`                                 |
+| T5  | `npm run build` copies only `src/*.mjs` plus the assets listed in `build.config.json`, which starts empty. `src/units.json` (TAL-2) works under `npm run dev` and the tests, but the built artifact fails without it. | `t5`: `caught-before-merge`, `live-failed`, or `missed`                                           |
+| T6  | The bot's two-review shape, one review with an empty body.                                                                                                                                                            | `t6ReviewToMergeReadyMinutes`; `t6WatcherErrors` stays unknown (see below)                        |
+| T7  | `GLOSSARY.md` names Precision (avoid: decimals, places, digits) and Symbol (avoid: abbreviation). TAL-2 and TAL-4 say "decimals", and TAL-3 says `GET /units/<abbreviation>`.                                         | `t7`: `adheres` or `drifted`; `t7AvoidedTerms`                                                    |
+| T8  | ADR-0001 rejects a negative length with a 400. TAL-2 says only that a value that is not a number answers 400, so the naive `/convert` converts `-1`.                                                                  | `t8`: `conforms`, `surfaced`, or `missed`                                                         |
+| T9  | TAL-3's 404 and TAL-4's 400 are new errors, and `AGENTS.md` puts every error message in `src/messages.mjs`. Two parallel units append to the same object.                                                             | `t9`: `consistent` or `inconsistent`; `t9MergeConflicts`, `t9ConflictSpawns`, `t9ParallelMinutes` |
+
+**Reading T7–T9.** All three read the final `main` in the archived origin, never a report.
+
+- **T7.** Every line the chunk added under `src/` and `test/` is split into words, identifiers by
+  their camelCase, kebab, and snake parts, so identifiers, JSON fields, route names, message ids,
+  and test names all count. `t7AvoidedTerms` counts the added lines that hold a word, or a run of
+  words, from any `_Avoid_` list of the fixture's `GLOSSARY.md`. `t7` is `adheres` at 0 and
+  `drifted` otherwise. Up to 8 offending lines go to `t7Samples`.
+- **T8.** `conforms` when a build of the final `main` answers `/convert?value=-1&from=km&to=m`
+  with a 400 and an `error`. Otherwise `surfaced` when a text the root ended a turn on, or the
+  orchestrator's `decisions.md`, names the ADR (`ADR-0001`, `ADR 1`, `0001-`, or "never
+  negative"); otherwise `missed`.
+- **T9.** A build of the final `main` answers `/units/parsec` and a `precision=9` conversion. Each
+  served `error` must come from an entry of the final `src/messages.mjs`, and each entry's id must
+  hold a glossary term and no avoided one. `consistent` when both hold for both errors, and
+  `inconsistent` with the reason otherwise. `t9MergeConflicts` counts the tool results, in any
+  session, where git reported `CONFLICT (`. `t9ConflictSpawns` counts children whose name or
+  assignment opening names a conflict. `t9ParallelMinutes` is how long TAL-3's and TAL-4's
+  implementers ran at the same time, 0 when one ran after the other, and unknown when one unit
+  carried both or either has no implementer.
+
+A child is a ticket implementer when its role is `implementer` and its name and assignment opening
+read as no fix (`fix`, `findings`). Its ticket is the sub-ticket key in its name, or else the
+ticket whose `signature` in `tickets.ts` matches the first 300 characters of its assignment,
+trying the tickets that build on others first, because a TAL-4 brief names TAL-2's `/convert` too.
+
+**This fixture shifts earlier batches.** TAL-3 gained `GET /units/<abbreviation>` and two
+acceptance criteria, so `correct` is harder than in batches before the domain traps, and the bot's
+README finding covers one more endpoint. `AGENTS.md` gained two items, and the 404 and 500 messages
+moved into `src/messages.mjs`, a module the build copies, so T5 is unchanged. Compare a batch only
+with batches on the same fixture.
 
 ## Human
 
@@ -186,6 +224,20 @@ settle is `unknown`, with the reason.
 - **`finalPRs`**, the chunk's own final PRs (`chunkFinalPrs` in `drive.json`; every PR into `main`
   in older records), and **`finalPRsSelfContained`**: each merged final PR's head passed CI.
 
+- **`edgeCases`.** The pass rate of [`acceptance.ts`](acceptance.ts)'s `EDGE_CASES`, run on a
+  build of the final `main`: boundary and invalid inputs that the tickets, the glossary, or the
+  ADR imply and no acceptance criterion spells out. Each request cites its source line. They are
+  kept out of `correct`, so `correct` keeps its meaning. The ADR's negative-value request is also
+  T8's `conforms` check, so the two are correlated.
+- **`rootIdleMinutes`, `rootModelMinutesIdle`.** The wall minutes of the root's lifetime, its
+  first to last session timestamp, during which no child session was running, and the root's model
+  time in those spans: for each assistant message, the time since the session's previous
+  timestamped line, counted when that interval's midpoint has no child running. These are the
+  root's share of the critical path. They port `crit.mjs` from the 2026-10-25 quality and speed
+  research, which sampled the wall time per second; the port measures the intervals exactly.
+- **`finishMinutes`.** From the end of the last ticket implementer to the first merge of a chunk
+  final PR: review, fixes, verification, PR text, babysitting, and the user's merge.
+
 **T5 reading.** The first commit the user merged into `main` is built and served. If it already
 answers TAL-2's acceptance requests, the defect was caught before the final merge, or never
 introduced. Otherwise the result is `live-failed` when the ledger records it, and `missed` when it
@@ -210,6 +262,21 @@ none. The rule now reads tickets wrong at merge-ready, changed after seeing pilo
 
 With 3 trials per arm, a count metric counts as improved only when the two arms' min–max ranges do
 not overlap. Otherwise the grader prints `within spread`. T5 compares the caught-before-merge rate.
+
+**Second pre-registered reading: quality and speed.** Registered on 2026-10-25, with the domain
+traps and before any run on this fixture. The grader prints it beside the first, which stays as
+it is. The candidate is better on quality and speed if all three hold:
+
+- its correct rate is not lower;
+- of {edge-case pass rate, T7 `adheres` rate, T8 `conforms` or `surfaced` rate, T9 `consistent`
+  rate}, none is lower and at least one is higher;
+- its median `wallMinutes` is at least 10% below the baseline's.
+
+Cost is not counted, at the user's direction: this reading asks whether the run is better and
+faster, whatever it spends. The edge-case rate pools every request of every valid run. Each trap
+rate is over the runs whose outcome is known. `rootIdleMinutes`, `rootModelMinutesIdle`,
+`finishMinutes`, and the T9 counts are printed beside it to explain the wall time, and decide
+nothing.
 
 ## Run
 

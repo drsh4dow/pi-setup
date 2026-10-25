@@ -84,6 +84,17 @@ describe("the scripted user", () => {
     });
   });
 
+  test("a question about an ADR or a glossary term gets the proposed default, even when it names an intake topic", () => {
+    for (const text of [
+      "ADR-0001 rejects negative lengths: should the target environment answer `value=-1` with a 400?",
+      "The glossary avoids 'abbreviation': shall I name the route parameter `symbol` before I publish the PR?",
+    ]) {
+      const decision = decide(turn({ text }));
+
+      assert.equal(decision.kind === "reply" && decision.reason, "default", text);
+    }
+  });
+
   test("a status report without a question gets a nudge, counted as a status request", () => {
     const decision = decide(
       turn({ text: "TAL-2 merged into the integration branch. TAL-3 is in flight." }),

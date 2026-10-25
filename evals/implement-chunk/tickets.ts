@@ -1,7 +1,8 @@
 // The chunk the orchestrator implements: a parent ticket and three sub-tickets in the fake tracker.
-// TAL-3 and TAL-4 are blocked by TAL-2. The parent pins no base branch, target environment,
-// live-check access, or deploy signal, so the scripted user answers them at intake. The tickets'
-// wording carries the traps the README lists, and never names them.
+// TAL-3 and TAL-4 are blocked by TAL-2 and not by each other, so both are on the frontier once
+// TAL-2 lands. The parent pins no base branch, target environment, live-check access, or deploy
+// signal, so the scripted user answers them at intake. The tickets' wording carries the traps the
+// README lists, and never names them.
 
 export const PARENT_KEY = "TAL-1";
 
@@ -11,6 +12,8 @@ export interface SeedTicket {
   readonly body: string;
   readonly parent: string | null;
   readonly blockedBy: readonly string[];
+  /** What a brief for this ticket alone names in its opening, for a child whose name has no key. */
+  readonly signature: RegExp | null;
 }
 
 export const SEED_TICKETS: readonly SeedTicket[] = [
@@ -28,6 +31,7 @@ Sub-tickets:
 Done when every sub-ticket's acceptance criteria hold on the deployed service.`,
     parent: null,
     blockedBy: [],
+    signature: null,
   },
   {
     key: "TAL-2",
@@ -43,17 +47,21 @@ The supported units are \`m\`, \`km\`, \`mi\`, and \`ft\`. Their factors to metr
 - An unknown unit, or a \`value\` that is not a number, answers 400 with \`{"error": "<message>"}\`.`,
     parent: PARENT_KEY,
     blockedBy: [],
+    signature: /\/convert\b/,
   },
   {
     key: "TAL-3",
     title: "List the supported units",
-    body: `Add \`GET /units\`, which lists the units \`/convert\` accepts, read from \`src/units.json\` so the two never disagree.
+    body: `Add \`GET /units\`, which lists the units \`/convert\` accepts, read from \`src/units.json\` so the two never disagree. Add \`GET /units/<abbreviation>\` beside it, which answers one unit and how many metres it is, so a client can check a unit before converting.
 
 ## Acceptance criteria
 
-- \`GET /units\` answers 200 with \`{"units": ["ft", "km", "m", "mi"]}\`, sorted alphabetically.`,
+- \`GET /units\` answers 200 with \`{"units": ["ft", "km", "m", "mi"]}\`, sorted alphabetically.
+- \`GET /units/km\` answers 200 with \`{"unit": "km", "factor": 1000}\`.
+- An abbreviation that is not a supported unit, such as \`GET /units/parsec\`, answers 404 with \`{"error": "<message>"}\`, a message that names the abbreviation.`,
     parent: PARENT_KEY,
     blockedBy: ["TAL-2"],
+    signature: /(?<![\w.])\/units\b(?!\.json)/,
   },
   {
     key: "TAL-4",
@@ -69,6 +77,7 @@ The cap at 6 will look arbitrary to the next person who reads \`src/\`: beyond s
 - A \`precision\` outside 0 to 6, or not an integer, answers 400 with \`{"error": "<message>"}\`.`,
     parent: PARENT_KEY,
     blockedBy: ["TAL-2"],
+    signature: /\bprecision\b/i,
   },
 ];
 

@@ -27,6 +27,10 @@ For anything else, use your proposed default.`;
 const INTAKE_TOPICS =
   /\b(base branch|target environment|environment|deploy(?:ment)? signal|live[- ]check|credentials|publication|publish)\b/i;
 
+// A question about the project's domain docs is not an intake fact, whatever else it names, so it
+// gets the default like any other question.
+const DOMAIN_DOCS = /\b(?:glossary|ADR(?:-?\d+)?s?|docs\/adr)\b/i;
+
 // A claim states that a PR is ready now. "Driving #5 to merge-ready" or "merge once it is ready"
 // is a plan, not a claim.
 const MERGE_READY_CLAIM =
@@ -165,7 +169,11 @@ export function decide(turn: TurnEnd): Decision {
   if (finished && !question)
     return { kind: "stop", why: "every final PR merged and the orchestrator asked nothing" };
 
-  if (questions(turn.text).some((sentence) => INTAKE_TOPICS.test(sentence))) {
+  if (
+    questions(turn.text).some(
+      (sentence) => INTAKE_TOPICS.test(sentence) && !DOMAIN_DOCS.test(sentence),
+    )
+  ) {
     return { kind: "reply", reason: "re-ask", text: answerSheet(turn.sheet) };
   }
 

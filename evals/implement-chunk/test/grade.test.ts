@@ -323,7 +323,7 @@ function armWith(
       arm,
       trial: index + 1,
       isolation: { ok: true, sessions: 1, bad: [] },
-      integrity: { ok: true, problems: [] },
+      integrity: { ok: true, problems: [], warnings: [] },
       metrics,
     };
   });

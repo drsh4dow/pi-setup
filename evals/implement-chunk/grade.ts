@@ -347,6 +347,8 @@ function runLines(run: GradedRun): string[] {
 
   for (const problem of run.integrity.problems) lines.push(`   ! integrity: ${problem}`);
 
+  for (const warning of run.integrity.warnings) lines.push(`   ~ integrity: ${warning}`);
+
   lines.push(`   correct: ${format(metrics.correct)}`);
 
   if (metrics.acceptanceFailures.length > 0)
@@ -418,8 +420,9 @@ export async function gradeDirectory(
             runDir: dir,
             record: record.integrity ?? null,
             scratch: runScratch(dir, record.agentDir),
+            armRoot: record.arm.root,
           })
-        : { ok: false, problems: ["no root session to check"] },
+        : { ok: false, problems: ["no root session to check"], warnings: [] },
       metrics: await runMetrics(dir),
     })),
   );

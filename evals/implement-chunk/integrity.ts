@@ -9,6 +9,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { Schema } from "effect";
 import { argument, parseSession } from "../lib/session.ts";
@@ -45,6 +46,8 @@ export type IntegrityRecord = typeof IntegrityRecord.Type;
 export interface Integrity {
   readonly ok: boolean;
   readonly problems: readonly string[];
+  /** What the run did outside itself that cannot have changed what it measured. */
+  readonly warnings: readonly string[];
 }
 
 const lines = (text: string) => text.split("\n").filter((line) => line.trim() !== "");
@@ -91,8 +94,15 @@ function changed(label: string, before: readonly string[], after: readonly strin
     : [`${label} changed during the run: ${diff.slice(0, 5).join(", ")}`];
 }
 
-/** What the run changed in the sources it must leave alone. */
-export function sourceProblems(record: IntegrityRecord | null): string[] {
+/**
+ * What the run changed in the sources it must leave alone. A branch the live repository gained
+ * counts only when `mentioned` says the run's sessions name it: other agents create branches there
+ * while a batch runs.
+ */
+export function sourceProblems(
+  record: IntegrityRecord | null,
+  mentioned: (branch: string) => boolean = () => true,
+): string[] {
   if (record === null)
     return ["no integrity record: the run predates the check, so its sources were never compared"];
 
@@ -114,10 +124,14 @@ export function sourceProblems(record: IntegrityRecord | null): string[] {
   if (after.armDigest !== before.armDigest)
     problems.push("the arm's harness files changed during the run");
 
-  const known = new Set([...before.armBranches, ...before.liveBranches]);
+  for (const branch of after.armBranches) {
+    if (!before.armBranches.includes(branch))
+      problems.push(`branch ${branch} was added to the arm's repository`);
+  }
 
-  for (const branch of new Set([...after.armBranches, ...after.liveBranches])) {
-    if (!known.has(branch)) problems.push(`branch ${branch} was added to the arm's repository`);
+  for (const branch of addedLiveBranches(record)) {
+    if (mentioned(branch))
+      problems.push(`branch ${branch} was added to the live repository, and the run names it`);
   }
 
   problems.push(
@@ -130,6 +144,18 @@ export function sourceProblems(record: IntegrityRecord | null): string[] {
   return problems;
 }
 
+/** Branches the live repository gained during the run, whoever made them. */
+export function addedLiveBranches(record: IntegrityRecord | null): string[] {
+  if (record === null || record.after === null) return [];
+
+  const { before, after } = record;
+
+  return after.liveBranches.filter(
+    // A branch both gained is the arm's: a worktree arm shares its repository with the live one.
+    (branch) => !before.liveBranches.includes(branch) && !after.armBranches.includes(branch),
+  );
+}
+
 export interface WriteScope {
   /** The run's scratch directory, `/tmp/ic-eval-*`, which holds its repository and home. */
   readonly scratch: string;
@@ -139,7 +165,8 @@ export interface WriteScope {
 /**
  * Whether a write to `path`, issued from `cwd`, stays inside what the run owns: its scratch
  * directory, minus the run home's copy of the harness and its links into the real home and the
- * live checkout; or `/tmp` outside every other run's scratch directory, since `mktemp` lands there.
+ * live checkout; or `/tmp` outside every other run's scratch directory and every arm clone, since
+ * `mktemp` lands there.
  */
 export function ownedPath(path: string, cwd: string, scope: WriteScope): boolean {
   // Codemode cuts long arguments with `...`; a cut path that can still be the run's own is.
@@ -152,8 +179,7 @@ export function ownedPath(path: string, cwd: string, scope: WriteScope): boolean
     if (roots.some((root) => root.startsWith(kept)) || ownedPath(kept, cwd, scope)) return true;
   }
 
-  const expanded = path.replace(/^(?:~|\/HOME|\$HOME|\$\{HOME\})(?=\/|$)/, home);
-  const absolute = isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
+  const absolute = absoluteWrite(path, cwd, scope);
   const under = (root: string) => absolute === root || absolute.startsWith(`${root}/`);
 
   if (absolute.startsWith("/dev/")) return true;
@@ -170,12 +196,38 @@ export function ownedPath(path: string, cwd: string, scope: WriteScope): boolean
 
   if (under(scope.scratch)) return true;
 
-  return absolute.startsWith("/tmp/") && !absolute.startsWith("/tmp/ic-eval-");
+  return (
+    absolute.startsWith("/tmp/") &&
+    !absolute.startsWith("/tmp/ic-eval-") &&
+    !absolute.startsWith("/tmp/ic-arm-")
+  );
+}
+
+/** Where a write to `path` from `cwd` lands, with the run home standing for `~`. */
+function absoluteWrite(path: string, cwd: string, scope: WriteScope): string {
+  const expanded = path.replace(
+    /^(?:~|\/HOME|\$HOME|\$\{HOME\})(?=\/|$)/,
+    join(scope.scratch, "home"),
+  );
+
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
+}
+
+interface ForeignWrite {
+  /** `<tool>: <what>`. */
+  readonly text: string;
+  /** Where it landed, or null for a path codemode cut short. */
+  readonly absolute: string | null;
 }
 
 /** Every write one session made outside what the run owns, as `<tool>: <what>`. */
 export function foreignWrites(jsonl: string, cwd: string, scope: WriteScope): string[] {
-  const found: string[] = [];
+  return foreignWriteList(jsonl, cwd, scope).map((write) => write.text);
+}
+
+function foreignWriteList(jsonl: string, cwd: string, scope: WriteScope): ForeignWrite[] {
+  const found: ForeignWrite[] = [];
+  const landed = (path: string) => (path.endsWith("...") ? null : absoluteWrite(path, cwd, scope));
 
   for (const operation of parseSession(withoutEmptyDetails(jsonl)).operations) {
     const at = operation.nested ? `codemode ${operation.tool}` : operation.tool;
@@ -183,7 +235,8 @@ export function foreignWrites(jsonl: string, cwd: string, scope: WriteScope): st
     if (operation.tool === "edit" || operation.tool === "write") {
       const path = argument(operation, "path") ?? "";
 
-      if (!ownedPath(path, cwd, scope)) found.push(`${at}: writes ${path}`);
+      if (!ownedPath(path, cwd, scope))
+        found.push({ text: `${at}: writes ${path}`, absolute: landed(path) });
 
       continue;
     }
@@ -193,11 +246,13 @@ export function foreignWrites(jsonl: string, cwd: string, scope: WriteScope): st
     const writes = commandWrites(argument(operation, "command") ?? "");
 
     for (const { kind, target } of writes.files) {
-      if (!ownedPath(target, cwd, scope)) found.push(`${at}: ${kind} of ${target}`);
+      if (!ownedPath(target, cwd, scope))
+        found.push({ text: `${at}: ${kind} of ${target}`, absolute: landed(target) });
     }
 
     for (const { verb, dir } of writes.gitWrites) {
-      if (dir !== null && !ownedPath(dir, cwd, scope)) found.push(`${at}: git ${verb} in ${dir}`);
+      if (dir !== null && !ownedPath(dir, cwd, scope))
+        found.push({ text: `${at}: git ${verb} in ${dir}`, absolute: landed(dir) });
     }
   }
 
@@ -218,38 +273,83 @@ function withoutEmptyDetails(jsonl: string): string {
     .join("\n");
 }
 
-/** The writes outside the run that the root (`root.jsonl`) and every child session of a run dir made. */
-export function runForeignWrites(runDir: string, scope: WriteScope): string[] {
-  const files = [
+function runSessionFiles(runDir: string): string[] {
+  return [
     join(runDir, "root.jsonl"),
     ...(existsSync(join(runDir, "sessions")) ? sessionFiles(join(runDir, "sessions")) : []),
   ].filter((file) => existsSync(file));
+}
 
-  return files.flatMap((file) =>
-    foreignWrites(readFileSync(file, "utf8"), readSessionFacts(file).cwd, scope).map(
-      (write) => `${file.slice(runDir.length + 1)}: ${write}`,
+function runWriteList(runDir: string, scope: WriteScope): ForeignWrite[] {
+  return runSessionFiles(runDir).flatMap((file) =>
+    foreignWriteList(readFileSync(file, "utf8"), readSessionFacts(file).cwd, scope).map(
+      (write): ForeignWrite => ({
+        text: `${file.slice(runDir.length + 1)}: ${write.text}`,
+        absolute: write.absolute,
+      }),
     ),
   );
 }
 
-/** Both readings of one run. */
+/** The writes outside the run that the root (`root.jsonl`) and every child session of a run dir made. */
+export function runForeignWrites(runDir: string, scope: WriteScope): string[] {
+  return runWriteList(runDir, scope).map((write) => write.text);
+}
+
+/**
+ * Both readings of one run. A write outside the run invalidates it when it landed in a source the
+ * eval compares (the live checkout, the arm, any harness checkout under a `.pi` directory, another
+ * run's scratch or arm clone), when codemode cut
+ * its path, or when the file is still there. A stray write that is gone again, such as a file a
+ * child wrote under the real home and then moved into its own, is a warning: nothing measured read
+ * it. A branch the live repository gained that no session names is another agent's.
+ */
 export function runIntegrity({
   runDir,
   record,
   scratch,
+  armRoot,
+  liveRoot = join(homedir(), ".pi"),
 }: {
   runDir: string;
   record: IntegrityRecord | null;
   scratch: string;
+  armRoot?: string;
+  liveRoot?: string;
 }): Integrity {
   const armEntries = record?.armEntries ?? ARM_ENTRIES;
-  const writes = runForeignWrites(runDir, { scratch, armEntries });
+
+  const text = runSessionFiles(runDir)
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n");
+
+  const mentioned = (branch: string) => text.includes(branch);
+
+  const protectedRoots = [liveRoot, ...(armRoot === undefined ? [] : [armRoot])];
+
+  const harms = (absolute: string) =>
+    protectedRoots.some((root) => absolute === root || absolute.startsWith(`${root}/`)) ||
+    absolute.startsWith("/tmp/ic-eval-") ||
+    absolute.startsWith("/tmp/ic-arm-") ||
+    absolute.includes("/.pi/") ||
+    existsSync(absolute);
+
+  const writes = runWriteList(runDir, { scratch, armEntries });
+  const bad = writes.filter((write) => write.absolute === null || harms(write.absolute));
+  const stray = writes.filter((write) => write.absolute !== null && !harms(write.absolute));
 
   const problems = [
-    ...sourceProblems(record),
-    ...writes.slice(0, 8).map((write) => `wrote outside the run: ${write}`),
-    ...(writes.length > 8 ? [`and ${writes.length - 8} more writes outside the run`] : []),
+    ...sourceProblems(record, mentioned),
+    ...bad.slice(0, 8).map((write) => `wrote outside the run: ${write.text}`),
+    ...(bad.length > 8 ? [`and ${bad.length - 8} more writes outside the run`] : []),
   ];
 
-  return { ok: problems.length === 0, problems };
+  const warnings = [
+    ...stray.map((write) => `stray write, gone by grading: ${write.text}`),
+    ...addedLiveBranches(record)
+      .filter((branch) => !mentioned(branch))
+      .map((branch) => `the live repository gained branch ${branch}, which no session names`),
+  ];
+
+  return { ok: problems.length === 0, problems, warnings };
 }

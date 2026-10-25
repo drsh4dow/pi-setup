@@ -9,7 +9,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { ARM_ENTRIES, prepareRunHome } from "../home.ts";
-import { foreignWrites, readSources, sourceProblems, type Sources } from "../integrity.ts";
+import {
+  foreignWrites,
+  readSources,
+  runIntegrity,
+  sourceProblems,
+  type Sources,
+} from "../integrity.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "ic-integrity-test-"));
 
@@ -228,5 +234,67 @@ describe("the session write scan", () => {
     ]);
 
     assert.equal(found.length, 4, found.join("; "));
+  });
+});
+
+const writeCall = (path: string) => ({ name: "write", arguments: { path } });
+
+describe("the run verdict", () => {
+  const run = world("verdict");
+  const runDir = join(scratch, "verdict-run");
+  // Outside /tmp, where the scan allows every write but other runs' scratch directories.
+  const outside = mkdtempSync("/var/tmp/ic-integrity-test-");
+  const kept = join(outside, "kept.md");
+
+  after(() => rmSync(outside, { recursive: true, force: true }));
+
+  write(kept, "left behind");
+
+  const verdict = (calls: Parameters<typeof session>[0], liveBranches: readonly string[]) => {
+    write(join(runDir, "root.jsonl"), session(calls));
+
+    return runIntegrity({
+      runDir,
+      record: {
+        armEntries: run.home.armEntries,
+        before: run.before,
+        after: { ...run.before, liveBranches: [...run.before.liveBranches, ...liveBranches] },
+      },
+      scratch: "/tmp/ic-eval-verdict",
+      armRoot: run.arm,
+      liveRoot: run.live,
+    });
+  };
+
+  test("a branch another agent adds to the live repository is a warning, one the run names is a problem", () => {
+    const other = verdict([], ["catchup-narrated"]);
+
+    assert.deepEqual([other.ok, other.warnings.length], [true, 1], other.problems.join("; "));
+
+    const named = verdict(
+      [{ name: "bash", arguments: { command: "git branch tracker-linking" } }],
+      ["tracker-linking"],
+    );
+
+    assert.equal(named.ok, false);
+    assert.match(named.problems.join(), /tracker-linking/);
+  });
+
+  test("a stray write that is gone again is a warning, one left in place or in the live checkout is a problem", () => {
+    const gone = verdict([writeCall(join(outside, "gone.md"))], []);
+
+    assert.deepEqual([gone.ok, gone.warnings.length], [true, 1], gone.problems.join("; "));
+
+    const left = verdict([writeCall(kept)], []);
+
+    assert.equal(left.ok, false);
+
+    const harness = verdict([writeCall(join(outside, ".pi", "agent", "never-written.md"))], []);
+
+    assert.equal(harness.ok, false);
+
+    const clone = verdict([writeCall("/tmp/ic-arm-candidate/agent/SYSTEM.md")], []);
+
+    assert.equal(clone.ok, false);
   });
 });

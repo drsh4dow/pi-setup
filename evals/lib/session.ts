@@ -43,10 +43,14 @@ const decodeSessionLine = Schema.decodeUnknownSync(
 
 // Codemode records each tool call its script made. It truncates long argument JSON, so the
 // arguments stay a string: a path or command sits near the start, where truncation cannot reach it.
+// A script that failed before it ran, such as one with a misplaced `// @options:` line, records no
+// calls.
 const decodeCodemodeDetails = Schema.decodeUnknownSync(
   Schema.Struct({
-    calls: Schema.Array(
-      Schema.Struct({ name: Schema.String, args: Schema.String, status: Schema.String }),
+    calls: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({ name: Schema.String, args: Schema.String, status: Schema.String }),
+      ),
     ),
   }),
 );
@@ -123,7 +127,7 @@ function toolOperations(lines: readonly SessionLine[]): ToolOperation[] {
     const details = line.message.details;
 
     const nestedCalls =
-      details === undefined || details === null ? [] : decodeCodemodeDetails(details).calls;
+      details === undefined || details === null ? [] : (decodeCodemodeDetails(details).calls ?? []);
 
     for (const nested of nestedCalls) {
       result.push({

@@ -312,6 +312,13 @@ runs that have a `run.json`. After each run, the runner:
 - Roles, fix rounds, respawns, T2 fix spawns, and T3 scope stops come from regular expressions
   over child names, assignments, and reports. Check them against the sessions before acting on a
   small difference.
+- `t9MergeConflicts` reads top-level tool results only. A git conflict inside a codemode script
+  shows only when the script returned git's output.
+- Ticket implementers and their tickets come from names, assignment openings, and the
+  `signature` of each ticket in `tickets.ts`. Check `t9ParallelMinutes` and `finishMinutes`
+  against the sessions' spans before acting on a small difference.
+- T7 matches whole words and runs of words, singular and plural as the glossary writes them, so
+  `decimalPlace` does not count against "decimal places".
 - The fake `gh` and tracker are this eval's own. `evals/harness-lessons/fakegh*.ts` models one PR
   with a fixed head, and this eval needs many PRs on a real bare origin with stacked bases, CI on
   each head, and merges that move the tracker. Only `killProcessesWithEnv` is reused from

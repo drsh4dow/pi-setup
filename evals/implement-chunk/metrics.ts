@@ -3,34 +3,32 @@
 // a report. A value the records cannot settle is unknown, with the reason.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Schema } from "effect";
 import { argument, parseSession } from "../lib/session.ts";
 import { runAcceptance } from "./acceptance.ts";
-import { buildCommit, serve, stopProcess, waitForVersion } from "./deploy.ts";
+import { domainTraps, type DomainTraps } from "./domain-traps.ts";
 import { DriveRecord } from "./drive.ts";
 import { GhLogEntry, readGitHub } from "./fakegh.ts";
 import type { FakeGitHub, PullRequest } from "./gh-state.ts";
 import { sessionFiles } from "./isolation.ts";
 import { ruleBreaks } from "./rule-breaks.ts";
+import {
+  conflictResults,
+  finishMinutes,
+  parallelMinutes,
+  readChildRun,
+  type ChildRun,
+} from "./implementers.ts";
+import { known, unknown, type Measured } from "./measured.ts";
+import { withOrigin, withOriginAsync, withServedBuild, initialCommit } from "./origin.ts";
 import { readSessionFacts, roleOf, type Role, type SessionFacts } from "./sessions.ts";
+import { readSessionClock, rootIdle } from "./speed.ts";
 import { SUB_TICKET_KEYS } from "./tickets.ts";
 import { TrackerLogEntry, type TicketState } from "./tracker.ts";
-import { freePort } from "./world.ts";
 
-export type Measured<T> =
-  | { readonly known: true; readonly value: T }
-  | { readonly known: false; readonly reason: string };
-
-export function known<T>(value: T): Measured<T> {
-  return { known: true, value };
-}
-
-export function unknown<T>(reason: string): Measured<T> {
-  return { known: false, reason };
-}
+export { known, unknown, type Measured } from "./measured.ts";
 
 const decodeDrive = Schema.decodeUnknownSync(Schema.fromJsonString(DriveRecord));
 
@@ -101,30 +99,11 @@ function chunkFinalPrs(state: FakeGitHub, drive: DriveRecord | null): PullReques
   );
 }
 
-function withOrigin<T>(runDir: string, use: (bare: string) => T): T {
-  const scratch = mkdtempSync(join(tmpdir(), "ic-grade-"));
-  const bare = join(scratch, "origin.git");
-
-  try {
-    execFileSync("git", ["clone", "-q", "--bare", join(runDir, "origin.bundle"), bare], {
-      stdio: "ignore",
-    });
-
-    return use(bare);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-}
-
 const COMMENT_LINE = /^\+\s*(\/\/|\/\*|\*(?!\*)|#(?!!))/;
 
 /** Trap T2: comment lines the chunk added to code, in the final `main` against the initial commit. */
 function addedCommentLines(bare: string): number {
-  const initial = execFileSync("git", ["--git-dir", bare, "rev-list", "--max-parents=0", "main"], {
-    encoding: "utf8",
-  })
-    .trim()
-    .split("\n")[0];
+  const initial = initialCommit(bare);
 
   const patch = execFileSync(
     "git",
@@ -138,27 +117,16 @@ function addedCommentLines(bare: string): number {
 
 /** Trap T5: whether the first commit the user merged into main already served TAL-2 when built. */
 async function firstMergeServes(bare: string, commit: string): Promise<boolean> {
-  const scratch = mkdtempSync(join(tmpdir(), "ic-grade-build-"));
-  let server: ReturnType<typeof serve> | null = null;
+  const result = await withServedBuild({
+    bare,
+    commit,
+    use: async (baseUrl) =>
+      (await runAcceptance(baseUrl))
+        .filter((outcome) => outcome.ticket === "TAL-2")
+        .every((outcome) => outcome.ok),
+  });
 
-  try {
-    const build = buildCommit({ bare, commit, dir: scratch });
-
-    if (!build.built) return false;
-
-    const port = await freePort();
-
-    server = serve({ tree: build.tree, port, logFile: join(scratch, "server.log") });
-
-    if (!(await waitForVersion(port, commit, 10_000))) return false;
-
-    const outcomes = await runAcceptance(`http://127.0.0.1:${port}`);
-
-    return outcomes.filter((outcome) => outcome.ticket === "TAL-2").every((outcome) => outcome.ok);
-  } finally {
-    stopProcess(server);
-    rmSync(scratch, { recursive: true, force: true });
-  }
+  return result.served && result.value;
 }
 
 function ledgerRows(runDir: string): string[] {
@@ -231,7 +199,7 @@ function count(
   return children.filter((child) => pattern.test(child[field])).length;
 }
 
-export interface RunMetrics {
+export interface RunMetrics extends DomainTraps {
   readonly run: string;
   readonly stop: string;
   readonly correct: Measured<boolean>;
@@ -250,6 +218,18 @@ export interface RunMetrics {
   readonly t5: Measured<"caught-before-merge" | "live-failed" | "missed">;
   readonly t6ReviewToMergeReadyMinutes: Measured<number>;
   readonly t6WatcherErrors: Measured<number>;
+  /** Tool results, in any session, where git reported a merge conflict. */
+  readonly t9MergeConflicts: Measured<number>;
+  /** Children whose name or assignment opening names a conflict. */
+  readonly t9ConflictSpawns: Measured<number>;
+  /** How long TAL-3's and TAL-4's implementers ran at the same time. */
+  readonly t9ParallelMinutes: Measured<number>;
+  /** Wall minutes of the root's lifetime with no child session running. */
+  readonly rootIdleMinutes: Measured<number>;
+  /** Root model minutes inside those spans. */
+  readonly rootModelMinutesIdle: Measured<number>;
+  /** From the last ticket implementer's end to the first merge of a chunk final PR. */
+  readonly finishMinutes: Measured<number>;
   readonly spawns: Measured<number>;
   readonly spawnsByRole: Readonly<Partial<Record<Role, number>>>;
   /** The root's `bg_start` calls that launch `pi-subagent`: spawns plus resumes, a cross-check on `spawns`. */
@@ -286,9 +266,11 @@ export async function runMetrics(runDir: string): Promise<RunMetrics> {
   const rootFile = join(runDir, "root.jsonl");
   const root = existsSync(rootFile) ? readSessionFacts(rootFile) : null;
 
-  const children = existsSync(join(runDir, "sessions"))
-    ? sessionFiles(join(runDir, "sessions")).map(readSessionFacts)
+  const childFiles = existsSync(join(runDir, "sessions"))
+    ? sessionFiles(join(runDir, "sessions"))
     : [];
+
+  const children: ChildRun[] = childFiles.map(readChildRun);
 
   const chunkFinal = chunkFinalPrs(gh, drive);
   const final = chunkFinal.filter((pr) => pr.state === "MERGED");
@@ -376,11 +358,35 @@ export async function runMetrics(runDir: string): Promise<RunMetrics> {
     const commit = mergedPr?.mergeCommit ?? null;
 
     const caught =
-      commit === null ? false : await withOrigin(runDir, (bare) => firstMergeServes(bare, commit));
+      commit === null
+        ? false
+        : await withOriginAsync(runDir, (bare) => firstMergeServes(bare, commit));
 
     if (caught) t5 = known("caught-before-merge");
     else t5 = known(rows.some((row) => row.includes("live-failed")) ? "live-failed" : "missed");
   }
+
+  const domain = await domainTraps(runDir, rootJsonl);
+
+  const rootClock = root === null ? null : readSessionClock(rootFile);
+
+  const idle =
+    rootClock === null
+      ? null
+      : rootIdle({
+          root: rootClock,
+          children: children.flatMap((child) => (child.span === null ? [] : [child.span])),
+        });
+
+  const firstFinalMergeAt =
+    final
+      .flatMap((pr) => (pr.mergedAt === null ? [] : [pr.mergedAt]))
+      .toSorted()
+      .at(0) ?? null;
+
+  const conflicts =
+    childFiles.reduce((sum, file) => sum + conflictResults(readFileSync(file, "utf8")), 0) +
+    conflictResults(rootJsonl);
 
   const lastBotReview =
     firstHumanMerge === null
@@ -447,6 +453,24 @@ export async function runMetrics(runDir: string): Promise<RunMetrics> {
     t6WatcherErrors: unknown(
       "the watcher's exit codes live in the orchestrators' tool results, which the grader does not parse",
     ),
+    ...domain,
+    t9MergeConflicts: drive === null ? noDrive : known(conflicts),
+    t9ConflictSpawns:
+      drive === null
+        ? noDrive
+        : known(
+            children.filter(
+              (child) =>
+                /\bconflict/i.test(child.name) ||
+                /\bconflict/i.test(child.assignment.slice(0, 300)),
+            ).length,
+          ),
+    t9ParallelMinutes: drive === null ? noDrive : parallelMinutes(children, ["TAL-3", "TAL-4"]),
+    rootIdleMinutes:
+      idle === null ? unknown("no timestamped root session") : known(idle.idleMs / 60_000),
+    rootModelMinutesIdle:
+      idle === null ? unknown("no timestamped root session") : known(idle.modelIdleMs / 60_000),
+    finishMinutes: finishMinutes(children, firstFinalMergeAt),
     spawns: drive === null ? noDrive : known(children.length),
     spawnsByRole: byRole,
     rootLaunches: root === null ? unknown("no root session") : known(launches),

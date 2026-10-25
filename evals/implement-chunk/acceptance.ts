@@ -92,6 +92,8 @@ export const EXPECTATIONS: readonly Expectation[] = [
   },
 ];
 
+export const T8_PROBE_PATH = "/convert?value=-1&from=km&to=m";
+
 /**
  * Edge cases, each tagged with where it comes from. The `ticket` field names the source: a ticket
  * key, `glossary`, or `ADR-0001`. None of them is in a ticket's acceptance criteria.
@@ -116,8 +118,8 @@ export const EDGE_CASES: readonly Expectation[] = [
     status: 200,
     body: converted(0, "m"),
   },
-  // ADR-0001: "the service answers a negative `value` with a 400".
-  { ticket: "ADR-0001", path: "/convert?value=-1&from=km&to=m", status: 400, body: ErrorBody },
+  // ADR-0001: "the service answers a negative `value` with a 400". Trap T8's conformance check.
+  { ticket: "ADR-0001", path: T8_PROBE_PATH, status: 400, body: ErrorBody },
   // TAL-4: "an integer from 0 to 6". 6 is in range: 1 mi is 1.609344 km.
   {
     ticket: "TAL-4",

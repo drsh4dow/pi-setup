@@ -1,11 +1,13 @@
 // Synthetic run directories the way `run.ts` leaves them, minus the archived origin, for the
 // grader's tests: sessions, run.json with its integrity record, gh and tracker state, drive.json.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after } from "node:test";
 import { initialFakeGitHub, type PullRequest } from "../gh-state.ts";
+import { FIXTURE } from "../world.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "ic-run-dir-"));
 
@@ -24,7 +26,12 @@ export interface SessionSpec {
   readonly addendum?: string;
   readonly name?: string;
   readonly cost?: number;
-  readonly calls?: readonly { readonly name: string; readonly arguments: Record<string, string> }[];
+  readonly calls?: readonly {
+    readonly name: string;
+    readonly arguments: Record<string, string>;
+    /** The tool's text output. */
+    readonly output?: string;
+  }[];
   readonly texts?: readonly string[];
 }
 
@@ -67,7 +74,7 @@ export function sessionJsonl(spec: SessionSpec): string {
       message: {
         role: "toolResult",
         toolCallId: `c${index}`,
-        content: [{ type: "text", text: "" }],
+        content: [{ type: "text", text: call.output ?? "" }],
         isError: false,
       },
     });
@@ -101,6 +108,8 @@ export interface RunSpec {
   readonly childCalls?: SessionSpec["calls"];
   /** The chunk's final PRs the driver froze, recorded in drive.json. */
   readonly chunkFinalPrs?: readonly number[];
+  /** The texts the root ended its turns on. */
+  readonly rootTexts?: readonly string[];
 }
 
 export const SOURCES = {
@@ -150,6 +159,7 @@ export function writeRun(out: string, spec: RunSpec): string {
       cwd,
       agentDir,
       cost: 2,
+      texts: spec.rootTexts,
       calls: [
         {
           name: "bg_start",
@@ -235,6 +245,42 @@ export function writeRun(out: string, spec: RunSpec): string {
   );
 
   return dir;
+}
+
+const git = (cwd: string, args: readonly string[]) =>
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+    cwd,
+    stdio: "ignore",
+  });
+
+/**
+ * Archives an origin the way `run.ts` does, as `origin.bundle` in the run directory: an initial
+ * commit of the fixture, then the chunk's work on `main` as one commit that writes `files`.
+ * `withoutGlossary` drops GLOSSARY.md from the initial commit, as the fixture was before the
+ * domain traps.
+ */
+export function writeOrigin(
+  runDir: string,
+  {
+    files,
+    withoutGlossary = false,
+  }: { files: Readonly<Record<string, string>>; withoutGlossary?: boolean },
+) {
+  const work = mkdtempSync(join(scratch, "origin-"));
+
+  cpSync(FIXTURE, work, { recursive: true });
+
+  if (withoutGlossary) rmSync(join(work, "GLOSSARY.md"));
+
+  git(work, ["init", "-q", "-b", "main"]);
+  git(work, ["add", "-A"]);
+  git(work, ["commit", "-q", "-m", "initial"]);
+
+  for (const [path, content] of Object.entries(files)) writeFileSync(join(work, path), content);
+
+  git(work, ["add", "-A"]);
+  git(work, ["commit", "-q", "-m", "chunk"]);
+  git(work, ["bundle", "create", "-q", join(runDir, "origin.bundle"), "main"]);
 }
 
 /** A merged PR into `main`, numbered, with head branch `b<number>`. */

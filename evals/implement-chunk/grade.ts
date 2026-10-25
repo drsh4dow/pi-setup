@@ -1,6 +1,6 @@
 // Grades an implement-chunk eval directory: per run, the metrics and the harness-isolation check;
-// per arm, n, the correct rate, medians with min–max, and the per-trap tallies; then the
-// pre-registered reading for each non-baseline arm against `baseline`.
+// per arm, n, the correct rate, medians with min–max, and the per-trap tallies; then the two
+// pre-registered readings for each non-baseline arm against `baseline`.
 //
 // Usage: node evals/implement-chunk/grade.ts <out> [--json]
 
@@ -17,7 +17,8 @@ import {
   type SessionHarness,
 } from "./isolation.ts";
 import { IntegrityRecord, runIntegrity, type Integrity } from "./integrity.ts";
-import { runMetrics, type Measured, type RunMetrics } from "./metrics.ts";
+import { known, runMetrics, type Measured, type RunMetrics } from "./metrics.ts";
+import { qualitySpeedReading, type QualitySpeedReading } from "./quality-reading.ts";
 import { readSessionFacts } from "./sessions.ts";
 
 const RunRecord = Schema.Struct({
@@ -131,6 +132,13 @@ export const NUMERIC: readonly NumericKey[] = [
   "childCost",
   "ruleBreaks",
   "finalPRs",
+  "t7AvoidedTerms",
+  "t9MergeConflicts",
+  "t9ConflictSpawns",
+  "t9ParallelMinutes",
+  "rootIdleMinutes",
+  "rootModelMinutesIdle",
+  "finishMinutes",
 ];
 
 export interface Spread {
@@ -170,7 +178,25 @@ export interface ArmSummary {
   readonly invalid: number;
   readonly correct: { readonly yes: number; readonly known: number };
   readonly t5: Readonly<Record<string, number>>;
+  readonly t7: Readonly<Record<string, number>>;
+  readonly t8: Readonly<Record<string, number>>;
+  readonly t9: Readonly<Record<string, number>>;
+  /** Every edge-case request of every valid run with a known result, pooled. */
+  readonly edgeCases: { readonly passed: number; readonly total: number };
   readonly metrics: Readonly<Partial<Record<NumericKey, Spread>>>;
+}
+
+/** How many runs had each outcome, `unknown` for those the records could not settle. */
+function tally(outcomes: readonly Measured<string>[]) {
+  const counts = new Map<string, number>();
+
+  for (const outcome of outcomes) {
+    const label = outcome.known ? outcome.value : "unknown";
+
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+
+  return Object.fromEntries(counts);
 }
 
 export function summarize(arm: string, runs: readonly GradedRun[]): ArmSummary {
@@ -183,12 +209,13 @@ export function summarize(arm: string, runs: readonly GradedRun[]): ArmSummary {
     if (result !== null) metrics[key] = result;
   }
 
-  const t5: Record<string, number> = {};
+  const edgeCases = { passed: 0, total: 0 };
 
   for (const run of valid) {
-    const label = run.metrics.t5.known ? run.metrics.t5.value : "unknown";
+    if (!run.metrics.edgeCases.known) continue;
 
-    t5[label] = (t5[label] ?? 0) + 1;
+    edgeCases.passed += run.metrics.edgeCases.value.passed;
+    edgeCases.total += run.metrics.edgeCases.value.total;
   }
 
   const correct = valid.flatMap((run) =>
@@ -200,7 +227,15 @@ export function summarize(arm: string, runs: readonly GradedRun[]): ArmSummary {
     n: valid.length,
     invalid: runs.length - valid.length,
     correct: { yes: correct.filter(Boolean).length, known: correct.length },
-    t5,
+    t5: tally(valid.map((run) => run.metrics.t5)),
+    t7: tally(valid.map((run) => run.metrics.t7)),
+    t8: tally(valid.map((run) => run.metrics.t8)),
+    t9: tally(
+      valid.map((run) =>
+        run.metrics.t9.known ? known(run.metrics.t9.value.outcome) : run.metrics.t9,
+      ),
+    ),
+    edgeCases,
     metrics,
   };
 }
@@ -357,7 +392,16 @@ function runLines(run: GradedRun): string[] {
   lines.push(
     `   t5: ${format(metrics.t5)}`,
     `   t6WatcherErrors: ${format(metrics.t6WatcherErrors)}`,
+    `   t7: ${format(metrics.t7)}`,
+    `   t8: ${format(metrics.t8)}`,
+    `   t9: ${format(metrics.t9, (t9) => (t9.outcome === "consistent" ? `consistent (${t9.ids.join(", ")})` : `inconsistent (${t9.why})`))}`,
+    `   edgeCases: ${format(metrics.edgeCases, (cases) => `${cases.passed}/${cases.total}`)}`,
   );
+
+  if (metrics.t7Samples.length > 0) lines.push(`   t7Samples: ${metrics.t7Samples.join(" | ")}`);
+
+  if (metrics.edgeCaseFailures.length > 0)
+    lines.push(`   edgeCaseFailures: ${metrics.edgeCaseFailures.join(" | ")}`);
 
   for (const key of NUMERIC) lines.push(`   ${key}: ${format(metrics[key], round)}`);
 
@@ -379,6 +423,7 @@ function summaryLines(summary: ArmSummary): string[] {
 
   const lines = [
     `== ${summary.arm}: n=${summary.n} (invalid ${summary.invalid}), correct ${rate}, T5 ${JSON.stringify(summary.t5)}`,
+    `   edge cases ${summary.edgeCases.passed}/${summary.edgeCases.total}, T7 ${JSON.stringify(summary.t7)}, T8 ${JSON.stringify(summary.t8)}, T9 ${JSON.stringify(summary.t9)}`,
   ];
 
   for (const [key, value] of Object.entries(summary.metrics)) {
@@ -390,9 +435,12 @@ function summaryLines(summary: ArmSummary): string[] {
   return lines;
 }
 
-export async function gradeDirectory(
-  out: string,
-): Promise<{ runs: GradedRun[]; summaries: ArmSummary[]; readings: Reading[] }> {
+export async function gradeDirectory(out: string): Promise<{
+  runs: GradedRun[];
+  summaries: ArmSummary[];
+  readings: Reading[];
+  qualityReadings: QualitySpeedReading[];
+}> {
   const arms = readdirSync(out, { withFileTypes: true })
     .flatMap((entry) => (entry.isDirectory() ? [entry.name] : []))
     .toSorted();
@@ -441,7 +489,26 @@ export async function gradeDirectory(
       ? []
       : summaries.flatMap((summary) => (summary === baseline ? [] : [reading(baseline, summary)]));
 
-  return { runs, summaries, readings };
+  const qualityReadings =
+    baseline === undefined
+      ? []
+      : summaries.flatMap((summary) =>
+          summary === baseline ? [] : [qualitySpeedReading(baseline, summary)],
+        );
+
+  return { runs, summaries, readings, qualityReadings };
+}
+
+function readingLines(entry: {
+  readonly sentence: string;
+  readonly comparisons: readonly Comparison[];
+}): string[] {
+  return [
+    entry.sentence,
+    ...entry.comparisons.map(
+      (comparison) => `   ${comparison.name}: ${comparison.verdict} (${comparison.detail})`,
+    ),
+  ];
 }
 
 async function main() {
@@ -472,12 +539,8 @@ async function main() {
     "",
     ...graded.summaries.flatMap(summaryLines),
     "",
-    ...graded.readings.flatMap((entry) => [
-      entry.sentence,
-      ...entry.comparisons.map(
-        (comparison) => `   ${comparison.name}: ${comparison.verdict} (${comparison.detail})`,
-      ),
-    ]),
+    ...graded.readings.flatMap(readingLines),
+    ...graded.qualityReadings.flatMap(readingLines),
   ];
 
   if (graded.runs.length === 0) lines.push(`no finished runs (run.json) under ${out}`);

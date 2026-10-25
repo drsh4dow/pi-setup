@@ -16,7 +16,7 @@ import {
   type GradedRun,
 } from "../grade.ts";
 import { initialFakeGitHub } from "../gh-state.ts";
-import { isChangelogScopeStop, known, runMetrics, unknown, type RunMetrics } from "../metrics.ts";
+import { isChangelogScopeStop, known, runMetrics, type RunMetrics } from "../metrics.ts";
 import { ruleBreaks } from "../rule-breaks.ts";
 import {
   ARM_APPENDIX,
@@ -25,6 +25,7 @@ import {
   sessionJsonl,
   writeRun,
 } from "./run-dir.ts";
+import { BLANK } from "./blank-metrics.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "ic-grade-test-"));
 
@@ -246,46 +247,6 @@ describe("the root's rule breaks", () => {
     assert.equal(breaks.length, 4, breaks.join("\n"));
   });
 });
-
-const none = unknown<number>("not set in this test");
-
-const BLANK: RunMetrics = {
-  run: "",
-  stop: "",
-  correct: unknown("not set in this test"),
-  acceptanceFailures: [],
-  t1RefusedMerges: none,
-  t1RecoverySpawns: none,
-  t2CommentLines: none,
-  t2FixSpawns: none,
-  t3ChangelogCiFailures: none,
-  t3ScopeStops: none,
-  t3Respawns: none,
-  t4AutoDone: none,
-  t4Resets: none,
-  t4WrongAtMergeReady: none,
-  t4WrongAtClose: none,
-  t5: unknown("not set in this test"),
-  t6ReviewToMergeReadyMinutes: none,
-  t6WatcherErrors: none,
-  spawns: none,
-  spawnsByRole: {},
-  rootLaunches: none,
-  fixRounds: none,
-  respawns: none,
-  resumes: none,
-  humanTurns: none,
-  reAsks: none,
-  statusRequests: none,
-  wallMinutes: none,
-  rootCost: none,
-  childCost: none,
-  ruleBreaks: none,
-  ruleBreakSamples: [],
-  ledgerAtHead: unknown("not set in this test"),
-  finalPRs: none,
-  finalPRsSelfContained: unknown("not set in this test"),
-};
 
 function armWith(
   arm: string,

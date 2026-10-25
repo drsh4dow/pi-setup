@@ -33,6 +33,7 @@ import {
   type Unknown,
 } from "./metrics.ts";
 import type { GradeInput } from "./record.ts";
+import { recordedTruth } from "./recorded.ts";
 import { renderKind, runTiming, type RunTiming } from "./run-timing.ts";
 import { keptStateFolder } from "./state-folder.ts";
 import {
@@ -396,3 +397,13 @@ export async function gradeNarratedVideo(input: GradeInput, truth: CatchupTruth)
 }
 
 export const catchupVideo = (input: GradeInput) => gradeNarratedVideo(input, GIFT_REGISTRY_TRUTH);
+
+/** The recorded scenario, graded against the recording's story.md. */
+export async function catchupVideoRecorded(input: GradeInput): Promise<Graded> {
+  const truth = recordedTruth();
+
+  if ("kind" in truth)
+    return { metrics: { groundTruth: truth }, primary: "unknown", crossChecks: [] };
+
+  return gradeNarratedVideo(input, truth);
+}

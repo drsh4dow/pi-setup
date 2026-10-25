@@ -369,15 +369,17 @@ test("framesLooked needs every contact sheet of the final render read after it",
   const render = bash("node /harness/agent/skills/catchup-video/scripts/video.ts render story.py");
 
   mkdirSync(frames, { recursive: true });
+
   for (const name of ["sheet-1.png", "sheet-2.png", "beat-01-mid.png"])
     writeFileSync(join(frames, name), "");
 
   const both = [read(join(live, "sheet-1.png")), read(join(live, "sheet-2.png"))];
+
   const looked = (calls: Parameters<typeof session>[0]) =>
     values({ looked: framesLooked(video, session(calls)) }).looked;
 
   assert.equal(looked([render, ...both]), true);
-  assert.equal(looked([render, both[0]!]), false);
+  assert.equal(looked([render, both[0]]), false);
   assert.equal(looked([...both, render]), false);
   assert.equal(looked(both), "unknown");
   assert.equal(framesLooked(undefined, session([])).kind, "unknown");

@@ -10,7 +10,7 @@ directory. Both arms get the argument; only an arm whose checkout has the skill 
 
 [`scenarios.ts`](scenarios.ts) lists the scenarios. Each one names its project, an optional
 [`setup/`](setup/) script, a prompt that reads like a real request, a timeout, and a trial
-count. A project is one of two kinds:
+count. A project is one of three kinds:
 
 - a small invented project under [`fixtures/`](fixtures/), copied into a fresh git repository;
 - a copy of the arm's checkout at its committed HEAD, in a fresh `/tmp/pi-setup-XXXXXX`, built
@@ -18,7 +18,9 @@ count. A project is one of two kinds:
   `evals/harness-lessons/`. A `git clone --local` would keep every object of the shared
   repository, so a run could read the other arm's commits by hash. The copy has no remote,
   so each run's state folder is named after its own directory, and its git identity is
-  `Sam Rivera <sam@example.com>`.
+  `Sam Rivera <sam@example.com>`;
+- a clone of a recorded session's repository at the commit it ended on, for
+  [catchup-video-recorded](#catchup-video-recorded).
 
 ## Run
 
@@ -33,8 +35,9 @@ node evals/harness-lessons/grade.ts evals/harness-lessons/results/<name>
 Results go to `<out>/<scenario>/<arm>/<model>/t<n>/`. Rerunning with the same `--out`
 skips finished runs, so an interrupted batch resumes. Without `--trials`, each scenario
 runs its own trial count. Without `--timeout-minutes`, each runs to its own timeout.
-Without `--only`, every scenario runs except `cosmetic-wake`, which runs only when `--only`
-names it (see [cosmetic-wake](#cosmetic-wake)).
+Without `--only`, every scenario runs except `cosmetic-wake` and `catchup-video-recorded`,
+which run only when `--only` names them (see [cosmetic-wake](#cosmetic-wake) and
+[catchup-video-recorded](#catchup-video-recorded)).
 
 `--dry-run` prepares every planned working directory and prints its `pi` command, then
 checks the setup state the metrics depend on, without launching a model. It also waits for
@@ -203,6 +206,59 @@ The reply, judged: `replyLayout`, the reply catchup-video asks for, and `callsDe
 
 The primary verdict wants `videoRendered`, `opened`, `readOnlyExceptVideo`, `saysCalls`,
 `inventsNothing`, and `callsDecidable`.
+
+## catchup-video-recorded
+
+Not in the default set, because it needs a recording, and recordings hold company data that
+stays out of the repository. It continues a real chat, cut from a recorded Pi session, and
+grades the video exactly as [catchup-video](#catchup-video) does, against a story written by
+hand.
+
+A recording lives in `~/.local/state/pi-agent/pi-setup/catchup-port/recorded/<name>/`, and
+`CATCHUP_RECORDING` picks one (default `default`). Make one with
+[`record-session.ts`](record-session.ts):
+
+```sh
+node evals/harness-lessons/record-session.ts --session <session.jsonl> [--name default] \
+  [--own-state <state folder name>]... [--state <dir>] [--stretch <n>] [--repo <dir>] [--list]
+```
+
+It lists the session's stretches after each user message (`--list` stops there), picks the one
+with the most PRs and events (or the one `--stretch` names), and cuts the chat at that stretch's last turn end. It
+writes:
+
+- `session.jsonl`: the chat up to the cut, with known secret formats redacted;
+- `prs.json`: `gh pr view --json` of every PR the stretch names, redacted the same way;
+- `repo.bundle`: the session's repository at the last commit before the cut;
+- `state/`: with `--state <dir>`, the session's own state folder as it was at the cut. `--state`
+  names the folder as it is on disk now, since it may have been renamed. A file created after the
+  cut is left out, and so is a file changed after it, since its content at the cut is gone;
+  `recording.json` lists those;
+- `recording.json`: where each came from, what was redacted on which lines, and what the state
+  snapshot left out.
+
+`story.md` is the ground truth, written by hand from the stretch: what the user already knew,
+their last message, what happened after it, the numbers, any wrong statement, and a
+`## Calls waiting on the user` section, which `callsDecidable` checks the reply against. The
+judge reads the whole story for the transcript questions.
+
+[`recorded.ts`](recorded.ts) prepares a run: it clones the bundle, sets a local bare `origin`,
+and rewrites the chat's working directory and its own state folders to the run's. The run's
+state folder is `~/.local/state/pi-agent/catchup-recorded/`, which does not exist before the
+run; the run starts it as a copy of `state/`.
+
+By the time a recording runs, the machine knows what happened after the cut: the session's real
+state folder, later sessions, the repository, and the recording's own `story.md`. Pi therefore
+runs under `bwrap` ([`recorded-sandbox.ts`](recorded-sandbox.ts)) with `~/.local/state/pi-agent/`, `~/.pi/agent/sessions/`, and the recorded
+working directory replaced by empty directories, apart from the run's state folder and its output
+directory. Only the run sees the empty directories, so Pi sessions and watchers using the real
+folders keep working. The dry run checks what the sandbox shows. Any service other than GitHub
+that the run can reach still answers with its current state.
+[`recorded-bin/`](recorded-bin/) goes first on PATH. Its `gh`
+([`recorded-stubs.ts`](recorded-stubs.ts)) serves the snapshot read-only: `pr view`,
+`pr checks`, `pr list`, and REST GETs of pulls, issues, reviews, and comments. Anything that
+would change GitHub fails as the catchup stubs do, and both stubs log every call. The snapshot
+is taken when the recording is made, so a PR that changed after the cut serves its later state.
 
 ## What the grade counts
 

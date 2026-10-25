@@ -15,6 +15,15 @@ import { gitMaybe, isAncestor } from "./inspect.ts";
 import { BOT_EDIT_TEXT } from "./fakegh-state.ts";
 import { GIFT_REGISTRY_STATE, type Scenario, type ScenarioId } from "./scenarios.ts";
 import { liveStateFolder } from "./state-folder.ts";
+import { sandboxChecks } from "./recorded-sandbox.ts";
+import {
+  loadRecording,
+  RECORDED_STATE,
+  recordedStubEnv,
+  recordingDir,
+  recordingFiles,
+  wholePath,
+} from "./recorded.ts";
 import {
   BABYSIT_STATE,
   attentionBatch,
@@ -236,6 +245,84 @@ function catchupChecks(context: CheckContext): SetupCheck[] {
   ];
 }
 
+/** The clone, the seeded chat, and the stubs match the recording, and nothing reaches GitHub. */
+function recordedChecks(context: CheckContext): SetupCheck[] {
+  const recording = loadRecording();
+  const files = recordingFiles(recordingDir());
+  const env = { ...process.env, ...recordedStubEnv(context.outputDir) };
+  const stub = (args: readonly string[]) => run(context.workdir, ["gh", ...args], env);
+  const paths = catchupStubPaths(context.outputDir);
+  const first = recording.prs[0] ?? "";
+  const view = stub(["pr", "view", first, "--json", "url,state"]);
+  const merge = stub(["pr", "merge", first, "--squash"]);
+  const ghLog = existsSync(paths.gh) ? readFileSync(paths.gh, "utf8") : "";
+  const opened = run(context.workdir, ["xdg-open", "/dev/null"], env);
+  const openLog = existsSync(paths.open) ? readFileSync(paths.open, "utf8") : "";
+
+  // The checks' own calls are history the run did not make.
+  writeFileSync(paths.gh, "");
+  writeFileSync(paths.open, "");
+
+  const cwd = realpathSync(context.workdir);
+  const seed = context.scenario.seededChat?.(cwd) ?? "";
+  const session = parseSession(seed);
+  const origin = git(context, ["remote", "get-url", "origin"]);
+  const state = liveStateFolder(RECORDED_STATE);
+
+  const strays = [
+    recording.cwd,
+    ...recording.ownStateFolders.map((name) => `/.local/state/pi-agent/${name}`),
+  ].filter((path) => wholePath(path).test(seed));
+
+  return [
+    onBranch(context, recording.branch),
+    check(
+      "HEAD is the recorded commit",
+      context.snapshot.head === recording.commit,
+      context.snapshot.head,
+    ),
+    check(
+      `origin is a local repository named ${RECORDED_STATE}`,
+      origin.startsWith("/") && origin.endsWith(`/${RECORDED_STATE}.git`),
+      origin,
+    ),
+    check(
+      "origin holds the branch at HEAD",
+      git(context, ["ls-remote", "origin", `refs/heads/${recording.branch}`]).startsWith(
+        recording.commit,
+      ),
+    ),
+    check(
+      "the seeded chat names the working directory and ends on the agent's turn",
+      seed.slice(0, seed.indexOf("\n")).includes(`"cwd":${JSON.stringify(cwd)}`) &&
+        session.lastStopReason === "stop",
+      `last stop reason ${session.lastStopReason ?? "none"}`,
+    ),
+    check(
+      "the seeded chat names no recorded working directory or state folder",
+      strays.length === 0,
+      strays.join(", "),
+    ),
+    check(
+      "the gh stub serves the first recorded PR",
+      view.exitCode === 0 && view.output.includes(first),
+      view.output.trim().slice(0, 300),
+    ),
+    check(
+      "the gh stub refuses a merge and logs it",
+      merge.exitCode !== 0 && /"argv":\["pr","merge"[^\n]*"outcome":"refused"/.test(ghLog),
+      merge.output.trim(),
+    ),
+    check(
+      "the xdg-open stub logs the call and opens nothing",
+      opened.exitCode === 0 && openLog.includes('"argv":["/dev/null"]'),
+      openLog.trim(),
+    ),
+    check("the recording has its ground truth", existsSync(files.story), files.story),
+    check("the run's state folder does not exist yet", !existsSync(state), state),
+  ];
+}
+
 const CHECKS: Record<ScenarioId, (context: CheckContext) => SetupCheck[]> = {
   "live-reader-rebase": (context) => [
     onBranch(context, "feature"),
@@ -403,6 +490,7 @@ const CHECKS: Record<ScenarioId, (context: CheckContext) => SetupCheck[]> = {
   },
   catchup: catchupChecks,
   "catchup-video": catchupChecks,
+  "catchup-video-recorded": recordedChecks,
 };
 
 export function setupChecks(context: CheckContext): SetupCheck[] {
@@ -482,6 +570,9 @@ function rearmWakes(context: CheckContext): SetupCheck[] {
 /** The checks too slow for every run: they wait for timed events or drive the real watcher. */
 export async function dryRunChecks(context: CheckContext): Promise<SetupCheck[]> {
   if (context.scenario.id === "concurrent-main") return userCommitLands(context);
+
+  if (context.scenario.id === "catchup-video-recorded")
+    return sandboxChecks(context.workdir, context.outputDir);
 
   if (context.scenario.id === "cosmetic-wake") return rearmWakes(context);
 

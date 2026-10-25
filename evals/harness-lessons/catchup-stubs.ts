@@ -37,8 +37,8 @@ export const GhCall = Schema.Struct({
   cwd: Schema.String,
   /** Served a read, refused a change to GitHub, or failed a call the stub does not serve. */
   outcome: GhOutcome,
-  /** The PRs whose state the reply showed. */
-  prs: Schema.Array(Schema.Int),
+  /** The PRs whose state the reply showed: numbers here, URLs in the recorded scenario's stub. */
+  prs: Schema.Array(Schema.Union([Schema.Int, Schema.String])),
 });
 
 export type GhCall = typeof GhCall.Type;
@@ -65,7 +65,7 @@ export function catchupStubEnv(outputDir: string, workdir: string): NodeJS.Proce
   };
 }
 
-class GhExit extends Error {
+export class GhExit extends Error {
   readonly code: number;
   readonly outcome: GhOutcome;
   constructor(message: string, outcome: GhOutcome = "unsupported") {
@@ -77,17 +77,17 @@ class GhExit extends Error {
 
 export interface Reply {
   readonly stdout: string;
-  readonly prs: readonly number[];
+  readonly prs: readonly (number | string)[];
   readonly exitCode: number;
 }
 
-const refused = (command: string) =>
+export const refused = (command: string) =>
   new GhExit(
     `HTTP 403: Resource not accessible by personal access token (${command}). This token can only read.`,
     "refused",
   );
 
-const noBrowser = () => new GhExit("gh: cannot open a browser here");
+export const noBrowser = () => new GhExit("gh: cannot open a browser here");
 
 /** Flags that take a value; every other flag is a switch. */
 const VALUED = new Set(
@@ -96,12 +96,12 @@ const VALUED = new Set(
   ),
 );
 
-interface Options {
+export interface Options {
   readonly positionals: readonly string[];
   readonly values: ReadonlyMap<string, readonly string[]>;
 }
 
-function options(args: readonly string[]): Options {
+export function options(args: readonly string[]): Options {
   const positionals: string[] = [];
   const values = new Map<string, string[]>();
 
@@ -122,10 +122,10 @@ function options(args: readonly string[]): Options {
   return { positionals, values };
 }
 
-const valueOf = (opts: Options, ...names: readonly string[]) =>
+export const valueOf = (opts: Options, ...names: readonly string[]) =>
   names.flatMap((name) => opts.values.get(name) ?? []).at(-1);
 
-const has = (opts: Options, ...names: readonly string[]) =>
+export const has = (opts: Options, ...names: readonly string[]) =>
   names.some((name) => opts.values.has(name));
 
 function currentBranchPr(): Pr | undefined {
@@ -157,7 +157,7 @@ function findPr(selector: string | undefined): Pr {
 }
 
 /** The fields `--json a,b` selects from `record`, or gh's error for an unknown field. */
-function select(record: Readonly<Record<string, JsonValue>>, fields: string) {
+export function select(record: Readonly<Record<string, JsonValue>>, fields: string) {
   const names = fields.split(",").map((name) => name.trim());
   const missing = names.find((name) => !(name in record));
 
@@ -177,7 +177,7 @@ function select(record: Readonly<Record<string, JsonValue>>, fields: string) {
 }
 
 /** What a `--json` call prints, through `--jq` when it names a filter. */
-function printJson(data: JsonValue, opts: Options): string {
+export function printJson(data: JsonValue, opts: Options): string {
   const filter = valueOf(opts, "--jq", "-q");
   const text = JSON.stringify(data, null, 2);
 
@@ -191,9 +191,9 @@ function printJson(data: JsonValue, opts: Options): string {
 }
 
 /** A reply: the records' `--json` selection when asked for, or else the text. */
-function reply(
+export function reply(
   opts: Options,
-  prs: readonly number[],
+  prs: Reply["prs"],
   records: () => JsonValue,
   text: () => string,
   exitCode = 0,
@@ -360,7 +360,7 @@ const AUTH_STATUS = `github.com
 `;
 
 /** Subcommands that change GitHub, by command group. */
-const MUTATING = new Map(
+export const MUTATING = new Map(
   Object.entries({
     pr: "merge comment review close edit create reopen ready lock unlock update-branch",
     issue: "create comment close edit reopen delete lock unlock transfer pin unpin",
@@ -419,7 +419,12 @@ function log(file: "gh" | "open", entry: GhCall | OpenCall) {
   if (dir !== undefined) appendFileSync(catchupStubPaths(dir)[file], `${JSON.stringify(entry)}\n`);
 }
 
-function main(tool: string | undefined, argv: readonly string[]) {
+/** Answers one call to the stubs: `xdg-open` logs and opens nothing, `gh` asks `answer`. */
+export function serve(
+  tool: string | undefined,
+  argv: readonly string[],
+  answer: (args: readonly string[]) => Reply,
+) {
   const base = { at: new Date().toISOString(), argv: [...argv], cwd: process.cwd() };
 
   if (tool === "xdg-open") {
@@ -429,11 +434,11 @@ function main(tool: string | undefined, argv: readonly string[]) {
   }
 
   try {
-    const answer = gh(argv);
+    const answered = answer(argv);
 
-    log("gh", { ...base, outcome: "served", prs: [...answer.prs] });
-    process.stdout.write(answer.stdout);
-    process.exitCode = answer.exitCode;
+    log("gh", { ...base, outcome: "served", prs: [...answered.prs] });
+    process.stdout.write(answered.stdout);
+    process.exitCode = answered.exitCode;
   } catch (error) {
     if (!(error instanceof GhExit)) throw error;
 
@@ -443,4 +448,4 @@ function main(tool: string | undefined, argv: readonly string[]) {
   }
 }
 
-if (import.meta.main) main(process.argv[2], process.argv.slice(3));
+if (import.meta.main) serve(process.argv[2], process.argv.slice(3), gh);

@@ -7,7 +7,7 @@ import {
   dependencyByPath,
 } from "./grade-artifacts.ts";
 import { catchup } from "./grade-catchup.ts";
-import { catchupVideo } from "./grade-catchup-video.ts";
+import { catchupVideo, catchupVideoRecorded } from "./grade-catchup-video.ts";
 import { newGate, vacuousPass } from "./grade-checks.ts";
 import {
   cosmeticWake,
@@ -33,4 +33,5 @@ export const graders: Record<ScenarioId, Grader> = {
   "hand-edits-use-edit": handEditsUseEdit,
   catchup,
   "catchup-video": catchupVideo,
+  "catchup-video-recorded": catchupVideoRecorded,
 };

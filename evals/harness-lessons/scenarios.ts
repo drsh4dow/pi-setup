@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { catchupChat } from "./catchup-chat.ts";
+import { RECORDED_STATE, recordedChat } from "./recorded.ts";
 
 export const ScenarioId = Schema.Literals([
   "live-reader-rebase",
@@ -17,23 +18,27 @@ export const ScenarioId = Schema.Literals([
   "hand-edits-use-edit",
   "catchup",
   "catchup-video",
+  "catchup-video-recorded",
 ]);
 
 export type ScenarioId = typeof ScenarioId.Type;
 
 /**
  * Where the working directory comes from: a fixture under fixtures/ committed into a fresh
- * repository, or a clone of the arm's harness checkout at its committed HEAD.
+ * repository, a clone of the arm's harness checkout at its committed HEAD, or the repository of a
+ * recorded session at the commit it ended on (recorded.ts).
  */
 export type Project =
   | { readonly kind: "fixture"; readonly fixture: string }
-  | { readonly kind: "clone" };
+  | { readonly kind: "clone" }
+  | { readonly kind: "recording" };
 
 /**
- * The stand-in for GitHub on the run's PATH: the babysit fake serving PR #42 (fakegh.ts), or the
- * catchup stubs serving PRs #51 to #53 with an `xdg-open` that opens nothing (catchup-stubs.ts).
+ * The stand-in for GitHub on the run's PATH: the babysit fake serving PR #42 (fakegh.ts), the
+ * catchup stubs serving PRs #51 to #53 with an `xdg-open` that opens nothing (catchup-stubs.ts),
+ * or a recording's PR snapshot behind the same refusals and `xdg-open` (recorded-stubs.ts).
  */
-export type FakeGitHub = "babysit-pr-42" | "catchup-prs";
+export type FakeGitHub = "babysit-pr-42" | "catchup-prs" | "recorded-prs";
 
 export interface Scenario {
   readonly id: ScenarioId;
@@ -205,6 +210,18 @@ const table: Record<ScenarioId, Omit<Scenario, "id">> = {
     stateFolder: GIFT_REGISTRY_STATE,
     fakeGitHub: "catchup-prs",
     seededChat: catchupChat,
+    prompt: "/skill:catchup-video",
+  },
+  // Company data stays out of the repository: the session it continues is a recording in the
+  // state folder, so the scenario runs only where one exists and only when named.
+  "catchup-video-recorded": {
+    ...DEFAULTS,
+    project: { kind: "recording" },
+    timeoutMinutes: 30,
+    stateFolder: RECORDED_STATE,
+    fakeGitHub: "recorded-prs",
+    seededChat: recordedChat,
+    byDefault: false,
     prompt: "/skill:catchup-video",
   },
 };

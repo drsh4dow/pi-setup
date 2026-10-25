@@ -138,17 +138,24 @@ export interface PiResult {
   readonly timedOut: boolean;
 }
 
+/**
+ * Runs `pi args` in `cwd`. `launcher` is the command Pi's arguments follow: a sandbox such as
+ * `bwrap … --` ending in `pi`, or `pi` itself.
+ */
 export function runPi(
   cwd: string,
   args: readonly string[],
   logDir: string,
   timeoutMs: number,
   env: NodeJS.ProcessEnv = candidateEnv(),
+  launcher: readonly [string, ...string[]] = ["pi"],
 ): Promise<PiResult> {
   const stdout = openSync(join(logDir, "stdout.txt"), "w");
   const stderr = openSync(join(logDir, "stderr.txt"), "w");
 
-  const child = spawn("pi", args, {
+  const [command, ...before] = launcher;
+
+  const child = spawn(command, [...before, ...args], {
     cwd,
     env,
     detached: true,

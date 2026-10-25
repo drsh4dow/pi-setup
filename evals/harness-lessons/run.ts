@@ -35,6 +35,8 @@ import { runPool } from "../lib/pool.ts";
 import type { RunRecord } from "./record.ts";
 import { scenarios, type Scenario } from "./scenarios.ts";
 import { catchupStubEnv } from "./catchup-stubs.ts";
+import { recordedSandbox } from "./recorded-sandbox.ts";
+import { recordedStubEnv, seedRecordedState } from "./recorded.ts";
 import { fakeGitHubEnv, fakeGitHubPaths } from "./fake-pr.ts";
 import { dryRunChecks, setupChecks, type SetupCheck } from "./setup-checks.ts";
 import { keepStateFolder, liveStateFolder } from "./state-folder.ts";
@@ -94,10 +96,14 @@ export function harnessArgs({
   workdir: string;
 }): string[] {
   const args = checkoutHarnessArgs(armRoot);
+  const projectSkills = join(workdir, ".agents", "skills");
 
   if (scenario.project.kind === "fixture") return args;
 
-  return [...args, "--skill", join(workdir, ".agents", "skills")];
+  // A recorded repository may have no project skills; a clone of the harness always has them.
+  if (scenario.project.kind === "recording" && !existsSync(projectSkills)) return args;
+
+  return [...args, "--skill", projectSkills];
 }
 
 /** The seeded chat's file in the run's session directory, named as Pi names its sessions. */
@@ -125,6 +131,11 @@ function piArgs(
   ];
 }
 
+/** What Pi runs under: a recorded run's sandbox, or nothing. */
+function launcher(run: PlannedRun): [string, ...string[]] {
+  return run.scenario.project.kind === "recording" ? [...recordedSandbox(run.dir), "pi"] : ["pi"];
+}
+
 /** The command line as a reader wants it: the system prompt named by its file, not inlined. */
 function displayCommand(run: PlannedRun, args: readonly string[]): string {
   const systemPrompt = readFileSync(join(run.arm.root, "agent", "SYSTEM.md"), "utf8");
@@ -135,7 +146,7 @@ function displayCommand(run: PlannedRun, args: readonly string[]): string {
     return /^[\w./:=@-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
   });
 
-  return `pi ${shown.join(" ")}`;
+  return [...launcher(run), ...shown].join(" ");
 }
 
 function runEnv(run: PlannedRun, workdir: string): NodeJS.ProcessEnv {
@@ -146,6 +157,8 @@ function runEnv(run: PlannedRun, workdir: string): NodeJS.ProcessEnv {
       return { ...candidateEnv(), ...fakeGitHubEnv(run.dir) };
     case "catchup-prs":
       return { ...candidateEnv(), ...catchupStubEnv(run.dir, workdir) };
+    case "recorded-prs":
+      return { ...candidateEnv(), ...recordedStubEnv(run.dir) };
     default: {
       const exhaustive: never = run.scenario.fakeGitHub;
 
@@ -249,6 +262,8 @@ async function execute(run: PlannedRun, settings: Settings): Promise<RunRecord> 
   if (run.scenario.seededChat !== null)
     writeFileSync(seededSessionPath(sessionDir), run.scenario.seededChat(realpathSync(workdir)));
 
+  if (run.scenario.project.kind === "recording") seedRecordedState();
+
   const started = Date.now();
 
   const result = await runPi(
@@ -257,6 +272,7 @@ async function execute(run: PlannedRun, settings: Settings): Promise<RunRecord> 
     run.dir,
     timeoutMs,
     runEnv(run, workdir),
+    launcher(run),
   );
 
   reap(run, workdir);

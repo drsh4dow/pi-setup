@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { Schema } from "effect";
 import { fixtureRepository, git, gitOutput } from "../lib/pi-run.ts";
 import { preparePriorWatch } from "./fake-pr.ts";
+import { prepareRecordedWorkdir } from "./recorded.ts";
 import type { Scenario } from "./scenarios.ts";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -114,6 +115,25 @@ export function cloneHarness(root: string): string {
   return workdir;
 }
 
+function projectWorkdir(scenario: Scenario, armRoot: string, outputDir: string): string {
+  switch (scenario.project.kind) {
+    case "clone":
+      return cloneHarness(armRoot);
+    case "fixture":
+      return fixtureRepository(
+        join(HERE, "fixtures", scenario.project.fixture),
+        scenario.project.fixture,
+      );
+    case "recording":
+      return prepareRecordedWorkdir(outputDir);
+    default: {
+      const exhaustive: never = scenario.project;
+
+      return exhaustive;
+    }
+  }
+}
+
 export interface PrepareOptions {
   readonly scenario: Scenario;
   readonly armRoot: string;
@@ -130,13 +150,7 @@ export function userCommitRecord(outputDir: string): string {
  * working directory inside it, so killing the processes in it after the run reaps them.
  */
 export function prepareWorkdir({ scenario, armRoot, outputDir }: PrepareOptions): string {
-  const workdir =
-    scenario.project.kind === "clone"
-      ? cloneHarness(armRoot)
-      : fixtureRepository(
-          join(HERE, "fixtures", scenario.project.fixture),
-          scenario.project.fixture,
-        );
+  const workdir = projectWorkdir(scenario, armRoot, outputDir);
 
   if (scenario.setup !== null) {
     execFileSync("bash", [join(HERE, "setup", scenario.setup)], {

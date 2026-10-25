@@ -41,10 +41,18 @@ test("a fixture run loads only the arm's skills", () => {
 
 const ids = (only?: string[]) => selectScenarios(only).map((scenario) => scenario.id);
 
-test("cosmetic-wake runs only when --only names it", () => {
-  assert.ok(!ids().includes("cosmetic-wake"));
-  assert.equal(ids().length, scenarios.length - 1);
-  assert.deepEqual(ids(["cosmetic-wake", "cross-project"]), ["cross-project", "cosmetic-wake"]);
+test("a scenario off by default runs only when --only names it", () => {
+  const off = scenarios.filter((scenario) => !ids().includes(scenario.id));
+
+  assert.deepEqual(
+    off.map((scenario) => scenario.id),
+    ["cosmetic-wake", "catchup-video-recorded"],
+  );
+  assert.deepEqual(ids(["catchup-video-recorded", "cosmetic-wake", "cross-project"]), [
+    "cross-project",
+    "cosmetic-wake",
+    "catchup-video-recorded",
+  ]);
 });
 
 test("keeping a run's state folder moves it into the output directory over an earlier copy", () => {

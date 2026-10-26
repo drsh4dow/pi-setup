@@ -7,6 +7,31 @@ SCRATCH_BASE=${TMPDIR:-/tmp}/verify-pi-setup
 EVIDENCE_BASE=$HOME/.local/state/pi-agent/verify-pi-setup
 LIVE_AGENT_DIR=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}
 READY_PATTERN='[0-9.]+%/[0-9]'
+POLL=0.25
+# wait-idle needs this many polls in a row with nothing running and the session file unchanged.
+IDLE_QUIET_POLLS=8
+
+# An assistant message ends a turn on these stop reasons. "error" may be followed by a retry.
+ENDS_TURN_JQ='def ends_turn: .role == "assistant" and (.stopReason | IN("stop", "length", "aborted"));'
+
+# Reads session lines past a send's baseline. Prints "none" until the first user message,
+# "ended" once an assistant message after it ends a turn, or "running" and the last error.
+SEND_TURN_JQ="$ENDS_TURN_JQ"'
+[inputs | fromjson? | select(.type == "message") | .message] as $messages
+| (first(range($messages | length) as $i | select($messages[$i].role == "user") | $i) // null) as $prompt
+| if $prompt == null then "none"
+  elif any($messages[$prompt + 1:][]; ends_turn) then "ended"
+  else "running", ([$messages[$prompt + 1:][] | .errorMessage // empty] | last // empty) end'
+
+# Reads a whole session file. Prints "idle" when its last conversation entry ends a turn,
+# and otherwise what is running. A background job's result arrives as a custom_message.
+SESSION_IDLE_JQ="$ENDS_TURN_JQ"'
+[inputs | fromjson?
+  | select(.type == "custom_message" or (.type == "message" and (.message.role | IN("user", "assistant", "toolResult"))))]
+| last
+| if . == null or (.type == "message" and (.message | ends_turn)) then "idle"
+  elif .type == "custom_message" then "a turn is starting on a \(.customType) message"
+  else "a turn is running (last message: \(.message.role) \(.message.stopReason // ""))" end'
 
 usage() {
   cat <<'EOF'
@@ -16,8 +41,10 @@ control-pi send RUN_ID TEXT         type TEXT literally, then press Enter
 control-pi keys RUN_ID KEY...       send tmux key names (C-o, Escape, C-M-m, Down)
 control-pi capture RUN_ID           print the visible pane
 control-pi wait RUN_ID ERE [SECS]   wait until the pane matches ERE (default 60 s)
+control-pi wait-turn RUN_ID [SECS]  wait until the turn of the last sent prompt ends
+control-pi wait-idle RUN_ID [SECS]  wait until no turn, prompt, or background job is left
 control-pi snap RUN_ID NAME         save the pane to EVIDENCE/NAME.txt
-control-pi path RUN_ID scratch|evidence|agent
+control-pi path RUN_ID scratch|evidence|agent|sessions
 control-pi stop RUN_ID              tear down the instance and keep the evidence
 control-pi list                     list runs that still have scratch state
 EOF
@@ -41,11 +68,53 @@ bind_run() {
   SESSION=vps-$RUN_ID
   PANE="=$SESSION:"
   STDERR_LOG=$SCRATCH/pi.stderr.log
+  SESSIONS=$SCRATCH/sessions
+  SENDS=$SCRATCH/sends.jsonl
 }
 
 session_alive() {
   tm has-session -t "=$SESSION" 2>/dev/null &&
     [[ $(tm list-panes -t "$PANE" -F '#{pane_dead}') == 0 ]]
+}
+
+# Fails unless Pi is up, saying why. $1 names the wait for the "Pi exited" message.
+require_up() {
+  if [[ ! -d $SCRATCH ]]; then
+    echo "control-pi: run $RUN_ID does not exist; launch it first" >&2
+  elif ! tm has-session -t "=$SESSION" 2>/dev/null; then
+    echo "control-pi: run $RUN_ID has not started: it has scratch state but no tmux session; wait for 'control-pi launch' to print run=" >&2
+  elif session_alive; then
+    return 0
+  else
+    echo "control-pi: Pi exited${1:+ while waiting for $1}" >&2
+    cat "$STDERR_LOG" >&2 2>/dev/null || true
+  fi
+  return 1
+}
+
+# Pi writes one .jsonl per session straight into $SESSIONS, and a new one after /new.
+newest_session() {
+  local file newest=
+  for file in "$SESSIONS"/*.jsonl; do
+    [[ -f $file && (-z $newest || $file -nt $newest) ]] && newest=$file
+  done
+  echo "$newest"
+}
+
+last_send_text() {
+  tail -n 1 "$SENDS" | jq -r .text
+}
+
+# The turn of the last sent prompt, scanned from the session length that send recorded.
+last_send_turn() {
+  local file offset
+  file=$(newest_session)
+  if [[ -z $file ]]; then
+    echo none
+    return
+  fi
+  offset=$(tail -n 1 "$SENDS" | jq -r --arg file "$file" 'if .file == $file then .offset else 0 end')
+  tail -c +$((offset + 1)) "$file" | jq -nrR "$SEND_TURN_JQ"
 }
 
 pane() {
@@ -58,13 +127,9 @@ pi_pid() {
   pgrep -P "$shell_pid" -x pi | head -n 1
 }
 
+# One grep over every environ, so wait-idle can poll it (a grep per process takes over a second).
 pids_tagged_with_run() {
-  local pid
-  for pid in $(pgrep -u "$UID"); do
-    if grep -qxz "VERIFY_PI_SETUP_RUN=$RUN_ID" "/proc/$pid/environ" 2>/dev/null; then
-      echo "$pid"
-    fi
-  done
+  { grep -lxzs -- "VERIFY_PI_SETUP_RUN=$RUN_ID" /proc/[0-9]*/environ || true; } | cut -d/ -f3
 }
 
 oauth_providers() {
@@ -85,7 +150,7 @@ cmd_launch() {
       echo "control-pi: warning: could not refresh $provider credentials" >&2
   done
 
-  mkdir -p "$AGENT_DIR" "$SCRATCH/workspace" "$SCRATCH/sessions" "$EVIDENCE"
+  mkdir -p "$AGENT_DIR" "$SCRATCH/workspace" "$SESSIONS" "$EVIDENCE"
   trap 'launch_failed' EXIT
   echo "$CHECKOUT" >"$SCRATCH/checkout"
   install -m 600 "$LIVE_AGENT_DIR/auth.json" "$AGENT_DIR/auth.json"
@@ -106,7 +171,7 @@ cmd_launch() {
     "PI_CODING_AGENT_DIR=$AGENT_DIR" \
     PI_SKIP_VERSION_CHECK=1 \
     HERDR_ENV=0 \
-    pi --session-dir "$SCRATCH/sessions" --no-skills --skill "$AGENT_DIR/skills")
+    pi --session-dir "$SESSIONS" --no-skills --skill "$AGENT_DIR/skills")
   tm new-session -d -s "$SESSION" -x 200 -y 50 -c "$SCRATCH/workspace" "$command 2>$(printf '%q' "$STDERR_LOG")"
   tm set-option -t "$PANE" remain-on-exit on >/dev/null
 
@@ -129,19 +194,83 @@ launch_failed() {
 wait_for() {
   local pattern=$1 deadline=$((SECONDS + ${2:-60}))
   while ((SECONDS < deadline)); do
+    require_up "/$pattern/" || return 1
     if pane | grep -qE -- "$pattern"; then
       return 0
     fi
-    if ! session_alive; then
-      echo "control-pi: Pi exited while waiting for /$pattern/" >&2
-      cat "$STDERR_LOG" >&2 2>/dev/null || true
-      return 1
-    fi
-    sleep 0.25
+    sleep "$POLL"
   done
   echo "control-pi: timed out waiting for /$pattern/" >&2
   pane >&2
   return 1
+}
+
+cmd_send() {
+  bind_run "${1:-}"
+  local text=${2:?text required} file offset=0
+  require_up || exit 1
+  # The baseline is taken before Enter, so nothing Pi writes for this prompt falls before it.
+  file=$(newest_session)
+  [[ -n $file ]] && offset=$(stat -c %s "$file")
+  jq -cn --arg file "$file" --argjson offset "$offset" --arg text "$text" \
+    '{file: $file, offset: $offset, text: $text}' >>"$SENDS"
+  tm send-keys -t "$PANE" -l -- "$text"
+  sleep 0.15
+  tm send-keys -t "$PANE" Enter
+}
+
+cmd_wait_turn() {
+  bind_run "${1:-}"
+  local deadline=$((SECONDS + ${2:-60})) what="the turn of the last send to end" turn=none
+  require_up "$what" || exit 1
+  [[ -s $SENDS ]] || die "no prompt sent to $RUN_ID since launch; run 'control-pi send' first"
+  while ((SECONDS < deadline)); do
+    require_up "$what" || exit 1
+    turn=$(last_send_turn)
+    [[ $turn == ended ]] && return 0
+    sleep "$POLL"
+  done
+  if [[ $turn == none ]]; then
+    die "timed out: no turn started since the last send ($(last_send_text)); wait-turn follows prompts, not keys or commands that start no turn"
+  fi
+  local error=${turn#running}
+  die "timed out waiting for $what${error:+; last error:${error//$'\n'/ }}"
+}
+
+# Prints what keeps the run from being idle, or nothing when it is idle.
+busy_reason() {
+  local pi jobs file
+  pi=$(pi_pid || true)
+  jobs=$(pids_tagged_with_run | grep -vx -- "${pi:-none}" || true)
+  if [[ -n $jobs ]]; then
+    echo "background processes still run: $(ps -o pid=,args= -p "${jobs//$'\n'/,}" 2>/dev/null | cut -c1-120 | paste -sd ';' || true)"
+  elif [[ -s $SENDS && $(last_send_turn | head -n 1) == none ]]; then
+    echo "the last send has no user message in the session yet ($(last_send_text))"
+  elif file=$(newest_session) && [[ -n $file ]]; then
+    jq -nrR "$SESSION_IDLE_JQ" <"$file" | grep -vx idle || true
+  fi
+}
+
+cmd_wait_idle() {
+  bind_run "${1:-}"
+  local deadline=$((SECONDS + ${2:-60})) what="the run to go idle" quiet=0 reason snapshot previous=
+  require_up "$what" || exit 1
+  while ((SECONDS < deadline)); do
+    require_up "$what" || exit 1
+    reason=$(busy_reason)
+    snapshot=$(stat -c '%s %.9Y' "$(newest_session)" 2>/dev/null || true)
+    if [[ -n $reason ]]; then
+      quiet=0
+    elif [[ $snapshot != "$previous" ]]; then
+      quiet=0
+      reason="the session file is still changing"
+    elif ((++quiet >= IDLE_QUIET_POLLS)); then
+      return 0
+    fi
+    previous=$snapshot
+    sleep "$POLL"
+  done
+  die "timed out waiting for $what: $reason"
 }
 
 pi_env_has() {
@@ -250,17 +379,11 @@ shift || true
 case $subcommand in
 launch) cmd_launch "$@" ;;
 doctor) cmd_doctor "$@" ;;
-send)
-  bind_run "${1:-}"
-  session_alive || die "run $RUN_ID is not alive"
-  tm send-keys -t "$PANE" -l -- "${2:?text required}"
-  sleep 0.15
-  tm send-keys -t "$PANE" Enter
-  ;;
+send) cmd_send "$@" ;;
 keys)
   bind_run "${1:-}"
   shift
-  session_alive || die "run $RUN_ID is not alive"
+  require_up || exit 1
   tm send-keys -t "$PANE" "$@"
   ;;
 capture)
@@ -271,6 +394,8 @@ wait)
   bind_run "${1:-}"
   wait_for "${2:?pattern required}" "${3:-60}"
   ;;
+wait-turn) cmd_wait_turn "$@" ;;
+wait-idle) cmd_wait_idle "$@" ;;
 snap)
   bind_run "${1:-}"
   mkdir -p "$EVIDENCE"
@@ -283,7 +408,8 @@ path)
   scratch) echo "$SCRATCH" ;;
   evidence) echo "$EVIDENCE" ;;
   agent) echo "$AGENT_DIR" ;;
-  *) die "path kind must be scratch, evidence, or agent" ;;
+  sessions) echo "$SESSIONS" ;;
+  *) die "path kind must be scratch, evidence, agent, or sessions" ;;
   esac
   ;;
 stop) cmd_stop "$@" ;;

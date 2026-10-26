@@ -7,7 +7,7 @@ user-invokable: false
 
 Reference for writing any document an agent consumes: a skill, an `AGENTS.md` / `CLAUDE.md`, a doc reached by a pointer. The packaging differs; the writing does not: the same levers make each one predictable, since the agent takes the same _process_ every run rather than producing the same output.
 
-When the document you're writing is a skill, read [`SKILL-MECHANICS.md`](SKILL-MECHANICS.md) for frontmatter, invocation choice, and router skills.
+When the document you're writing is a skill, read [`SKILL-MECHANICS.md`](SKILL-MECHANICS.md) for frontmatter, invocation choice, router skills, and adapting another author's skill.
 
 ## Context pointers
 
@@ -60,14 +60,6 @@ Splitting one document into two spends one of the two loads, so split only when 
 
 - **By sequence**: split a run of steps where the post-completion steps tempt the agent to rush the one in front of it. Keeping them out of view drives more legwork on the current task. Beware the reverse: merging sequences exposes each step's later steps to what follows, inviting premature completion.
 - **By invocation**, skill-specific: see [`SKILL-MECHANICS.md`](SKILL-MECHANICS.md).
-
-## Adapting outside skills
-
-When a skill or rule comes from another author's collection, adapt it into this harness instead of vendoring it:
-
-- Credit the source in the README's Credits section, not in the skill. Drop upstream pins, commit hashes, and sync dates, since the adapted copy tracks no upstream.
-- Strip the author's personal conventions, such as their labels, folders, tools, and tracker habits, and route each step through the skills and records this harness already has.
-- Keep the guidance you adopt verbatim, and check each copied span against the source mechanically. Where the host forces a rewrite, compare the rewritten rule with its source for who must do what, to what, and in what scope. Connective words such as "not", "only", and "the caller, not the callee" carry the rule, and a quote check passes over them.
 
 ## Leading words
 

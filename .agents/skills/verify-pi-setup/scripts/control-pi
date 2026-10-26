@@ -140,7 +140,7 @@ pi_pid() {
 
 # One grep over every environ, so wait-idle can poll it.
 pids_tagged_with_run() {
-  { grep -lxzs -- "VERIFY_PI_SETUP_RUN=$RUN_ID" /proc/[0-9]*/environ || true; } | cut -d/ -f3
+  { grep -lxFzs -- "VERIFY_PI_SETUP_RUN=$RUN_ID" /proc/[0-9]*/environ || true; } | cut -d/ -f3
 }
 
 oauth_providers() {

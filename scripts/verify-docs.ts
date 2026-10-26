@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, resolve } from "node:path";
 
+import { allowsUserInvocation } from "../agent/extensions/skill-visibility/user-invokable.ts";
 import { isEvalFixturePath } from "./eval-fixture-folders.ts";
 
 const root = process.cwd();
@@ -124,6 +125,10 @@ function extensionName(path: string) {
   );
 }
 
+function skillName(path: string) {
+  return path.match(/^agent\/skills\/([^/]+)\/SKILL\.md$/)?.[1];
+}
+
 const extensionNames = [
   ...new Set(files.map(extensionName).filter((name) => name !== undefined)),
 ].toSorted();
@@ -132,9 +137,7 @@ const inventory = [
   { heading: "Installed extensions", actual: extensionNames },
   {
     heading: "Installed skills",
-    actual: files
-      .map((path) => path.match(/^agent\/skills\/([^/]+)\/SKILL\.md$/)?.[1])
-      .filter((name) => name !== undefined),
+    actual: files.map(skillName).filter((name) => name !== undefined),
   },
   {
     heading: "Installed prompts",
@@ -154,14 +157,19 @@ const inventoryFile = "docs/inventory.md";
 
 const inventoryText = readFileSync(resolve(root, inventoryFile), "utf8");
 
-for (const { heading, actual } of inventory) {
-  const section = inventoryText.match(
-    new RegExp(`^### ${heading}\\s*$([\\s\\S]*?)(?=^###? |(?![\\s\\S]))`, "m"),
+// The text under a "### <heading>" of the inventory, up to the next heading of level 2 or 3.
+function inventorySection(heading: string) {
+  return (
+    inventoryText.match(
+      new RegExp(`^### ${heading}\\s*$([\\s\\S]*?)(?=^###? |(?![\\s\\S]))`, "m"),
+    )?.[1] ?? ""
   );
+}
 
-  const documented = section
-    ? [...section[1].matchAll(/^[-|].*?`([^`]+)`/gm)].map((match) => match[1])
-    : [];
+for (const { heading, actual } of inventory) {
+  const documented = [...inventorySection(heading).matchAll(/^[-|].*?`([^`]+)`/gm)].map(
+    (match) => match[1],
+  );
 
   const expected = [...new Set(actual)].toSorted();
   const found = [...new Set(documented)].toSorted();
@@ -182,12 +190,12 @@ type InvocationFlags = {
   readonly "user-invokable"?: unknown;
 };
 
-// Pi hides a skill from the model only on an explicit `disable-model-invocation: true`, and
-// skill-visibility hides it from /skill: only on an explicit `user-invokable: false`.
+// Pi hides a skill from the model only on an explicit `disable-model-invocation: true`.
 function whoFromFrontmatter(frontmatter: InvocationFlags): Who | "nobody" {
-  const userCanStart = frontmatter["user-invokable"] !== false;
+  const modelCanStart = frontmatter["disable-model-invocation"] !== true;
+  const userCanStart = allowsUserInvocation(frontmatter);
 
-  if (frontmatter["disable-model-invocation"] !== true) return userCanStart ? "both" : "agent";
+  if (modelCanStart) return userCanStart ? "both" : "agent";
 
   return userCanStart ? "you" : "nobody";
 }
@@ -195,7 +203,7 @@ function whoFromFrontmatter(frontmatter: InvocationFlags): Who | "nobody" {
 const skillWho = new Map<string, Who>();
 
 for (const path of files) {
-  const name = path.match(/^agent\/skills\/([^/]+)\/SKILL\.md$/)?.[1];
+  const name = skillName(path);
 
   if (name === undefined) continue;
 
@@ -231,10 +239,9 @@ function tableCells(line: string) {
     .map((cell) => cell.trim());
 }
 
-// Each row of a table under "### Installed skills" whose header has a Who column.
-function whoRows(markdown: string) {
-  const section = markdown.match(/^### Installed skills\s*$([\s\S]*?)(?=^###? |(?![\s\S]))/m);
-  const lines = section ? section[1].split("\n") : [];
+// Each row of a table in the given section whose header has a Who column.
+function whoRows(section: string) {
+  const lines = section.split("\n");
   const rows: { name: string; who: string }[] = [];
   let whoColumn = -1;
 
@@ -254,7 +261,7 @@ function whoRows(markdown: string) {
   return rows;
 }
 
-for (const { name, who } of whoRows(inventoryText)) {
+for (const { name, who } of whoRows(inventorySection("Installed skills"))) {
   const expected = skillWho.get(name);
 
   if (expected !== undefined && expected !== who) {

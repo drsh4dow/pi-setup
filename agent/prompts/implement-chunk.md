@@ -124,7 +124,7 @@ Intermediate PRs exist for your verification. Final PRs exist for the human's tr
 
 ## The brief
 
-Write each **brief** from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A field you cannot fill is a unit you have not scoped yet. Save the brief in the state folder and launch it; the launcher checks it. Launch each implementer and verifier with `--append ~/.pi/agent/prompts/implement-chunk/definition-of-done.md`, because its brief names a bar the child cannot otherwise read. Check each path the brief names yourself (`test -e`).
+Write each **brief** fresh from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A brief made by search-and-replace on an earlier one keeps that unit's PR numbers and SHAs wherever the replace missed them. A field you cannot fill is a unit you have not scoped yet. Save the brief in the state folder and launch it; the launcher checks it. Launch each implementer and verifier with `--append ~/.pi/agent/prompts/implement-chunk/definition-of-done.md`, because its brief names a bar the child cannot otherwise read. Check each path the brief names yourself (`test -e`).
 
 ## Verification
 

@@ -103,6 +103,56 @@ describe("feedback reads", () => {
     });
   });
 
+  it("tells bot authors from humans in reviews, comments, and thread comments", async () => {
+    const bot = { author: { __typename: "Bot", login: "coderabbitai" } };
+    const human = { author: { __typename: "User", login: "alice" } };
+    const query = graphql({
+      "FeedbackReviews::": reviews(
+        page(
+          [
+            node("r-bot", { state: "COMMENTED", submittedAt: "now", ...bot }),
+            node("r-human", { state: "APPROVED", submittedAt: "now", ...human }),
+          ],
+          null
+        )
+      ),
+      "FeedbackComments::": comments(
+        page([node("c-bot", bot), node("c-suffix", { author: { login: "acme[bot]" } })], null)
+      ),
+      "FeedbackThreads::": threads(
+        page(
+          [
+            {
+              id: "t1",
+              isResolved: true,
+              comments: page(
+                [node("t-bot", { ...threadComment, ...bot }), node("t-human", { ...threadComment, ...human })],
+                null
+              ),
+            },
+          ],
+          null
+        )
+      ),
+    });
+    const snapshot = await readFeedback(query, context);
+    const bots = (items: readonly { id: string; authorIsBot: boolean }[]) =>
+      items.map((item) => [item.id, item.authorIsBot]);
+    expect(bots(snapshot.reviews)).toEqual([
+      ["r-bot", true],
+      ["r-human", false],
+    ]);
+    expect(bots(snapshot.comments)).toEqual([
+      ["c-bot", true],
+      ["c-suffix", true],
+    ]);
+    expect(bots(snapshot.threads[0]?.comments ?? [])).toEqual([
+      ["t-bot", true],
+      ["t-human", false],
+    ]);
+    expect(query.requests).toHaveLength(3);
+  });
+
   it("fails the whole read on a malformed later page", async () => {
     const query = graphql({
       ...basePages,

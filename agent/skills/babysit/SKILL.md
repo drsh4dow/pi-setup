@@ -55,7 +55,7 @@ Run `scripts/watch-pr` with `bg_start`, so its exit wakes you. Pass `--stack` fo
 1. **Recover the assignment.** Read the scope, state directory, and last batch path from the run notes. Reuse a live watcher on the same state directory from `bg_list`.
 2. **Arm the watcher** with `bg_start`: `scripts/watch-pr --until-merged --state <dir>` with explicit `--owner`, `--repo`, and `--pr`, or the frozen `--queued-stack --stack-prs` list. Each assignment gets its own state directory outside the checkout: `~/.local/state/pi-agent/<repo>/babysit/<pr>` for one PR, `~/.local/state/pi-agent/<repo>/babysit/<root-pr>-stack` for a stack, where the root PR is the bottom of the captured list. Record the state path and the exact command in the run notes before you yield.
 3. **Read the whole batch.** Exit 8 is `ATTENTION`. Its final line names a batch file, the file's sha256, and a preview. Read the file; it holds every item with its full body.
-   - `feedback`: a new or edited review, PR comment, or thread comment.
+   - `feedback`: a new or edited review, PR comment, or thread comment. A bot's edit or reply in a resolved thread never wakes you by itself; it rides the next batch that something else wakes, or the batch at the merge.
    - `merge-blocker`: a conflict, failing checks, or a draft or changes-requested gate.
    - `merge-ready`: the frontier is green and mergeable at this head and waits on a human.
    - `status-unavailable` / `status-recovered`: a GitHub read went down or came back.

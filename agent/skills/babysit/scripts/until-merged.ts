@@ -127,13 +127,15 @@ function updateMember(
 function queue(
   step: PrStep,
   environment: Environment,
-  item: Pick<StoredItem, "id" | "kind" | "excerpt" | "detail">
+  item: Pick<StoredItem, "id" | "kind" | "excerpt" | "detail"> &
+    Partial<Pick<StoredItem, "held">>
 ): void {
   step.queued.push({
     ...item,
     excerpt: excerpt(item.excerpt),
     pr: step.pr.number,
     acknowledged: false,
+    held: item.held ?? false,
     observedAt: environment.observedAt,
   });
 }
@@ -192,6 +194,7 @@ interface Revision {
   readonly subject: "review" | "comment" | "thread-comment";
   readonly nodeId: string;
   readonly authorLogin: string | null;
+  readonly authorIsBot: boolean;
   readonly body: string;
   readonly updatedAt: string;
   readonly reviewState: SubmittedReviewState | null;
@@ -205,6 +208,7 @@ function revisions(snapshot: FeedbackSnapshot): readonly Revision[] {
       subject: "review",
       nodeId: review.id,
       authorLogin: review.authorLogin,
+      authorIsBot: review.authorIsBot,
       body: review.body,
       updatedAt: review.updatedAt,
       reviewState: review.state,
@@ -216,6 +220,7 @@ function revisions(snapshot: FeedbackSnapshot): readonly Revision[] {
       subject: "comment",
       nodeId: comment.id,
       authorLogin: comment.authorLogin,
+      authorIsBot: comment.authorIsBot,
       body: comment.body,
       updatedAt: comment.updatedAt,
       reviewState: null,
@@ -228,6 +233,7 @@ function revisions(snapshot: FeedbackSnapshot): readonly Revision[] {
         subject: "thread-comment",
         nodeId: comment.id,
         authorLogin: comment.authorLogin,
+        authorIsBot: comment.authorIsBot,
         body: comment.body,
         updatedAt: comment.updatedAt,
         reviewState: null,
@@ -292,6 +298,7 @@ function observeFeedback(
       kind: "feedback",
       excerpt: `${revision.subject}${state} by ${revision.authorLogin ?? "ghost"}: ${revision.body}`,
       detail: revision.detail,
+      held: revision.inResolvedThread && revision.authorIsBot,
     });
   }
   step.pr = { ...step.pr, feedbackBaselined: true, seenRevisions: [...seen] };
@@ -692,7 +699,12 @@ async function monitor(args: {
     }
     saveLedger(stateDirectory, ledger);
     const attention = ledger.items.filter((item) => !item.acknowledged);
-    if (attention.length > 0) {
+    const status = scopeStatus(ledger, readThisPoll);
+    // Held items wake the agent only with other news, or before the watch ends.
+    const wake =
+      attention.some((item) => !item.held) ||
+      (status.kind === "finished" && attention.length > 0);
+    if (wake) {
       const batch = writeBatch(stateDirectory, {
         repository,
         createdAt: environment.observedAt,
@@ -714,7 +726,6 @@ async function monitor(args: {
         },
       });
     }
-    const status = scopeStatus(ledger, readThisPoll);
     if (status.kind === "finished")
       return stamp({
         kind: "FINISHED",

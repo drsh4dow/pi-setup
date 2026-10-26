@@ -4,6 +4,7 @@ import {
   list,
   missing,
   optionalString,
+  parseAuthor,
   record,
   runJson,
   string,
@@ -13,6 +14,7 @@ import type * as T from "./types.ts";
 export interface FeedbackComment {
   readonly id: string;
   readonly authorLogin: string | null;
+  readonly authorIsBot: boolean;
   readonly body: string;
   readonly url: string;
   readonly createdAt: string;
@@ -26,6 +28,7 @@ export type SubmittedReviewState =
 export interface SubmittedReview {
   readonly id: string;
   readonly authorLogin: string | null;
+  readonly authorIsBot: boolean;
   readonly body: string;
   readonly url: string;
   readonly state: SubmittedReviewState;
@@ -52,7 +55,8 @@ export interface FeedbackReader {
 }
 
 const PAGE_INFO = "pageInfo { hasNextPage endCursor }";
-const COMMENT_FIELDS = "id body createdAt updatedAt url author { login }";
+const AUTHOR_FIELDS = "author { __typename login }";
+const COMMENT_FIELDS = `id body createdAt updatedAt url ${AUTHOR_FIELDS}`;
 const THREAD_COMMENT_FIELDS = `${COMMENT_FIELDS} path line`;
 export const FEEDBACK_REVIEWS_QUERY = `
 query FeedbackReviews($owner: String!, $repo: String!, $pr: Int!, $after: String) {
@@ -61,7 +65,7 @@ query FeedbackReviews($owner: String!, $repo: String!, $pr: Int!, $after: String
     pullRequest(number: $pr) {
       reviews(first: 100, after: $after) {
         ${PAGE_INFO}
-        nodes { id body state submittedAt updatedAt url author { login } }
+        nodes { id body state submittedAt updatedAt url ${AUTHOR_FIELDS} }
       }
     }
   }
@@ -138,15 +142,18 @@ function connectionCursor(connection: Record<string, unknown>, path: string) {
   if (!page.hasNextPage) return null;
   return string(page.endCursor, `${path}.pageInfo.endCursor`);
 }
-function authorLogin(value: unknown, path: string): string | null {
-  if (value === null) return null;
-  return string(record(value, `${path}.author`).login, `${path}.author.login`);
+function author(value: unknown, path: string) {
+  const parsed = parseAuthor(value, `${path}.author`);
+  return {
+    authorLogin: parsed?.login ?? null,
+    authorIsBot: parsed?.isBot ?? false,
+  };
 }
 function parseFeedbackComment(value: unknown, path: string): FeedbackComment {
   const object = record(value, path);
   return {
     id: string(object.id, `${path}.id`),
-    authorLogin: authorLogin(object.author, path),
+    ...author(object.author, path),
     body: string(object.body, `${path}.body`),
     url: string(object.url, `${path}.url`),
     createdAt: string(object.createdAt, `${path}.createdAt`),
@@ -176,7 +183,7 @@ function parseReview(value: unknown): SubmittedReview | null {
   if (state === "PENDING") return null;
   return {
     id: string(object.id, "review.id"),
-    authorLogin: authorLogin(object.author, "review"),
+    ...author(object.author, "review"),
     body: string(object.body, "review.body"),
     url: string(object.url, "review.url"),
     state,

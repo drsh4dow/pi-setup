@@ -17,8 +17,8 @@ theme needs a line here.
 | `grill-with-docs`      | you   | Get interviewed hard, and write the glossary and ADRs as you go |
 | `prototype`            | agent | Build a throwaway that settles a design question                |
 | `research`             | agent | Answer a question from primary sources in a background agent    |
-| `to-spec`              | you   | Turn the conversation into a spec ticket                        |
-| `to-tickets`           | you   | Split the spec into tickets under it, with blocking edges       |
+| `to-spec`              | both  | Turn the conversation into a spec ticket                        |
+| `to-tickets`           | both  | Split the spec into tickets under it, with blocking edges       |
 | `grilling`             | agent | Question a plan hard when you say "grill me"                    |
 | `writing-good-tickets` | agent | Write one ticket an agent can take to one PR                    |
 

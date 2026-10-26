@@ -550,13 +550,12 @@ export class GhGitHubReader implements T.GitHubReader {
       at(value, ["data", "repository", "pullRequest", "commits", "nodes"]),
       "commits.nodes"
     );
-    if (commits.length === 0) return { checks: [], endCursor: null };
+    if (commits.length === 0) return { kind: "no-rollup" };
     const commit = record(
       at(commits[commits.length - 1], ["commit"]),
       "commit"
     );
-    if (commit.statusCheckRollup === null)
-      return { checks: [], endCursor: null };
+    if (commit.statusCheckRollup === null) return { kind: "no-rollup" };
     const contexts = record(
       at(commit, ["statusCheckRollup", "contexts"]),
       "contexts"
@@ -571,7 +570,11 @@ export class GhGitHubReader implements T.GitHubReader {
       page.endCursor,
       "contexts.pageInfo.endCursor"
     );
-    return { checks, endCursor: page.hasNextPage && cursor ? cursor : null };
+    return {
+      kind: "contexts",
+      checks,
+      endCursor: page.hasNextPage && cursor ? cursor : null,
+    };
   }
   async reviewThreadPage(
     context: T.PrContext,
@@ -607,22 +610,43 @@ export class GhGitHubReader implements T.GitHubReader {
   }
 }
 
+const NO_CHECKS_REPORTED = /^no checks reported/m;
+/** The head commit's check contexts, or null when it has no check rollup. */
+async function readRollup(
+  reader: T.GitHubReader,
+  context: T.PrContext
+): Promise<readonly T.Check[] | null> {
+  const checks: T.Check[] = [];
+  let after: string | null = null;
+  do {
+    const page = await reader.checkRollupPage(context, after);
+    if (page.kind === "no-rollup") return after === null ? null : checks;
+    checks.push(...page.checks);
+    after = page.endCursor;
+  } while (after !== null);
+  return checks;
+}
 export async function resolveChecks(
   reader: T.GitHubReader,
   context: T.PrContext
 ): Promise<T.CheckRead> {
   const fast = await reader.checksFastPath(context);
   const direct = fast.kind === "checks" ? nonEmpty(fast.checks) : null;
-  if (direct !== null) return { source: "gh-pr-checks", checks: direct };
-  const checks: T.Check[] = [];
-  let after: string | null = null;
-  do {
-    const page = await reader.checkRollupPage(context, after);
-    checks.push(...page.checks);
-    after = page.endCursor;
-  } while (after !== null);
-  const fallback = nonEmpty(checks);
-  if (fallback !== null) return { source: "graphql-rollup", checks: fallback };
+  if (direct !== null)
+    return { kind: "checks", source: "gh-pr-checks", checks: direct };
+  const rollup = await readRollup(reader, context);
+  const fallback = rollup === null ? null : nonEmpty(rollup);
+  if (fallback !== null)
+    return { kind: "checks", source: "graphql-rollup", checks: fallback };
+  // Both sources must agree that the commit has no checks. An empty rollup, or
+  // any other gh failure, can be a credential that cannot read checks, which
+  // must never read as a clean PR.
+  if (
+    rollup === null &&
+    fast.kind === "unusable" &&
+    NO_CHECKS_REPORTED.test(fast.stderr)
+  )
+    return { kind: "no-checks" };
   const suffix =
     fast.kind === "unusable"
       ? `fast path exit=${fast.exitCode}; GraphQL rollup was empty${firstLine(fast.stderr) ? `; ${firstLine(fast.stderr)}` : ""}`

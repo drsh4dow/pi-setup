@@ -28,13 +28,13 @@ Launch every subagent with the **subagents** skill's brief launcher, `~/.pi/agen
 
 Roles, with kind and model row:
 
-- **explorer** (delegate, `modeler` for contract notes and statecharts, `explorer` for exploration notes): notes saved in `notes/`.
+- **explorer** (delegate, `modeler` for contract notes and statecharts, `mapper` for exploration notes): notes saved in `notes/`.
 - **implementer** (delegate, `feature, refactoring`, `bug-fix`, or `hardest tasks`): one ticket, chain, or fix scope, delivered as one intermediate PR.
-- **verifier** (delegate, `cross-family reviewer`): a verdict for one PR at one head SHA.
+- **verifier** (delegate, `cross-family reviewer`, against the family of the PR's implementer): a verdict for one PR at one head SHA.
 - **merger** (delegate, `feature, refactoring`): the only writer of topology. It creates integration branches, merges intermediate PRs, resolves conflicts, rebases, and retargets.
 - **PR writer** (delegate, `judgment and prose`): drafts, opens, and edits final PRs.
 - **babysitter** (owner, `feature, refactoring`): runs the **babysit** skill on a final PR or stack to merge-ready.
-- **live verifier** (delegate, `detail reviewer`): drives the deployed environment after a merge.
+- **live verifier** (delegate, `cross-family reviewer`): drives the deployed environment after a merge.
 
 You run the **code-review** skill yourself. It is a lead role: its personas are delegates and it applies nothing.
 

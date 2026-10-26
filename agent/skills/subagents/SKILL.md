@@ -41,22 +41,24 @@ taste: it writes, plans, and implements best, and judges whether code reads
 well and has the simplest shape. Give a new role the family whose strength the
 job needs.
 
-Scouts return locations and verbatim quotes, which the parent checks before
-it relies on them. Work that another agent builds on, or that the user is asked
-to agree to, takes the row for that work, never a scout row at a higher level.
+Scouts report findings that their parent checks or combines before anything
+depends on them, each with the file, line, commit, or PR it rests on. Work that
+an agent builds on without re-checking, or that the user is asked to agree to,
+takes the row for that work, such as `mapper` or `modeler`, never a scout row
+at a higher level.
 
 | Role | Returns | Model | Thinking |
 | --- | --- | --- | --- |
-| `how explorer`, `why investigators`, `swarm scouts` | File and line pointers, commit and PR refs, verbatim excerpts; no design or verdict | `anthropic/claude-opus-5-5` | `low` |
-| `explorer` | Exploration notes an agent reads instead of the code | `anthropic/claude-opus-5-5` | `medium` |
-| `modeler` | Contract notes, statecharts drawn for agreement, TLA+ models, architect skeletons: the names, seams, shapes, and rules others build on | `anthropic/claude-opus-5-5` | `high` |
+| `how explorer`, `why investigators`, `swarm scouts` | Referenced findings for the parent to check and combine: located code, traced flows, excerpts, candidates, read-only slice verdicts | `anthropic/claude-opus-5-5` | `low` |
+| `mapper` | Exploration notes an agent reads instead of the code | `anthropic/claude-opus-5-5` | `medium` |
+| `modeler` | Contract notes and statecharts drawn for agreement: the names, seams, shapes, and rules others build on | `anthropic/claude-opus-5-5` | `high` |
 | `hardest tasks` | Code for the subtlest units | `anthropic/claude-opus-5-5` | `high` |
-| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `merger`, `babysitter` | Code, branch topology, PR upkeep | `anthropic/claude-opus-5-5` | `medium` |
+| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | Code, branch topology, PR upkeep | `anthropic/claude-opus-5-5` | `medium` |
 | `reflect tooling` | Tooling fixes | `anthropic/claude-opus-5-5` | `medium` |
 | `judgment and prose`, `how explainer`, `why synthesizer`, `reflect judgment, synthesizer` | Prose and decisions a human reads | `anthropic/claude-opus-5-5` | `high` |
 | `swarm workers` | Lane work that writes, verifies, or measures | `anthropic/claude-opus-5-5` | `high` |
 | `code-review taste personas` | Readability and shape findings | `anthropic/claude-opus-5-5` | `high` |
-| `detail reviewer`, `cross-family reviewer`, `code-review detail personas`, `reflect divergent`, `researcher` | Edge cases, proofs, failures, statechart audits, cited findings | `openai/gpt-6.1-sol` | `high` |
+| `cross-family reviewer`, `code-review detail personas`, `reflect divergent`, `researcher` | Findings exhaustive on details: edge cases, failures, proofs, cited sources | `openai/gpt-6.1-sol` | `high` |
 | `arena runners`, `architect runners`, `architect reviewers` | Independent candidates and reviews | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 | `arena cross-judge pool` | Independent judgments | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 
@@ -69,14 +71,17 @@ A reviewer or verifier that must run on a different model family from the
 work's author takes the `cross-family reviewer` role. When the author ran on
 `openai/gpt-6.1-sol`, run it on `anthropic/claude-opus-5-5` at `high` instead.
 
-Before each spawn, start from the role's row and pick the thinking level the
-job needs. Raise it one step for the hardest or subtlest work. Lower it one
-step for judgment and two or more steps for routine work. Change only the
-thinking level and keep the model the role names, so a panel stays diverse.
-`high` is the ceiling and `low` the floor for every model. When a scout's
-report fails a spot check, such as a wrong reference or a missed file, rerun
-that slice at `medium`. If a model fails to launch, rerun that seat on
-`anthropic/claude-opus-5-5` at `high` and say so in your report.
+Before each spawn, start from the role's row and set the thinking level the
+job needs, between `low` and `high`: one step up for the hardest or subtlest
+work, one or two steps down for routine work. Change only the thinking level and keep the model the
+role names, so a panel stays diverse. When a scout's report fails a spot
+check, such as a wrong reference or a missed file, rerun that slice at
+`medium`.
+
+If a model fails to launch, retry that seat once on the same model, then
+rerun it at `high` on the other family's model. A seat that had to differ in
+family from the author or from its panel has then lost that independence:
+say so in your report, beside the seat's output.
 
 ## Prepare
 

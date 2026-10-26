@@ -41,23 +41,24 @@ taste: it writes, plans, and implements best, and judges whether code reads
 well and has the simplest shape. Give a new role the family whose strength the
 job needs.
 
-| Role | Model | Thinking |
-| --- | --- | --- |
-| `how explorer`, `why investigators`, `swarm scouts` | `anthropic/claude-haiku-5-5` | `medium` |
-| `hardest tasks` | `anthropic/claude-opus-5-5` | `high` |
-| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | `anthropic/claude-opus-5-5` | `medium` |
-| `judgment and prose` | `anthropic/claude-opus-5-5` | `high` |
-| `how explainer`, `why synthesizer` | `anthropic/claude-opus-5-5` | `high` |
-| `reflect judgment, synthesizer` | `anthropic/claude-opus-5-5` | `high` |
-| `reflect divergent` | `openai/gpt-6.1-sol` | `high` |
-| `reflect tooling` | `anthropic/claude-opus-5-5` | `medium` |
-| `researcher` | `openai/gpt-6.1-sol` | `high` |
-| `swarm workers` | `anthropic/claude-opus-5-5` | `high` |
-| `arena runners`, `architect runners`, `architect reviewers` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
-| `arena cross-judge pool` | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
-| `cross-family reviewer` | `openai/gpt-6.1-sol` | `high` |
-| `code-review detail personas` | `openai/gpt-6.1-sol` | `high` |
-| `code-review taste personas` | `anthropic/claude-opus-5-5` | `high` |
+Scouts return locations and verbatim quotes, which the parent checks before
+it relies on them. Work that another agent builds on, or that the user is asked
+to agree to, takes the row for that work, never a scout row at a higher level.
+
+| Role | Returns | Model | Thinking |
+| --- | --- | --- | --- |
+| `how explorer`, `why investigators`, `swarm scouts` | File and line pointers, commit and PR refs, verbatim excerpts; no design or verdict | `anthropic/claude-opus-5-5` | `low` |
+| `explorer` | Exploration notes an agent reads instead of the code | `anthropic/claude-opus-5-5` | `medium` |
+| `modeler` | Contract notes, statecharts drawn for agreement, TLA+ models, architect skeletons: the names, seams, shapes, and rules others build on | `anthropic/claude-opus-5-5` | `high` |
+| `hardest tasks` | Code for the subtlest units | `anthropic/claude-opus-5-5` | `high` |
+| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb`, `merger`, `babysitter` | Code, branch topology, PR upkeep | `anthropic/claude-opus-5-5` | `medium` |
+| `reflect tooling` | Tooling fixes | `anthropic/claude-opus-5-5` | `medium` |
+| `judgment and prose`, `how explainer`, `why synthesizer`, `reflect judgment, synthesizer` | Prose and decisions a human reads | `anthropic/claude-opus-5-5` | `high` |
+| `swarm workers` | Lane work that writes, verifies, or measures | `anthropic/claude-opus-5-5` | `high` |
+| `code-review taste personas` | Readability and shape findings | `anthropic/claude-opus-5-5` | `high` |
+| `detail reviewer`, `cross-family reviewer`, `code-review detail personas`, `reflect divergent`, `researcher` | Edge cases, proofs, failures, statechart audits, cited findings | `openai/gpt-6.1-sol` | `high` |
+| `arena runners`, `architect runners`, `architect reviewers` | Independent candidates and reviews | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
+| `arena cross-judge pool` | Independent judgments | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
 
 A role with two models is a panel: run one subagent per model, so the panel
 size equals the number of models. Panels mix model families because their
@@ -72,10 +73,9 @@ Before each spawn, start from the role's row and pick the thinking level the
 job needs. Raise it one step for the hardest or subtlest work. Lower it one
 step for judgment and two or more steps for routine work. Change only the
 thinking level and keep the model the role names, so a panel stays diverse.
-`high` is the ceiling for every model. Haiku runs at `medium`.
-Opus stays between `low` and `high`. When a Haiku report fails a spot
-check, such as a wrong reference or a missed file, rerun that slice on Opus at
-`medium`. If a model fails to launch, rerun that seat on
+`high` is the ceiling and `low` the floor for every model. When a scout's
+report fails a spot check, such as a wrong reference or a missed file, rerun
+that slice at `medium`. If a model fails to launch, rerun that seat on
 `anthropic/claude-opus-5-5` at `high` and say so in your report.
 
 ## Prepare

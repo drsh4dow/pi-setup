@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { readFeedback, type GraphqlQuery } from "./feedback.ts";
+import { selectedFields } from "./fakes.test-helper.ts";
 import { WatcherQueryError } from "./github.ts";
 import { parsePrNumber } from "./types.ts";
 
@@ -34,7 +35,7 @@ describe("feedback reads", () => {
       const key = `${name}:${variables.thread ?? ""}:${variables.after ?? ""}`;
       requests.push(key);
       if (!(key in pages)) throw new Error(`unexpected request ${key}`);
-      return pages[key];
+      return selectedFields(query, pages[key]);
     };
     return Object.assign(query, { requests });
   }
@@ -80,7 +81,12 @@ describe("feedback reads", () => {
       )
     ),
     "FeedbackThreadComments:t1:t-next": {
-      data: { node: { comments: page(range("u", 20, threadComment), null) } },
+      data: {
+        node: {
+          __typename: "PullRequestReviewThread",
+          comments: page(range("u", 20, threadComment), null),
+        },
+      },
     },
   };
 

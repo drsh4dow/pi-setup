@@ -86,10 +86,14 @@ export type Check =
     });
 export type FailedCheck = Extract<Check, { readonly kind: "failed" }>;
 export type PendingCheck = Extract<Check, { readonly kind: "pending" }>;
-export interface CheckRead {
-  readonly source: "gh-pr-checks" | "graphql-rollup";
-  readonly checks: NonEmpty<Check>;
-}
+/** `no-checks`: gh reports no checks and the head commit has no check rollup. */
+export type CheckRead =
+  | {
+      readonly kind: "checks";
+      readonly source: "gh-pr-checks" | "graphql-rollup";
+      readonly checks: NonEmpty<Check>;
+    }
+  | { readonly kind: "no-checks" };
 export interface CommitRollup {
   readonly oid: string;
   readonly state: RollupState;
@@ -114,7 +118,7 @@ export type GitHubMergeAllowed =
     };
 export type GitHubMergeAssessment = GitHubMergeAllowed | GitHubMergeRefusal;
 interface CiBase {
-  readonly source: CheckRead["source"];
+  readonly source: Extract<CheckRead, { readonly kind: "checks" }>["source"];
   readonly all: NonEmpty<Check>;
   readonly hadPreviousPassingCi: boolean;
 }
@@ -141,7 +145,20 @@ export type CiClean = CiBase & {
   readonly pending: readonly [];
   readonly github: GitHubMergeAllowed;
 };
-export type CiState = CiFailing | CiGithubRejected | CiPending | CiClean;
+/** A commit with no checks at all, which counts as clean CI for merge-ready. */
+export type CiNoChecks = {
+  readonly kind: "ci-no-checks";
+  readonly failed: readonly [];
+  readonly pending: readonly [];
+  readonly hadPreviousPassingCi: boolean;
+  readonly github: GitHubMergeAllowed;
+};
+export type CiState =
+  | CiFailing
+  | CiGithubRejected
+  | CiPending
+  | CiClean
+  | CiNoChecks;
 export type PrSnapshot =
   | {
       readonly kind: "merged" | "closed";
@@ -162,7 +179,7 @@ export interface ReadyPr {
   readonly proof: {
     readonly mergeability: "clear";
     readonly threads: readonly [];
-    readonly ci: CiClean;
+    readonly ci: CiClean | CiNoChecks;
     readonly gate: {
       readonly state: "OPEN";
       readonly reviewDecision: Exclude<ReviewDecision, "CHANGES_REQUESTED">;
@@ -375,10 +392,14 @@ export type ChecksFastPath =
       readonly exitCode: number;
       readonly stderr: string;
     };
-export interface RollupPage {
-  readonly checks: readonly Check[];
-  readonly endCursor: string | null;
-}
+/** `no-rollup`: the head commit has no statusCheckRollup, or the PR has no commits. */
+export type RollupPage =
+  | {
+      readonly kind: "contexts";
+      readonly checks: readonly Check[];
+      readonly endCursor: string | null;
+    }
+  | { readonly kind: "no-rollup" };
 export interface RawReviewThread {
   readonly id: string;
   readonly firstComment: ReviewComment | null;

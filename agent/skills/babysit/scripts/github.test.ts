@@ -31,9 +31,11 @@ describe("checks fallback chain", () => {
     const reader = fakeReader({
       fastPath: { kind: "checks", checks: [passingCheck("fast")] },
     });
-    const read = await resolveChecks(reader, context);
-    expect(read.source).toBe("gh-pr-checks");
-    expect(read.checks.map((check) => check.name)).toEqual(["fast"]);
+    expect(await resolveChecks(reader, context)).toMatchObject({
+      kind: "checks",
+      source: "gh-pr-checks",
+      checks: [{ name: "fast" }],
+    });
     expect(reader.calls).toEqual(["checksFastPath"]);
   });
 
@@ -41,13 +43,15 @@ describe("checks fallback chain", () => {
     const reader = fakeReader({
       fastPath: { kind: "unusable", exitCode: 8, stderr: "" },
       rollupPages: [
-        { checks: [passingCheck("first")], endCursor: "next" },
-        { checks: [failedCheck("second")], endCursor: null },
+        { kind: "contexts", checks: [passingCheck("first")], endCursor: "next" },
+        { kind: "contexts", checks: [failedCheck("second")], endCursor: null },
       ],
     });
-    const read = await resolveChecks(reader, context);
-    expect(read.source).toBe("graphql-rollup");
-    expect(read.checks.map((check) => check.name)).toEqual(["first", "second"]);
+    expect(await resolveChecks(reader, context)).toMatchObject({
+      kind: "checks",
+      source: "graphql-rollup",
+      checks: [{ name: "first" }, { name: "second" }],
+    });
     expect(reader.calls).toEqual([
       "checksFastPath",
       "checkRollupPage:null",
@@ -58,11 +62,13 @@ describe("checks fallback chain", () => {
   it("falls back when valid fast-path JSON represented an empty list", async () => {
     const reader = fakeReader({
       fastPath: { kind: "checks", checks: [] },
-      rollupPages: [{ checks: [pendingCheck("fallback")], endCursor: null }],
+      rollupPages: [
+        { kind: "contexts", checks: [pendingCheck("fallback")], endCursor: null },
+      ],
     });
-    expect((await resolveChecks(reader, context)).checks[0].name).toBe(
-      "fallback"
-    );
+    expect(await resolveChecks(reader, context)).toMatchObject({
+      checks: [{ name: "fallback" }],
+    });
     expect(reader.calls).toEqual(["checksFastPath", "checkRollupPage:null"]);
   });
 
@@ -78,6 +84,46 @@ describe("checks fallback chain", () => {
       ChecksUnavailable
     );
     expect(reader.calls).toEqual(["checksFastPath", "checkRollupPage:null"]);
+  });
+
+  it("reports no checks when gh finds none and the head commit has no rollup", async () => {
+    const reader = fakeReader({
+      fastPath: {
+        kind: "unusable",
+        exitCode: 1,
+        stderr: "no checks reported on the 'feature' branch\n",
+      },
+      rollupPages: [{ kind: "no-rollup" }],
+    });
+    expect(await resolveChecks(reader, context)).toEqual({ kind: "no-checks" });
+  });
+
+  it("fails closed when gh finds no checks but the head commit has an empty rollup", async () => {
+    const reader = fakeReader({
+      fastPath: {
+        kind: "unusable",
+        exitCode: 1,
+        stderr: "no checks reported on the 'feature' branch",
+      },
+      rollupPages: [{ kind: "contexts", checks: [], endCursor: null }],
+    });
+    await expect(resolveChecks(reader, context)).rejects.toBeInstanceOf(
+      ChecksUnavailable
+    );
+  });
+
+  it("fails closed when the head commit has no rollup but gh failed for another reason", async () => {
+    const reader = fakeReader({
+      fastPath: {
+        kind: "unusable",
+        exitCode: 8,
+        stderr: "credential cannot read checks",
+      },
+      rollupPages: [{ kind: "no-rollup" }],
+    });
+    await expect(resolveChecks(reader, context)).rejects.toBeInstanceOf(
+      ChecksUnavailable
+    );
   });
 });
 

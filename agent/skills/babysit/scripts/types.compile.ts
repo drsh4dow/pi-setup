@@ -1,6 +1,7 @@
 import { parsePrNumber } from "./types.ts";
 import type {
   CiClean,
+  CiNoChecks,
   GitHubMergeAllowed,
   PrContext,
   ReadyPr,
@@ -64,6 +65,21 @@ const ready = {
 
 void ready;
 
+// A commit with no checks is clear CI for merge-ready (no CI to wait for).
+const noChecksCi = {
+  kind: "ci-no-checks",
+  failed: [],
+  pending: [],
+  hadPreviousPassingCi: false,
+  github: cleanCi.github,
+} satisfies CiNoChecks;
+const noChecksReady = {
+  ...readyPr,
+  proof: { ...readyPr.proof, ci: noChecksCi },
+} satisfies ReadyPr;
+
+void noChecksReady;
+
 // PR 179929's shape. Each assertion below stays a single short statement so a
 // reformat cannot drift the directive away from the line that actually errors.
 const refused = {
@@ -79,6 +95,9 @@ const refusalIsNotAllowed: GitHubMergeAllowed = refused;
 // @ts-expect-error CI cannot be clean while GitHub refuses the merge.
 const refusalIsNotClean: CiClean = { ...cleanCi, github: refused };
 
+// @ts-expect-error A commit with no checks cannot be clear while GitHub refuses the merge.
+const refusalIsNotNoChecks: CiNoChecks = { ...noChecksCi, github: refused };
+
 // @ts-expect-error READY cannot carry the failing-checks exit code.
 const readyWithBlockerExit: ReadyVerdict = { ...ready, exitCode: 4 };
 
@@ -89,5 +108,6 @@ const readyWithoutProof: ReadyPr = unprovenPr;
 
 void refusalIsNotAllowed;
 void refusalIsNotClean;
+void refusalIsNotNoChecks;
 void readyWithBlockerExit;
 void readyWithoutProof;

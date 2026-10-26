@@ -33,6 +33,7 @@ import type {
   PrContext,
   PullRequestFacts,
   QueryFailure,
+  RollupPage,
 } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
 
@@ -49,6 +50,7 @@ const emptyFeedback: FeedbackSnapshot = {
 interface World {
   readonly facts: Map<number, Partial<Omit<PullRequestFacts, "context">>>;
   readonly checks: Map<number, ChecksFastPath>;
+  readonly rollups: Map<number, RollupPage>;
   readonly feedback: Map<number, FeedbackFrame>;
   readonly feedbackReads: number[];
   readonly open: OpenPullRequest[];
@@ -99,6 +101,7 @@ function world(): World {
   return {
     facts: new Map(),
     checks: new Map(),
+    rollups: new Map(),
     feedback: new Map(),
     feedbackReads: [],
     open: [],
@@ -117,6 +120,12 @@ function readerFor(scene: World): GitHubReader {
     },
     async checksFastPath(context: PrContext) {
       return scene.checks.get(context.number) ?? pending;
+    },
+    async checkRollupPage(context: PrContext, after: string | null) {
+      return (
+        scene.rollups.get(context.number) ??
+        base.checkRollupPage(context, after)
+      );
     },
     async reviewThreadPage() {
       throw new Error("the monitor reads threads through the feedback reader");
@@ -262,6 +271,24 @@ describe("merge-ready is attention, not an exit", () => {
     expect(rehead.code).toBe(8);
     expect(rehead.items.map((item) => item.kind)).toEqual(["merge-ready"]);
     expect(rehead.items[0]?.id).not.toBe(first.items[0]?.id);
+  });
+
+  it("wakes once for a PR with no checks, then waits", async () => {
+    const scene = world();
+    scene.checks.set(1, {
+      kind: "unusable",
+      exitCode: 1,
+      stderr: "no checks reported on the 'feature' branch",
+    });
+    scene.rollups.set(1, { kind: "no-rollup" });
+    const first = await watch(scene);
+    expect(first.code).toBe(8);
+    expect(first.items.map((item) => item.kind)).toEqual(["merge-ready"]);
+    const quiet = await watch(scene, acks(first.items));
+    expect(quiet.code).toBe(5);
+    expect(quiet.records).toContainEqual(
+      expect.objectContaining({ kind: "MONITORING", condition: "merge-ready" })
+    );
   });
 
   it("wakes on a later review while the PR sits merge-ready", async () => {

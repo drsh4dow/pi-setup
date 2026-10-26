@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -83,7 +84,8 @@ interface RawOptions {
   readonly statusOnly: boolean;
   readonly allowDraft: boolean;
   readonly pretty: boolean;
-  readonly untilMerged: boolean;
+  readonly untilMerged?: true;
+  readonly untilReady?: true;
   readonly state?: string;
   readonly ack: readonly AttentionId[];
 }
@@ -93,7 +95,19 @@ export function parseArgs(
 ): CliOptions {
   const program = new Command("watch-pr")
     .description(
-      "Watch one pull request, a connected stack, or an immutable queued stack.\nJSON (NDJSON while polling) is the default; --pretty renders human text."
+      [
+        "Watch one pull request, a connected stack, or an immutable queued stack.",
+        "",
+        "Modes:",
+        "  default        watch until every PR merges or closes: exit 8 with a",
+        "                 batch on new attention, 0 once merged or closed;",
+        "                 --until-merged names it",
+        "  --until-ready  stop at merge-ready (exit 0) or at the first blocker",
+        "                 (exit 2-7)",
+        "  --status-only  print one status pass and exit 0",
+        "",
+        "JSON (NDJSON while polling) is the default; --pretty renders human text.",
+      ].join("\n")
     )
     .configureOutput({ writeOut: io.stdout, writeErr: io.stderr })
     .exitOverride()
@@ -134,18 +148,18 @@ export function parseArgs(
       positiveInteger,
       5
     )
-    .option("--status-only", "print one status table and exit 0", false)
+    .option("--status-only", "print one status pass and exit 0", false)
     .option("--allow-draft", "do not treat a draft as a merge gate", false)
     .option("--pretty", "render human text instead of JSON", false)
+    .option("--until-ready", "stop at merge-ready or at the first blocker")
+    .option("--until-merged", "name the default mode")
     .option(
-      "--until-merged",
-      "keep watching past merge-ready; exit 8 on new attention, 0 once merged or closed",
-      false
+      "--state <directory>",
+      "durable monitor state; default ~/.local/state/pi-agent/<repo>/babysit/<pr>, or <root-pr>-stack for a stack"
     )
-    .option("--state <directory>", "durable monitor state (--until-merged only)")
     .option(
       "--ack <id>",
-      "acknowledge a delivered attention item (repeatable, --until-merged only)",
+      "acknowledge a delivered attention item (repeatable)",
       collectAck,
       []
     );
@@ -153,19 +167,23 @@ export function parseArgs(
   const raw = program.opts<RawOptions>();
   if (raw.stackPrs !== undefined && !raw.queuedStack)
     program.error("error: --stack-prs requires --queued-stack");
-  let lifetime: Lifetime = { kind: "existing" };
-  if (raw.untilMerged) {
-    if (raw.state === undefined)
-      return program.error("error: --until-merged requires --state <directory>");
-    if (raw.statusOnly)
-      program.error("error: --until-merged cannot be combined with --status-only");
-    lifetime = {
-      kind: "until-merged",
-      stateDirectory: resolve(raw.state),
-      acknowledge: raw.ack,
-    };
-  } else if (raw.state !== undefined || raw.ack.length > 0)
-    program.error("error: --state and --ack require --until-merged");
+  const modes = [
+    raw.untilMerged === true && "--until-merged",
+    raw.untilReady === true && "--until-ready",
+    raw.statusOnly && "--status-only",
+  ].filter((mode) => mode !== false);
+  if (modes.length > 1)
+    program.error(`error: ${modes.join(" and ")} are different modes; pass one`);
+  let lifetime: Lifetime = {
+    kind: "until-merged",
+    stateDirectory: raw.state === undefined ? null : resolve(raw.state),
+    acknowledge: raw.ack,
+  };
+  if (raw.untilReady === true || raw.statusOnly) {
+    if (raw.state !== undefined || raw.ack.length > 0)
+      program.error("error: --state and --ack belong to the default until-merged watch");
+    lifetime = { kind: "until-ready" };
+  }
   return {
     owner: raw.owner ?? null,
     repo: raw.repo ?? null,
@@ -189,6 +207,8 @@ export interface CliRuntime {
   readonly clock: WatchClock;
   readonly stdout: (value: string) => void;
   readonly stderr: (value: string) => void;
+  /** The user's home directory, under which the default monitor state lives. */
+  readonly home: string;
 }
 function realRuntime(): CliRuntime {
   return {
@@ -202,6 +222,7 @@ function realRuntime(): CliRuntime {
     },
     stdout: (value) => process.stdout.write(value),
     stderr: (value) => process.stderr.write(value),
+    home: homedir(),
   };
 }
 export async function main(

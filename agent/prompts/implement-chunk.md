@@ -1,5 +1,5 @@
 ---
-description: Orchestrate a task chunk end to end through subagents, to merge-ready PRs, babysat to merge and verified live on the deployed environment.
+description: Orchestrate a task chunk end to end through subagents, to final PRs babysat until they merge, then verified live on the deployed environment.
 argument-hint: "<ticket reference> [base branch] [target environment]"
 ---
 
@@ -25,7 +25,7 @@ Roles. The babysitter is an owner and the rest are delegates. The verifier and l
 - `verifier`: a verdict for one PR at one head SHA.
 - `merger`: the sole writer of topology.
 - `pr-writer`: drafts, opens, and edits final PRs.
-- `babysitter`: runs the **babysit** skill on a final PR or stack, to merge-ready.
+- `babysitter`: babysits a final PR or stack until it merges: the **babysit** skill's `drive` mode (`watch-pr --until-ready`) to merge-ready, then each later batch from your `until-merged` watcher, one fresh babysitter per batch.
 - `live-verifier`: drives the deployed environment after a merge.
 
 ## State folder
@@ -94,12 +94,12 @@ Start once every ticket of a final PR has merged into its integration branch. Ev
 2. Have a verifier record the integration head's verdict, with a witness per Verification for each lane. This verdict covers the fix round. It includes a **regression lane against the base branch**: the same load-bearing scenario at base and head. If base does not have the feature, the lane records that fact and gates the behavior the diff adds plus the end state the user waits for.
 3. While that verifier runs, have a PR writer draft the final PR's body to a file, then have a `cross-family reviewer` delegate run the expert read the writer hands back. Once the verdict lands, have a fresh PR writer apply the expert read, paste the verdict's witnesses, and open the final PR, ready, from the integration branch to the base branch, or to its parent's integration branch for a dependent final PR. Post what each `Part of` ticket still owes as a comment on that ticket.
 
-### 6. Babysit to merge-ready
+### 6. Babysit until merged
 
-1. Spawn one babysitter per final PR, or one per stack with `--stack`, in `drive` mode. Hand each conflict or stale-base report it sends you to a merger.
-2. After a babysit push that changes the tree, have a verifier record a fresh verdict at the merge-ready head: one verifier for a minor fix, the full step 5 verdict for new behavior.
-3. Report per Reply, with any bot review dismissal the babysitter names.
-4. Arm the **babysit** skill's `until-merged` watcher yourself. Give each batch to a fresh babysitter with consolidated scope, then ack each item handed off and rearm.
+1. The moment a final PR opens, in one turn, spawn one babysitter per final PR, or one per stack with `--stack`, in `drive` mode, and arm the **babysit** skill's `until-merged` watcher yourself: `watch-pr` with no mode flag, which watches until the PR merges or closes. Hand each conflict or stale-base report a babysitter sends you to a merger.
+2. While the `drive` babysitter runs, it owns each batch the watcher brings: ack the batch and rearm. After it reports, give each batch to a fresh babysitter with consolidated scope, then ack each item handed off and rearm.
+3. After a babysit push that changes the tree, have a verifier record a fresh verdict at the merge-ready head: one verifier for a minor fix, the full step 5 verdict for new behavior.
+4. Report per Reply, with any bot review dismissal the babysitter names.
 
 ### 7. Verify live after merge
 
@@ -151,4 +151,4 @@ End every message to the user with each open ask restated in full until it is an
 
 ## Reply
 
-At merge-ready and at close, paste the output of `chunk report`. A final PR is merge-ready only where the report says `yes` or `merged`, whatever the transcript says, and merging is the user's call. Then add what was abandoned and why, the questions awaiting the user (the only asks), and the state folder path.
+At merge-ready and at close, paste the output of `chunk report`. A final PR is merge-ready only where the report says `yes` or `merged`, whatever the transcript says, and merging is the user's call, while its `until-merged` watcher stays armed until it merges or closes. Then add what was abandoned and why, the questions awaiting the user (the only asks), and the state folder path.

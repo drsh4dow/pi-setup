@@ -597,6 +597,56 @@ describe("bot revisions in resolved threads", () => {
     expect(done.records.at(-1)).toMatchObject({ kind: "FINISHED" });
   });
 
+  it("delivers held bot revisions when the PR closes, then finishes", async () => {
+    const scene = world();
+    scene.feedback.set(1, feedback({ threads: [resolved(finding, answered)] }));
+    await watch(scene);
+    scene.feedback.set(1, feedback({ threads: [resolved(finding, answered, offer)] }));
+    expect((await watch(scene)).code).toBe(5);
+
+    scene.facts.set(1, { state: "CLOSED" });
+    const closed = await watch(scene);
+    expect(closed.code).toBe(8);
+    expect(closed.items.map((item) => item.detail.body)).toEqual([offer.body]);
+    const done = await watch(scene, acks(closed.items));
+    expect(done.code).toBe(0);
+    expect(done.records.at(-1)).toMatchObject({ kind: "FINISHED" });
+  });
+
+  it("keeps an unacknowledged held revision for the next batch without waking on it", async () => {
+    const scene = world();
+    scene.feedback.set(1, feedback({ threads: [resolved(finding, answered)] }));
+    await watch(scene);
+    const news = comment("c1", "alice", "please rename");
+    scene.feedback.set(
+      1,
+      feedback({ comments: [news], threads: [resolved(finding, answered, offer)] })
+    );
+    const batch = await watch(scene);
+    expect(batch.items.map((item) => item.detail.body)).toEqual([
+      "please rename",
+      offer.body,
+    ]);
+
+    const newsOnly = batch.items.filter((item) => item.detail.body === news.body);
+    const rearmed = await watch(scene, acks(newsOnly));
+    expect(rearmed.code).toBe(5);
+
+    scene.feedback.set(
+      1,
+      feedback({
+        comments: [news, comment("c2", "alice", "and one more")],
+        threads: [resolved(finding, answered, offer)],
+      })
+    );
+    const next = await watch(scene);
+    expect(next.code).toBe(8);
+    expect(next.items.map((item) => item.detail.body)).toEqual([
+      offer.body,
+      "and one more",
+    ]);
+  });
+
   it("wakes on a bot's edit or reply in an open thread", async () => {
     const scene = world();
     const open = (...comments: FeedbackComment[]) =>

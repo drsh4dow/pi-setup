@@ -66,7 +66,11 @@ export interface StoredItem {
   readonly pr: T.PrNumber;
   readonly kind: AttentionKind;
   readonly acknowledged: boolean;
-  /** A bot's revision in a resolved thread: it rides the next batch but never wakes the agent alone. */
+  /**
+   * A bot's revision in a resolved thread. It goes out with the next batch
+   * that another item wakes, or with the last batch when the watch finishes,
+   * and an unacknowledged held item never wakes the agent alone.
+   */
   readonly held: boolean;
   readonly observedAt: string;
   readonly excerpt: string;
@@ -235,7 +239,8 @@ function storedItem(value: unknown, path: string): StoredItem {
     pr: prNumber(raw.pr, `${path}.pr`),
     kind: oneOf(raw.kind, ATTENTION_KINDS, `${path}.kind`),
     acknowledged: flag(raw.acknowledged, `${path}.acknowledged`),
-    // A watcher from before held items wrote no field; its items all wake.
+    // Ledgers written before held items existed have no `held` field. Load
+    // their items as not held.
     held: raw.held === undefined ? false : flag(raw.held, `${path}.held`),
     observedAt: text(raw.observedAt, `${path}.observedAt`),
     excerpt: text(raw.excerpt, `${path}.excerpt`),

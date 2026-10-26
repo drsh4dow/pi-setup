@@ -700,7 +700,8 @@ async function monitor(args: {
     saveLedger(stateDirectory, ledger);
     const attention = ledger.items.filter((item) => !item.acknowledged);
     const status = scopeStatus(ledger, readThisPoll);
-    // Held items wake the agent only with other news, or before the watch ends.
+    // A held item never wakes the agent alone. It goes out with a batch that
+    // another item wakes, or with the last batch when the watch finishes.
     const wake =
       attention.some((item) => !item.held) ||
       (status.kind === "finished" && attention.length > 0);

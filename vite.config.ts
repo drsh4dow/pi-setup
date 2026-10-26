@@ -19,6 +19,22 @@ const ignoredFiles = [
   "oxlint/anti-slop/**",
 ];
 
+// Every task verify runs except the catchup-video renders, which verify adds itself.
+const verifyChecks = [
+  "verify:strict-diagnostics",
+  "verify:skills",
+  "verify:terminal-delivery-citations",
+  "verify:babysit-scripts",
+  "verify:implement-chunk-scripts",
+  "verify:subagent-scripts",
+  "verify:statechart-scripts",
+  "verify:catchup-scripts",
+  "test:extensions",
+  "test:dumpfile",
+  "test:evals",
+  "test:docs",
+];
+
 export default defineConfig({
   run: {
     // Verify stays quiet on success so agents can read its whole output. Tests use the
@@ -119,22 +135,11 @@ export default defineConfig({
       // The dependencies run concurrently; vp check runs once they pass.
       verify: {
         command: "vp check",
-        dependsOn: [
-          "verify:strict-diagnostics",
-          "verify:skills",
-          "verify:terminal-delivery-citations",
-          "verify:babysit-scripts",
-          "verify:implement-chunk-scripts",
-          "verify:subagent-scripts",
-          "verify:statechart-scripts",
-          "verify:catchup-scripts",
-          "verify:catchup-video-scripts",
-          "test:extensions",
-          "test:dumpfile",
-          "test:evals",
-          "test:docs",
-        ],
+        dependsOn: [...verifyChecks, "verify:catchup-video-scripts"],
       },
+      // CI runs this, and runs verify:catchup-video-scripts in its own workflow only when the
+      // skill changes, because the Manim renders take three minutes.
+      "verify:without-video": { command: "vp check", dependsOn: verifyChecks },
     },
   },
   // Pi rewrites agent/settings.json with its own JSON formatting whenever a setting changes.

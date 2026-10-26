@@ -12,15 +12,15 @@ A documented standard overrides any generic baseline a reviewer brings.
 
 ## Guardrails
 
-`vp run verify` runs every check below except the last two. Its task list lives in `vite.config.ts`.
+`vp run verify` runs every check below except the last two. Its task list lives in `vite.config.ts`. CI runs it in two workflows on pushes to `main` and on pull requests: `check.yml` runs `vp run verify:without-video`, and `catchup-video.yml` runs `vp run verify:catchup-video-scripts` only when the `catchup-video` skill, `vite.config.ts`, or the dependencies change.
 
-| Check                                                                    | Command                                                                                                             | Runs in                                                                    |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| format, lint, typecheck                                                  | `vp check`                                                                                                          | CI (`.github/workflows/check.yml`, every push and PR), via `vp run verify` |
-| tests, and Markdown links                                                | `vp run test:extensions`, `test:dumpfile`, `test:evals`, `test:docs`                                                | CI, via `vp run verify`                                                    |
-| skills, strict diagnostics, terminal-delivery citations, babysit scripts | `vp run verify:skills`, `verify:strict-diagnostics`, `verify:terminal-delivery-citations`, `verify:babysit-scripts` | CI, via `vp run verify`                                                    |
-| end-to-end tests against live models                                     | `vp run test:e2e`                                                                                                   | manual only                                                                |
-| Markdown lint                                                            | markdownlint-cli2, configured by `.markdownlint-cli2.jsonc`                                                         | editor only                                                                |
+| Check                                                                    | Command                                                                                                             | Runs in                                                               |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| format, lint, typecheck                                                  | `vp check`                                                                                                          | CI (`.github/workflows/check.yml`), via `vp run verify:without-video` |
+| tests, and Markdown links                                                | `vp run test:extensions`, `test:dumpfile`, `test:evals`, `test:docs`                                                | CI, via `vp run verify`                                               |
+| skills, strict diagnostics, terminal-delivery citations, babysit scripts | `vp run verify:skills`, `verify:strict-diagnostics`, `verify:terminal-delivery-citations`, `verify:babysit-scripts` | CI, via `vp run verify`                                               |
+| end-to-end tests against live models                                     | `vp run test:e2e`                                                                                                   | manual only                                                           |
+| Markdown lint                                                            | markdownlint-cli2, configured by `.markdownlint-cli2.jsonc`                                                         | editor only                                                           |
 
 ## Findings
 

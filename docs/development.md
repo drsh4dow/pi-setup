@@ -10,7 +10,8 @@ vp run verify
 
 `verify`, like CI, runs credential-free formatting, lint, type,
 diagnostic-enforcement, and behavioral checks. Its tasks live in
-`vite.config.ts`. Suites replay from cache when their inputs are unchanged, and
+`vite.config.ts`. CI splits it: `check.yml` runs `verify:without-video`, and
+`catchup-video.yml` runs the slow Manim renders only when that skill changes. Suites replay from cache when their inputs are unchanged, and
 `vp run --no-cache verify` reruns everything. `verify:babysit-scripts`
 type-checks and tests the `babysit` skill's `watch-pr` against its own
 `tsconfig.json` and locked dependencies. Live Pi integration tests

@@ -1,24 +1,29 @@
 name: check
 
+# Pushes to main and pull requests only: a push to a PR branch is already checked through the PR.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A newer commit on a PR cancels the older run; every commit on main keeps its own result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A stalled apt mirror once held a run for 42 minutes; a healthy run takes about 3.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: voidzero-dev/setup-vp@v1.21.2
         with:
           run-install: false
           cache: true
-      # ffmpeg for the videos; cairo, pango, and pkg-config build the Manim wheels uv installs
-      # for the catchup-video tests.
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config
-      - uses: astral-sh/setup-uv@v10.3.2
-        with:
-          enable-cache: true
-          cache-dependency-glob: agent/skills/catchup-video/python/uv.lock
+      # ffmpeg renders the test videos the harness-lessons eval grades.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: vp install --frozen-lockfile
-      - run: vp run verify
+      # catchup-video.yml runs the catchup-video renders when that skill changes.
+      - run: vp run verify:without-video

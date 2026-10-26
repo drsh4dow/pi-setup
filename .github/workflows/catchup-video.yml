@@ -1,0 +1,37 @@
+name: catchup-video
+
+# The Manim renders take about three minutes, so they run only when something they depend on changes.
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - agent/skills/catchup-video/**
+      - .github/workflows/catchup-video.yml
+      - vite.config.ts
+      - package.json
+      - bun.lock
+  pull_request:
+    paths: *paths
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  catchup-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: voidzero-dev/setup-vp@v1.21.2
+        with:
+          run-install: false
+          cache: true
+      # ffmpeg joins the beats; cairo, pango, and pkg-config build the Manim wheels uv installs.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: agent/skills/catchup-video/python/uv.lock
+      - run: vp install --frozen-lockfile
+      - run: vp run verify:catchup-video-scripts

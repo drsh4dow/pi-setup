@@ -126,7 +126,7 @@ Write the regression test **before the fix**, but only if there is a **correct s
 
 A correct seam is one where the test exercises the **real bug pattern** as it occurs at the call site. If the only available seam is too shallow (single-caller test when the bug needs multiple callers, unit test that can't replicate the chain that triggered the bug), a regression test there gives false confidence.
 
-**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Flag this in the report, and recommend the user run the [improve-codebase-architecture](../improve-codebase-architecture/SKILL.md) skill.
+**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Flag this in the report, and recommend the [improve-codebase-architecture](../improve-codebase-architecture/SKILL.md) skill there.
 
 If a correct seam exists:
 

@@ -191,8 +191,8 @@ fix(background-terminals): a notification reaches the model when its terminal en
 
 ## Evidence
 
-- The TUI reply is `a-61 end` on pstack and `a-61 b-62 end` here.
-- `test/steering.test.ts` fails on pstack and passes here.
+- The TUI reply is `a-61 end` on stack-base and `a-61 b-62 end` here.
+- `test/steering.test.ts` fails on stack-base and passes here.
 - `vp run verify` passes.
 
 ## Risk

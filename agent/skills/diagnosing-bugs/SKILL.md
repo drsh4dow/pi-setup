@@ -7,8 +7,6 @@ user-invokable: false
 
 # Diagnosing bugs
 
-Adapted from Matt Pocock's [`diagnosing-bugs`](https://github.com/mattpocock/skills) skill.
-
 A discipline for hard bugs. Skip phases only when explicitly justified.
 
 Keep the loop scripts, captured artifacts, and notes in a folder for this bug under the state folder, `~/.local/state/pi-agent/<project>/<bug>/`. Only the regression test lands in the repository.

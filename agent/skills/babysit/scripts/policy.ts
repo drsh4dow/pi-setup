@@ -1,4 +1,5 @@
 import {
+  ChecksUnavailable,
   WatcherQueryError,
   resolveChecks,
   resolveReviewThreads,
@@ -30,10 +31,14 @@ export function assessGitHubMerge(args: {
     headRollupState: args.headRollupState,
   };
 }
+export interface MergeAssessment {
+  readonly hadPreviousPassingCi: boolean;
+  readonly github: T.GitHubMergeAssessment;
+}
 export async function mergeAssessment(
   reader: T.GitHubReader,
   facts: T.PullRequestFacts
-) {
+): Promise<MergeAssessment> {
   const commits = await reader.commitRollups(facts.context);
   const headRollupState =
     facts.headRefOid === null
@@ -48,6 +53,79 @@ export async function mergeAssessment(
       mergeStateStatus: facts.mergeStateStatus,
       headRollupState,
     }),
+  };
+}
+const isFailedCheck = (check: T.Check): check is T.FailedCheck =>
+  check.kind === "failed";
+const isPendingCheck = (check: T.Check): check is T.PendingCheck =>
+  check.kind === "pending";
+/** CI that lets a PR be merge-ready: every check passed, or the commit has none. */
+export const isCiClear = (ci: T.CiState): ci is T.CiClean | T.CiNoChecks =>
+  ci.kind === "ci-clean" || ci.kind === "ci-no-checks";
+export function classifyCi(
+  checks: T.CheckRead,
+  merge: MergeAssessment
+): T.CiState {
+  if (checks.kind === "no-checks") {
+    // The two reads raced: a check started after the rollup read. Read again.
+    if (merge.github.kind === "refused")
+      throw new ChecksUnavailable(
+        `could not read PR checks: the head commit had no check rollup, then GitHub reported it as ${merge.github.headRollupState}`
+      );
+    return {
+      kind: "ci-no-checks",
+      failed: [],
+      pending: [],
+      hadPreviousPassingCi: merge.hadPreviousPassingCi,
+      github: merge.github,
+    };
+  }
+  const failed = nonEmpty(checks.checks.filter(isFailedCheck));
+  const pending = nonEmpty(checks.checks.filter(isPendingCheck));
+  const base = {
+    source: checks.source,
+    all: checks.checks,
+    hadPreviousPassingCi: merge.hadPreviousPassingCi,
+  };
+  if (failed !== null)
+    return {
+      ...base,
+      kind: "ci-failing",
+      failed,
+      pending: pending ?? [],
+      github: merge.github,
+    };
+  if (merge.github.kind === "refused")
+    return {
+      ...base,
+      kind: "ci-github-rejected",
+      failed: [],
+      pending: pending ?? [],
+      github: merge.github,
+    };
+  if (pending !== null)
+    return { ...base, kind: "ci-pending", failed: [], pending };
+  return {
+    ...base,
+    kind: "ci-clean",
+    failed: [],
+    pending: [],
+    github: merge.github,
+  };
+}
+/** Queued mode skips the commit history read while the checks are only pending. */
+function pendingWithoutHistory(checks: T.CheckRead): T.CiPending | null {
+  if (checks.kind === "no-checks" || checks.checks.some(isFailedCheck))
+    return null;
+  const pending = nonEmpty(checks.checks.filter(isPendingCheck));
+  if (pending === null) return null;
+  return {
+    kind: "ci-pending",
+    source: checks.source,
+    all: checks.checks,
+    failed: [],
+    pending,
+    hadPreviousPassingCi: false,
   };
 }
 const AUTOMATION_TOKENS = [
@@ -69,73 +147,24 @@ export async function readSnapshot(args: {
     return { kind: "closed", context: args.context, facts };
   const threads = await resolveReviewThreads(args.reader, args.context);
   const checks = await resolveChecks(args.reader, args.context);
-  const failed = nonEmpty(
-    checks.checks.filter(
-      (check): check is T.FailedCheck => check.kind === "failed"
-    )
-  );
-  const pending = nonEmpty(
-    checks.checks.filter(
-      (check): check is T.PendingCheck => check.kind === "pending"
-    )
-  );
-  let ci: T.CiState;
-  if (failed === null && pending !== null && args.pendingHistory === "omit")
-    ci = {
-      kind: "ci-pending",
-      source: checks.source,
-      all: checks.checks,
-      failed: [],
-      pending,
-      hadPreviousPassingCi: false,
-    };
-  else {
-    const merge = await mergeAssessment(args.reader, facts);
-    const base = {
-      source: checks.source,
-      all: checks.checks,
-      hadPreviousPassingCi: merge.hadPreviousPassingCi,
-    };
-    if (failed !== null)
-      ci = {
-        ...base,
-        kind: "ci-failing",
-        failed,
-        pending: pending ?? [],
-        github: merge.github,
-      };
-    else if (merge.github.kind === "refused")
-      ci = {
-        ...base,
-        kind: "ci-github-rejected",
-        failed: [],
-        pending: pending ?? [],
-        github: merge.github,
-      };
-    else if (pending !== null)
-      ci = { ...base, kind: "ci-pending", failed: [], pending };
-    else
-      ci = {
-        ...base,
-        kind: "ci-clean",
-        failed: [],
-        pending: [],
-        github: merge.github,
-      };
-  }
+  const ci =
+    (args.pendingHistory === "omit" ? pendingWithoutHistory(checks) : null) ??
+    classifyCi(checks, await mergeAssessment(args.reader, facts));
   return {
     kind: "open",
     context: args.context,
     facts,
     threads,
     ci,
-    reviewAutomationRunning: checks.checks.some(
-      (check) =>
-        check.kind === "pending" &&
-        AUTOMATION_TOKENS.some((token) =>
-          check.name.toLowerCase().includes(token)
-        )
-    ),
+    reviewAutomationRunning:
+      checks.kind === "checks" &&
+      checks.checks.some(
+        (check) =>
+          check.kind === "pending" &&
+          AUTOMATION_TOKENS.some((token) =>
+            check.name.toLowerCase().includes(token)
+          )
+      ),
   };
 }
 const conflictBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
@@ -192,7 +221,7 @@ export function readyContribution(
     };
   if (
     row.kind !== "open" ||
-    row.ci.kind !== "ci-clean" ||
+    !isCiClear(row.ci) ||
     row.threads.length !== 0 ||
     conflictBlocker(row) !== null ||
     gateReason(row, allowDraft) !== null

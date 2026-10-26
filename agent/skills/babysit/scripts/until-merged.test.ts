@@ -28,6 +28,7 @@ import {
 } from "./fakes.test-helper.ts";
 import type {
   ChecksFastPath,
+  CommitRollup,
   GitHubReader,
   OpenPullRequest,
   PrContext,
@@ -51,6 +52,7 @@ interface World {
   readonly facts: Map<number, Partial<Omit<PullRequestFacts, "context">>>;
   readonly checks: Map<number, ChecksFastPath>;
   readonly rollups: Map<number, RollupPage>;
+  readonly commitRollups: Map<number, readonly CommitRollup[]>;
   readonly feedback: Map<number, FeedbackFrame>;
   readonly feedbackReads: number[];
   readonly open: OpenPullRequest[];
@@ -102,6 +104,7 @@ function world(): World {
     facts: new Map(),
     checks: new Map(),
     rollups: new Map(),
+    commitRollups: new Map(),
     feedback: new Map(),
     feedbackReads: [],
     open: [],
@@ -125,6 +128,11 @@ function readerFor(scene: World): GitHubReader {
       return (
         scene.rollups.get(context.number) ??
         base.checkRollupPage(context, after)
+      );
+    },
+    async commitRollups(context: PrContext) {
+      return (
+        scene.commitRollups.get(context.number) ?? base.commitRollups(context)
       );
     },
     async reviewThreadPage() {
@@ -290,6 +298,7 @@ describe("merge-ready is attention, not an exit", () => {
       stderr: "no checks reported on the 'feature' branch",
     });
     scene.rollups.set(1, { kind: "no-rollup" });
+    scene.commitRollups.set(1, [{ oid: "head", state: null }]);
     const first = await watch(scene);
     expect(first.code).toBe(8);
     expect(first.items.map((item) => item.kind)).toEqual(["merge-ready"]);

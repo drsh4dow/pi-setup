@@ -69,8 +69,9 @@ export function classifyCi(
   merge: MergeAssessment
 ): T.CiState {
   if (checks.kind === "no-checks") {
-    // The two reads raced: a check started after the rollup read. Read again.
-    if (merge.github.kind === "refused")
+    // The later commit read found a check rollup on the head, so the two reads
+    // disagree. ChecksUnavailable is retryable: the caller reads both again.
+    if (merge.github.headRollupState !== null)
       throw new ChecksUnavailable(
         `could not read PR checks: the head commit had no check rollup, then GitHub reported it as ${merge.github.headRollupState}`
       );

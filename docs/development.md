@@ -10,9 +10,16 @@ vp run verify
 
 `verify`, like CI, runs credential-free formatting, lint, type,
 diagnostic-enforcement, and behavioral checks. Its tasks live in
-`vite.config.ts`. CI splits it: `check.yml` runs `verify:without-video`, and
-`catchup-video.yml` runs the slow Manim renders only when that skill changes. Suites replay from cache when their inputs are unchanged, and
-`vp run --no-cache verify` reruns everything. `verify:babysit-scripts`
+`vite.config.ts` under `verify:all`, which `scripts/verify.ts` runs. CI splits
+it: `check.yml` runs `verify:without-video`, which runs `verify:checks` (every
+task but the Manim renders) through the same script, and `catchup-video.yml`
+runs the renders only when that skill changes. Suites replay from cache when
+their inputs are unchanged, and `vp run verify --no-cache` reruns everything:
+options after `verify` reach the inner run. When a task fails, the task runner
+kills the tasks still running, and each exits 137. Verify then ends with
+`verify: <task> failed (exit <n>)` and that task's output, and lists the killed
+tasks as stopped. A 137 with no failure before it still counts as a failure.
+`verify:babysit-scripts`
 type-checks and tests the `babysit` skill's `watch-pr` against its own
 `tsconfig.json` and locked dependencies. Live Pi integration tests
 need provider credentials and run separately with `vp run test:e2e`. Run them

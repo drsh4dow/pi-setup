@@ -11,6 +11,8 @@ import { homedir } from "node:os";
 import { join, posix } from "node:path";
 import { Schema } from "effect";
 import { argument, type Session } from "../lib/session.ts";
+import { catchupChat } from "./catchup-chat.ts";
+import { chatRecord } from "./chat-record.ts";
 import { catchupStubPaths, GhCall, OpenCall } from "./catchup-stubs.ts";
 import { gitMaybe } from "./inspect.ts";
 import { judged } from "./judge.ts";
@@ -295,8 +297,22 @@ export interface CatchupTruth {
   readonly record?: string;
 }
 
+/**
+ * The seeded gift-registry chat as the run reads it, tool output included, and what the two
+ * screenshots in it show, since the judge reads text.
+ */
+const GIFT_REGISTRY_RECORD = [
+  ...chatRecord(catchupChat("/work/gift-registry"), {
+    roles: ["user", "assistant", "toolResult"],
+  }),
+  "",
+  'evidence/checkout-before.png: the split page for a $100.00 gift and 3 guests. Ana, Ben and Chloe each pay $33.33; "Collected $99.99" and "Registry shows: 1 cent short" are in red.',
+  'evidence/checkout-after.png: the same page. Ana pays $33.34, Ben and Chloe $33.33; "Collected $100.00" and "Ana pays $33.34 · fully paid" are in green.',
+].join("\n");
+
 export const GIFT_REGISTRY_TRUTH: CatchupTruth = {
   liveState: LIVE_STATE,
+  record: GIFT_REGISTRY_RECORD,
   calls: CALLS_WAITING,
   sharedCall:
     "For the shared merge call of #51 and #52, each PR needs its own line with its own change, evidence, and risk.",

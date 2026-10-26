@@ -25,7 +25,8 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join, relative } from "node:path";
-import { Option, Schema } from "effect";
+import { Schema } from "effect";
+import { chatRecord } from "./chat-record.ts";
 import type { CatchupTruth } from "./grade-catchup.ts";
 import { unknown, type Unknown } from "./metrics.ts";
 import { liveStateFolder } from "./state-folder.ts";
@@ -230,23 +231,6 @@ export function section(markdown: string, heading: string): string | undefined {
 
 export const CALLS_HEADING = "## Calls waiting on the user";
 
-const RecordLine = Schema.Struct({
-  message: Schema.optional(
-    Schema.Struct({
-      role: Schema.String,
-      content: Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]),
-    }),
-  ),
-});
-
-const decodeRecordLine = Schema.decodeUnknownOption(Schema.fromJsonString(RecordLine));
-
-const TextPart = Schema.Struct({ type: Schema.Literal("text"), text: Schema.String });
-
-const isText = Schema.is(TextPart);
-
-const isString = Schema.is(Schema.String);
-
 const PrState = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
@@ -273,21 +257,10 @@ export function recordedRecord(dir = recordingDir()): string {
   const recording = loadRecording(dir);
   const files = recordingFiles(dir);
 
-  const said = readFileSync(files.session, "utf8")
-    .split("\n")
-    .slice(recording.windowStart - 1)
-    .flatMap((line) => {
-      const message = Option.getOrUndefined(decodeRecordLine(line))?.message;
-
-      if (message === undefined || (message.role !== "user" && message.role !== "assistant"))
-        return [];
-
-      const parts = isString(message.content)
-        ? [message.content]
-        : message.content.filter(isText).map((part) => part.text);
-
-      return parts.filter((text) => text.trim() !== "").map((text) => `${message.role}: ${text}`);
-    });
+  const said = chatRecord(readFileSync(files.session, "utf8"), {
+    from: recording.windowStart - 1,
+    roles: ["user", "assistant"],
+  });
 
   const prs = decodePrStates(readFileSync(files.prs, "utf8")).map(
     (pr) =>
@@ -300,8 +273,6 @@ export function recordedRecord(dir = recordingDir()): string {
     "",
     "The PRs as the gh stub serves them:",
     ...prs,
-    "",
-    REPLAY_GAPS,
   ].join("\n");
 }
 
@@ -318,7 +289,7 @@ export function recordedTruth(): CatchupTruth | Unknown {
     calls: section(text, CALLS_HEADING) ?? text,
     sharedCall:
       "For a call that covers several PRs, each PR needs its own line with its own change, evidence, and risk.",
-    story: text,
+    story: `${text}\n\n${REPLAY_GAPS}`,
     record: recordedRecord(),
   };
 }

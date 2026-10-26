@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   ChecksUnavailable,
+  GhGitHubReader,
   WatcherQueryError,
   buildReviewThreads,
   countReviewPasses,
@@ -12,13 +13,16 @@ import {
   parseReviewThreadPage,
   resolveChecks,
   resolveContext,
+  resolveReviewPasses,
   resolveReviewThreads,
 } from "./github.ts";
 import {
+  botReview,
   fakeReader,
   failedCheck,
   passingCheck,
   pendingCheck,
+  selectedFields,
 } from "./fakes.test-helper.ts";
 import type { RawReview } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
@@ -346,15 +350,7 @@ describe("review passes per bot author", () => {
     commitOid: string,
     body: string,
     submittedAt: string
-  ): RawReview => ({
-    id,
-    authorLogin: "acme-review[bot]",
-    authorIsBot: true,
-    body,
-    state: "COMMENTED",
-    commitOid,
-    submittedAt,
-  });
+  ): RawReview => botReview({ id, commitOid, body, submittedAt });
   const headA = [
     acme("a-summary", "A", "Summary: 2 findings", "2026-01-01T00:00:00Z"),
     acme("a-inline", "A", "", "2026-01-01T00:00:05Z"),
@@ -373,6 +369,38 @@ describe("review passes per bot author", () => {
           reviewId: "b-summary",
           commitOid: "B",
           submittedAt: "2026-01-01T01:00:00Z",
+        },
+      },
+    ]);
+  });
+
+  it("counts two bots on the same head commits independently", () => {
+    const lint = (id: string, commitOid: string, submittedAt: string) =>
+      botReview({ id, author: "lint-bot", commitOid, body: "1 issue", submittedAt });
+    const reviews = [
+      ...headA,
+      lint("l-a", "A", "2026-01-01T00:01:00Z"),
+      ...headB,
+      lint("l-b", "B", "2026-01-01T01:01:00Z"),
+      lint("l-c", "C", "2026-01-01T02:00:00Z"),
+    ];
+    expect(countReviewPasses(reviews, [])).toEqual([
+      {
+        author: "acme-review[bot]",
+        passes: 2,
+        latestPass: {
+          reviewId: "b-summary",
+          commitOid: "B",
+          submittedAt: "2026-01-01T01:00:00Z",
+        },
+      },
+      {
+        author: "lint-bot",
+        passes: 3,
+        latestPass: {
+          reviewId: "l-c",
+          commitOid: "C",
+          submittedAt: "2026-01-01T02:00:00Z",
         },
       },
     ]);
@@ -440,6 +468,58 @@ describe("review passes per bot author", () => {
         },
       },
     ]);
+  });
+
+  it("reads every page of reviews and asks GraphQL for the author type", async () => {
+    const node = (id: string, commitOid: string, login: string, typename: string) => ({
+      id,
+      body: "Summary: 1 finding",
+      state: "COMMENTED",
+      submittedAt: `2026-01-01T0${id.at(-1)}:00:00Z`,
+      url: `https://github.com/owner/repo/pull/42#${id}`,
+      commit: { oid: commitOid },
+      author: { __typename: typename, login },
+    });
+    const response = (nodes: readonly unknown[], next: string | null) => ({
+      data: {
+        repository: {
+          pullRequest: {
+            reviews: {
+              pageInfo: { hasNextPage: next !== null, endCursor: next },
+              nodes,
+            },
+          },
+        },
+      },
+    });
+    const pages: Record<string, unknown> = {
+      "": response([node("r1", "A", "coderabbitai", "Bot")], "page-2"),
+      "page-2": response(
+        [node("r2", "B", "coderabbitai", "Bot"), node("r3", "B", "alice", "User")],
+        null
+      ),
+    };
+    const requests: string[] = [];
+    const reader = new GhGitHubReader(async (argv) => {
+      const value = (name: string) =>
+        argv.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
+      const after = value("after") ?? "";
+      requests.push(after);
+      if (!(after in pages)) throw new Error(`unexpected page ${after}`);
+      return selectedFields(value("query") ?? "", pages[after]);
+    });
+    expect(await resolveReviewPasses(reader, context, [])).toEqual([
+      {
+        author: "coderabbitai",
+        passes: 2,
+        latestPass: {
+          reviewId: "r2",
+          commitOid: "B",
+          submittedAt: "2026-01-01T02:00:00Z",
+        },
+      },
+    ]);
+    expect(requests).toEqual(["", "page-2"]);
   });
 
   it("reads a bot author from the GraphQL type or a [bot] login", () => {

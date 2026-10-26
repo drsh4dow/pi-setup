@@ -559,6 +559,11 @@ function graphqlArgs(
 }
 
 export class GhGitHubReader implements T.GitHubReader {
+  readonly #runJson: typeof runJson;
+  /** Takes the runner for gh commands that print JSON, so a test can stand in for gh. */
+  constructor(json: typeof runJson = runJson) {
+    this.#runJson = json;
+  }
   async originRepo(): Promise<T.Repository | null> {
     const result = await run(["git", "remote", "get-url", "origin"]);
     return result.code === 0 ? parseRemote(result.stdout) : null;
@@ -567,7 +572,7 @@ export class GhGitHubReader implements T.GitHubReader {
     const argv: [string, ...string[]] = ["gh", "pr", "view"];
     if (pr !== null) argv.push(String(pr));
     argv.push("--json", "number,url");
-    const object = record(await runJson(argv), "current PR");
+    const object = record(await this.#runJson(argv), "current PR");
     const parsed = parsePrUrl(string(object.url, "current PR.url"));
     return {
       ...parsed,
@@ -576,7 +581,7 @@ export class GhGitHubReader implements T.GitHubReader {
   }
   async pullRequest(context: T.PrContext): Promise<T.PullRequestFacts> {
     return parsePullRequest(
-      await runJson([
+      await this.#runJson([
         "gh",
         "pr",
         "view",
@@ -592,7 +597,7 @@ export class GhGitHubReader implements T.GitHubReader {
   async openPullRequests(
     repository: T.Repository
   ): Promise<readonly T.OpenPullRequest[]> {
-    const value = await runJson([
+    const value = await this.#runJson([
       "gh",
       "pr",
       "list",
@@ -648,7 +653,7 @@ export class GhGitHubReader implements T.GitHubReader {
   ): Promise<T.RollupPage> {
     const argv = graphqlArgs(PR_CHECK_ROLLUP_QUERY, context);
     if (after !== null) argv.push("-f", `after=${after}`);
-    const value = await runJson(argv);
+    const value = await this.#runJson(argv);
     const commits = list(
       at(value, ["data", "repository", "pullRequest", "commits", "nodes"]),
       "commits.nodes"
@@ -685,7 +690,7 @@ export class GhGitHubReader implements T.GitHubReader {
   ): Promise<T.ReviewThreadPage> {
     const argv = graphqlArgs(REVIEW_THREADS_QUERY, context);
     if (after !== null) argv.push("-f", `after=${after}`);
-    return parseReviewThreadPage(await runJson(argv));
+    return parseReviewThreadPage(await this.#runJson(argv));
   }
   async reviewPage(
     context: T.PrContext,
@@ -693,12 +698,12 @@ export class GhGitHubReader implements T.GitHubReader {
   ): Promise<T.ReviewPage> {
     const argv = graphqlArgs(REVIEWS_QUERY, context);
     if (after !== null) argv.push("-f", `after=${after}`);
-    return parseReviewPage(await runJson(argv));
+    return parseReviewPage(await this.#runJson(argv));
   }
   async commitRollups(
     context: T.PrContext
   ): Promise<readonly T.CommitRollup[]> {
-    const value = await runJson(graphqlArgs(PR_COMMIT_STATUS_QUERY, context));
+    const value = await this.#runJson(graphqlArgs(PR_COMMIT_STATUS_QUERY, context));
     const commits = list(
       at(value, ["data", "repository", "pullRequest", "commits", "nodes"]),
       "commits.nodes"

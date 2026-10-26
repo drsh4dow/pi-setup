@@ -61,29 +61,86 @@ test("calculateTotal sums line items", () => {
 
 If `calculateTotal` has a bug, an expected value computed the same way has it too, so the second test passes by construction.
 
-## Fakes only at system boundaries
+## Real boundaries where they run, checked fakes where they don't
 
-The payment gateway sits outside the code, so the test passes in a fake one. What the gateway receives is behavior, because the gateway observes it.
+A temp directory is fast and local, so the suite writes real files.
 
 ```typescript
-// GOOD: the gateway is a parameter, and the test asserts the charge it receives
-test("checkout charges the cart total in cents", async () => {
-  const charges: Charge[] = [];
-  const gateway: PaymentGateway = {
-    charge: async (charge) => {
-      charges.push(charge);
-      return { id: "ch_1" };
-    },
-  };
-  await checkout(createCart([{ price: 12.5 }]), { gateway });
-  expect(charges).toEqual([{ amountCents: 1250, currency: "usd" }]);
+// GOOD: writes through the real file system
+test("exportReport writes the report where the user asked", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "report-"));
+  await exportReport(report, join(dir, "reports", "q3.csv"));
+  expect(await readFile(join(dir, "reports", "q3.csv"), "utf8")).toBe("region,total\neu,15\n");
 });
 
-// BAD: patches the import, so the test is tied to where checkout builds its client
+// BAD: fakes a boundary the suite could have run
+vi.mock("node:fs/promises");
+```
+
+The real write fails when `exportReport` forgets to create the `reports` directory or writes to the wrong path. The mocked one passes either way.
+
+A payment gateway can't run in the suite, so the suite fakes it, and one contract suite keeps the fake honest. The contract runs against the fake in the suite and against the vendor's sandbox from the verification skill.
+
+```typescript
+// gateway-contract.ts: one contract for every implementation
+export function gatewayContract(name: string, makeGateway: () => PaymentGateway) {
+  describe(`${name} gateway`, () => {
+    test("a charge returns a charge id", async () => {
+      const { id } = await makeGateway().charge({ amountCents: 1250, currency: "usd" });
+      expect(id).toMatch(/^ch_/);
+    });
+    test("a zero amount is rejected as InvalidAmount", async () => {
+      const charging = makeGateway().charge({ amountCents: 0, currency: "usd" });
+      await expect(charging).rejects.toThrow(InvalidAmount);
+    });
+  });
+}
+
+// fake-gateway.test.ts: runs in the suite and in CI
+gatewayContract("fake", () => createFakeGateway());
+
+// stripe-gateway.contract.ts: outside the suite's include glob, so CI skips it.
+// The verification skill lists its command and runs it against the sandbox.
+gatewayContract("stripe sandbox", () =>
+  createStripeGateway({ apiKey: process.env.STRIPE_TEST_KEY! }),
+);
+```
+
+The fake does what the contract says the service does:
+
+```typescript
+export function createFakeGateway() {
+  const charges: Charge[] = [];
+  return {
+    charges,
+    async charge(charge: Charge) {
+      if (charge.amountCents <= 0) throw new InvalidAmount(charge.amountCents);
+      charges.push(charge);
+      return { id: `ch_${charges.length}` };
+    },
+    async refund() {},
+  };
+}
+```
+
+The logic above the boundary runs against that fake. What the gateway receives is behavior, because the gateway observes it.
+
+```typescript
+// GOOD: the fake is a parameter, and the test asserts the charge it receives
+test("checkout charges the cart total in cents", async () => {
+  const gateway = createFakeGateway();
+  await checkout(createCart([{ price: 12.5 }]), { gateway });
+  expect(gateway.charges).toEqual([{ amountCents: 1250, currency: "usd" }]);
+});
+
+// BAD: patches the import, so the test is tied to where checkout builds its
+// client, and nothing checks that the patched client behaves like Stripe
 vi.mock("./stripe-client", () => ({
   StripeClient: vi.fn(() => ({ charge: vi.fn() })),
 }));
 ```
+
+When Stripe changes how it rejects an amount, the sandbox run fails and the adapter and the fake change together. A fake with no contract suite is a guess about the service.
 
 To make that fake possible, pass the client in instead of constructing it inside the code, and give each external operation its own function:
 

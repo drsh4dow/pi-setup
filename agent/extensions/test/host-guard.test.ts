@@ -329,6 +329,66 @@ test("a shell's -c operand is read after long options that take an argument", as
   await assertEach(rootBash(["bash --rcfile x script.sh pkill"]), assertRuns);
 });
 
+test("a kill run through command or builtin is refused", async () => {
+  await assertEach(
+    everySession([
+      "command pkill -f vitest",
+      "command -p pkill -f vitest",
+      'builtin kill "$(pgrep -f vitest)"',
+    ]),
+    assertKillRefused,
+  );
+});
+
+test("a kill or delete run through sudo or doas is refused, past their options", async () => {
+  await assertEach(
+    everySession([
+      "sudo pkill -f vitest",
+      "sudo -u x pkill -f vitest",
+      "sudo -- pkill -f vitest",
+      "sudo -E -g staff killall java",
+      "sudo -nu x pkill node",
+      "sudo --user x pkill node",
+      "sudo --user=x pkill node",
+      'sudo -u x kill "$(pgrep -f vitest)"',
+      "doas pkill -f vitest",
+      "doas -u x pkill -f vitest",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(
+    everySession(["sudo -u x rm -rf /tmp/aa-*", "doas -u x rm -rf /tmp/tmp.*/w"]),
+    assertTmpGlobRefused,
+  );
+});
+
+test("a kill or delete in env's split string, or past env's options, is refused", async () => {
+  await assertEach(
+    everySession([
+      'env -S "pkill -f vitest"',
+      "env -S'pkill -f vitest'",
+      'env -iS "pkill node"',
+      'env --split-string="pkill -f vitest"',
+      'env --split-string "killall java"',
+      'env -S "pkill -f" vitest',
+      'env -S "-u FOO" pkill node',
+      'sudo env -S "pkill -f vitest"',
+      "env -u FOO pkill node",
+      "env -C /repo killall java",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(['env -S "rm -rf /tmp/aa-*"']), assertTmpGlobRefused);
+  await assertEach(everySession(['env -S "kill 12345"', "env -u FOO grep -n pkill f"]), assertRuns);
+});
+
+test("a lookup of a kill command runs", async () => {
+  await assertEach(
+    everySession(["command -v pkill", "command -V killall", "command -pv pkill", "type pkill"]),
+    assertRuns,
+  );
+});
+
 test("an array assignment with an operator inside is judged without hanging", async () => {
   await assertEach(rootBash(["arr=(a>b) && pkill node"]), assertKillRefused);
   await assertEach(rootBash(["arr=(a;b|c&d<e"]), assertRuns);

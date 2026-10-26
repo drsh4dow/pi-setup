@@ -3,20 +3,26 @@
 // and `{ … }` groups, and after reserved words such as `if`, `then`, and `do`. It
 // also finds them inside `$( … )`, backtick, and `<( … )` substitutions, whether
 // bare, in double quotes, or in an unquoted heredoc body, and in the operand of
-// `bash -c`, `sh -c`, `zsh -c`, and `eval`. Single-quoted text, and double-quoted
+// `bash -c`, `sh -c`, `zsh -c`, `eval`, and `env -S`. It reads the command word
+// past wrappers such as `sudo -u root`, `command`, and `timeout 5`, and leaves
+// `command -v` as the lookup it is. Single-quoted text, and double-quoted
 // text outside a substitution, stays one literal word, so a separator or a command
 // name inside it is never read as a command. Comments, redirections, and quoted
 // heredoc bodies are dropped.
+
+import { commandStart, isShell } from "./command-word.ts";
+
+export { basename, commandArgv, isShell } from "./command-word.ts";
 
 /** One simple command, or a group, with the scripts that run as part of it. */
 export interface Command {
   /**
    * The words, with quotes and escapes removed and redirections dropped. A
    * substitution stays in its word as its source text. Empty for a group, and
-   * for a `bash -c` or `eval` whose operand was read into `nested`.
+   * for a `bash -c`, `eval`, or `env -S` whose operand was read into `nested`.
    */
   readonly argv: readonly string[];
-  /** Its substitutions, a group's body, or the operand of `bash -c` or `eval`. */
+  /** Its substitutions, a group's body, or the operand of `bash -c`, `eval`, or `env -S`. */
   readonly nested: readonly Script[];
 }
 
@@ -26,25 +32,7 @@ export type Pipeline = readonly Command[];
 /** Pipelines joined by `;`, `&`, `&&`, `||`, or newlines. */
 export type Script = readonly Pipeline[];
 
-const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
 const ARRAY_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=$/;
-
-const SHELLS: ReadonlySet<string> = new Set(["bash", "sh", "zsh"]);
-
-const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
-  ...SHELLS,
-  "env",
-  "exec",
-  "nice",
-  "node",
-  "nohup",
-  "setsid",
-  "time",
-  "timeout",
-]);
-
-const TIMEOUT_DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
 
 const SHELL_SHORT_OPTIONS = /^[-+][A-Za-z]+$/;
 
@@ -400,24 +388,6 @@ function heredocBodies(s: Scanner): Script[] {
   return nested;
 }
 
-function isWrapperWord(word: string): boolean {
-  return (
-    ENV_ASSIGNMENT.test(word) ||
-    COMMAND_WRAPPERS.has(word) ||
-    word.startsWith("-") ||
-    TIMEOUT_DURATION.test(word)
-  );
-}
-
-export function basename(word: string): string {
-  return word.slice(word.lastIndexOf("/") + 1);
-}
-
-/** Whether the word names bash, sh, or zsh, by name or by path. */
-export function isShell(word: string): boolean {
-  return SHELLS.has(basename(word));
-}
-
 function shellCommandOperand(args: readonly string[]): string | undefined {
   let readsCommand = false;
   let skipsArgument = false;
@@ -450,15 +420,18 @@ function shellCommandOperand(args: readonly string[]): string | undefined {
   return undefined;
 }
 
-// The command string that `bash -c '…'`, `sh -c "…"`, `zsh -c …`, or `eval …` runs.
+// The command string that `bash -c '…'`, `sh -c "…"`, `zsh -c …`, `eval …`, or `env -S '…'` runs.
 function commandString(argv: readonly string[]): string | undefined {
-  for (const [index, word] of argv.entries()) {
-    if (isShell(word)) return shellCommandOperand(argv.slice(index + 1));
+  const start = commandStart(argv, isShell);
 
-    if (word === "eval") return argv.slice(index + 1).join(" ");
+  if (start.kind === "commandLine") return start.text;
 
-    if (!isWrapperWord(word)) return undefined;
-  }
+  const { index } = start;
+  const word = argv[index] ?? "";
+
+  if (isShell(word)) return shellCommandOperand(argv.slice(index + 1));
+
+  if (word === "eval") return argv.slice(index + 1).join(" ");
 
   return undefined;
 }
@@ -572,14 +545,4 @@ export function pipelines(command: string): readonly Pipeline[] {
 /** The command and every command nested inside it, at any depth. */
 export function withNested(command: Command): readonly Command[] {
   return [command, ...command.nested.flatMap(everyPipeline).flat()];
-}
-
-/**
- * The words from the command word on, without the env assignments, wrappers such
- * as `timeout 5` or `bash`, and flags before it. Empty when no word is left.
- */
-export function commandArgv(argv: readonly string[]): readonly string[] {
-  const index = argv.findIndex((word) => !isWrapperWord(word));
-
-  return index === -1 ? [] : argv.slice(index);
 }

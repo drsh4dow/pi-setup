@@ -126,6 +126,8 @@ test("commands that are not pi print launches pass", () => {
     "rg -n skills/subagents/scripts/launch.ts agent",
     "cat ~/.pi/agent/skills/subagents/scripts/launch.ts",
     "node --test agent/skills/subagents/scripts/test/launch.test.ts",
+    "command -v pi-subagent",
+    "type pi-subagent",
   ]) {
     assert.equal(delegateGuard(command), undefined, command);
     assert.equal(ownerGuard(command), undefined, command);
@@ -211,6 +213,14 @@ for (const command of [
   "time pi-subagent --model m",
   "bash -c 'pi-subagent --model m'",
   "timeout -k 5 10m /home/u/.pi/.build/bin/pi-subagent --model m",
+  "command pi --print hi",
+  "command pi-subagent --model m",
+  "builtin exec pi-subagent --model m",
+  "sudo pi --print hi",
+  "sudo -u x pi-subagent --model m",
+  "doas -u x pi-subagent --model m",
+  'env -S "pi-subagent --model m"',
+  "env -u FOO pi-subagent --model m",
 ]) {
   test(`a delegate is blocked from a wrapped pi-subagent launch: ${command}`, () => {
     assert.match(guardFor(delegateArgv)(command) ?? "", DELEGATE_BLOCK);

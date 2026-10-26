@@ -419,7 +419,7 @@ export interface ReviewPage {
   readonly reviews: readonly RawReview[];
   readonly endCursor: string | null;
 }
-/** A review pass: one bot author's non-empty review on one head commit. */
+/** One bot author's review passes (non-empty reviews on distinct head commits): the count and the latest pass. */
 export interface BotReviewPasses {
   readonly author: string;
   readonly passes: number;

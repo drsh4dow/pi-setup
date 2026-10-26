@@ -317,13 +317,42 @@ export function isBotAuthor(
 export function parseAuthor(
   value: unknown,
   path: string
-): { readonly login: string; readonly isBot: boolean } | null {
-  if (value === null) return null;
+): { readonly authorLogin: string | null; readonly authorIsBot: boolean } {
+  if (value === null) return { authorLogin: null, authorIsBot: false };
   const author = record(value, path);
   const login = string(author.login, `${path}.login`);
   const typename =
     typeof author.__typename === "string" ? author.__typename : null;
-  return { login, isBot: isBotAuthor(typename, login) };
+  return { authorLogin: login, authorIsBot: isBotAuthor(typename, login) };
+}
+/** The cursor of the next page, or null on the last page. */
+export function connectionCursor(
+  connection: Record<string, unknown>,
+  path: string
+): string | null {
+  const page = record(connection.pageInfo, `${path}.pageInfo`);
+  if (typeof page.hasNextPage !== "boolean")
+    missing(`${path}.pageInfo.hasNextPage`, page.hasNextPage);
+  if (!page.hasNextPage) return null;
+  return string(page.endCursor, `${path}.pageInfo.endCursor`);
+}
+/** Every page of a connection, from `first` or a fetch with no cursor; a repeated cursor fails the read. */
+export async function drain<P extends { readonly endCursor: string | null }>(
+  label: string,
+  fetch: (after: string | null) => Promise<P>,
+  first?: P
+): Promise<T.NonEmpty<P>> {
+  const pages: [P, ...P[]] = [first ?? (await fetch(null))];
+  const cursors = new Set<string>();
+  let after = pages[0].endCursor;
+  while (after !== null) {
+    if (cursors.has(after)) missing(`${label}.pageInfo.endCursor`, after);
+    cursors.add(after);
+    const page = await fetch(after);
+    pages.push(page);
+    after = page.endCursor;
+  }
+  return pages;
 }
 function parseComment(value: unknown): T.ReviewComment {
   const object = record(value, "review comment");
@@ -395,14 +424,7 @@ export function parseReviewThreadPage(value: unknown): T.ReviewThreadPage {
       resolved: thread.isResolved,
     });
   }
-  const page = record(reviewThreads.pageInfo, "reviewThreads.pageInfo");
-  if (typeof page.hasNextPage !== "boolean")
-    missing("reviewThreads.pageInfo.hasNextPage", page.hasNextPage);
-  const cursor = optionalString(
-    page.endCursor,
-    "reviewThreads.pageInfo.endCursor"
-  );
-  return { threads, endCursor: page.hasNextPage && cursor ? cursor : null };
+  return { threads, endCursor: connectionCursor(reviewThreads, "reviewThreads") };
 }
 /** Bugbot posts each pass as threads that share a RUN_ID. */
 function bugbotThreadPasses(threads: readonly T.RawReviewThread[]): number {
@@ -414,7 +436,8 @@ function bugbotThreadPasses(threads: readonly T.RawReviewThread[]): number {
     if (key === null) keyless = true;
     else keys.add(key);
   }
-  return keys.size > 0 ? keys.size : keyless ? 1 : 0;
+  if (keys.size > 0) return keys.size;
+  return keyless ? 1 : 0;
 }
 export function buildReviewThreads(
   threads: readonly T.RawReviewThread[]
@@ -429,7 +452,7 @@ export function buildReviewThreads(
       bugbotReviewPasses: passes,
     }));
 }
-const REVIEW_STATES = [
+export const REVIEW_STATES = [
   "APPROVED",
   "CHANGES_REQUESTED",
   "COMMENTED",
@@ -446,24 +469,18 @@ export function parseReviewPage(value: unknown): T.ReviewPage {
     const review = record(node, "review");
     const state = enumValue(review.state, REVIEW_STATES, "review.state");
     if (state === "PENDING") continue;
-    const author = parseAuthor(review.author, "review.author");
     const commit =
       review.commit === null ? null : record(review.commit, "review.commit");
     reviews.push({
       id: string(review.id, "review.id"),
-      authorLogin: author?.login ?? null,
-      authorIsBot: author?.isBot ?? false,
+      ...parseAuthor(review.author, "review.author"),
       body: string(review.body, "review.body"),
       state,
       commitOid: commit === null ? null : string(commit.oid, "review.commit.oid"),
       submittedAt: string(review.submittedAt, "review.submittedAt"),
     });
   }
-  const page = record(connection.pageInfo, "reviews.pageInfo");
-  if (typeof page.hasNextPage !== "boolean")
-    missing("reviews.pageInfo.hasNextPage", page.hasNextPage);
-  const cursor = optionalString(page.endCursor, "reviews.pageInfo.endCursor");
-  return { reviews, endCursor: page.hasNextPage && cursor ? cursor : null };
+  return { reviews, endCursor: connectionCursor(connection, "reviews") };
 }
 /**
  * One review pass is one bot author's non-empty review on one head commit, so
@@ -475,14 +492,16 @@ export function countReviewPasses(
   reviews: readonly T.RawReview[],
   threads: readonly T.RawReviewThread[]
 ): readonly T.BotReviewPasses[] {
-  const commits = new Map<string, Set<string>>();
+  const passCommitsByAuthor = new Map<string, Set<string>>();
   const latest = new Map<string, T.BotReviewPasses["latestPass"]>();
   for (const review of reviews) {
     const author = review.authorLogin;
     if (!review.authorIsBot || author === null || review.commitOid === null)
       continue;
     if (review.body.trim() === "") continue;
-    commits.set(author, (commits.get(author) ?? new Set()).add(review.commitOid));
+    const passCommits = passCommitsByAuthor.get(author) ?? new Set<string>();
+    passCommits.add(review.commitOid);
+    passCommitsByAuthor.set(author, passCommits);
     const previous = latest.get(author) ?? null;
     if (previous === null || review.submittedAt > previous.submittedAt)
       latest.set(author, {
@@ -495,13 +514,17 @@ export function countReviewPasses(
   for (const thread of threads) {
     const author = thread.firstComment?.authorLogin ?? null;
     if (author === null || !isBugbot(thread.firstComment)) continue;
-    bugbotThreads.set(author, [...(bugbotThreads.get(author) ?? []), thread]);
+    const authored = bugbotThreads.get(author);
+    if (authored === undefined) bugbotThreads.set(author, [thread]);
+    else authored.push(thread);
   }
-  const authors = [...new Set([...commits.keys(), ...bugbotThreads.keys()])];
+  const authors = [
+    ...new Set([...passCommitsByAuthor.keys(), ...bugbotThreads.keys()]),
+  ];
   return authors.sort().map((author) => ({
     author,
     passes: Math.max(
-      commits.get(author)?.size ?? 0,
+      passCommitsByAuthor.get(author)?.size ?? 0,
       bugbotThreadPasses(bugbotThreads.get(author) ?? [])
     ),
     latestPass: latest.get(author) ?? null,
@@ -671,17 +694,10 @@ export class GhGitHubReader implements T.GitHubReader {
     const checks = list(contexts.nodes, "contexts.nodes")
       .map(mapRollupNode)
       .filter((check): check is T.Check => check !== null);
-    const page = record(contexts.pageInfo, "contexts.pageInfo");
-    if (typeof page.hasNextPage !== "boolean")
-      missing("contexts.pageInfo.hasNextPage", page.hasNextPage);
-    const cursor = optionalString(
-      page.endCursor,
-      "contexts.pageInfo.endCursor"
-    );
     return {
       kind: "contexts",
       checks,
-      endCursor: page.hasNextPage && cursor ? cursor : null,
+      endCursor: connectionCursor(contexts, "contexts"),
     };
   }
   async reviewThreadPage(
@@ -732,15 +748,20 @@ async function readRollup(
   reader: T.GitHubReader,
   context: T.PrContext
 ): Promise<readonly T.Check[] | null> {
-  const checks: T.Check[] = [];
-  let after: string | null = null;
-  do {
-    const page = await reader.checkRollupPage(context, after);
-    if (page.kind === "no-rollup") return after === null ? null : checks;
-    checks.push(...page.checks);
-    after = page.endCursor;
-  } while (after !== null);
-  return checks;
+  const first = await reader.checkRollupPage(context, null);
+  if (first.kind === "no-rollup") return null;
+  const pages = await drain(
+    "contexts",
+    async (after): Promise<typeof first> => {
+      const page = await reader.checkRollupPage(context, after);
+      // A later page that lost the rollup keeps the checks already read.
+      return page.kind === "no-rollup"
+        ? { kind: "contexts", checks: [], endCursor: null }
+        : page;
+    },
+    first
+  );
+  return pages.flatMap((page) => page.checks);
 }
 export async function resolveChecks(
   reader: T.GitHubReader,
@@ -754,9 +775,9 @@ export async function resolveChecks(
   const fallback = rollup === null ? null : nonEmpty(rollup);
   if (fallback !== null)
     return { kind: "checks", source: "graphql-rollup", checks: fallback };
-  // Both sources must agree that the commit has no checks. An empty rollup, or
-  // any other gh failure, can be a credential that cannot read checks, which
-  // must never read as a clean PR.
+  // Both sources must agree that the commit has no checks. An empty rollup or
+  // any other gh failure can mean the credential cannot read checks, and that
+  // must never count as a clean PR.
   if (
     rollup === null &&
     fast.kind === "unusable" &&
@@ -774,34 +795,23 @@ export async function readReviewThreads(
   reader: T.GitHubReader,
   context: T.PrContext
 ): Promise<readonly T.RawReviewThread[]> {
-  const threads: T.RawReviewThread[] = [];
-  let after: string | null = null;
-  do {
-    const page = await reader.reviewThreadPage(context, after);
-    threads.push(...page.threads);
-    after = page.endCursor;
-  } while (after !== null);
-  return threads;
-}
-export async function resolveReviewThreads(
-  reader: T.GitHubReader,
-  context: T.PrContext
-): Promise<readonly T.ReviewThread[]> {
-  return buildReviewThreads(await readReviewThreads(reader, context));
+  const pages = await drain("reviewThreads", (after) =>
+    reader.reviewThreadPage(context, after)
+  );
+  return pages.flatMap((page) => page.threads);
 }
 export async function resolveReviewPasses(
   reader: T.GitHubReader,
   context: T.PrContext,
   threads: readonly T.RawReviewThread[]
 ): Promise<readonly T.BotReviewPasses[]> {
-  const reviews: T.RawReview[] = [];
-  let after: string | null = null;
-  do {
-    const page = await reader.reviewPage(context, after);
-    reviews.push(...page.reviews);
-    after = page.endCursor;
-  } while (after !== null);
-  return countReviewPasses(reviews, threads);
+  const pages = await drain("reviews", (after) =>
+    reader.reviewPage(context, after)
+  );
+  return countReviewPasses(
+    pages.flatMap((page) => page.reviews),
+    threads
+  );
 }
 export async function resolveContext(args: {
   readonly reader: T.GitHubReader;

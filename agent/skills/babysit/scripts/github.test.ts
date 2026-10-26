@@ -12,9 +12,9 @@ import {
   parseReviewPage,
   parseReviewThreadPage,
   resolveChecks,
+  readReviewThreads,
   resolveContext,
   resolveReviewPasses,
-  resolveReviewThreads,
 } from "./github.ts";
 import {
   botReview,
@@ -586,7 +586,7 @@ describe("review thread pagination", () => {
         { threads: [thread("three")], endCursor: null },
       ],
     });
-    const threads = await resolveReviewThreads(reader, context);
+    const threads = await readReviewThreads(reader, context);
     expect(threads.map((item) => item.id)).toEqual(["one", "two", "three"]);
     expect(reader.calls).toEqual([
       "reviewThreadPage:null",
@@ -602,7 +602,7 @@ describe("review thread pagination", () => {
         { threads: [thread("late")], endCursor: null },
       ],
     });
-    const threads = await resolveReviewThreads(reader, context);
+    const threads = buildReviewThreads(await readReviewThreads(reader, context));
     expect(threads.map((item) => item.id)).toEqual(["late"]);
   });
 
@@ -610,7 +610,7 @@ describe("review thread pagination", () => {
     const reader = fakeReader({
       threadPages: [{ threads: [thread("only")], endCursor: null }],
     });
-    expect((await resolveReviewThreads(reader, context)).length).toBe(1);
+    expect(await readReviewThreads(reader, context)).toHaveLength(1);
     expect(reader.calls).toEqual(["reviewThreadPage:null"]);
   });
 
@@ -632,7 +632,7 @@ describe("review thread pagination", () => {
         { threads: [bugbot("two", "run-2")], endCursor: null },
       ],
     });
-    const threads = await resolveReviewThreads(reader, context);
+    const threads = buildReviewThreads(await readReviewThreads(reader, context));
     expect(threads.map((item) => item.bugbotReviewPasses)).toEqual([2, 2]);
   });
 
@@ -644,7 +644,9 @@ describe("review thread pagination", () => {
       ],
     });
     expect(
-      (await resolveReviewThreads(reader, context)).map((item) => item.id)
+      buildReviewThreads(await readReviewThreads(reader, context)).map(
+        (item) => item.id
+      )
     ).toEqual(["one"]);
   });
 
@@ -657,6 +659,31 @@ describe("review thread pagination", () => {
       },
     };
     expect(() => parseReviewThreadPage(response)).toThrow(WatcherQueryError);
+  });
+
+  it("rejects a page that has a next page but no cursor, or a repeated cursor", async () => {
+    const response = {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              pageInfo: { hasNextPage: true, endCursor: null },
+              nodes: [],
+            },
+          },
+        },
+      },
+    };
+    expect(() => parseReviewThreadPage(response)).toThrow(WatcherQueryError);
+    const looping = fakeReader({
+      threadPages: [
+        { threads: [thread("one")], endCursor: "next" },
+        { threads: [thread("two")], endCursor: "next" },
+      ],
+    });
+    await expect(readReviewThreads(looping, context)).rejects.toBeInstanceOf(
+      WatcherQueryError
+    );
   });
 });
 

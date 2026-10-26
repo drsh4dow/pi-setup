@@ -1,43 +1,57 @@
 ---
 name: tdd
-description: "Use only when the user explicitly asks for TDD, a failing test, or a regression test, OR when the bug has an obvious cheap local test target. Skip when the test path is unclear, expensive, integration-heavy, or not requested."
+description: "Test-first red-green loop for features and bug fixes. Use when building a feature or fixing a bug whose behavior has a cheap local test target, or when the user asks for TDD, a failing test, or a regression test. Skip when the test path is unclear, expensive, or integration-heavy."
 disable-model-invocation: false
 user-invokable: false
 ---
 
-# TDD Bug Fix
+# Test-driven development
 
-When fixing a bug with a clear, cheap test path, make the broken behavior executable before changing production code. The goal is a focused regression test that fails before the fix and passes after it.
+Make each behavior the change adds or fixes executable before writing the code for it: a test that goes red, then the least code that turns it green. Inspired by Matt Pocock's `tdd` skill.
 
-Do not force a test when it would be impractical. If the available test would require broad harness setup, brittle mocks, slow end-to-end infrastructure, production-only state, vague reproduction steps, or large unrelated fixture churn, skip adding a new test and use the closest useful verification instead.
+When exploring the codebase, read `GLOSSARY.md` (if it exists) so test names and interface vocabulary match the project's domain language, and respect ADRs in the area you're touching.
 
-## Workflow
+## Seams
 
-1. **Understand the bug.** Identify the intended behavior, current behavior, affected path, and smallest observable reproduction.
-2. **Choose the narrowest executable check.** Prefer the closest unit, component, integration, or regression test already used for that codepath. If no practical test path is obvious, do not create one from scratch just to satisfy the workflow.
-3. **Write the failing test first.** Add the smallest focused test that would have caught the bug. The test should encode intended behavior, not mirror the current implementation.
-4. **Run the new test before fixing.** Confirm it fails for the intended reason. If it passes or fails for an unrelated reason, correct the test or reproduction before editing the implementation.
-5. **Fix the bug.** Make the smallest production change that satisfies the intended behavior while preserving nearby contracts.
-6. **Rerun the regression test.** Confirm the test now passes.
+A **seam** is the public boundary you test at: the interface where you observe behavior without reaching inside. Tests live at seams, never against internals.
 
-## If a Failing Test Is Impractical
+Test only at agreed seams, settled before the first test:
 
-Use the closest executable regression check instead: a targeted script, manual reproduction command, browser automation, snapshot comparison, log assertion, or focused integration check.
+- A brief, a contract note, or the ticket that names the seams settles them.
+- In an interactive session with no seams named, ask the user: "What's the public interface, and which seams should we test?" Give each proposed seam a one-line note on what it catches and what it misses.
+- Unattended with no seams named, test through the seam the existing tests already use for that code path, and name it in the report as your assumption.
 
-Prefer no new test over a bad test. A bad test is one that mostly tests mocks, encodes current implementation details, depends on timing or unrelated global state, needs expensive infrastructure for a small fix, or would be deleted immediately after proving the fix.
+When the shape of that interface is itself in question (how deep the module is, where the seam belongs, what the interface should expose), read the [codebase-design](../codebase-design/SKILL.md) skill for the vocabulary.
 
-## Guardrails
+## The loop
 
-- Do not change tests merely to match a wrong implementation.
-- Do not weaken existing assertions unless the expected behavior has genuinely changed and the reason is clear.
-- Keep the regression test focused on the bug. Avoid broad fixture churn or unrelated coverage expansion.
-- If the bug is flaky, make the test deterministic where possible and document the signal being locked down.
-- If the bug exposes a broader class of failures, first land the focused regression path, then consider additional sibling coverage.
+Work in **vertical slices**: one test, one implementation, repeat, each test a **tracer bullet** that responds to what the last cycle taught you.
 
-## Final Response
+1. **Pick one slice.** One seam, one test, one minimal implementation per cycle. For a bug, the first slice is the smallest test that would have caught it.
+2. **Write the test and run it red.** Confirm it fails for the intended reason. If it passes, or fails for an unrelated reason, fix the test before touching the code.
+3. **Write only enough code to pass it.** Don't anticipate future tests or add speculative features.
+4. **Run it green**, with the tests nearby, then take the next slice.
 
-Report the evidence, not just the outcome:
+The loop is done when every behavior the ticket or bug names has a green test at an agreed seam, or a recorded reason under "When a failing test is impractical", and each new test survives the two imagined edits below. Refactoring is not part of the loop. It belongs to the review stage (see the [code-review](../code-review/SKILL.md) skill), not the red-green implementation cycle.
 
-- Name the failing-before test or executable check and the failure it produced.
-- Name the passing-after test run and any nearby validation performed.
-- If failing-before evidence could not be demonstrated, state why and describe the closest regression check used instead.
+## What a good test is
+
+Tests verify behavior through public interfaces, not implementation details. A good test reads like a specification: "user can checkout with valid cart" tells you exactly what capability exists. Name it in the glossary's terms.
+
+Expected values must come from an independent source of truth: a known-good literal, a worked example, the spec. Judge each test with the [principle-test-behavior-not-implementation](../principle-test-behavior-not-implementation/SKILL.md) skill's two imagined edits, which also define the tautological tests to leave out.
+
+- Change a test only when the expected behavior changed, and keep its assertions as strict as the contract.
+- Make a flaky behavior deterministic in the test where you can, and name the signal it locks down.
+
+## When a failing test is impractical
+
+Prefer no new test over a bad test. A bad test mostly tests mocks, depends on timing or unrelated global state, needs broad harness setup or expensive infrastructure for a small change, or would be deleted right after proving the change.
+
+When the only test path is one of those, or the reproduction is vague or needs production-only state, use the closest executable check instead: a targeted script, a reproduction command, browser automation, a snapshot comparison, a log assertion, or a focused integration check. Run it red before the change and green after, the same as a test.
+
+## Report
+
+- Each seam you tested at, and where it came from: the brief, the user, or your assumption.
+- Each slice's red run: the command and the failure it produced.
+- The green run of every new test, and the nearby checks you ran.
+- Each behavior with no red run, why, and the closest check you used instead.

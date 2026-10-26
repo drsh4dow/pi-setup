@@ -33,7 +33,7 @@ theme needs a line here.
 | `subagents`                 | agent | Delegate, with the model for each role               |
 | `swarm`                     | agent | Fan out parallel workers and merge one report        |
 | `background-terminals`      | agent | Run services, watchers, and subagents alongside work |
-| `tdd`                       | agent | Write a failing test first when the target is cheap  |
+| `tdd`                       | agent | Test-first loop for features and bug fixes           |
 | `typescript-best-practices` | agent | Write TypeScript to this setup's standard            |
 | `frontend-design`           | agent | Give new UI a deliberate visual direction            |
 | `docs-search`               | agent | Check version-sensitive API behavior                 |

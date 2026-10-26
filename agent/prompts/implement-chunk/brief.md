@@ -43,7 +43,7 @@ Every implementer and fixer unit meets this bar on top of its ACCEPTANCE, and th
 
 - Its worktree is based on the integration branch before work starts, reset onto it if not.
 - Names in code, routes, fields, tests, commits, and PR text follow `plan.md`'s Terms and the contract notes. A new term the unit owns goes into the glossary per the **domain-modeling** skill. No ADR is contradicted unless the brief says the user reopened it.
-- It uses the **tdd** skill where the ticket has a cheap test target, and the receipt holds the failing run.
+- It works test-first per the **tdd** skill wherever the ticket has a cheap test target, at the seams the contract notes name, one slice at a time. The receipt holds each slice's red run.
 - It dogfoods the change on the real surface: the **agent-browser** skill for browser and Electron UIs, the **background-terminals** skill for CLIs and TUIs, or the repository's `verify-*` skill. "Inconclusive" or wrong-surface is not a pass.
 - The repository's checks for the touched paths pass on the committed head. A check reruns only after the code changed since its last pass.
 - It changes only what the ticket needs. Anything else worth fixing goes in REPORT as a follow-up.

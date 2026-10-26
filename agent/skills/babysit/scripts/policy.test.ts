@@ -107,6 +107,7 @@ describe("snapshot query planning", () => {
     expect(reader.calls).toEqual([
       "pullRequest",
       "reviewThreadPage:null",
+      "reviewPage:null",
       "checksFastPath",
     ]);
   });

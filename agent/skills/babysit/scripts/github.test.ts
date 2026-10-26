@@ -3,10 +3,12 @@ import {
   ChecksUnavailable,
   WatcherQueryError,
   buildReviewThreads,
+  countReviewPasses,
   mapRollupNode,
   orderStack,
   parseFastCheck,
   parsePullRequest,
+  parseReviewPage,
   parseReviewThreadPage,
   resolveChecks,
   resolveContext,
@@ -18,6 +20,7 @@ import {
   passingCheck,
   pendingCheck,
 } from "./fakes.test-helper.ts";
+import type { RawReview } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
 
 const context = {
@@ -335,6 +338,151 @@ it("annotates Bugbot threads with distinct review-pass counts", () => {
   expect(threads).toHaveLength(2);
   expect(threads.map((thread) => thread.isBugbot)).toEqual([true, true]);
   expect(threads.map((thread) => thread.bugbotReviewPasses)).toEqual([3, 3]);
+});
+
+describe("review passes per bot author", () => {
+  const acme = (
+    id: string,
+    commitOid: string,
+    body: string,
+    submittedAt: string
+  ): RawReview => ({
+    id,
+    authorLogin: "acme-review[bot]",
+    authorIsBot: true,
+    body,
+    state: "COMMENTED",
+    commitOid,
+    submittedAt,
+  });
+  const headA = [
+    acme("a-summary", "A", "Summary: 2 findings", "2026-01-01T00:00:00Z"),
+    acme("a-inline", "A", "", "2026-01-01T00:00:05Z"),
+  ];
+  const headB = [
+    acme("b-summary", "B", "Summary: 1 finding", "2026-01-01T01:00:00Z"),
+    acme("b-inline", "B", "  \n", "2026-01-01T01:00:05Z"),
+  ];
+
+  it("counts one pass per head commit for a bot that is not Cursor Bugbot", () => {
+    expect(countReviewPasses([...headA, ...headB], [])).toEqual([
+      {
+        author: "acme-review[bot]",
+        passes: 2,
+        latestPass: {
+          reviewId: "b-summary",
+          commitOid: "B",
+          submittedAt: "2026-01-01T01:00:00Z",
+        },
+      },
+    ]);
+  });
+
+  it("counts a summary and an empty review at one head as one pass", () => {
+    expect(countReviewPasses(headA, [])).toEqual([
+      {
+        author: "acme-review[bot]",
+        passes: 1,
+        latestPass: {
+          reviewId: "a-summary",
+          commitOid: "A",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      },
+    ]);
+  });
+
+  it("counts two non-empty reviews at one head as one pass", () => {
+    const followUp = acme("a-follow-up", "A", "One more note", "2026-01-01T00:10:00Z");
+    expect(countReviewPasses([...headA, followUp], [])).toMatchObject([
+      { passes: 1, latestPass: { reviewId: "a-follow-up" } },
+    ]);
+  });
+
+  it("counts no pass for a bot that posted only empty reviews, or for a human", () => {
+    const human: RawReview = {
+      ...acme("h1", "A", "looks good", "2026-01-01T00:00:00Z"),
+      authorLogin: "alice",
+      authorIsBot: false,
+    };
+    expect(countReviewPasses([headA[1], human], [])).toEqual([]);
+  });
+
+  it("keeps Cursor Bugbot's passes from its threads when its reviews show fewer", () => {
+    const run = (id: string, runId: string) => ({
+      id,
+      firstComment: {
+        authorLogin: "cursor",
+        body: `bugbot RUN_ID: ${runId}`,
+        path: "a.ts",
+        line: 1,
+        createdAt: "now",
+      },
+      resolved: false,
+    });
+    const review: RawReview = {
+      ...acme("c1", "A", "Bugbot reviewed your changes", "2026-01-01T00:00:00Z"),
+      authorLogin: "cursor",
+    };
+    expect(
+      countReviewPasses(
+        [review],
+        [run("1", "run-1"), run("2", "run-2"), run("3", "run-3")]
+      )
+    ).toEqual([
+      {
+        author: "cursor",
+        passes: 3,
+        latestPass: {
+          reviewId: "c1",
+          commitOid: "A",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      },
+    ]);
+  });
+
+  it("reads a bot author from the GraphQL type or a [bot] login", () => {
+    const node = (id: string, author: unknown) => ({
+      id,
+      body: "summary",
+      state: "COMMENTED",
+      submittedAt: "2026-01-01T00:00:00Z",
+      commit: { oid: "A" },
+      author,
+    });
+    const page = parseReviewPage({
+      data: {
+        repository: {
+          pullRequest: {
+            reviews: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [
+                node("r1", { __typename: "Bot", login: "coderabbitai" }),
+                node("r2", { __typename: "User", login: "alice" }),
+                node("r3", { login: "acme-review[bot]" }),
+                node("r4", null),
+                {
+                  ...node("r5", { __typename: "User", login: "bob" }),
+                  state: "PENDING",
+                  submittedAt: null,
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    expect(
+      page.reviews.map((review) => [review.id, review.authorLogin, review.authorIsBot])
+    ).toEqual([
+      ["r1", "coderabbitai", true],
+      ["r2", "alice", false],
+      ["r3", "acme-review[bot]", true],
+      ["r4", null, false],
+    ]);
+    expect(page.endCursor).toBeNull();
+  });
 });
 
 describe("review thread pagination", () => {

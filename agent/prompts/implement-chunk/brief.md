@@ -31,8 +31,9 @@ FORBIDDEN    no PR retargets or merges, no rebase, no force-push, no fixes outsi
              allows, such as "no local integration suite: the host is saturated; run it in CI".
              A brief that overrides an order says "lifts order N"
 REPORT       status, branch, head SHA, PRs, verdict, what you actually ran, deviations,
-             suggested follow-ups. Before stopping for any reason, push the branch or save
-             the patch and logs under evidence/<unit>/, and cite that path
+             suggested follow-ups; for an implementer or fixer, the tdd and dogfood
+             reports the Definition of Done names. Before stopping for any reason, push
+             the branch or save the patch and logs under evidence/<unit>/, and cite that path
 ```
 
 The standing orders are not a field. The launch appends `orders.md` as a system prompt, so every spawn and resume reads the current file.
@@ -43,9 +44,9 @@ Every implementer and fixer unit meets this bar on top of its ACCEPTANCE, and th
 
 - Its worktree is based on the integration branch before work starts, reset onto it if not.
 - Names in code, routes, fields, tests, commits, and PR text follow `plan.md`'s Terms and the contract notes. A new term the unit owns goes into the glossary per the **domain-modeling** skill. No ADR is contradicted unless the brief says the user reopened it.
-- It works test-first per the **tdd** skill wherever the ticket has a cheap test target, at the seams the contract notes name, one slice at a time. The receipt holds each slice's red run.
+- It works test-first per the **tdd** skill wherever the ticket has a cheap test target, at the seams the contract notes name, one slice at a time. The receipt holds the tdd report.
 - A chain unit implements its tickets in order, one commit per ticket named by the ticket's title, and passes each ticket's checks before it starts the next.
-- It dogfoods the change on the real surface: the **agent-browser** skill for browser and Electron UIs, the **background-terminals** skill for CLIs and TUIs, or the repository's `verify-*` skill. "Inconclusive" or wrong-surface is not a pass.
+- It dogfoods the change per the **principle-prove-it-works** skill's "Dogfood the real thing" section, through the verification skill the orders name, whether or not the ticket had a cheap test target. The receipt holds that section's report.
 - The repository's checks for the touched paths pass on the committed head. A check reruns only after the code changed since its last pass.
 - It changes only what the ticket needs. Anything else worth fixing goes in REPORT as a follow-up.
 - Ticket keys stay out of its branch name, commit messages, PR title, and PR body, which name each ticket by its title, because the tracker moves any ticket a merged or closed PR names, whatever its base.

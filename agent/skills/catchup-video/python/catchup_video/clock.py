@@ -51,7 +51,7 @@ from manim.animation.animation import prepare_animation
 from manim.utils.exceptions import EndSceneEarlyException
 
 from . import report, state
-from .graph import STRIP_GAP
+from .graph import LEAVE, STRIP_GAP
 from . import theme as T
 from .text import em_px, fit, label_of
 
@@ -482,45 +482,52 @@ class Video(MovingCameraScene):
 
     def dive(self, graph, n: int, run_time: float = 1.5):
         """Open PR `n`'s chapter: the graph folds into a strip at the stage's left edge that keeps
-        every PR's node, PR `n`'s highlighted, and its title lifts out to become the header. The
-        chapter's pieces get the rest of the stage; marks played in it show in the strip at once."""
+        every PR's node, PR `n`'s highlighted, and its title becomes the header. Its words fade
+        before its nodes move and the strip's words show once they are in place, so no word ever
+        passes over another. The chapter's pieces get the rest of the stage; marks played in it
+        show in the strip at once."""
         if self.header is not None:
             raise ValueError("pull_back(graph) before diving into another PR")
         gone = self._unpinned([graph])
         head = graph.header_for(n)
         head._cv_pr, head._cv_name, head._cv_chrome = n, f"header #{n}", True
-        fold = graph.fold(n, head)
-        fold.anims[0]._cv_verb = "dive"
+        fold = graph.fold(n, head, shown=graph in self.get_mobject_family_members())
+        graph.visibility(0.0)
+        self.add(graph)  # unseen, the fold draws it; marks played in the chapter still reach it
+        motion = fold.motion(into_strip=True)
+        motion._cv_verb = "dive"
 
         def settle():
-            self.remove(*fold.movers)
+            self.remove(fold)
             self.add(fold.strip, head)
             self.pin(graph, fold.strip, head)
             self.header, graph.strip = head, fold.strip
             T.STAGE.left = fold.strip.right + STRIP_GAP
 
-        self._play([*fold.anims, *(FadeOut(m) for m in gone)], {"run_time": run_time}, settle, place=False)
+        self._play([motion, *(FadeOut(m, rate_func=_before_fold_moves) for m in gone)], {"run_time": run_time},
+                   settle, place=False)
 
     def pull_back(self, graph, run_time: float = 1.5):
-        """Close the chapter: its pieces fade, the strip grows back into the whole graph, and the
-        header returns to its row as its title."""
+        """Close the chapter: its pieces and the strip's words fade, the strip grows back into the
+        whole graph, and the graph's words, the header's title among them, show in their rows."""
         if self.header is None:
             raise ValueError("dive(graph, n) before pulling back")
         gone = self._unpinned([graph])
         head, strip = self.header, graph.strip
         fold = graph.unfold(head)
-        fold.anims[0]._cv_verb = "pull_back"
+        motion = fold.motion(into_strip=False)
+        motion._cv_verb = "pull_back"
         self.remove(strip, head)
         self._pins = [m for m in self._pins if m is not graph and m is not strip and m is not head]
         self.header, graph.strip = None, None
         T.STAGE.left = T.LEFT
 
         def settle():
-            self.remove(*fold.movers)
+            self.remove(fold)
             graph.visibility(1.0)
 
-        self._play([*fold.anims, *(FadeOut(m, rate_func=_early) for m in gone)], {"run_time": run_time}, settle,
-                   place=False)
+        self._play([motion, *(FadeOut(m, rate_func=_before_fold_moves) for m in gone)], {"run_time": run_time},
+                   settle, place=False)
 
 
 def _anim_label(a) -> str:
@@ -556,7 +563,7 @@ def _within(rate_func, t0: float, t1: float):
     return lambda t: rate_func(min(1.0, max(0.0, (t - t0) / (t1 - t0))))
 
 
-_early = _within(rate_functions.smooth, 0.0, 0.4)  # gone in the first 40%, before what replaces it shows
+_before_fold_moves = _within(rate_functions.smooth, 0.0, LEAVE)  # what a dive or pull_back clears goes with the words
 
 
 def _no_crossfade(anims) -> None:

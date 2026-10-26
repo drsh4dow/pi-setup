@@ -21,7 +21,6 @@ from manim import (
     Dot,
     Line,
     RoundedRectangle,
-    Transform,
     UpdateFromAlphaFunc,
     VGroup,
     VMobject,
@@ -90,7 +89,6 @@ class Branches(VGroup):
         reach = 1.2 if cols == 1 else 0.85
         self._rows: dict[int, dict] = {}
         self._v = 1.0
-        self._gone: set[int] = set()
         self.trunks: list[Line] = []
         self.strip: Strip | None = None  # the folded graph while a chapter is on
         items = list(prs.items())
@@ -111,7 +109,7 @@ class Branches(VGroup):
                 self.add(self.base)
             right = T.LEFT + (c + 1) * cw - (0.1 if c == cols - 1 else 0.35)
             for (num, title), y in zip(chunk, ys):
-                self._add_row(num, title, xm, y, pitch, reach, right)
+                self._add_row(num, title, c, xm, y, pitch, reach, right)
         if cols == 1:
             # One column leaves room: center the graph a little left, keeping space for the marks.
             content_right = max(r["label"].get_right()[0] for r in self._rows.values())
@@ -119,7 +117,7 @@ class Branches(VGroup):
         self._remember()
         self._cv_name = "Branches"
 
-    def _add_row(self, num: int, title: str, xm: float, y: float, pitch: float, reach: float, right: float):
+    def _add_row(self, num: int, title: str, column: int, xm: float, y: float, pitch: float, reach: float, right: float):
         fork = np.array([xm, y + 0.6 * pitch, 0])
         end = np.array([xm + reach, y, 0])
         curve = CubicBezier(fork, [xm, y, 0], [xm + 0.35 * reach, y, 0], end, stroke_color=T.FAINT, stroke_width=4)
@@ -139,7 +137,7 @@ class Branches(VGroup):
         # "state" is the row's latest mark as its icon kind and color: what the strip shows.
         self._rows[num] = {"curve": curve, "node": node, "label": label, "number": number, "title": name,
                            "full": title, "marks": marks, "rings": rings, "icons": [], "tag": None, "right": right,
-                           "state": None}
+                           "state": None, "column": column}
         self.add(curve, node, label, marks, rings)
 
     def _remember(self, mob=None):
@@ -153,8 +151,8 @@ class Branches(VGroup):
             base = getattr(m, "_cv_base", None)
             if base is None:
                 continue
-            f = 0.0 if id(m) in self._gone else self._v
-            m.set_fill(opacity=base[0] * k * f, family=False).set_stroke(opacity=base[1] * k * f, family=False)
+            f = k * self._v
+            m.set_fill(opacity=base[0] * f, family=False).set_stroke(opacity=base[1] * f, family=False)
 
     def _cv_parts(self):
         """What must never overlap, for the check: each row's node (with its rings), number,
@@ -184,10 +182,9 @@ class Branches(VGroup):
         head = VGroup(number, name).arrange(RIGHT, buff=0.22, aligned_edge=DOWN)
         return head.move_to([T.LEFT, T.HEADER_Y, 0], aligned_edge=LEFT)
 
-    def visibility(self, v: float, hidden=()) -> None:
-        """Show the graph at opacity `v` (0..1), keeping the parts in `hidden` out of sight."""
+    def visibility(self, v: float) -> None:
+        """Show the graph at opacity `v` (0..1)."""
         self._v = v
-        self._gone = {id(f) for m in hidden for f in m.get_family()}
         self._fade(self, 1.0)
 
     @verb
@@ -284,71 +281,15 @@ class Branches(VGroup):
             return self.strip.point(n, color, keep, run_time)
         return flash(self._rows[n]["label"], color, keep, run_time)
 
-    def fold(self, n: int, head) -> Fold:
-        """The animation that folds the graph into a strip for PR `n`'s chapter: each branch, node,
-        ring, and number glides to its place in the strip, each mark fades into its icon there, the
-        rest fades, and PR `n`'s title becomes `head`. Video.dive plays it."""
-        strip = Strip(self, n)
-        pairs = self._pairs(strip)
-        hidden = [full for full, _ in pairs if full is not None] + [self.label(n)]
-        movers, anims = [], []
-        for full, part in pairs:
-            mover = full.copy() if full is not None else _clear(part)
-            movers.append(mover)
-            anims.append(Transform(mover, part))
-        flier = self.label(n).copy()
-        movers.append(flier)
-        anims.append(Transform(flier, head))
-
-        def fade(g, a):
-            self.visibility(1 - rate_functions.smooth(min(1.0, 2 * a)), hidden=hidden)
-
-        anims.append(UpdateFromAlphaFunc(self, fade))
-        return Fold(anims, movers, strip)
+    def fold(self, n: int, head, shown: bool = True) -> Fold:
+        """The stand-in Video.dive plays to fold the graph into a strip for PR `n`'s chapter, with
+        `head` as its header; from nothing where the graph was when it is not `shown` on stage."""
+        return Fold(self, Strip(self, n), head, start=(lambda m: m.copy()) if shown else _unseen)
 
     def unfold(self, head) -> Fold:
-        """The animation that grows the strip back into the whole graph, the header returning to its
-        row as its title; marks played in the chapter show whole. Video.pull_back plays it."""
-        strip = self.strip
-        pairs = self._pairs(strip)
-        hidden = [full for full, _ in pairs if full is not None] + [self.label(strip.focus)]
-        movers, anims = [], []
-        for full, part in pairs:
-            mover = part.copy()
-            movers.append(mover)
-            anims.append(Transform(mover, self._shown(full) if full is not None else _clear(part)))
-        flier = head.copy()
-        movers.append(flier)
-        anims.append(Transform(flier, self._shown(self.label(strip.focus))))
-
-        def fade(g, a):
-            self.visibility(rate_functions.smooth(max(0.0, 2 * a - 1)), hidden=hidden)
-
-        anims.append(UpdateFromAlphaFunc(self, fade))
-        return Fold(anims, movers, strip)
-
-    def _pairs(self, strip: Strip) -> list:
-        """Each strip part with the part of the whole graph it folds from, or None when it has none."""
-        pairs = [(self.trunks[0], strip.trunk), (None, strip.band)]
-        for k, row in self._rows.items():
-            part = strip.rows[k]
-            pairs += [(row["curve"], part["curve"]), (row["node"], part["node"])]
-            if part["ring"] is not None:
-                pairs.append((row["rings"][-1], part["ring"]))
-            if part["number"] is not None:
-                pairs.append((row["number"] if k != strip.focus else None, part["number"]))
-            if part["pip"] is not None:
-                pairs.append((None, part["pip"]))  # a mark fades between its tag and its icon in place
-        return pairs
-
-    def _shown(self, mob):
-        """A copy of `mob` with the look it has when the graph is fully shown."""
-        shown = mob.copy()
-        for m in shown.get_family():
-            base = getattr(m, "_cv_base", None)
-            if base is not None:
-                m.set_fill(opacity=base[0], family=False).set_stroke(opacity=base[1], family=False)
-        return shown
+        """The stand-in Video.pull_back plays to grow the strip back into the whole graph, fully
+        shown, with the marks played in the chapter whole."""
+        return Fold(self, self.strip, head, start=_full_look)
 
     def _change(self, born, gone, moves, run_time):
         def update(g, a):
@@ -384,17 +325,112 @@ def flash(label, color: str, keep: bool, run_time: float) -> UpdateFromAlphaFunc
     return UpdateFromAlphaFunc(label, update, run_time=run_time)
 
 
-class Fold:
-    """A fold or unfold of the graph: its animations, the stand-ins they move (taken off stage when
-    they end), and the strip."""
+def _full_look(mob):
+    """A copy of `mob` with the look it has when the graph is fully shown."""
+    shown = mob.copy()
+    for m in shown.get_family():
+        base = getattr(m, "_cv_base", None)
+        if base is not None:
+            m.set_fill(opacity=base[0], family=False).set_stroke(opacity=base[1], family=False)
+    return shown
 
-    def __init__(self, anims: list, movers: list, strip: Strip):
-        self.anims, self.movers, self.strip = anims, movers, strip
 
-
-def _clear(mob):
-    """A fully transparent copy of `mob`: what a part that has no counterpart fades from or to."""
+def _unseen(mob):
+    """A fully transparent copy of `mob`."""
     return mob.copy().set_opacity(0)
+
+
+LEAVE, TURN, SETTLE = 0.2, 0.5, 0.8  # a fold's progress: words leave, columns close up, they slide, words arrive
+
+
+def _span(u: float, a: float, b: float) -> float:
+    """How far `u` is through `a`..`b`, eased."""
+    return rate_functions.smooth(min(1.0, max(0.0, (u - a) / (b - a))))
+
+
+class Fold(VGroup):
+    """The graph on its way into its strip, drawn in place of both while a chapter opens (progress
+    0 to 1) or closes (1 to 0), so no label, mark, or tag ever passes over another. The words and
+    marks of the side it leaves fade out where they are. With no words on stage, each column of
+    nodes and branches closes up to the strip's spacing in place, then all slide to the strip,
+    which keeps the columns apart. Then the words of the side it reaches fade in."""
+
+    def __init__(self, graph: Branches, strip: Strip, head, start):
+        super().__init__()
+        self.strip = strip
+        self._tracks: list = []  # (mover, at 0, after closing up, at 1)
+        self._graph_words: list = []  # shown at progress 0
+        self._strip_words: list = [strip.band.copy(), head.copy()]  # shown at progress 1
+        self._parts: list = [("header", self._strip_words[1])]
+        self._nodes: dict[int, list] = {}
+        index = {num: k for k, num in enumerate(graph._rows)}
+        for c, trunk in enumerate(graph.trunks):
+            rows = [index[num] for num, row in graph._rows.items() if row["column"] == c]
+            top = strip.top - rows[0] * strip.pitch
+            bottom = strip.top - (rows[-1] + 1) * strip.pitch if c < len(graph.trunks) - 1 else strip.trunk.get_end()[1]
+            end = strip.trunk.copy().put_start_and_end_on([strip.x0, top, 0], [strip.x0, bottom, 0])
+            self._track(start(trunk), end.copy().set_x(trunk.get_x()), end)
+        self._words(self._graph_words, "base", start(graph.base))
+        for num, row in graph._rows.items():
+            self._row(num, row, strip.rows[num], strip, graph.pitch, start)
+        for m in [*self._graph_words, *self._strip_words]:
+            remember(m)
+        self.add(self._strip_words[0], *(t[0] for t in self._tracks), *self._graph_words, *self._strip_words[1:])
+        self._cv_name = "Branches fold"
+
+    def _track(self, begin, close, end):
+        mover = begin.copy()
+        self._tracks.append((mover, begin, close, end))
+        return mover
+
+    def _words(self, side: list, name: str, mob) -> None:
+        side.append(mob)
+        self._parts.append((name, mob))
+
+    def _row(self, num: int, row: dict, part: dict, strip: Strip, pitch: float, start) -> None:
+        node0, node1 = start(row["node"]), part["node"].copy()
+        dx = RIGHT * (node0.get_x() - node1.get_x())
+        dy = UP * (node1.get_y() - node0.get_y())
+        nodes = [self._track(node0, node1.copy().shift(dx), node1)]
+        curve0 = start(row["curve"])
+        closed = curve0.copy().stretch(strip.pitch / pitch, 1, about_point=node0.get_center()).shift(dy)
+        self._track(curve0, closed, part["curve"].copy())
+        rings = list(row["rings"])
+        if part["ring"] is not None:
+            ring1 = part["ring"].copy()
+            nodes.append(self._track(start(rings.pop()), ring1.copy().shift(dx), ring1))
+        self._nodes[num] = nodes
+        for ring in rings:  # rings under the latest one: the strip shows only that
+            self._graph_words.append(start(ring))
+        self._words(self._graph_words, f"#{num} number", start(row["number"]))
+        self._words(self._graph_words, f"#{num} title", start(row["title"]))
+        for m in row["marks"]:
+            self._words(self._graph_words, f"#{num} {label_of(m).removeprefix(f'Branches #{num} ')}", start(m))
+        for what in ("number", "pip"):
+            if part[what] is not None:
+                self._words(self._strip_words, f"strip #{num} {what}", part[what].copy())
+
+    def _cv_parts(self):
+        """What must never overlap, for the check: each row's node (with its ring), and every
+        number, title, mark, and header the fold shows."""
+        return [(f"#{num} node", VGroup(*nodes)) for num, nodes in self._nodes.items()] + self._parts
+
+    def at(self, u: float) -> None:
+        """Show the fold at progress `u`: 0 is the whole graph, 1 the strip and its header."""
+        for m in self._graph_words:
+            look(m, 1 - _span(u, 0.0, LEAVE))
+        for m in self._strip_words:
+            look(m, _span(u, SETTLE, 1.0))
+        for mover, begin, close, end in self._tracks:
+            if u < TURN:
+                mover.interpolate(begin, close, _span(u, LEAVE, TURN))
+            else:
+                mover.interpolate(close, end, _span(u, TURN, SETTLE))
+
+    def motion(self, into_strip: bool) -> UpdateFromAlphaFunc:
+        """Animation: the fold from the graph into the strip, or back with into_strip=False."""
+        self.at(0.0 if into_strip else 1.0)
+        return UpdateFromAlphaFunc(self, lambda _, a: self.at(a if into_strip else 1 - a))
 
 
 STRIP_PITCH = 0.62  # the strip's largest row pitch
@@ -419,6 +455,7 @@ class Strip(VGroup):
         self.ring_size = min(pitch, (radius + 0.1) / 0.42)
         top = (T.TOP + T.FLOOR) / 2 + n * pitch / 2
         x0 = T.LEFT + 0.1
+        self.top, self.pitch, self.x0 = top, pitch, x0
         xn = x0 + 0.35
         numbers = {k: text(f"#{k}", size=size, color=T.TEXT if k == focus else T.DIM, font=T.SERIF)
                    for k in graph._rows if numbered or k == focus}

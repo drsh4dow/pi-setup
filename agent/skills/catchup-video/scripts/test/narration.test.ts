@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
-import { type Beat, narrate, splitPhrases } from "../narration.ts";
+import { type Beat, narrate, splitPhrases, stripTags } from "../narration.ts";
 
 const ELEVEN_KEY = "eleven-secret-key-123";
 const GEMINI_KEY = "gemini-secret-key-456";
@@ -38,13 +38,14 @@ function stub(answer: { eleven: (c: Call) => [number, unknown]; tts: (c: Call) =
     req.on("end", () => {
       const url = req.url ?? "";
       const model = /models\/([^:]+):/.exec(url)?.[1] ?? "elevenlabs";
-      const parts: unknown = JSON.parse(body)?.contents?.[0]?.parts;
+      const json = JSON.parse(body);
+      const parts: unknown = json?.contents?.[0]?.parts;
       const first = Array.isArray(parts) ? parts[0] : undefined;
       const audio = Array.isArray(parts) ? parts[1]?.inlineData?.data : undefined;
       const call: Call = {
         path: url, model, key: String(req.headers["xi-api-key"] ?? req.headers["x-goog-api-key"]),
         // What a TTS request asks to say, or what the clip a listener request carries was made from.
-        text: typeof audio === "string" ? textOf(Buffer.from(audio, "base64")) : String(first?.text ?? ""),
+        text: typeof audio === "string" ? textOf(Buffer.from(audio, "base64")) : String(first?.text ?? json?.text ?? ""),
       };
       calls.push(call);
       let status = 200;
@@ -150,4 +151,50 @@ test("caption phrases keep a short sentence with the next and break both texts i
   assert.deepEqual(said, ["So: merge the cache, review the upload fix,", "and pick how long to keep logs for thirty days."]);
   assert.deepEqual(shown, ["So: merge the cache, review the upload fix,", "and pick how long to keep logs for 30 days."]);
   assert.throws(() => splitPhrases({ name: "x", say: "One, two.", show: "One two." }), /beat x: say and show differ/);
+});
+
+test("audio tags come out of the words with the place of every character kept", () => {
+  const { text, from } = stripTags("[curious] Fifty gifts, [short pause] and more.");
+  assert.equal(text, "Fifty gifts, and more.");
+  assert.equal(from.length, text.length);
+  assert.equal("[curious] Fifty gifts, [short pause] and more."[from[text.indexOf("and")] ?? 0], "a");
+});
+
+describe("a beat's audio tags", () => {
+  // The stub ElevenLabs times every character it was sent, tags included, as the real one does:
+  // the first phrase over the first tone, the rest over the second.
+  const said: string[] = [];
+  const eleven = (c: Call): [number, unknown] => {
+    said.push(c.text);
+    const pcm = spawnSync("ffmpeg", ["-v", "error", "-i", "pipe:0", "-f", "s16le", "-ar", "24000", "-ac", "1", "-"],
+      { input: speech(c.text), maxBuffer: 1 << 24 }).stdout;
+    const cut = c.text.indexOf(",") + 1;
+    const chars = [...c.text];
+    const ends = chars.map((_, i) => (i < cut ? (1.2 * (i + 1)) / cut : 1.6 + (1.0 * (i + 1 - cut)) / (chars.length - cut)));
+    return [200, { audio_base64: pcm.toString("base64"), alignment: { characters: chars, character_end_times_seconds: ends } }];
+  };
+  const { server } = stub({ eleven, tts: audio, heard: (c) => c.text });
+  after(() => server.close());
+
+  test("reach ElevenLabs and nothing else: captions, cue words, and phrase timing come from the spoken words", async () => {
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catchup-tags-"));
+    const timing = await narrate({
+      beats: [{ name: "tagged", say: "[curious] Fifty gifts load per page, | [short pause] and search got faster.",
+        show: "50 gifts load per page, | and search got faster.", pause: null }],
+      outDir: path.join(dir, "out"), voice: "Iapetus", offline: false, log: () => {},
+      env: { ELEVENLABS_API_KEY: ELEVEN_KEY, CATCHUP_VIDEO_CACHE: dir, CATCHUP_ELEVENLABS_URL: base },
+    });
+    assert.deepEqual(said, ["[curious] Fifty gifts load per page, [short pause] and search got faster."]);
+    assert.equal(timing.provider, "elevenlabs");
+    assert.equal(timing.model, "eleven_v4");
+    const [beat] = timing.beats;
+    assert.equal(beat?.say, "Fifty gifts load per page, and search got faster.");
+    assert.deepEqual(beat?.phrases.map((p) => [p.text, p.said]), [
+      ["50 gifts load per page,", "Fifty gifts load per page,"], ["and search got faster.", "and search got faster."]]);
+    // The break is where the comma was spoken, not shifted by the tag characters before it.
+    const at = (beat?.phrases[0]?.end ?? 0) - (beat?.start ?? 0);
+    assert.ok(at > 1.0 && at < 1.3, `break at ${at}`);
+  });
 });

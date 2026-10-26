@@ -1,7 +1,9 @@
 /**
  * The narration pipeline, free of any animation engine: beats in, one audio timeline and a
  * timing file out. Providers, each falling through to the next for the whole run:
- *   1. ElevenLabs with character timestamps (ELEVENLABS_API_KEY, voice ELEVENLABS_VOICE_ID)
+ *   1. ElevenLabs eleven_v4 with character timestamps (ELEVENLABS_API_KEY), voice "Mark - Natural
+ *      Conversations" unless ELEVENLABS_VOICE_ID names another; a beat's audio tags ("[curious]")
+ *      reach only this provider and are cut from everything else
  *   2. Gemini TTS, gemini-3.8-flash-tts then gemini-2.5-pro-preview-tts (GEMINI_API_KEY), in the
  *      story's voice (Iapetus by default); every clip is transcribed and checked against its
  *      words, and re-synthesized when it fails
@@ -47,14 +49,18 @@ const READING_WORDS_PER_SEC = 2.6;
 const MIN_PHRASE_SEC = 1.4;
 const CAPTION_CHARS = 56;
 const ATTEMPTS = 4;
-const PARALLEL = 3;
+/** Requests in flight per provider: the ElevenLabs creator tier allows 5. */
+const PARALLEL = { elevenlabs: 5, gemini: 3 } as const;
+/** A provider that has not answered a request within this many seconds falls through. */
+const REQUEST_BUDGET_SEC = 75;
 const PASS_SCORE = 0.97;
 const JUDGE_SCORE = 0.8;
 const CHECK_MODEL = "gemini-3.8-flash";
 const GEMINI_MODELS = ["gemini-3.8-flash-tts", "gemini-2.5-pro-preview-tts"];
-const ELEVEN_MODEL = "eleven_multilingual_v2";
+const ELEVEN_MODEL = "eleven_v4";
+const ELEVEN_VOICE = "UgBBYS2sOqTuMpoF3BR0";
 /** Bump when the processing of a cached clip changes, so old clips are made again. */
-const CLIP_FORMAT = 2;
+const CLIP_FORMAT = 3;
 
 /** A timing file this module wrote, read back. */
 export function parseTiming(data: unknown): Timing {
@@ -124,6 +130,31 @@ export function splitPhrases(beat: Pick<Beat, "name" | "say" | "show">): { said:
 }
 
 const clean = (text: string) => text.replaceAll("|", " ").replace(/\s+/g, " ").trim();
+
+/** `text` without its audio tags ("[curious]", "[short pause]"), and for each character kept,
+ *  its index in `text`. Spaces around a tag collapse to one. */
+export function stripTags(text: string): { text: string; from: number[] } {
+  let out = "";
+  const from: number[] = [];
+  let depth = 0;
+  for (const [i, ch] of [...text].entries()) {
+    if (ch === "[") depth++;
+    else if (ch === "]" && depth > 0) depth--;
+    else if (depth === 0) {
+      if (/\s/.test(ch) && (out === "" || out.endsWith(" "))) continue;
+      out += /\s/.test(ch) ? " " : ch;
+      from.push(i);
+    }
+  }
+  while (out.endsWith(" ")) {
+    out = out.slice(0, -1);
+    from.pop();
+  }
+  return { text: out, from };
+}
+
+/** The words a beat speaks: its text without audio tags or phrase marks. */
+export const spoken = (say: string) => clean(stripTags(say).text);
 
 // ---- audio ------------------------------------------------------------------------
 
@@ -230,7 +261,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function postJson(url: string, headers: Record<string, string>, body: unknown, keys: string[]): Promise<unknown> {
   let last = "";
-  for (let attempt = 0; attempt < 8; attempt++) {
+  const deadline = performance.now() + REQUEST_BUDGET_SEC * 1000;
+  for (let attempt = 0; attempt < 8 && performance.now() < deadline; attempt++) {
     let wait = 1500 * (attempt + 1);
     try {
       const res = await fetch(url, {
@@ -251,6 +283,7 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
       if (error instanceof Refused) throw error;
       last = redact(error instanceof Error ? error.message : String(error), keys);
     }
+    if (performance.now() + wait > deadline) break;
     await sleep(wait);
   }
   throw new Error(last);
@@ -264,7 +297,7 @@ type Provider = Voice & { synth: (say: string, tmp: string) => Promise<Clip> };
 
 function voices(env: Env, voice: string): Voice[] {
   return [
-    { provider: "elevenlabs", model: ELEVEN_MODEL, voice: env.ELEVENLABS_VOICE_ID ?? "JBFqnCBsd6RMkjVDRZzb" },
+    { provider: "elevenlabs", model: ELEVEN_MODEL, voice: env.ELEVENLABS_VOICE_ID ?? ELEVEN_VOICE },
     ...GEMINI_MODELS.map((model): Voice => ({ provider: "gemini", model, voice })),
   ];
 }
@@ -278,11 +311,16 @@ function elevenLabs(v: Voice, key: string, env: Env): Provider {
         { "xi-api-key": key }, { text: say, model_id: v.model }, [key]);
       const audio = dig(data, "audio_base64");
       const ends = dig(data, "alignment", "character_end_times_seconds");
+      const chars = dig(data, "alignment", "characters");
       if (typeof audio !== "string" || !Array.isArray(ends)) throw new Error("ElevenLabs answered without audio");
       const raw = join(tmp, "eleven.pcm");
       writeFileSync(raw, Buffer.from(audio, "base64"));
       const { pcm, lead } = normalize(["-f", "s16le", "-ar", "24000", "-ac", "1", "-i", raw], tmp);
-      return { pcm, charEnds: ends.map((t) => Number(t) - lead), transcript: null };
+      // The alignment times every character sent, tags included; keep the spoken ones. When it
+      // does not spell the text sent, phrase ends fall back to the pauses in the audio.
+      const aligned = Array.isArray(chars) && chars.join("") === say;
+      const kept = stripTags(say).from;
+      return { pcm, charEnds: aligned ? kept.map((i) => Number(ends[i]) - lead) : null, transcript: null };
     },
   };
 }
@@ -343,7 +381,7 @@ function gemini(v: Voice, key: string, env: Env, log: (line: string) => void): P
       let heard = "";
       for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
         const data = await postJson(`${base}/v1beta/models/${v.model}:generateContent`, { "x-goog-api-key": key }, {
-          contents: [{ parts: [{ text: say }] }],
+          contents: [{ parts: [{ text: spoken(say) }] }],
           generationConfig: {
             responseModalities: ["AUDIO"],
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: v.voice } } },
@@ -359,7 +397,7 @@ function gemini(v: Voice, key: string, env: Env, log: (line: string) => void): P
         writeFileSync(raw, Buffer.from(audio, "base64"));
         const rate = /rate=(\d+)/.exec(mime)?.[1] ?? "24000";
         const { pcm } = normalize(isWav ? ["-i", raw] : ["-f", "s16le", "-ar", rate, "-ac", "1", "-i", raw], tmp);
-        const check = await ears.listen(pcm, say);
+        const check = await ears.listen(pcm, spoken(say));
         if (check.ok) return { pcm, charEnds: null, transcript: check.heard };
         heard = check.heard;
         log(`  re-synthesizing, attempt ${attempt} heard: ${heard.slice(0, 100)}`);
@@ -382,9 +420,13 @@ function providers(env: Env, voice: string, log: (line: string) => void): Provid
 
 type Cached = { pcm: Buffer; charEnds: number[] | null };
 
+/** The text a provider is sent: ElevenLabs takes audio tags, Gemini would read them aloud. */
+const sent = (v: Voice, say: string) => (v.provider === "elevenlabs" ? clean(say) : spoken(say));
+
 function cachePaths(env: Env, v: Voice, say: string) {
   const dir = join(cacheRoot(env), "tts");
-  const hash = createHash("sha256").update(JSON.stringify([CLIP_FORMAT, say, v.provider, v.model, v.voice])).digest("hex").slice(0, 32);
+  const hash = createHash("sha256").update(JSON.stringify([CLIP_FORMAT, sent(v, say), v.provider, v.model, v.voice]))
+    .digest("hex").slice(0, 32);
   return { dir, pcm: join(dir, `${hash}.pcm`), meta: join(dir, `${hash}.json`) };
 }
 
@@ -400,11 +442,11 @@ async function clip(p: Provider, say: string, env: Env): Promise<Cached> {
   if (hit) return hit;
   const tmp = mkdtempSync(join(tmpdir(), "catchup-tts-"));
   try {
-    const made = await p.synth(say, tmp);
+    const made = await p.synth(sent(p, say), tmp);
     const at = cachePaths(env, p, say);
     mkdirSync(at.dir, { recursive: true });
     writeFileSync(at.pcm, made.pcm);
-    writeFileSync(at.meta, JSON.stringify({ say, charEnds: made.charEnds, transcript: made.transcript }));
+    writeFileSync(at.meta, JSON.stringify({ say: sent(p, say), charEnds: made.charEnds, transcript: made.transcript }));
     return { pcm: made.pcm, charEnds: made.charEnds };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -431,16 +473,42 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) 
   return out;
 }
 
+/** Loudness below which a stretch of a clip counts as a pause between phrases. */
+const PAUSE_DB = -40;
+
+/** The center of the quietest 80 ms of 48 kHz s16le samples between two times, and its loudness. */
+function quietest(pcm: Buffer, from: number, to: number): { at: number; db: number } {
+  const samples = new Int16Array(pcm.buffer, pcm.byteOffset, Math.floor(pcm.length / 2));
+  const span = Math.round(0.08 * RATE);
+  let best = { at: (from + to) / 2, db: 0 };
+  for (let t = Math.max(0, from); t + 0.08 <= to + 0.04; t += 0.01) {
+    const a = Math.round(t * RATE);
+    let sum = 0;
+    for (let i = a; i < a + span && i < samples.length; i++) sum += (samples[i] ?? 0) ** 2;
+    const db = 20 * Math.log10(Math.max(1e-9, Math.sqrt(sum / span) / 32768));
+    if (db < best.db) best = { at: t + 0.04, db };
+  }
+  return best;
+}
+
 /** Where each phrase ends inside a clip: from character timings when the provider gave them,
  *  else estimated by spoken characters and snapped to the nearest pause the speaker took.
  *  null: the speaker did not pause there, so the phrase runs on into the next one. */
 function phraseEnds(said: string[], say: string, c: Cached): (number | null)[] {
   const dur = seconds(c.pcm);
   if (c.charEnds) {
+    // A character's end time says where its word ends, not where the speaker pauses: break in the
+    // quietest moment between this phrase's last character and the next phrase's first.
+    const ends = c.charEnds;
     let pos = 0;
     return said.map((p, i) => {
       pos = say.indexOf(p, pos) + p.length;
-      return i === said.length - 1 ? dur : Math.min(dur, c.charEnds?.[Math.max(0, pos - 1)] ?? dur);
+      if (i === said.length - 1) return dur;
+      const next = say.indexOf(said[i + 1] ?? "", pos);
+      const from = Math.min(dur, ends[Math.max(0, pos - 1)] ?? dur);
+      const to = Math.min(dur, Math.max(from + 0.05, ends[Math.min(ends.length - 1, next)] ?? dur));
+      const quiet = quietest(c.pcm, from - 0.12, to);
+      return quiet.db < PAUSE_DB ? quiet.at : null;
     });
   }
   const tmp = mkdtempSync(join(tmpdir(), "catchup-ph-"));
@@ -486,7 +554,7 @@ function lay(beats: readonly Beat[], spans: (b: Beat, said: string[]) => (number
       open = { text: [], said: [], start: end };
     }
     t += phrases.length ? (ends.at(-1) ?? 0) : 0;
-    return { name: b.name, say: clean(b.say), start: round(start), end: round(t), phrases };
+    return { name: b.name, say: spoken(b.say), start: round(start), end: round(t), phrases };
   });
   return { beats: out, total: round(t + TAIL) };
 }
@@ -505,23 +573,25 @@ export function readingTimeline(beats: readonly Beat[]): Timing {
 export async function narrate(o: NarrateOptions): Promise<Timing> {
   mkdirSync(o.outDir, { recursive: true });
   const beats = o.beats;
-  for (const b of beats) splitPhrases(b);
+  // Phrases and captions come from the spoken words; only the clip request sees the tags.
+  const words = beats.map((b) => ({ ...b, say: stripTags(b.say).text }));
+  for (const b of words) splitPhrases(b);
   // A voice with every clip cached plays without a request, so a rerun never waits on a
   // provider; the first fully cached voice in provider order wins.
   const cached = voices(o.env, o.voice).flatMap((v) => {
-    const clips = beats.map((b) => fromCache(o.env, v, clean(b.say)));
+    const clips = beats.map((b) => fromCache(o.env, v, b.say));
     return clips.every((c) => c !== null) ? [{ ...v, make: async () => clips.filter((c) => c !== null) }] : [];
   }).slice(0, 1);
   const chain: (Voice & { make: () => Promise<Cached[]> })[] = cached.length || o.offline
     ? cached
-    : providers(o.env, o.voice, o.log).map((p) => ({ ...p, make: () => mapLimit(beats, PARALLEL, (b) => clip(p, clean(b.say), o.env)) }));
+    : providers(o.env, o.voice, o.log).map((p) => ({ ...p, make: () => mapLimit(beats, PARALLEL[p.provider], (b) => clip(p, b.say, o.env)) }));
   for (const p of chain) {
     try {
       if (!cached.length) o.log(`narration: trying ${p.provider} ${p.model}, voice ${p.voice}`);
       const clips = await p.make();
-      const laid = lay(beats, (b, said) => {
-        const c = clips[beats.indexOf(b)];
-        return c ? phraseEnds(said, clean(b.say), c) : [];
+      const laid = lay(words, (b, said) => {
+        const c = clips[words.indexOf(b)];
+        return c ? phraseEnds(said, spoken(b.say), c) : [];
       });
       const parts: Buffer[] = [silence(LEAD_IN)];
       for (const [i, c] of clips.entries()) {
@@ -540,7 +610,7 @@ export async function narrate(o: NarrateOptions): Promise<Timing> {
   }
   o.log(o.offline ? "narration: no cached voice for these words; timed at reading pace (run narrate for the voice)"
     : "narration: no voice provider worked; captions only");
-  const timing = readingTimeline(beats);
+  const timing = readingTimeline(words);
   writeFileSync(join(o.outDir, "timing.json"), JSON.stringify(timing, null, 2));
   return timing;
 }

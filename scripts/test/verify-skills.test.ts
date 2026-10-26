@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
+import { EVAL_FIXTURE_FOLDERS } from "../eval-fixture-folders.ts";
+
 const checker = new URL("../verify-skills.ts", import.meta.url).pathname;
 
 function repository(t: TestContext, files: Record<string, string>) {
@@ -165,6 +167,26 @@ test("fails on every skill pointer in Markdown that names a skill Pi does not lo
 
   const fixed = run(root);
   assert.equal(fixed.status, 0, fixed.stderr);
+});
+
+test("skips skill pointers under every eval fixture folder and checks the rest of evals", (t) => {
+  const how = "agent/skills/how/SKILL.md";
+  const pointer = "Run the **gone** skill.\n";
+
+  const root = repository(t, {
+    [how]: skillManifest(how, "Explain a subsystem."),
+    ...Object.fromEntries(
+      EVAL_FIXTURE_FOLDERS.map((folder) => [`evals/demo/${folder}/case/README.md`, pointer]),
+    ),
+    "evals/demo/README.md": pointer,
+  });
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.equal(
+    result.stderr.trim(),
+    'evals/demo/README.md:1: points to skill "gone", which Pi does not load',
+  );
 });
 
 test("fails on an agent/skills SKILL.md that leaves an invocation flag to its default", (t) => {

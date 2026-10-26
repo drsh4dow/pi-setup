@@ -11,6 +11,8 @@ import { execFileSync } from "node:child_process";
 import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+import { isEvalFixturePath } from "./eval-fixture-folders.ts";
+
 const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
 
 const ONLY_NON_EXECUTABLE_REGULAR_FILE_MODE = "100644";
@@ -156,7 +158,8 @@ function danglingSkillPointers(loaded: readonly Skill[]) {
     { cwd: root, encoding: "utf8" },
   )
     .split("\0")
-    .filter((path) => path !== "" && lstatSync(resolve(root, path), { throwIfNoEntry: false }));
+    .filter((path) => path !== "" && !isEvalFixturePath(path))
+    .filter((path) => lstatSync(resolve(root, path), { throwIfNoEntry: false }));
 
   const errors: string[] = [];
 

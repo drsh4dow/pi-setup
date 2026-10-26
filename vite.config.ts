@@ -14,7 +14,7 @@ const ignoredFiles = [
   "agent/sessions/**",
   "agent/skills/*",
   ...EVAL_FIXTURE_FOLDERS.map((folder) => `evals/*/${folder}/**`),
-  // Real shell scripts the evals run to prepare fixtures, outside the list so verify-docs reads them.
+  // Shell scripts the evals run to prepare their fixtures, which are code, not fixtures.
   "evals/*/setup/**",
   // Gitignored eval run output.
   "evals/*/results/**",

@@ -170,6 +170,7 @@ export type PrSnapshot =
       readonly context: PrContext;
       readonly facts: PullRequestFacts;
       readonly threads: readonly ReviewThread[];
+      readonly reviewPasses: readonly BotReviewPasses[];
       readonly ci: CiState;
       readonly reviewAutomationRunning: boolean;
     };
@@ -405,6 +406,29 @@ export interface RawReviewThread {
   readonly firstComment: ReviewComment | null;
   readonly resolved: boolean;
 }
+export interface RawReview {
+  readonly id: string;
+  readonly authorLogin: string | null;
+  readonly authorIsBot: boolean;
+  readonly body: string;
+  readonly state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
+  readonly commitOid: string | null;
+  readonly submittedAt: string;
+}
+export interface ReviewPage {
+  readonly reviews: readonly RawReview[];
+  readonly endCursor: string | null;
+}
+/** A review pass: one bot author's non-empty review on one head commit. */
+export interface BotReviewPasses {
+  readonly author: string;
+  readonly passes: number;
+  readonly latestPass: {
+    readonly reviewId: string;
+    readonly commitOid: string;
+    readonly submittedAt: string;
+  } | null;
+}
 export interface ReviewThreadPage {
   readonly threads: readonly RawReviewThread[];
   readonly endCursor: string | null;
@@ -423,6 +447,7 @@ export interface GitHubReader {
     context: PrContext,
     after: string | null
   ): Promise<ReviewThreadPage>;
+  reviewPage(context: PrContext, after: string | null): Promise<ReviewPage>;
   commitRollups(context: PrContext): Promise<readonly CommitRollup[]>;
 }
 export interface PollingOptions {

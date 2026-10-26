@@ -7,6 +7,7 @@ import type {
   PrContext,
   PullRequestFacts,
   Repository,
+  RawReview,
   RawReviewThread,
   ReviewThread,
   ReviewThreadPage,
@@ -20,6 +21,7 @@ export interface FakeReaderOptions {
   readonly rollupPages?: readonly RollupPage[];
   readonly threads?: readonly ReviewThread[];
   readonly threadPages?: readonly ReviewThreadPage[];
+  readonly reviews?: readonly RawReview[];
   readonly commitRollups?: readonly CommitRollup[];
   readonly openPullRequests?: readonly OpenPullRequest[];
   readonly origin?: Repository | null;
@@ -126,6 +128,10 @@ export function fakeReader(
         threads: (options.threads ?? []).map(toRawThread),
         endCursor: null,
       };
+    },
+    async reviewPage(_requested, after) {
+      calls.push(`reviewPage:${after ?? "null"}`);
+      return { reviews: options.reviews ?? [], endCursor: null };
     },
     async commitRollups() {
       calls.push("commitRollups");

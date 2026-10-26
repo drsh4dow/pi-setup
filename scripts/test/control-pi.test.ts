@@ -44,7 +44,7 @@ type Pane = "none" | "alive" | "dead";
 let runs = 0;
 
 // One run of control-pi against a stub tmux, with its scratch state under a fresh temp dir.
-function harness(t: TestContext) {
+function harness(t: TestContext, run = `control-pi-test-${process.pid}-${++runs}`) {
   const root = mkdtempSync(join(tmpdir(), "control-pi-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
@@ -54,8 +54,6 @@ function harness(t: TestContext) {
   writeFileSync(join(bin, "tmux"), stubTmux);
   chmodSync(join(bin, "tmux"), 0o755);
 
-  runs += 1;
-  const run = `control-pi-test-${process.pid}-${runs}`;
   const scratch = join(root, "verify-pi-setup", run);
   const sessions = join(scratch, "sessions");
 
@@ -443,6 +441,23 @@ test("wait-idle does not count Pi itself as a background job", (t) => {
   h.pi();
 
   const result = h.cp("wait-idle", h.run, "10");
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("wait-idle ignores a process of another run whose id matches this one only as a regex", async (t) => {
+  const h = harness(t, `control-pi.test-${process.pid}`);
+  h.launch();
+
+  const other = spawn("sleep", ["30"], {
+    env: { ...process.env, VERIFY_PI_SETUP_RUN: h.run.replace(".", "x") },
+    stdio: "ignore",
+  });
+
+  t.after(() => other.kill());
+  await sleep(200);
+
+  const result = h.cp("wait-idle", h.run, "5");
 
   assert.equal(result.status, 0, result.stderr);
 });

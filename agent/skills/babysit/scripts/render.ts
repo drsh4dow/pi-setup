@@ -21,8 +21,7 @@ function ciCell(row: T.PrSnapshot): string {
     }
   }
 }
-function reviewCell(row: T.PrSnapshot): string {
-  if (row.kind !== "open") return "\u2014";
+function threadsCell(row: Extract<T.PrSnapshot, { kind: "open" }>): string {
   const open = row.threads.length;
   return row.reviewAutomationRunning
     ? open
@@ -31,6 +30,13 @@ function reviewCell(row: T.PrSnapshot): string {
     : open
       ? `📝 ${open} open`
       : "✅";
+}
+function reviewCell(row: T.PrSnapshot): string {
+  if (row.kind !== "open") return "\u2014";
+  const passes = row.reviewPasses.map(
+    (bot) => `; ${bot.author} ${bot.passes} pass${bot.passes === 1 ? "" : "es"}`
+  );
+  return `${threadsCell(row)}${passes.join("")}`;
 }
 function mergeCell(row: T.PrSnapshot): string {
   if (row.kind === "merged") return "✅ merged";

@@ -3,6 +3,8 @@ import type * as T from "./types.ts";
 import { nonEmpty, parsePrNumber } from "./types.ts";
 export const REVIEW_THREADS_QUERY =
   "\nquery ReviewThreads($owner: String!, $repo: String!, $pr: Int!, $after: String) {\n  repository(owner: $owner, name: $repo) {\n    pullRequest(number: $pr) {\n      reviewThreads(first: 100, after: $after) {\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        nodes {\n          id\n          isResolved\n          comments(first: 10) {\n            nodes {\n              body\n              createdAt\n              path\n              line\n              author { login }\n            }\n          }\n        }\n      }\n    }\n  }\n}\n";
+export const REVIEWS_QUERY =
+  "\nquery Reviews($owner: String!, $repo: String!, $pr: Int!, $after: String) {\n  repository(owner: $owner, name: $repo) {\n    pullRequest(number: $pr) {\n      reviews(first: 100, after: $after) {\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        nodes {\n          id\n          body\n          state\n          submittedAt\n          commit { oid }\n          author { __typename login }\n        }\n      }\n    }\n  }\n}\n";
 export const PR_COMMIT_STATUS_QUERY =
   "\nquery PrCommitStatuses($owner: String!, $repo: String!, $pr: Int!) {\n  repository(owner: $owner, name: $repo) {\n    pullRequest(number: $pr) {\n      commits(last: 50) {\n        nodes {\n          commit {\n            oid\n            statusCheckRollup {\n              state\n            }\n          }\n        }\n      }\n    }\n  }\n}\n";
 export const PR_CHECK_ROLLUP_QUERY =
@@ -304,6 +306,25 @@ export function mapRollupNode(value: unknown): T.Check | null {
     ? { ...details, link, kind: "passed", reportedState: state }
     : { ...details, link, kind: "failed", reportedState: state || "FAILURE" };
 }
+/** A bot author: GraphQL `__typename` Bot, or a login ending in [bot]. GraphQL drops the suffix, so the type is the main signal. */
+export function isBotAuthor(
+  typename: string | null,
+  login: string | null
+): boolean {
+  return typename === "Bot" || (login?.endsWith("[bot]") ?? false);
+}
+/** Reads `author { __typename login }`; a deleted account (`null`) is no author. */
+export function parseAuthor(
+  value: unknown,
+  path: string
+): { readonly login: string; readonly isBot: boolean } | null {
+  if (value === null) return null;
+  const author = record(value, path);
+  const login = string(author.login, `${path}.login`);
+  const typename =
+    typeof author.__typename === "string" ? author.__typename : null;
+  return { login, isBot: isBotAuthor(typename, login) };
+}
 function parseComment(value: unknown): T.ReviewComment {
   const object = record(value, "review comment");
   const author =
@@ -383,9 +404,8 @@ export function parseReviewThreadPage(value: unknown): T.ReviewThreadPage {
   );
   return { threads, endCursor: page.hasNextPage && cursor ? cursor : null };
 }
-export function buildReviewThreads(
-  threads: readonly T.RawReviewThread[]
-): readonly T.ReviewThread[] {
+/** Bugbot posts each pass as threads that share a RUN_ID. */
+function bugbotThreadPasses(threads: readonly T.RawReviewThread[]): number {
   const keys = new Set<string>();
   let keyless = false;
   for (const thread of threads) {
@@ -394,7 +414,12 @@ export function buildReviewThreads(
     if (key === null) keyless = true;
     else keys.add(key);
   }
-  const passes = keys.size > 0 ? keys.size : keyless ? 1 : 0;
+  return keys.size > 0 ? keys.size : keyless ? 1 : 0;
+}
+export function buildReviewThreads(
+  threads: readonly T.RawReviewThread[]
+): readonly T.ReviewThread[] {
+  const passes = bugbotThreadPasses(threads);
   return threads
     .filter((thread) => !thread.resolved)
     .map(({ id, firstComment }) => ({
@@ -403,6 +428,84 @@ export function buildReviewThreads(
       isBugbot: isBugbot(firstComment),
       bugbotReviewPasses: passes,
     }));
+}
+const REVIEW_STATES = [
+  "APPROVED",
+  "CHANGES_REQUESTED",
+  "COMMENTED",
+  "DISMISSED",
+  "PENDING",
+] as const;
+export function parseReviewPage(value: unknown): T.ReviewPage {
+  const connection = record(
+    at(value, ["data", "repository", "pullRequest", "reviews"]),
+    "reviews"
+  );
+  const reviews: T.RawReview[] = [];
+  for (const node of list(connection.nodes, "reviews.nodes")) {
+    const review = record(node, "review");
+    const state = enumValue(review.state, REVIEW_STATES, "review.state");
+    if (state === "PENDING") continue;
+    const author = parseAuthor(review.author, "review.author");
+    const commit =
+      review.commit === null ? null : record(review.commit, "review.commit");
+    reviews.push({
+      id: string(review.id, "review.id"),
+      authorLogin: author?.login ?? null,
+      authorIsBot: author?.isBot ?? false,
+      body: string(review.body, "review.body"),
+      state,
+      commitOid: commit === null ? null : string(commit.oid, "review.commit.oid"),
+      submittedAt: string(review.submittedAt, "review.submittedAt"),
+    });
+  }
+  const page = record(connection.pageInfo, "reviews.pageInfo");
+  if (typeof page.hasNextPage !== "boolean")
+    missing("reviews.pageInfo.hasNextPage", page.hasNextPage);
+  const cursor = optionalString(page.endCursor, "reviews.pageInfo.endCursor");
+  return { reviews, endCursor: page.hasNextPage && cursor ? cursor : null };
+}
+/**
+ * One review pass is one bot author's non-empty review on one head commit, so
+ * a pass that posts a summary and an empty review holding its inline comments
+ * counts once. Cursor Bugbot also posts passes as threads keyed by RUN_ID; its
+ * entry takes the larger of the two counts, since both count the same passes.
+ */
+export function countReviewPasses(
+  reviews: readonly T.RawReview[],
+  threads: readonly T.RawReviewThread[]
+): readonly T.BotReviewPasses[] {
+  const commits = new Map<string, Set<string>>();
+  const latest = new Map<string, T.BotReviewPasses["latestPass"]>();
+  for (const review of reviews) {
+    const author = review.authorLogin;
+    if (!review.authorIsBot || author === null || review.commitOid === null)
+      continue;
+    if (review.body.trim() === "") continue;
+    commits.set(author, (commits.get(author) ?? new Set()).add(review.commitOid));
+    const previous = latest.get(author) ?? null;
+    if (previous === null || review.submittedAt > previous.submittedAt)
+      latest.set(author, {
+        reviewId: review.id,
+        commitOid: review.commitOid,
+        submittedAt: review.submittedAt,
+      });
+  }
+  const bugbotThreads = new Map<string, T.RawReviewThread[]>();
+  for (const thread of threads) {
+    const author = thread.firstComment?.authorLogin ?? null;
+    if (author === null || !isBugbot(thread.firstComment)) continue;
+    bugbotThreads.set(author, [...(bugbotThreads.get(author) ?? []), thread]);
+  }
+  const authors = [...new Set([...commits.keys(), ...bugbotThreads.keys()])];
+  return authors.sort().map((author) => ({
+    author,
+    passes: Math.max(
+      commits.get(author)?.size ?? 0,
+      bugbotThreadPasses(bugbotThreads.get(author) ?? [])
+    ),
+    latestPass: latest.get(author) ?? null,
+  }));
 }
 export function parsePullRequest(
   value: unknown,
@@ -584,6 +687,14 @@ export class GhGitHubReader implements T.GitHubReader {
     if (after !== null) argv.push("-f", `after=${after}`);
     return parseReviewThreadPage(await runJson(argv));
   }
+  async reviewPage(
+    context: T.PrContext,
+    after: string | null
+  ): Promise<T.ReviewPage> {
+    const argv = graphqlArgs(REVIEWS_QUERY, context);
+    if (after !== null) argv.push("-f", `after=${after}`);
+    return parseReviewPage(await runJson(argv));
+  }
   async commitRollups(
     context: T.PrContext
   ): Promise<readonly T.CommitRollup[]> {
@@ -653,10 +764,11 @@ export async function resolveChecks(
       : "fast path and GraphQL rollup were empty";
   throw new ChecksUnavailable(`could not read PR checks: ${suffix}`);
 }
-export async function resolveReviewThreads(
+/** Every review thread, resolved ones included, across all pages. */
+export async function readReviewThreads(
   reader: T.GitHubReader,
   context: T.PrContext
-): Promise<readonly T.ReviewThread[]> {
+): Promise<readonly T.RawReviewThread[]> {
   const threads: T.RawReviewThread[] = [];
   let after: string | null = null;
   do {
@@ -664,7 +776,27 @@ export async function resolveReviewThreads(
     threads.push(...page.threads);
     after = page.endCursor;
   } while (after !== null);
-  return buildReviewThreads(threads);
+  return threads;
+}
+export async function resolveReviewThreads(
+  reader: T.GitHubReader,
+  context: T.PrContext
+): Promise<readonly T.ReviewThread[]> {
+  return buildReviewThreads(await readReviewThreads(reader, context));
+}
+export async function resolveReviewPasses(
+  reader: T.GitHubReader,
+  context: T.PrContext,
+  threads: readonly T.RawReviewThread[]
+): Promise<readonly T.BotReviewPasses[]> {
+  const reviews: T.RawReview[] = [];
+  let after: string | null = null;
+  do {
+    const page = await reader.reviewPage(context, after);
+    reviews.push(...page.reviews);
+    after = page.endCursor;
+  } while (after !== null);
+  return countReviewPasses(reviews, threads);
 }
 export async function resolveContext(args: {
   readonly reader: T.GitHubReader;

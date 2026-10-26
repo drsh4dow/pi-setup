@@ -1,8 +1,10 @@
 import {
   ChecksUnavailable,
   WatcherQueryError,
+  buildReviewThreads,
+  readReviewThreads,
   resolveChecks,
-  resolveReviewThreads,
+  resolveReviewPasses,
 } from "./github.ts";
 import type * as T from "./types.ts";
 import { nonEmpty } from "./types.ts";
@@ -145,7 +147,12 @@ export async function readSnapshot(args: {
     return { kind: "merged", context: args.context, facts };
   if (facts.state === "CLOSED")
     return { kind: "closed", context: args.context, facts };
-  const threads = await resolveReviewThreads(args.reader, args.context);
+  const threads = await readReviewThreads(args.reader, args.context);
+  const reviewPasses = await resolveReviewPasses(
+    args.reader,
+    args.context,
+    threads
+  );
   const checks = await resolveChecks(args.reader, args.context);
   const ci =
     (args.pendingHistory === "omit" ? pendingWithoutHistory(checks) : null) ??
@@ -154,7 +161,8 @@ export async function readSnapshot(args: {
     kind: "open",
     context: args.context,
     facts,
-    threads,
+    threads: buildReviewThreads(threads),
+    reviewPasses,
     ci,
     reviewAutomationRunning:
       checks.kind === "checks" &&

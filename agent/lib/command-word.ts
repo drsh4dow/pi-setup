@@ -1,6 +1,6 @@
 // Finds a simple command's command word, past the env assignments, wrappers such
-// as `sudo -u root` or `timeout 5`, and their options before it, for the shell
-// command reader in shell-command.ts.
+// as `sudo -u root` or `timeout 5` (by name or by path), and their options before
+// it, for the shell command reader in shell-command.ts.
 
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
@@ -45,7 +45,8 @@ const WRAPPER_OPTIONS: ReadonlyMap<string, WrapperOptions> = new Map([
   [
     "sudo",
     {
-      short: "CDgpRrTtUu",
+      // `-h host` names a host; a bare `-h` prints help and runs no command.
+      short: "CDghpRrTtUu",
       long: new Set([
         "--chdir",
         "--chroot",
@@ -69,7 +70,7 @@ const TIMEOUT_DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
 function isWrapperWord(word: string): boolean {
   return (
     ENV_ASSIGNMENT.test(word) ||
-    COMMAND_WRAPPERS.has(word) ||
+    COMMAND_WRAPPERS.has(basename(word)) ||
     word.startsWith("-") ||
     TIMEOUT_DURATION.test(word)
   );
@@ -157,10 +158,12 @@ export function commandStart(
 
     if (endsAt(word) || !isWrapperWord(word)) return { kind: "word", index };
 
-    if (word === "command" && looksUp(argv.slice(index + 1))) return { kind: "word", index };
+    const name = basename(word);
+
+    if (name === "command" && looksUp(argv.slice(index + 1))) return { kind: "word", index };
 
     wrapper = word;
-    options = WRAPPER_OPTIONS.get(word);
+    options = WRAPPER_OPTIONS.get(name);
     index += 1;
   }
 

@@ -321,6 +321,19 @@ test("a PID search feeds xargs kill only through the same pipeline", async () =>
   );
 });
 
+test("a kill by name run through xargs is refused, whatever xargs' options", async () => {
+  await assertEach(
+    everySession([
+      "xargs -0 pkill x",
+      "cat names.txt | xargs pkill -f",
+      "printf '%s\\n' java | xargs -n 1 killall",
+      "xargs -r -- /usr/bin/pkill -f vitest",
+      "xargs -I{} sudo killall {}",
+    ]),
+    assertKillRefused,
+  );
+});
+
 test("a shell's -c operand is read after long options that take an argument", async () => {
   await assertEach(
     rootBash(["bash --rcfile x -c 'pkill y'", "bash --norc --init-file x -c 'killall java'"]),
@@ -359,6 +372,45 @@ test("a kill or delete run through sudo or doas is refused, past their options",
   await assertEach(
     everySession(["sudo -u x rm -rf /tmp/aa-*", "doas -u x rm -rf /tmp/tmp.*/w"]),
     assertTmpGlobRefused,
+  );
+});
+
+test("sudo -h with a host runs the command after the host, and sudo -h alone prints help", async () => {
+  await assertEach(
+    everySession([
+      "sudo -h host pkill x",
+      "sudo -hhost pkill x",
+      "sudo -h host -u x killall java",
+      "sudo -nh host pkill node",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(["sudo -h host rm -rf /tmp/aa-*"]), assertTmpGlobRefused);
+  await assertEach(everySession(["sudo -h", "sudo -h host kill 12345"]), assertRuns);
+});
+
+test("a wrapper or shell named by its path is read like its bare name", async () => {
+  await assertEach(
+    everySession([
+      "/usr/bin/env pkill x",
+      "/usr/bin/env -u FOO killall java",
+      '/usr/bin/env -S "pkill -f vitest"',
+      "/usr/bin/sudo -u x pkill node",
+      "/usr/bin/timeout 5 pkill x",
+      "/usr/bin/nohup /usr/bin/nice killall java",
+      "/bin/bash -c 'pkill node'",
+      "/usr/bin/env bash -c 'kill $(pgrep -f x)'",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(["/usr/bin/sudo rm -rf /tmp/aa-*"]), assertTmpGlobRefused);
+  await assertEach(
+    everySession([
+      "/usr/bin/env kill 12345",
+      "/usr/bin/env grep -n pkill f",
+      "/usr/bin/command -v pkill",
+    ]),
+    assertRuns,
   );
 });
 

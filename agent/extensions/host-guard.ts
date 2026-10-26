@@ -94,10 +94,13 @@ function killsByPattern(pipeline: Pipeline): boolean {
 
     if (name === "kill") return withNested(command).some(isPidSearch);
 
+    if (name !== "xargs") return false;
+
+    const runs = invocation(xargsCommand(args)).name;
+
     return (
-      name === "xargs" &&
-      invocation(xargsCommand(args)).name === "kill" &&
-      pipeline.slice(0, index).flatMap(withNested).some(isPidSearch)
+      KILL_BY_NAME.has(runs) ||
+      (runs === "kill" && pipeline.slice(0, index).flatMap(withNested).some(isPidSearch))
     );
   });
 }

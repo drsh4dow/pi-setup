@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { type CliRuntime, main, parseArgs } from "./cli.ts";
-import { fakeReader, passingCheck } from "./fakes.test-helper.ts";
-import { renderJson, renderPretty } from "./render.ts";
+import { botReview, fakeReader, passingCheck } from "./fakes.test-helper.ts";
 import { WatcherQueryError } from "./github.ts";
+import { renderJson, renderPretty } from "./render.ts";
 import type { GitHubReader, WatcherVerdict } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
 
@@ -370,23 +370,27 @@ describe("main", () => {
   });
 
   it("shows each review bot's pass count in the status output", async () => {
-    const acme = (id: string, commitOid: string, body: string, at: string) => ({
-      id,
-      authorLogin: "acme-review[bot]",
-      authorIsBot: true,
-      body,
-      state: "COMMENTED" as const,
-      commitOid,
-      submittedAt: at,
-    });
-    const reviews = [
-      acme("a-summary", "A", "Summary: 2 findings", "2026-01-01T00:00:00Z"),
-      acme("a-inline", "A", "", "2026-01-01T00:00:05Z"),
-      acme("b-summary", "B", "Summary: 1 finding", "2026-01-01T01:00:00Z"),
-      acme("b-inline", "B", "", "2026-01-01T01:00:05Z"),
+    const review = (id: string, commitOid: string, body: string, at: string, author?: string) =>
+      botReview({ id, author, commitOid, body, submittedAt: at });
+    const reviewPages = [
+      {
+        reviews: [
+          review("a-summary", "A", "Summary: 2 findings", "2026-01-01T00:00:00Z"),
+          review("a-inline", "A", "", "2026-01-01T00:00:05Z"),
+          review("l-a", "A", "1 issue", "2026-01-01T00:01:00Z", "lint-bot"),
+        ],
+        endCursor: "page-2",
+      },
+      {
+        reviews: [
+          review("b-summary", "B", "Summary: 1 finding", "2026-01-01T01:00:00Z"),
+          review("b-inline", "B", "", "2026-01-01T01:00:05Z"),
+        ],
+        endCursor: null,
+      },
     ];
     const argv = ["--owner", "owner", "--repo", "repo", "--pr", "1", "--status-only"];
-    const json = testRuntime(fakeReader({ reviews }));
+    const json = testRuntime(fakeReader({ reviewPages }));
     expect(await main(argv, json.runtime)).toBe(0);
     expect(JSON.parse(json.stdout[0] ?? "")).toMatchObject({
       kind: "STATUS",
@@ -398,15 +402,20 @@ describe("main", () => {
               passes: 2,
               latestPass: { reviewId: "b-summary", commitOid: "B" },
             },
+            {
+              author: "lint-bot",
+              passes: 1,
+              latestPass: { reviewId: "l-a", commitOid: "A" },
+            },
           ],
         },
       ],
     });
 
-    const pretty = testRuntime(fakeReader({ reviews }));
+    const pretty = testRuntime(fakeReader({ reviewPages }));
     expect(await main([...argv, "--pretty"], pretty.runtime)).toBe(0);
     expect(pretty.stdout.join("")).toContain(
-      "| ✅; acme-review[bot] 2 passes |"
+      "| ✅; acme-review[bot] 2 passes; lint-bot 1 pass |"
     );
   });
 

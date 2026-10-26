@@ -3,6 +3,7 @@ import type {
   CiClean,
   CiNoChecks,
   GitHubMergeAllowed,
+  GitHubMergeRefusal,
   PrContext,
   ReadyPr,
   TerminalVerdict,
@@ -95,8 +96,14 @@ const refusalIsNotAllowed: GitHubMergeAllowed = refused;
 // @ts-expect-error CI cannot be clean while GitHub refuses the merge.
 const refusalIsNotClean: CiClean = { ...cleanCi, github: refused };
 
+const refusal = {
+  kind: "refused",
+  mergeStateStatus: "BLOCKED",
+  headRollupState: "FAILURE",
+} satisfies GitHubMergeRefusal;
+
 // @ts-expect-error A commit with no checks cannot be clear while GitHub refuses the merge.
-const refusalIsNotNoChecks: CiNoChecks = { ...noChecksCi, github: refused };
+const refusalIsNotNoChecks: CiNoChecks = { ...noChecksCi, github: refusal };
 
 // @ts-expect-error READY cannot carry the failing-checks exit code.
 const readyWithBlockerExit: ReadyVerdict = { ...ready, exitCode: 4 };

@@ -661,6 +661,34 @@ describe("blockers", () => {
     expect(recur.items[0]?.id).not.toBe(rehead.items[0]?.id);
   });
 
+  it("reports CI recovered once when failing checks give way to a head with no checks", async () => {
+    const scene = world();
+    scene.checks.set(1, failing("https://ci/1"));
+    const failed = await watch(scene);
+    expect(failed.items.map((item) => item.kind)).toEqual(["merge-blocker"]);
+
+    scene.facts.set(1, { headRefOid: "second" });
+    scene.checks.set(1, {
+      kind: "unusable",
+      exitCode: 1,
+      stderr: "no checks reported on the 'feature' branch",
+    });
+    scene.rollups.set(1, { kind: "no-rollup" });
+    scene.commitRollups.set(1, [
+      { oid: "head", state: "FAILURE" },
+      { oid: "second", state: null },
+    ]);
+    const recovered = await watch(scene, acks(failed.items));
+    expect(recovered.items.map((item) => item.kind)).toEqual([
+      "ci-recovered",
+      "merge-ready",
+    ]);
+
+    const quiet = await watch(scene, acks(recovered.items));
+    expect(quiet.code).toBe(5);
+    expect(quiet.records.map((record) => record.kind)).not.toContain("ATTENTION");
+  });
+
   it("reports a conflict and then waits", async () => {
     const scene = world();
     scene.facts.set(1, { mergeable: "CONFLICTING" });

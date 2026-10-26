@@ -8,20 +8,26 @@ EVIDENCE_BASE=$HOME/.local/state/pi-agent/verify-pi-setup
 LIVE_AGENT_DIR=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}
 READY_PATTERN='[0-9.]+%/[0-9]'
 POLL=0.25
-# wait-idle needs this many polls in a row with nothing running and the session file unchanged.
+# wait-idle's quiet period: 8 polls, 2 s at POLL.
 IDLE_QUIET_POLLS=8
 
-# An assistant message ends a turn on these stop reasons. "error" may be followed by a retry.
-ENDS_TURN_JQ='def ends_turn: .role == "assistant" and (.stopReason | IN("stop", "length", "aborted"));'
+# "length" ends a turn only without a tool call: Pi fails a truncated call and asks again.
+# "error" may be followed by a retry.
+ENDS_TURN_JQ='def ends_turn: .role == "assistant"
+  and (.stopReason == "stop" or .stopReason == "aborted"
+    or (.stopReason == "length" and all(.content[]?; .type != "toolCall")));'
 
-# Reads session lines past a send's baseline. Prints "none" until the first user message,
-# "ended" once an assistant message after it ends a turn, or "running" and the last error.
+# Reads session lines past a send's baseline. Prints one line: "none" until the first user
+# message, "ended" once an assistant message after it ends a turn, and otherwise "running",
+# or "running: <last error>" after a failed request.
 SEND_TURN_JQ="$ENDS_TURN_JQ"'
 [inputs | fromjson? | select(.type == "message") | .message] as $messages
-| (first(range($messages | length) as $i | select($messages[$i].role == "user") | $i) // null) as $prompt
+| ($messages | map(.role) | index("user")) as $prompt
 | if $prompt == null then "none"
-  elif any($messages[$prompt + 1:][]; ends_turn) then "ended"
-  else "running", ([$messages[$prompt + 1:][] | .errorMessage // empty] | last // empty) end'
+  else $messages[$prompt + 1:] as $after
+  | if any($after[]; ends_turn) then "ended"
+    else "running" + ([$after[] | .errorMessage // empty] | last | if . then ": " + (tostring | gsub("\n"; " ")) else "" end) end
+  end'
 
 # Reads a whole session file. Prints "idle" when its last conversation entry ends a turn,
 # and otherwise what is running. A background job's result arrives as a custom_message.
@@ -82,7 +88,7 @@ require_up() {
   if [[ ! -d $SCRATCH ]]; then
     echo "control-pi: run $RUN_ID does not exist; launch it first" >&2
   elif ! tm has-session -t "=$SESSION" 2>/dev/null; then
-    echo "control-pi: run $RUN_ID has not started: it has scratch state but no tmux session; wait for 'control-pi launch' to print run=" >&2
+    echo "control-pi: run $RUN_ID has scratch state but no tmux session: it is still launching, or its tmux session was killed; wait for 'control-pi launch' to print run=, or stop and relaunch it" >&2
   elif session_alive; then
     return 0
   else
@@ -101,19 +107,24 @@ newest_session() {
   echo "$newest"
 }
 
-last_send_text() {
-  tail -n 1 "$SENDS" | jq -r .text
+last_send() {
+  tail -n 1 "$SENDS"
 }
 
-# The turn of the last sent prompt, scanned from the session length that send recorded.
-last_send_turn() {
+send_text() {
+  jq -r .text <<<"$1"
+}
+
+# The turn of the prompt in send record $1, scanned from the session length it recorded, or
+# from the start of a session file that is newer than the record.
+send_turn() {
   local file offset
   file=$(newest_session)
   if [[ -z $file ]]; then
     echo none
     return
   fi
-  offset=$(tail -n 1 "$SENDS" | jq -r --arg file "$file" 'if .file == $file then .offset else 0 end')
+  offset=$(jq -r --arg file "$file" 'if .file == $file then .offset else 0 end' <<<"$1")
   tail -c +$((offset + 1)) "$file" | jq -nrR "$SEND_TURN_JQ"
 }
 
@@ -127,7 +138,7 @@ pi_pid() {
   pgrep -P "$shell_pid" -x pi | head -n 1
 }
 
-# One grep over every environ, so wait-idle can poll it (a grep per process takes over a second).
+# One grep over every environ, so wait-idle can poll it.
 pids_tagged_with_run() {
   { grep -lxzs -- "VERIFY_PI_SETUP_RUN=$RUN_ID" /proc/[0-9]*/environ || true; } | cut -d/ -f3
 }
@@ -209,7 +220,7 @@ cmd_send() {
   bind_run "${1:-}"
   local text=${2:?text required} file offset=0
   require_up || exit 1
-  # The baseline is taken before Enter, so nothing Pi writes for this prompt falls before it.
+  # send records the baseline before it types the prompt, so nothing Pi writes for it lands before.
   file=$(newest_session)
   [[ -n $file ]] && offset=$(stat -c %s "$file")
   jq -cn --arg file "$file" --argjson offset "$offset" --arg text "$text" \
@@ -221,31 +232,34 @@ cmd_send() {
 
 cmd_wait_turn() {
   bind_run "${1:-}"
-  local deadline=$((SECONDS + ${2:-60})) what="the turn of the last send to end" turn=none
+  local deadline=$((SECONDS + ${2:-60})) what="the turn of the last send to end" turn=none send
   require_up "$what" || exit 1
   [[ -s $SENDS ]] || die "no prompt sent to $RUN_ID since launch; run 'control-pi send' first"
+  # The wait follows the send that is last now; a send made while it waits does not move it.
+  send=$(last_send)
   while ((SECONDS < deadline)); do
     require_up "$what" || exit 1
-    turn=$(last_send_turn)
+    turn=$(send_turn "$send")
     [[ $turn == ended ]] && return 0
     sleep "$POLL"
   done
-  if [[ $turn == none ]]; then
-    die "timed out: no turn started since the last send ($(last_send_text)); wait-turn follows prompts, not keys or commands that start no turn"
-  fi
-  local error=${turn#running}
-  die "timed out waiting for $what${error:+; last error:${error//$'\n'/ }}"
+  case $turn in
+  none) die "timed out: no turn started since the last send ($(send_text "$send")); wait-turn follows prompts, not keys or commands that start no turn" ;;
+  "running: "*) die "timed out waiting for $what; last error: ${turn#running: }" ;;
+  *) die "timed out waiting for $what" ;;
+  esac
 }
 
 # Prints what keeps the run from being idle, or nothing when it is idle.
 busy_reason() {
-  local pi jobs file
+  local pi jobs file send
   pi=$(pi_pid || true)
   jobs=$(pids_tagged_with_run | grep -vx -- "${pi:-none}" || true)
   if [[ -n $jobs ]]; then
-    echo "background processes still run: $(ps -o pid=,args= -p "${jobs//$'\n'/,}" 2>/dev/null | cut -c1-120 | paste -sd ';' || true)"
-  elif [[ -s $SENDS && $(last_send_turn | head -n 1) == none ]]; then
-    echo "the last send has no user message in the session yet ($(last_send_text))"
+    # The name only: a process's arguments can hold a token.
+    echo "background processes still run: $(ps -o pid=,comm= -p "${jobs//$'\n'/,}" 2>/dev/null | paste -sd ';' || true)"
+  elif [[ -s $SENDS ]] && send=$(last_send) && [[ $(send_turn "$send") == none ]]; then
+    echo "the last send has no user message in the session yet ($(send_text "$send"))"
   elif file=$(newest_session) && [[ -n $file ]]; then
     jq -nrR "$SESSION_IDLE_JQ" <"$file" | grep -vx idle || true
   fi

@@ -33,7 +33,6 @@ Preconditions:
 
 ## Gotchas
 
-- A turn's last screen stays visible while the next turn runs, so a `$CP wait` on a footer string such as `TPS` returns at once. Wait on the turn's end with `$CP wait-turn RUN` instead.
 - The session's system prompt lists every model-visible skill with its `SKILL.md` path, so a grep of the session file for `arena/SKILL.md` matches before the skill is read. Count only tool-call arguments that name the path.
 - While arena's runners or the sketch reviewers run, the parent can end a turn with a pending status. Answer only a turn whose last message asks a question, and let a completion start the next turn.
 - The report step runs `xdg-open` unless the prompt says not to, which opens a browser on the operator's desktop.

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -11,7 +20,8 @@ const controlPi = new URL(
 ).pathname;
 
 // A stand-in for tmux, which CI does not install. The run's pane exists while $TMUX_STUB/pane
-// does, and that file holds "alive" or "dead". capture-pane prints $TMUX_STUB/screen.
+// does, and that file holds "alive" or "dead". capture-pane prints $TMUX_STUB/screen, and the
+// pane's PID is $TMUX_STUB/pane_pid when a test started a Pi process under it.
 const stubTmux = `#!/usr/bin/env bash
 while [[ \${1:-} == -L ]]; do shift 2; done
 command=\${1:-}
@@ -21,7 +31,7 @@ list-panes)
   if [[ $* == *pane_dead* ]]; then
     [[ $(cat "$TMUX_STUB/pane") == dead ]] && echo 1 || echo 0
   else
-    echo 999999999
+    cat "$TMUX_STUB/pane_pid" 2>/dev/null || echo 999999999
   fi
   ;;
 capture-pane) cat "$TMUX_STUB/screen" 2>/dev/null || true ;;
@@ -75,6 +85,26 @@ function harness(t: TestContext) {
     screen(text: string) {
       writeFileSync(join(stub, "screen"), text);
     },
+    // Starts a process named pi, tagged with the run, under a pane shell that is not tagged,
+    // as tmux runs `env VERIFY_PI_SETUP_RUN=... pi` in the pane.
+    pi() {
+      const pi = join(root, "pi");
+      symlinkSync("/bin/sleep", pi);
+
+      const shell = spawn("bash", ["-c", `VERIFY_PI_SETUP_RUN=${run} ${pi} 30 & wait`], {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      const { pid } = shell;
+      assert.ok(pid !== undefined, "the pane shell started");
+      t.after(() => process.kill(-pid));
+      writeFileSync(join(stub, "pane_pid"), `${pid}\n`);
+    },
+    touch(file: string, secondsAgo: number) {
+      const time = Date.now() / 1000 - secondsAgo;
+      utimesSync(join(sessions, file), time, time);
+    },
     append(file: string, ...entries: object[]) {
       appendFileSync(
         join(sessions, file),
@@ -123,6 +153,16 @@ const assistant = (stopReason: string) => ({
 
 const toolResult = { type: "message", message: { role: "toolResult", content: [] } };
 
+// A reply cut off by the output limit inside a tool call. Pi fails the call and asks again.
+const truncatedToolCall = {
+  type: "message",
+  message: {
+    role: "assistant",
+    content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "ec" } }],
+    stopReason: "length",
+  },
+};
+
 const jobResult = {
   type: "custom_message",
   customType: "background-terminal-results",
@@ -147,14 +187,15 @@ test("every wait on a run that was never launched says the run does not exist, n
   }
 });
 
-test("a wait on a run with scratch state but no tmux session yet says it has not started", (t) => {
+test("a wait on a run with scratch state but no tmux session names both causes, launching or killed", (t) => {
   const h = harness(t);
   h.launch("none");
 
   const result = h.cp("wait", h.run, "x", "2");
 
   assert.equal(result.status, 1);
-  assert.match(result.stderr, new RegExp(`run ${h.run} has not started`));
+  assert.match(result.stderr, new RegExp(`run ${h.run} has scratch state but no tmux session`));
+  assert.match(result.stderr, /still launching, or its tmux session was killed/);
   assert.doesNotMatch(result.stderr, /Pi exited/);
 });
 
@@ -293,6 +334,55 @@ test("wait-turn counts an aborted or length-capped turn as ended and keeps waiti
   assert.equal(h.cp("wait-turn", h.run, "5").status, 0);
 });
 
+test("wait-turn keeps waiting through a reply truncated inside a tool call until its continuation ends", async (t) => {
+  const h = harness(t);
+  h.launch();
+  h.append("s.jsonl", header, system);
+  h.cp("send", h.run, "run a command");
+  h.append("s.jsonl", user("run a command"), truncatedToolCall, toolResult);
+
+  const waiting = h.cpAsync("wait-turn", h.run, "10");
+  await sleep(1200);
+  h.append("s.jsonl", assistant("stop"));
+  const result = await waiting;
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.seconds >= 1.2, `returned after ${result.seconds}s, before the continuation`);
+});
+
+test("a send during wait-turn leaves the wait on the prompt it started with", async (t) => {
+  const h = harness(t);
+  h.launch();
+  h.append("s.jsonl", header, system);
+  h.cp("send", h.run, "first");
+  h.append("s.jsonl", user("first"), assistant("toolUse"));
+
+  const waiting = h.cpAsync("wait-turn", h.run, "5");
+  await sleep(500);
+  h.cp("send", h.run, "second");
+  h.append("s.jsonl", toolResult, assistant("stop"));
+  const result = await waiting;
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.seconds < 2.5, `returned after ${result.seconds}s, not on the first turn's end`);
+});
+
+test("both waits read the most recently modified session file, not the first by name", (t) => {
+  const h = harness(t);
+  h.launch();
+  h.cp("send", h.run, "first");
+  h.append("a.jsonl", header, system, user("first"), assistant("toolUse"));
+  h.append("b.jsonl", header, system, user("first"), assistant("stop"));
+  h.append("c.jsonl", header, system, user("first"), assistant("toolUse"));
+  h.touch("a.jsonl", 20);
+  h.touch("c.jsonl", 10);
+
+  const turn = h.cp("wait-turn", h.run, "5");
+  assert.equal(turn.status, 0, turn.stderr);
+  const idle = h.cp("wait-idle", h.run, "10");
+  assert.equal(idle.status, 0, idle.stderr);
+});
+
 test("wait-turn reads the session file Pi creates after the first send", (t) => {
   const h = harness(t);
   h.launch();
@@ -331,7 +421,8 @@ test("wait-idle returns only after the background job exits and the turn its res
   );
   const busy = h.cp("wait-idle", h.run, "2");
   assert.equal(busy.status, 1);
-  assert.match(busy.stderr, new RegExp(`background process.*${job.pid}`));
+  assert.match(busy.stderr, new RegExp(`background process.*${job.pid} sleep`));
+  assert.doesNotMatch(busy.stderr, /sleep 30/, "names the process without its arguments");
 
   job.kill();
   await sleep(200);
@@ -344,6 +435,30 @@ test("wait-idle returns only after the background job exits and the turn its res
   const idle = h.cp("wait-idle", h.run, "10");
   assert.equal(idle.status, 0, idle.stderr);
   assert.ok(idle.seconds >= 2, `idle held for ${idle.seconds}s, less than the quiet period`);
+});
+
+test("wait-idle does not count Pi itself as a background job", (t) => {
+  const h = harness(t);
+  h.launch();
+  h.pi();
+
+  const result = h.cp("wait-idle", h.run, "10");
+
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("wait-idle waits a full quiet period after the session file last changed", async (t) => {
+  const h = harness(t);
+  h.launch();
+  h.append("s.jsonl", header, system, user("first"), assistant("stop"));
+
+  const waiting = h.cpAsync("wait-idle", h.run, "10");
+  await sleep(1500);
+  h.append("s.jsonl", { type: "model_change", provider: "p", modelId: "m" });
+  const result = await waiting;
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.seconds >= 3.5, `idle after ${result.seconds}s, under 2 s after the change`);
 });
 
 test("wait-idle keeps waiting while a sent prompt has no user message in the session", (t) => {

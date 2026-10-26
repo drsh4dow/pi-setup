@@ -7,7 +7,7 @@ user-invokable: false
 
 # Test-driven development
 
-Make each behavior the change adds or fixes executable before writing the code for it: a test that goes red, then the least code that turns it green. Inspired by Matt Pocock's `tdd` skill.
+Make each behavior the change adds or fixes executable before writing the code for it: a test that goes red, then the least code that turns it green.
 
 When exploring the codebase, read `GLOSSARY.md` (if it exists) so test names and interface vocabulary match the project's domain language, and respect ADRs in the area you're touching.
 

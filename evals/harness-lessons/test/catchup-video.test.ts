@@ -383,4 +383,18 @@ test("framesLooked needs every contact sheet of the final render read after it",
   assert.equal(looked([...both, render]), false);
   assert.equal(looked(both), "unknown");
   assert.equal(framesLooked(undefined, session([])).kind, "unknown");
+
+  // The skill has the agent look at the draft's sheets, fix, then render the final once.
+  const draftFrames = join(dirname(video), "story.build", "draft", "frames");
+  const draftLive = join(LIVE, "catchup", "story.build", "draft", "frames");
+  const draft = bash("node /harness/agent/skills/catchup-video/scripts/video.ts draft story.py");
+
+  mkdirSync(draftFrames, { recursive: true });
+
+  for (const name of ["sheet-1.png", "sheet-2.png"]) writeFileSync(join(draftFrames, name), "");
+
+  const draftSheets = [read(join(draftLive, "sheet-1.png")), read(join(draftLive, "sheet-2.png"))];
+
+  assert.equal(looked([draft, ...draftSheets, render]), true);
+  assert.equal(looked([draft, draftSheets[0], render]), false);
 });

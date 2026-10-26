@@ -34,7 +34,7 @@ import {
 } from "./metrics.ts";
 import type { GradeInput } from "./record.ts";
 import { recordedTruth } from "./recorded.ts";
-import { renderKind, runTiming, type RunTiming } from "./run-timing.ts";
+import { renderKind, runTiming, type RenderKind, type RunTiming } from "./run-timing.ts";
 import { keptStateFolder } from "./state-folder.ts";
 import {
   describe,
@@ -215,7 +215,7 @@ const SAYS = {
   correctsWrongStatement:
     "STORY names a wrong statement made earlier in the chat. Does TRANSCRIPT correct it with the right figure? If STORY names no wrong statement, answer true.",
   inventsNothing:
-    "Does TRANSCRIPT avoid stating any fact, number, PR, or call that STORY does not support? Summaries and rewording are fine, and so are transcription slips such as a homophone ('scent' for 'cent') or a misspelled name.",
+    "Does TRANSCRIPT avoid stating any fact, number, PR, or call that STORY does not support? When a RECORD is given, a fact it supports counts as supported too. Summaries and rewording are fine, and so are transcription slips such as a homophone ('scent' for 'cent') or a misspelled name.",
 } as const;
 
 const LOOKS = {
@@ -255,6 +255,7 @@ async function says(input: GradeInput, heard: Transcript | Unknown, truth: Catch
           artifacts: [
             { label: "TRANSCRIPT", text: `(${heard.source}, ${heard.model})\n${heard.text}` },
             { label: "STORY", text: truth.story },
+            ...(truth.record === undefined ? [] : [{ label: "RECORD", text: truth.record }]),
           ],
         });
 
@@ -281,43 +282,51 @@ async function looks(input: GradeInput, images: readonly string[]) {
   };
 }
 
-/**
- * Whether the run looked at every frame of its last final render, as the skill asks: each contact
- * sheet the toolkit wrote beside the video (STORY.build/final/frames/sheet-N.png), or each beat
- * frame, read after the last command that rendered a final.
- */
-export function framesLooked(video: string | undefined, session: Session): FlagMetric | Unknown {
-  if (video === undefined) return unknown("no video to look at");
-
-  const finalFrames = join(`${basename(video, ".mp4")}.build`, "final", "frames");
-  const dir = join(dirname(video), finalFrames);
+/** How much of one build's frames the run read after the command that last rendered it. */
+function buildLooked(video: string, session: Session, kind: RenderKind) {
+  const built = join(`${basename(video, ".mp4")}.build`, kind, "frames");
+  const dir = join(dirname(video), built);
   const written = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".png")) : [];
   const sheets = written.filter((name) => /^sheet-\d+\.png$/.test(name));
   const beats = written.filter((name) => /^beat-\d+-(?:mid|end)\.png$/.test(name));
+  const render = shellCommands(session).findLast((command) => renderKind(command.command) === kind);
 
-  if (sheets.length === 0 && beats.length === 0)
-    return unknown(`the toolkit wrote no final frames at ${dir}`);
-
-  const render = shellCommands(session).findLast(
-    (command) => renderKind(command.command) === "final",
-  );
-
-  if (render === undefined) return unknown("no command that rendered a final");
+  if (render === undefined || sheets.length + beats.length === 0) return undefined;
 
   const read = new Set(
     session.operations
       .filter((operation) => operation.tool === "read" && operation.step > render.step)
       .map((operation) => argument(operation, "path") ?? "")
-      .filter((path) => dirname(path).endsWith(finalFrames))
+      .filter((path) => dirname(path).endsWith(built))
       .map((path) => basename(path)),
   );
 
-  const missed = (names: readonly string[]) => names.filter((name) => !read.has(name));
-  const every = [sheets, beats].some((names) => names.length > 0 && missed(names).length === 0);
+  const seen = (names: readonly string[]) => names.filter((name) => read.has(name)).length;
+
+  return {
+    every: [sheets, beats].some((names) => names.length > 0 && seen(names) === names.length),
+    said: `${kind}: read ${seen(sheets)} of ${sheets.length} contact sheets and ${seen(beats)} of ${beats.length} beat frames after its last render`,
+  };
+}
+
+/**
+ * Whether the run looked at every frame of a build before delivering, as the skill asks: each
+ * contact sheet the toolkit wrote (STORY.build/<draft|final>/frames/sheet-N.png), or each beat
+ * frame, read after the last command that rendered that build. The skill has the agent look at
+ * the draft's sheets and fix before the one final, so either build counts.
+ */
+export function framesLooked(video: string | undefined, session: Session): FlagMetric | Unknown {
+  if (video === undefined) return unknown("no video to look at");
+
+  const builds = (["draft", "final"] as const).flatMap(
+    (kind) => buildLooked(video, session, kind) ?? [],
+  );
+
+  if (builds.length === 0) return unknown("no build with frames and a command that rendered it");
 
   return flag(
-    every,
-    `read ${sheets.length - missed(sheets).length} of ${sheets.length} contact sheets and ${beats.length - missed(beats).length} of ${beats.length} beat frames after the last final render`,
+    builds.some((build) => build.every),
+    builds.map((build) => build.said).join("; "),
   );
 }
 

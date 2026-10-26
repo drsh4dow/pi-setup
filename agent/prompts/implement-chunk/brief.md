@@ -1,68 +1,61 @@
-# implement-chunk: brief template, role variants, ledger outcomes
+# Briefs for implement-chunk
 
-Reference for the `/implement-chunk` prompt. Pi loads only the direct `.md` children of a prompts directory as commands, so this file is not a command.
+Fill every field, or write `none` and why. Leave the standing orders out: the launcher appends the current `orders.md` to every spawn and resume, and a brief overrides one only by writing `lifts order N`. A one-command unit fits in one paragraph that opens with `COLLAPSED` and names GOAL, SCOPE, VERIFY, and REPORT.
 
 ## The template
 
-Every field ends filled, or reads `none` with the reason. Size the brief to the unit: a one-command unit collapses the template to a paragraph that still names the goal, the scope, the verify command, and the report shape. Start that paragraph with `COLLAPSED` and write GOAL, SCOPE, VERIFY, and REPORT in it, so the launcher checks those four fields.
-
 ```
-GOAL         one sentence, the outcome, executable by a stranger with no chat access
-KIND         owner or delegate
-SCOPE        paths this unit may write; paths it may not; its exclusive worktree or branch
-AUTHORITY    DECIDE AND REPORT: edits the change forces (a CHANGELOG entry the repo requires,
-             tests that pin the changed code, build or bundler config), resolving bot threads
-             the bot marked fixed, opening the PR so CI runs a gate the local host cannot
-             finish, the repo's fallback merge method. STOP ON: any other write outside SCOPE,
-             a product call, an irreversible action. Tailor both lists to the unit.
-CONTEXT      pointers to tickets, spec, plan.md's Terms, notes/contract.md, files, and PRs;
-             upstream reports pasted in full when this unit depends on them, because a
-             subagent cannot see its siblings. Tag each fact with its source, as orders.md
-             tags its lines
-SKILLS       the skills the work requires, by name
-ACCEPTANCE   the ticket's Done-when items verbatim, one per line, each with its check, grouped
-             by ticket for a chain; for an implementer or fixer, plus "the Definition of Done"
-VERIFY       exact commands or the control-skill path, plus known gotchas. Run any gate
-             longer than about a minute through bg_start, redirected to
-             evidence/<unit>/<gate>.log, so a tool timeout cannot take its output with it
-TIMEBOX      rough cap on runtime; on expiry, return partial findings and stop rather than run on
-FORBIDDEN    no PR retargets or merges, no rebase, no force-push, no fixes outside scope,
-             plus unit-specific bans. Each line gives its reason and the alternative it
-             allows, such as "no local integration suite: the host is saturated; run it in CI".
-             A brief that overrides an order says "lifts order N"
-REPORT       status, branch, head SHA, PRs, verdict, what you actually ran, deviations,
-             suggested follow-ups; for an implementer or fixer, the tdd and dogfood
-             reports the Definition of Done names. Before stopping for any reason, push
-             the branch or save the patch and logs under evidence/<unit>/, and cite that path
+GOAL        the outcome, in one self-contained sentence
+KIND        owner or delegate
+SCOPE       the paths it writes, its own worktree and branch, and the branch it is based on
+AUTHORITY   DECIDE AND REPORT: knock-on edits outside SCOPE (a required CHANGELOG entry,
+            tests pinning the changed code, build config), resolving threads the bot marked
+            fixed, opening the PR early for CI-only gates, the repo's fallback merge method.
+            STOP ON: other writes outside SCOPE, product calls, irreversible actions.
+            Tailor both lists to the unit
+CONTEXT     pointers to the tickets, spec, Terms, contract notes, files, and PRs, each fact
+            tagged with its source as in orders.md. Paste each upstream report in full,
+            since a subagent never sees its siblings
+SKILLS      by name
+ACCEPTANCE  each Done-when item verbatim with its check, grouped by ticket for a chain.
+            Implementers add "the Definition of Done"
+VERIFY      exact commands or the verification skill, with known gotchas. A gate over a
+            minute runs through bg_start into evidence/<unit>/<gate>.log, so a timeout
+            keeps the log
+TIMEBOX     the runtime cap. At expiry, stop and report what you have
+FORBIDDEN   retargets, merges, rebases, force-pushes, and the unit's own bans, each with
+            its reason and the path it leaves open: "no local integration suite: the host
+            is saturated; run it in CI"
+REPORT      status, branch, head SHA, PRs, verdict, commands run, deviations, follow-ups.
+            Before stopping for any reason, push the branch or save the patch and logs to
+            evidence/<unit>/, and cite the path
 ```
-
-The standing orders are not a field. The launch appends `orders.md` as a system prompt, so every spawn and resume reads the current file.
 
 ## Role variants
 
-The implementer, babysitter, explorer, and live verifier use the template as written. The other roles change these fields and keep the rest.
+Roles not listed here use the template as written.
 
-- **Merger.** VERIFY becomes STEPS: the numbered commands it runs, such as `gh pr merge <n> --<method> --match-head-commit <sha>`, each with the output that shows it worked. ACCEPTANCE is the end state: the branch tip SHA and each PR's state. SKILLS is `none` unless a conflict needs code judgment. FORBIDDEN lifts, by name, the merges, rebases, and retargets its job needs.
-- **Verifier.** GOAL is a verdict for PR `#<n>` at head `<sha>`. SCOPE writes nothing in the repository, only `evidence/<unit>/` and its own scratch worktree. CONTEXT is the artifact and the contract: the tickets, the Terms, the contract notes, the Definition of Done, and the diff ref. From the implementer's report it takes only the commands that ran. Leave out the implementer's conclusions and your own expectations, because a verifier handed a claim returns validation of it. VERIFY lists the lanes, each naming the artifact the deploy builds, its runtime, and the input that reaches the changed path, plus the regression lane at base and head. ACCEPTANCE is one ledger outcome per lane, and a pass or a finding for each Done-when item and each Definition of Done line. REPORT gives each lane's outcome and its witness paths.
-- **PR writer.** A drafting writer writes the body to a file and opens nothing; the writer that opens the PR applies the expert read and pastes the verdict's witnesses. SKILLS is **writing-good-prs**. VERIFY is `check-body.ts` exiting 0 on the body file. ACCEPTANCE is a body for a reviewer who never saw this run: the change at the integration head against its base, the evidence behind that head's verdict pasted as witnesses, a `Closes` line for each ticket it finishes, and a `Part of` line for each other ticket. It names another final PR by its number and what it does, never by its letter or branch in `plan.md`. The intermediate merges already link each intermediate PR. REPORT gives the PR URL, the body file path, the check output, and the expert read it hands back for you to schedule.
-- **Persona.** The **code-review** skill's step 5 writes the assignment. Append `orders.md` to the launch, and pass the Terms and the settled decisions as that step's contract says.
+- **Merger.** STEPS replaces VERIFY: numbered commands, such as `gh pr merge <n> --<method> --match-head-commit <sha>`, each with the output that proves it worked. ACCEPTANCE is the end state, the branch tip SHA and each PR's state. SKILLS is `none` unless a conflict needs code judgment. FORBIDDEN lifts by name the merges, rebases, and retargets the job needs.
+- **Verifier.** GOAL is a verdict for PR `#<n>` at head `<sha>`. SCOPE is `evidence/<unit>/` and a scratch worktree, nothing in the repository. CONTEXT is the artifact and the contract, never the journey: the tickets, Terms, contract notes, Definition of Done, and diff ref, plus only the commands the implementer ran. A verifier handed a claim validates it. VERIFY lists the lanes, each with its witness spelled out, plus the regression lane at base and head. ACCEPTANCE is one ledger outcome per lane and a pass or finding for each Done-when item and Definition of Done line. REPORT gives each lane's outcome and witness paths.
+- **PR writer.** Runs twice, per step 5.3: a drafter writes the body to a file, and a fresh writer opens the PR. SKILLS is **writing-good-prs**. VERIFY is `check-body.ts` exiting 0 on the body file. ACCEPTANCE is a body a cold reader can trust: the integration head's change against its base, the verdict's witnesses pasted in, `Closes` for each ticket it finishes, and `Part of` for the rest. It cites another final PR by number and purpose, since `plan.md`'s letters and branches mean nothing to a reviewer. REPORT gives the PR URL, the body file, the check output, and the expert read for you to schedule.
+- **Persona.** The **code-review** skill's step 5 writes the assignment. Launch it with `--orders`, and add `plan.md`'s Terms to the contract that step describes.
 
 ## Ledger outcomes
 
-Label each `ledger.tsv` row with exactly one of these. Any other label is wrong.
+Each `ledger.tsv` row takes one of these outcomes.
 
-| Outcome                     | Merge-ready   | Means                                                                                                    |
-| --------------------------- | ------------- | -------------------------------------------------------------------------------------------------------- |
-| `live-deployed-verified`    | yes           | Passed on the deployed environment.                                                                      |
-| `live-ui-verified`          | yes           | Passed by driving the change in a running UI outside the deployed environment.                           |
-| `unit-test-verified`        | yes           | Passed by tests that reach the changed path.                                                             |
-| `type-check-only`           | lead sign-off | Only the type check ran. Behavioral work needs better than this.                                         |
-| `not-applicable`            | if cited      | The lane has nothing to witness in this change, such as a behavior lane on a lock-only diff. Give why.   |
-| `fails-identically-at-base` | if cited      | The check fails the same way at base, so the diff did not cause it. Cite both runs and file a follow-up. |
-| `accepted-gap`              | if cited      | A check that cannot run, accepted by a `decisions.md` entry the row cites.                               |
-| `isolated-pass-flake`       | if cited      | Fails in the full run, passes alone. Cite the isolated command and its output.                           |
-| `verifier-blocked`          | no            | The verifier could not reach a verdict. Not a pass: respawn when the environment heals.                  |
-| `verifier-failed`           | no            | Failed. It gets a fix unit, not a re-verify.                                                             |
-| `live-failed`               | no            | Failed on the deployed environment.                                                                      |
+| Outcome                     | Merge-ready   | Means                                                                                          |
+| --------------------------- | ------------- | ---------------------------------------------------------------------------------------------- |
+| `live-deployed-verified`    | yes           | Passed on the deployed environment.                                                            |
+| `live-ui-verified`          | yes           | Passed by driving a running UI outside the deployed environment.                               |
+| `unit-test-verified`        | yes           | Passed tests that reach the changed path.                                                      |
+| `type-check-only`           | lead sign-off | Only the type check ran, which is too weak for a behavior change.                              |
+| `not-applicable`            | if cited      | The lane has nothing to witness, such as a behavior lane on a lockfile-only diff.              |
+| `fails-identically-at-base` | if cited      | Fails the same way at base, so the diff is not the cause. Cite both runs and file a follow-up. |
+| `accepted-gap`              | if cited      | Cannot run, and a `decisions.md` entry accepts the gap.                                        |
+| `isolated-pass-flake`       | if cited      | Fails in the full run and passes alone. Cite the isolated run.                                 |
+| `verifier-blocked`          | no            | No verdict reached. Respawn when the environment heals.                                        |
+| `verifier-failed`           | no            | Failed. The next unit is a fix, not a re-verify.                                               |
+| `live-failed`               | no            | Failed on the deployed environment.                                                            |
 
-An implementer may self-report a row. A verifier's row overrides it on the same key.
+Implementers may self-report a row, and a verifier's row on the same key overrides it.

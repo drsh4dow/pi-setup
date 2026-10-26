@@ -258,6 +258,13 @@ const PrState = Schema.Struct({
 const decodePrStates = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(PrState)));
 
 /**
+ * What the replay cannot reproduce. The recorded session's subagents and background terminals
+ * ran on the original machine; in a replay they do not exist, so a run finds them gone.
+ */
+const REPLAY_GAPS =
+  "The replay: subagents, background terminals, and live checks that were running at the cut do not exist in it. A run that finds them gone and says they never reported back, or that it will start them again, states what it saw, not an invention.";
+
+/**
  * What a recorded run could read besides story.md: what the user and the agent wrote from the
  * window's start to the cut, and each PR's state in the snapshot the gh stub serves. story.md is
  * a summary of hours of work, so a fact a run took from these is not invented.
@@ -293,6 +300,8 @@ export function recordedRecord(dir = recordingDir()): string {
     "",
     "The PRs as the gh stub serves them:",
     ...prs,
+    "",
+    REPLAY_GAPS,
   ].join("\n");
 }
 

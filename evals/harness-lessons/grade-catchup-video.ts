@@ -209,7 +209,7 @@ const NOT_THE_REPLY = "(Not part of this question: judge the attached material o
 
 const SAYS = {
   saysCalls:
-    "TRANSCRIPT is what the video says (its narration, or for a silent video its captions read off frames). STORY is the ground truth. Does TRANSCRIPT name every call waiting on the user that STORY lists? One sentence that names several calls counts for each.",
+    "TRANSCRIPT is what the video says (its narration, or for a silent video its captions read off frames). STORY is the ground truth. Does TRANSCRIPT name every call waiting on the user that STORY lists? One sentence that names several calls counts for each. Calls of one kind, such as several PRs that each only need a merge or an approval, count when TRANSCRIPT names the group and how many it holds; a call that needs its own choice still has to be named on its own.",
   numbersRight:
     "Is every number TRANSCRIPT states consistent with STORY? The transcriber may write numbers as digits or words, and speech rounds as people do ('thirty-three thirty-three' for $33.33). Answer false if any stated number is wrong or attached to the wrong thing; a number left out is not wrong.",
   correctsWrongStatement:

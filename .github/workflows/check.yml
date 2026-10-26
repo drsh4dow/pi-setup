@@ -17,13 +17,25 @@ jobs:
     # A stalled apt mirror once held a run for 42 minutes; a healthy run takes about 3.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: voidzero-dev/setup-vp@v1.21.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
         with:
           run-install: false
           cache: true
       # ffmpeg renders the test videos the harness-lessons eval grades.
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # The pinned build comes from GitHub, not the apt mirror, whose stalls held jobs for 15 minutes.
+      - id: ffmpeg
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci-ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('scripts/ci/install-ffmpeg.sh') }}
+      - run: scripts/ci/install-ffmpeg.sh ~/.cache/ci-ffmpeg
+      # Saved right away, so a run whose checks fail still warms the next one.
+      - if: steps.ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci-ffmpeg
+          key: ${{ steps.ffmpeg.outputs.cache-primary-key }}
       - run: vp install --frozen-lockfile
       # catchup-video.yml runs the catchup-video renders when that skill changes.
       - run: vp run verify:without-video

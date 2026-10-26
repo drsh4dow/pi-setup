@@ -480,6 +480,7 @@ function mergeReadyProof(
       context: facts.context,
       facts,
       threads: [],
+      reviewPasses: [],
       ci,
       reviewAutomationRunning: false,
     },

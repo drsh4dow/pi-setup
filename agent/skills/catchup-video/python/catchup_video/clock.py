@@ -58,6 +58,7 @@ from .text import em_px, fit, label_of
 SQUEEZE = 0.5  # an animation may run at up to 1 / SQUEEZE times its speed to fit its beat
 MIN_RUN = 0.3  # seconds; no animation is sped up below this
 GHOST = 0.3  # elements fainter than this are background: others may sit on them
+CLEAR_TIME = 0.4  # seconds clear() takes to fade the old stage out
 EDGE = 6.75  # the stage's left and right limits for anything brought on, in Manim units
 
 
@@ -245,6 +246,7 @@ class Video(MovingCameraScene):
             return self._wait(min(n, b["end_f"] - self._frame) if b else n)
         if place:
             self._keep_new_on_stage(anims)
+            _no_crossfade(anims)
         run_time = kwargs.get("run_time") or self.get_run_time(anims)
         want = self._frames(run_time)
         n = self._fit(b, want) if b else want
@@ -428,10 +430,13 @@ class Video(MovingCameraScene):
         self.play(*(FadeOut(m) for m in mobs), run_time=run_time)
 
     def clear(self, *keep, run_time: float = 0.6, extra=()):
-        """Fade out everything except pinned mobjects and `keep`, playing `extra` alongside."""
+        """Fade out everything except pinned mobjects and `keep`, then play `extra` in `run_time`:
+        the old stage is gone before the new one shows."""
         gone = self._unpinned(keep)
-        if gone or extra:
-            self.play(*(FadeOut(m) for m in gone), *extra, run_time=run_time)
+        if gone:
+            self.play(*(FadeOut(m) for m in gone), run_time=CLEAR_TIME)
+        if extra:
+            self.play(*extra, run_time=run_time)
 
     def beside(self, mob, target, side=None, buff: float = 0.3):
         """Place `mob` next to `target` on the first side (right, below, left, above, or only
@@ -569,9 +574,26 @@ def _carry_text_marks(anims) -> None:
                 s._cv_ref = s.submobjects[t.submobjects.index(ref)]
 
 
-def _early(t: float) -> float:
-    """Ease that finishes in the first 40% of the animation, so a chapter is gone before the graph returns."""
-    return rate_functions.smooth(min(1.0, t / 0.4))
+def _within(rate_func, t0: float, t1: float):
+    """`rate_func` run between `t0` and `t1` of an animation, holding still before and after."""
+    return lambda t: rate_func(min(1.0, max(0.0, (t - t0) / (t1 - t0))))
+
+
+_early = _within(rate_functions.smooth, 0.0, 0.4)  # gone in the first 40%, before what replaces it shows
+
+
+def _no_crossfade(anims) -> None:
+    """In a play that fades something out and brings something in, what leaves is gone in the first
+    40% and what arrives shows after it, so no frame shows the old stage through the new."""
+    leaves = list(_leaves(anims))
+    gone = [a for a in leaves if a.is_remover()]
+    born = [a for a in leaves if a.is_introducer() and not a.is_remover()]
+    if not gone or not born:
+        return
+    for a in gone:
+        a.rate_func = _within(a.rate_func, 0.0, 0.4)
+    for a in born:
+        a.rate_func = _within(a.rate_func, 0.4, 1.0)
 
 
 def _solid(m) -> list:

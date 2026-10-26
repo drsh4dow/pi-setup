@@ -139,6 +139,31 @@ test("the check names a beat that leaves the stage idle, unless it is a transiti
   ]);
 });
 
+test("a change of stage never shows the old stage through the new one", () => {
+  const file = story(`
+    @beat("A red square fills the middle of the stage.")
+    def red(self):
+        self.show(Square(3, fill_color="#FF0000", fill_opacity=1, stroke_width=0))
+
+    @beat("It is cleared for a blue one in the same place.", transition=True)
+    def blue(self):
+        self.clear(extra=[FadeIn(Square(3, fill_color="#0000FF", fill_opacity=1, stroke_width=0))])
+
+    @beat("And a story's own fade swaps it back to red.", transition=True)
+    def back(self):
+        self.play(*(FadeOut(m) for m in self.mobjects if m is not self.camera.frame),
+                  FadeIn(Square(3, fill_color="#FF0000", fill_opacity=1, stroke_width=0)), run_time=2)
+`);
+  const r = video(["draft", file]);
+  assert.equal(r.code, 0, r.out + r.err);
+  const rgb = spawnSync("ffmpeg", ["-v", "error", "-i", file.replace(/\.py$/, ".draft.mp4"), "-vf", "format=rgb24,crop=1:1:427:200",
+    "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]).stdout;
+  const both = [];
+  for (let f = 0; f + 2 < rgb.length; f += 3) if ((rgb[f] ?? 0) > 40 && (rgb[f + 2] ?? 0) > 40) both.push(f / 3);
+  assert.ok(rgb.length > 90, `${rgb.length / 3} frames`);
+  assert.deepEqual(both, [], "frames that show red and blue at once");
+});
+
 test("pieces fit themselves: forty PRs, wrapped words, a long pipeline with notes on neighbors, and wide code check clean", () => {
   const prs = Array.from({ length: 40 }, (_, k) => `${200 + k}: "Change ${k} with a title long enough to need shortening"`);
   const file = story(`

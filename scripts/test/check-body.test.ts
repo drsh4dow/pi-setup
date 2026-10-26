@@ -61,6 +61,66 @@ test("passes a PR body in the default shape, ignoring headings inside fenced blo
   assert.equal(result.status, 0);
 });
 
+// The body and the 94-character title from the ticket that added the title cap.
+const noCiBody = `## Why
+
+Agents that check a PR in a repository with no CI wait twelve minutes for a status table.
+
+## Evidence
+
+\`\`\`text
+$ watch-pr --status-only
+exit 0
+\`\`\`
+
+**Not checked:** nothing.
+
+## Risk
+
+- **Blast radius.** The status command only.
+- **Door.** Two-way, a revert undoes it.
+- **Merge condition.** None.
+`;
+
+test("caps a PR title at 72 characters, the commit subject limit", (t) => {
+  const long =
+    "fix(babysit): watch-pr status-only exits at once with a no-checks row on repos that have no CI";
+
+  const longResult = check(t, noCiBody, ["pr", "--title", long]);
+
+  assert.equal(longResult.status, 1);
+  assert.deepEqual(longResult.lines, ["title: title is 94 characters, cut it to 72 or fewer"]);
+
+  const oneOver = "fix(babysit): print a no-checks row at once for repos that lack CI checks";
+  const oneOverResult = check(t, noCiBody, ["pr", "--title", oneOver]);
+
+  assert.equal(oneOverResult.status, 1);
+  assert.deepEqual(oneOverResult.lines, ["title: title is 73 characters, cut it to 72 or fewer"]);
+
+  const fits = "fix(babysit): print a no-checks row at once on repos that lack CI checks";
+  const fitsResult = check(t, noCiBody, ["pr", "--title", fits]);
+
+  assert.deepEqual(fitsResult.lines, []);
+  assert.equal(fitsResult.status, 0);
+});
+
+test("reports a long title beside its other title problem, and leaves ticket titles uncapped", (t) => {
+  const title = `fix(babysit): ${"a".repeat(60)}.`;
+  const result = check(t, noCiBody, ["pr", "--title", title]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    "title: title is 75 characters, cut it to 72 or fewer",
+    "title: title ends with punctuation",
+  ]);
+
+  const ticket = `## Problem\n\nA long title.\n\n## Done when\n\n- [ ] **It passes.** Check: exit 0.\n`;
+  const ticketResult = check(t, ticket, ["ticket", "--title", `babysit: ${"a".repeat(90)}`]);
+
+  assert.deepEqual(ticketResult.lines, []);
+  assert.equal(ticketResult.status, 0);
+});
+
 test("flags Evidence that only names a command, and Risk without its labeled lines", (t) => {
   const body = goodPr
     .replace(

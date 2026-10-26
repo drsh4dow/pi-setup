@@ -20,8 +20,8 @@ CONTEXT      pointers to tickets, spec, plan.md's Terms, notes/contract.md, file
              subagent cannot see its siblings. Tag each fact with its source, as orders.md
              tags its lines
 SKILLS       the skills the work requires, by name
-ACCEPTANCE   the ticket's Done-when items verbatim, one per line, each with its check; for an
-             implementer or fixer, plus "the Definition of Done"
+ACCEPTANCE   the ticket's Done-when items verbatim, one per line, each with its check, grouped
+             by ticket for a chain; for an implementer or fixer, plus "the Definition of Done"
 VERIFY       exact commands or the control-skill path, plus known gotchas. Run any gate
              longer than about a minute through bg_start, redirected to
              evidence/<unit>/<gate>.log, so a tool timeout cannot take its output with it
@@ -44,12 +44,13 @@ Every implementer and fixer unit meets this bar on top of its ACCEPTANCE, and th
 - Its worktree is based on the integration branch before work starts, reset onto it if not.
 - Names in code, routes, fields, tests, commits, and PR text follow `plan.md`'s Terms and the contract notes. A new term the unit owns goes into the glossary per the **domain-modeling** skill. No ADR is contradicted unless the brief says the user reopened it.
 - It works test-first per the **tdd** skill wherever the ticket has a cheap test target, at the seams the contract notes name, one slice at a time. The receipt holds each slice's red run.
+- A chain unit implements its tickets in order, one commit per ticket named by the ticket's title, and passes each ticket's checks before it starts the next.
 - It dogfoods the change on the real surface: the **agent-browser** skill for browser and Electron UIs, the **background-terminals** skill for CLIs and TUIs, or the repository's `verify-*` skill. "Inconclusive" or wrong-surface is not a pass.
 - The repository's checks for the touched paths pass on the committed head. A check reruns only after the code changed since its last pass.
 - It changes only what the ticket needs. Anything else worth fixing goes in REPORT as a follow-up.
 - Ticket keys stay out of its branch name, commit messages, PR title, and PR body, which name each ticket by its title, because the tracker moves any ticket a merged or closed PR names, whatever its base.
 - It merges the integration branch tip into its own branch before reporting done, so the squash merge carries its verdict (same tree).
-- Its intermediate PR targets the integration branch and is ready, not draft. The body is a receipt for the lead: the ticket title, what changed, and what ran.
+- Its intermediate PR targets the integration branch and is ready, not draft. The body is a receipt for the lead: each ticket's title, what changed, and what ran.
 
 ## Role variants
 

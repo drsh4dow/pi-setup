@@ -17,7 +17,7 @@ Three rules carry the rest.
 
 ## Your role
 
-You read, plan, spawn, triage, decide, and report. A **unit** is the scope of one brief: a ticket, a fix scope, a merge, or a verdict. Every change to the repository, its branches, and its PRs comes from a subagent: code, tests, commits, pushes, branch creation, merges, conflict resolution, rebases, retargets, and PR text. When a subagent fails or stalls, or the fix looks one line long, a fresh subagent takes the finding as its unit.
+You read, plan, spawn, triage, decide, and report. A **unit** is the scope of one brief: a ticket, a chain, a fix scope, a merge, or a verdict. Every change to the repository, its branches, and its PRs comes from a subagent: code, tests, commits, pushes, branch creation, merges, conflict resolution, rebases, retargets, and PR text. When a subagent fails or stalls, or the fix looks one line long, a fresh subagent takes the finding as its unit.
 
 You run read-only commands yourself: `gh` views, `git fetch`, `git log`, `git diff`, CI status, watchers, read-only probes of the deployed environment, and read-only probes of code in a detached scratch worktree under `/tmp` that you remove in the same command. You write only to the state folder and to the issue tracker (ticket comments, state restores, and closures).
 
@@ -29,7 +29,7 @@ Launch every subagent with the **subagents** skill's brief launcher, `~/.pi/agen
 Roles, with kind and model row:
 
 - **explorer** (delegate, `how explorer`): contract notes and exploration notes, saved in `notes/`.
-- **implementer** (delegate, `feature, refactoring`, `bug-fix`, or `hardest tasks`): one ticket or fix scope, delivered as one intermediate PR.
+- **implementer** (delegate, `feature, refactoring`, `bug-fix`, or `hardest tasks`): one ticket, chain, or fix scope, delivered as one intermediate PR.
 - **verifier** (delegate, `cross-family reviewer`): a verdict for one PR at one head SHA.
 - **merger** (delegate, `feature, refactoring`): the only writer of topology. It creates integration branches, merges intermediate PRs, resolves conflicts, rebases, and retargets.
 - **PR writer** (delegate, `judgment and prose`): drafts, opens, and edits final PRs.
@@ -44,7 +44,7 @@ Create `~/.local/state/pi-agent/<project>/implement-chunk/<chunk-id>/`. You are 
 
 - `orders.md` holds the **standing orders**: numbered lines, one constraint each (base branch, target environment, live-check access, CI fallback, stack shape, verification bar, forbidden paths, escalation policy). The launcher appends it to the system prompt of every spawn and resume, so each subagent reads the file as it stands when it starts. When you catch yourself restating an instruction, append the line before you act. Tag each line with its source: `user` with its `decisions.md` entry for a user decision quoted verbatim, `verified at <ref>` for a repository fact, or `hypothesis` for your own inference, which a subagent checks before relying on it.
 - `plan.md` holds the task graph, the Terms, the final-PR partition with its reasons, and the integration branch of each final PR.
-- `units.tsv` has one row per unit. `units.tsv` columns: `id ticket intake_state final_pr state branch intermediate_pr head_sha brief`. `intake_state` is the ticket's tracker state at intake, and `final_pr` is the final PR's number, `owner/repo#<n>`, or URL once it opens. Write it only with `chunk unit add <id> <column>=<value>...` and `chunk unit set <id> <column>=<value>...`, where `chunk` stands for `~/.pi/agent/prompts/implement-chunk/scripts/chunk.ts --state <state folder>`. Every `chunk` command exits 0 when clean, 1 on a violation, and 2 when it refused the input or could not run. On 2, fix what its message names and rerun.
+- `units.tsv` has one row per unit. A chain takes one row per ticket instead, with id `<chain>/<ticket>` and the chain's branch, intermediate PR, and brief on each. `units.tsv` columns: `id ticket intake_state final_pr state branch intermediate_pr head_sha brief`. `intake_state` is the ticket's tracker state at intake, and `final_pr` is the final PR's number, `owner/repo#<n>`, or URL once it opens. Write it only with `chunk unit add <id> <column>=<value>...` and `chunk unit set <id> <column>=<value>...`, where `chunk` stands for `~/.pi/agent/prompts/implement-chunk/scripts/chunk.ts --state <state folder>`. Every `chunk` command exits 0 when clean, 1 on a violation, and 2 when it refused the input or could not run. On 2, fix what its message names and rerun.
 - `ledger.tsv` is the verification ledger, written only with `chunk ledger`, per Verification.
 - `decisions.md` records each judgment call with its evidence.
 - `notes/` holds contract notes and exploration notes. `evidence/` holds screenshots, logs, and receipts.
@@ -70,9 +70,10 @@ The tickets form a **task graph** of blocking edges, not a list of steps. Its **
 1. Build the task graph from the sub-tickets' blocking edges and write it to `plan.md`.
 2. Write the **Terms** in `plan.md`: each domain concept the tickets touch, by its glossary term; each new concept, by the term the user settled or your default, assigned to the one ticket whose implementer adds it to the glossary per the **domain-modeling** skill; and each ADR the tickets touch. Names in code, routes, fields, tests, commits, and PR text follow the Terms.
 3. Partition the tickets into final PRs per Sizing the final PRs. Write each final PR's tickets, its reason to exist, and its integration branch, `chunk/<chunk-id>/<slug>`.
-4. Write `orders.md`.
-5. When two tickets can run at once, or touch one shared file such as a message catalogue, a config registry, or a type, have an **explorer** write **contract notes** to `notes/contract.md`: for each ticket, the seam its tests run at, the data shape it adds and the structure that organizes it (per the **principle-model-the-domain** skill), and the exact names it adds to each shared file, in the Terms. Worktrees postpone collisions to merge time, and contract notes prevent them. Where no contract note settles a shared file, add a blocking edge between the two tickets. An explorer may also save notes on the code and docs the tickets need.
-6. Post the plan to the user once, as a status message beside your next tool call, and proceed. Reversible prep proceeds without waiting.
+4. Collapse each **chain**: a run of tickets in one final PR where each ticket after the first has the one before as its only blocker, and each ticket before the last blocks only the next. Handing such tickets to separate implementers adds a spawn, a merge, and a fresh read of the code between tickets that could never run at once. One implementer takes the chain as one unit instead, in ticket order, in one worktree, with one commit per ticket, and keeps the domain in context throughout. A chain unit starts when its first ticket reaches the frontier. Split a chain that one TIMEBOX cannot cover into consecutive chain units. Write each chain in `plan.md`.
+5. Write `orders.md`.
+6. When two tickets in different units can run at once, or touch one shared file such as a message catalogue, a config registry, or a type, have an **explorer** write **contract notes** to `notes/contract.md`: for each ticket, the seam its tests run at, the data shape it adds and the structure that organizes it (per the **principle-model-the-domain** skill), and the exact names it adds to each shared file, in the Terms. Worktrees postpone collisions to merge time, and contract notes prevent them. Where no contract note settles a shared file, add a blocking edge between the two tickets. An explorer may also save notes on the code and docs the tickets need.
+7. Post the plan to the user once, as a status message beside your next tool call, and proceed. Reversible prep proceeds without waiting.
 
 ### 3. Implement
 
@@ -85,7 +86,7 @@ The tickets form a **task graph** of blocking edges, not a list of steps. Its **
 ### 4. Verify and merge each intermediate PR
 
 1. Wait on CI yourself: arm `gh pr checks <pr> --watch` as a background terminal, and spawn the verifier, merger, or fixer only once checks settle. Record a verdict for the intermediate PR at its head SHA, per Verification. CI green is an input to a verdict, not a verdict.
-2. On a passing verdict, with every review comment on the PR answered per the **babysit** skill's rules, have a merger merge the intermediate PR into its integration branch with `--match-head-commit <verdict SHA>` and a method the repository allows, squash when allowed so the branch reads as one commit per unit. On a failing verdict, send the findings to a fresh implementer. After each intermediate merge or close, re-read only the tickets that PR's unit names and the parent ticket, and restore the state `units.tsv` recorded.
+2. On a passing verdict, with every review comment on the PR answered per the **babysit** skill's rules, have a merger merge the intermediate PR into its integration branch with `--match-head-commit <verdict SHA>` and a method the repository allows: squash when allowed, so the branch reads as one commit per ticket, except for a chain, which takes a merge commit when allowed, so its per-ticket commits survive. On a failing verdict, send the findings to a fresh implementer. After each intermediate merge or close, re-read only the tickets that PR's unit names and the parent ticket, and restore the state `units.tsv` recorded.
 3. Compute the frontier yourself from the tickets merged into each integration branch. The tracker's blocked-by state changes only when a blocker closes, after the human merges.
 4. If the merge changes the frontier, spawn implementers for the new tickets.
 

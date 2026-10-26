@@ -77,7 +77,8 @@ The check reads Manim's own geometry at each beat's midpoint and end: elements t
 parts of one piece, such as a graph's titles and tags, that overlap), leave the frame, enter the
 caption band, or have text below its minimum; what a piece could not fit; and a beat that is not a
 transition whose stage at both its midpoint and end shows only the header, or the picture the beat
-before it ended on.
+before it ended on. Through the motion of a transition beat, and of every dive and pull_back, it
+reads the geometry every 0.1 s and names what overlaps, "in motion" with the times into the beat.
 On a voiced render it also checks that each beat's voice starts with its captions, that caption
 breaks fall in pauses, and that a transcript of the video's audio says each beat's words.
 Exit codes: 0 clean, 1 problems (one line each, naming beat and element), 2 could not run.`;

@@ -8,7 +8,8 @@ The clock fits motion to the beat: an animation that would run past the beat's e
 to fit, up to twice its speed, and one that would cross the beat's midpoint lands on it or starts
 after it, so the midpoint frame the check reads is settled. Anything brought on stage is kept
 inside the stage and above the caption band. At each beat's midpoint and end the clock records
-every element's geometry for the check.
+every element's geometry for the check, and through the motion of a transition beat (and of every
+dive and pull_back) it records it every MOTION_STEP seconds.
 
 Each beat's render is cached under a key of everything its frames depend on (see state.py); a
 beat whose key is cached is executed without drawing, and the caller reuses the cached frames.
@@ -60,11 +61,12 @@ MIN_RUN = 0.3  # seconds; no animation is sped up below this
 GHOST = 0.3  # elements fainter than this are background: others may sit on them
 CLEAR_TIME = 0.4  # seconds clear() takes to fade the old stage out
 MARGIN = 0.15  # how far past the stage's sides a piece may reach, in Manim units
+MOTION_STEP = 0.1  # seconds between the frames the check measures while motion may cross a midpoint
 
 
 def beat(say: str, show: str | None = None, pause: float | None = None, lead: float = 0.0,
          transition: bool = False):
-    """Mark a Video method as one narration beat: `say` is spoken (audio tags like "[curious]" shape the voice and are never captioned), `show` captioned (digits allowed), `pause` the silence before it, `lead` starts its motion earlier, `transition=True` lets motion cross its midpoint."""
+    """Mark a Video method as one narration beat: `say` is spoken (audio tags like "[curious]" shape the voice and are never captioned), `show` captioned (digits allowed), `pause` the silence before it, `lead` starts its motion earlier, `transition=True` lets motion cross its midpoint (the check still names what overlaps as it moves)."""
 
     def mark(fn):
         fn._cv_beat = {"name": fn.__name__, "say": " ".join(say.split()),
@@ -238,7 +240,9 @@ class Video(MovingCameraScene):
     def play(self, *args, **kwargs):
         self._play(args, kwargs)
 
-    def _play(self, args, kwargs, after=None, place=True):
+    def _play(self, args, kwargs, after=None, place=True, motion=False):
+        """Play `args` on the clock; with `motion`, or in a transition beat, its frames are measured
+        as it runs."""
         anims = [prepare_animation(a) for a in args]
         b = self._b
         if anims and all(isinstance(a, Wait) for a in anims):
@@ -255,7 +259,12 @@ class Video(MovingCameraScene):
             kwargs["run_time"] = (n - 0.5) / self._fps
         if b:
             b["since_cue"].append((anims, want / self._fps))
+        sampler = self._motion_sampler() if b and b["rec"] and (b["transition"] or motion) else None
+        if sampler:
+            self.add_updater(sampler)
         super().play(*anims, **kwargs)
+        if sampler:
+            self.remove_updater(sampler)
         _carry_text_marks(anims)
         self._tick(n)
         if after:
@@ -339,6 +348,29 @@ class Video(MovingCameraScene):
             b["mid_done"] = True
         if not b["rec"]:
             return
+        elements = list(self._elements())
+        # A transition beat's motion runs through its midpoint, so its geometry there is not
+        # recorded, but its frame is still taken at the midpoint itself.
+        b["records"].append({"kind": at, "frame": (b["mid_f"] if at == "mid" else self._frame) - b["start"],
+                             "skipped": at == "mid" and b["transition"], "elements": self._measure(elements),
+                             "look": state.look(self), "empty": all(getattr(m, "_cv_chrome", False) for m in elements)})
+
+    def _motion_sampler(self):
+        """A scene updater that measures every MOTION_STEP seconds of the play it runs in."""
+        step = max(1, round(MOTION_STEP * self._fps))
+        played = [0]  # frames of this play drawn so far; Manim runs scene updaters once per frame
+
+        def sample(dt):
+            k = played[0]
+            played[0] += 1
+            if k and k % step == 0:
+                self._b["records"].append({"kind": "motion", "frame": self._frame + k - self._b["start"],
+                                           "elements": self._measure(list(self._elements()))})
+
+        return sample
+
+    def _measure(self, elements: list) -> list:
+        """The geometry of `elements` on screen now, in pixels at 1080p."""
         frame = self.camera.frame
         cx, cy = frame.get_center()[:2]
         w, h = frame.width, frame.height
@@ -347,7 +379,6 @@ class Video(MovingCameraScene):
         def px(p):
             return [round((p[0] - cx) / w * 1920 + 960, 1), round((cy - p[1]) / h * 1080 + 540, 1)]
 
-        elements = list(self._elements())
         out = []
         for m in elements:
             allowed = {id(f) for t in getattr(m, "_cv_over", []) for f in t.get_family()}
@@ -368,11 +399,7 @@ class Video(MovingCameraScene):
                                           t.original_text.lstrip("\u2502")[:40],
                                           [*px(t.get_corner(UL)), *px(t.get_corner(DR))]])
             out.append(item)
-        # A transition beat's motion runs through its midpoint, so its geometry there is not
-        # recorded, but its frame is still taken at the midpoint itself.
-        b["records"].append({"kind": at, "frame": (b["mid_f"] if at == "mid" else self._frame) - b["start"],
-                             "skipped": at == "mid" and b["transition"], "elements": out,
-                             "look": state.look(self), "empty": all(getattr(m, "_cv_chrome", False) for m in elements)})
+        return out
 
     def _elements(self):
         """Each element on stage: a piece, a text, or a shape, with plain groups opened."""
@@ -505,7 +532,7 @@ class Video(MovingCameraScene):
             T.STAGE.left = fold.strip.right + STRIP_GAP
 
         self._play([motion, *(FadeOut(m, rate_func=_before_fold_moves) for m in gone)], {"run_time": run_time},
-                   settle, place=False)
+                   settle, place=False, motion=True)
 
     def pull_back(self, graph, run_time: float = 1.5):
         """Close the chapter: its pieces and the strip's words fade, the strip grows back into the
@@ -527,7 +554,7 @@ class Video(MovingCameraScene):
             graph.visibility(1.0)
 
         self._play([motion, *(FadeOut(m, rate_func=_before_fold_moves) for m in gone)], {"run_time": run_time},
-                   settle, place=False)
+                   settle, place=False, motion=True)
 
 
 def _anim_label(a) -> str:

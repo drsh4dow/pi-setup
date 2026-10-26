@@ -97,6 +97,24 @@ test("the check sees the parts of a composite piece and names the two that overl
   ]);
 });
 
+test("the check sees text passing over text while a transition moves it, though it ends apart", () => {
+  const file = story(`
+    @beat("Two words sit apart on the stage.")
+    def apart(self):
+        self.left, self.right = text("left words").shift(LEFT * 3), text("right words").shift(RIGHT * 3)
+        self.show(self.left, self.right)
+
+    @beat("In a transition the left words pass through the right ones and come back.", transition=True)
+    def through(self):
+        self.play(self.left.animate.move_to(self.right), run_time=1.2)
+        self.play(self.left.animate.shift(LEFT * 6), run_time=1.2)
+`);
+  const r = video(["draft", file]);
+  assert.equal(r.code, 1, r.out + r.err);
+  assert.deepEqual(r.out.split("\n").filter((l) => l.startsWith("beat ")).map((l) => l.replace(/[\d.]+s/g, "Ts")),
+    ['beat 2 (through) in motion from Ts to Ts: text "left words" of Text "left words" overlaps text "right words" of Text "right words"']);
+});
+
 test("an animation longer than its beat is sped up to end with it, and the video keeps its length", () => {
   const file = story(`
     @beat("Short words here.")
@@ -208,6 +226,35 @@ test("in a chapter the graph folds into a strip that keeps every PR's node, and 
     inNode = blue;
   }
   assert.equal(nodes, 12, "blue nodes in the strip");
+});
+
+test("a graph of two columns folds into its strip and back without drawing any text, mark, or tag over another", () => {
+  const prs = Array.from({ length: 16 }, (_, k) => `${501 + k}: "Move service ${k + 1} to the new ledger cluster"`);
+  const file = story(`
+    @beat("Sixteen pull requests moved: some are verified, some wait on you.")
+    def graph(self):
+        self.graph = Branches({${prs.join(", ")}})
+        self.play(self.graph.draw())
+        self.play(*(self.graph.mark(n, "verified") for n in (501, 504, 509, 514)),
+                  *(self.graph.ring(n) for n in (502, 507, 512, 515)), self.graph.mark(510, "not checked", T.DIM, "dot"))
+
+    @beat("First, the fourteenth, from the right column.", transition=True)
+    def into(self):
+        self.dive(self.graph, 514)
+
+    @beat("Its pipeline runs on its own, so it needs your call.")
+    def chapter(self):
+        flow = Flow(["merge", "build", "deploy"])
+        self.play(flow.grow())
+        self.play(self.graph.mark(514, "your call", T.YELLOW, "dot"))
+
+    @beat("Back to all sixteen.", transition=True)
+    def back(self):
+        self.pull_back(self.graph)
+`);
+  const r = video(["draft", file]);
+  assert.equal(r.code, 0, r.out + r.err);
+  assert.match(r.out, /check: clean/);
 });
 
 test("pieces fit themselves: forty PRs and their strip, wrapped words, a long pipeline with notes on neighbors, and wide code check clean", () => {

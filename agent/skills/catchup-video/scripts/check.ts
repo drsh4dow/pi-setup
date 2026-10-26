@@ -1,6 +1,6 @@
 /**
  * The check after a render. It reads the geometry the clock recorded from Manim at every beat's
- * midpoint and end, writes those frames from the video, and, for a voiced final render, measures
+ * midpoint and end and through the motion of transitions, writes the midpoint and end frames from the video, and, for a voiced final render, measures
  * the captions against the audio and has the narration transcribed against its beats. Every
  * problem is one line that names the beat and the element.
  */
@@ -45,8 +45,11 @@ export type Probe = {
   /** Nothing is on stage but the chapter header. */
   empty: boolean;
 };
+/** A frame measured while motion may cross a beat's midpoint: in a transition beat, or a dive or
+ *  pull_back. Only what overlaps counts there; the motion may pass the frame's edges on its way. */
+export type Motion = { kind: "motion"; frame: number; elements: Element[] };
 export type Note = { kind: "note"; problem: boolean; message: string };
-export type BeatProbes = { index: number; name: string; frames: number; transition: boolean; records: (Probe | Note)[] };
+export type BeatProbes = { index: number; name: string; frames: number; transition: boolean; records: (Probe | Motion | Note)[] };
 export type Probes = { fps: number; beats: BeatProbes[] };
 
 /** A beat's records as the render cached them (beat.json). */
@@ -58,9 +61,9 @@ export function readBeat(file: string, index: number, name: string): BeatProbes 
   return { index, name, frames, transition: dig(data, "transition") === true, records: records.filter(isRecord) };
 }
 
-function isRecord(r: unknown): r is Probe | Note {
+function isRecord(r: unknown): r is Probe | Motion | Note {
   const kind = dig(r, "kind");
-  return kind === "mid" || kind === "end" || kind === "note";
+  return kind === "mid" || kind === "end" || kind === "motion" || kind === "note";
 }
 
 const overlaps = (a: Box, b: Box) =>
@@ -88,8 +91,9 @@ function segmentHits(seg: [Point, Point], box: Box): boolean {
 /** What of an element others must keep clear of: its named parts, or its whole box. */
 const solids = (e: Element): [string, Box][] => e.parts?.map(([part, box]) => [`${e.name} ${part}`, box]) ?? [[e.name, e.box]];
 
-function elementProblems(els: Element[], add: (message: string) => void): void {
-  for (const [i, e] of els.entries()) {
+/** Elements that leave the frame or enter the caption band, and text below its minimum. */
+function placeProblems(els: Element[], add: (message: string) => void): void {
+  for (const e of els) {
     const [x0, y0, x1, y1] = e.box;
     const out = [["left", -x0], ["top", -y0], ["right", x1 - 1920], ["bottom", y1 - 1080]] as const;
     for (const [side, by] of out) if (by > 2) add(`${e.name} leaves the frame on the ${side} by ${Math.round(by)} px`);
@@ -98,6 +102,12 @@ function elementProblems(els: Element[], add: (message: string) => void): void {
       const min = MIN_PX[kind] ?? MIN_PX.label ?? 0;
       if (em < min - 0.5) add(`${e.name}: ${kind} text "${words}" is ${Math.round(em)} px, below the ${min} px minimum`);
     }
+  }
+}
+
+/** Text over text, and parts or elements over one another. */
+function overlapProblems(els: Element[], add: (message: string) => void): void {
+  for (const [i, e] of els.entries()) {
     for (const [a, ta] of e.texts.entries()) {
       for (const tb of e.texts.slice(a + 1)) {
         if (overlaps(ta[3], tb[3])) add(`${e.name}: text "${ta[2]}" overlaps text "${tb[2]}"`);
@@ -139,25 +149,34 @@ function meets(e: Element, ba: Box, f: Element, bb: Box): boolean {
   return overlaps(ba, bb);
 }
 
-/** Overlaps, frame exits, caption-band intrusions, and text below its minimum, by beat and element. */
+/** Overlaps, frame exits, caption-band intrusions, and text below its minimum, by beat and element;
+ *  in motion, overlaps only, with the first and last time into the beat they show. */
 export function geometryProblems(probes: Probes): string[] {
-  const found = new Map<string, string[]>();
+  type When = { probes: Set<string>; motion: number[] };
+  const found = new Map<string, When>();
   for (const beat of probes.beats) {
-    const add = (when: string, message: string) => {
+    const add = (message: string, probe?: string, motion?: number) => {
       const key = `beat ${beat.index} (${beat.name}): ${message}`;
-      found.set(key, [...(found.get(key) ?? []), when]);
+      const when = found.get(key) ?? { probes: new Set<string>(), motion: [] };
+      if (probe) when.probes.add(probe);
+      if (motion !== undefined) when.motion.push(motion);
+      found.set(key, when);
     };
     for (const r of beat.records) {
       if (r.kind === "note") {
-        if (r.problem) add("", r.message);
-        continue;
+        if (r.problem) add(r.message);
+      } else if (r.kind === "motion") {
+        overlapProblems(r.elements, (message) => add(message, undefined, r.frame / probes.fps));
+      } else if (!r.skipped) {
+        placeProblems(r.elements, (message) => add(message, r.kind));
+        overlapProblems(r.elements, (message) => add(message, r.kind));
       }
-      if (r.skipped) continue;
-      elementProblems(r.elements, (message) => add(r.kind, message));
     }
   }
-  return [...found].map(([key, whens]) => {
-    const at = [...new Set(whens.filter(Boolean))];
+  return [...found].map(([key, when]) => {
+    const at = [...when.probes];
+    const [first, last] = [Math.min(...when.motion), Math.max(...when.motion)];
+    if (when.motion.length) at.push(first === last ? `in motion at ${first.toFixed(2)}s` : `in motion from ${first.toFixed(2)}s to ${last.toFixed(2)}s`);
     return at.length ? key.replace("): ", `) ${at.join(" and ")}: `) : key;
   });
 }
@@ -201,7 +220,7 @@ export function writeFrames(video: string, probes: Probes, dir: string): { shots
   let first = 0; // the beat's first frame in the video
   for (const beat of probes.beats) {
     for (const r of beat.records) {
-      if (r.kind === "note") continue;
+      if (r.kind !== "mid" && r.kind !== "end") continue;
       const frame = first + (r.kind === "mid" ? r.frame : r.frame - 1);
       const file = join(dir, `beat-${String(beat.index).padStart(2, "0")}-${r.kind}.png`);
       run("ffmpeg", ["-v", "error", "-y", "-ss", Math.max(0, (frame - 0.5) / probes.fps).toFixed(4), "-i", video,

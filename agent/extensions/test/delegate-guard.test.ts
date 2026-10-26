@@ -130,6 +130,41 @@ test("commands that are not pi print launches pass", () => {
   }
 });
 
+test("a quoted launch string is a search pattern, not a launch", () => {
+  const delegateGuard = guardFor(delegateArgv);
+  const ownerGuard = guardFor(ownerArgv);
+
+  for (const command of [
+    'rg "foo; pi --print" .',
+    "grep -n 'a; pi-subagent b' f",
+    "grep -nE 'x|pi-subagent y' f",
+    'grep -n "a && ~/.pi/agent/skills/subagents/scripts/launch.ts --kind owner" f',
+  ]) {
+    assert.equal(delegateGuard(command), undefined, command);
+    assert.equal(ownerGuard(command), undefined, command);
+  }
+});
+
+test("a launch inside a bash -c, sh -c, or eval string is judged like a direct one", () => {
+  const delegateGuard = guardFor(delegateArgv);
+  const ownerGuard = guardFor(ownerArgv);
+  const delegateLaunch = `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE}`;
+
+  for (const command of [
+    "bash -c 'pi --print hi'",
+    'sh -c "cd /tmp/app && pi -p hi"',
+    "timeout 900 bash -lc 'pi-subagent --model m'",
+    "eval 'pi --print hi'",
+  ]) {
+    assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
+    assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
+  }
+
+  assert.match(delegateGuard(`bash -c '${delegateLaunch} hi'`) ?? "", DELEGATE_BLOCK);
+  assert.equal(ownerGuard(`bash -c '${delegateLaunch} hi'`), undefined);
+  assert.equal(delegateGuard("bash -c \"grep -n 'a; pi --print' f\""), undefined);
+});
+
 test("an owner's guard judges each launch by its own appends", () => {
   const ownerGuard = guardFor(ownerArgv);
   const delegateLaunch = `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt "${DELEGATE}"`;

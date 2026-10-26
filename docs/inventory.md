@@ -143,6 +143,10 @@ The agent loads these on its own when the trigger matches.
 - `herdr-worktrees`: inside Herdr, each checkout that appears under
   `.worktrees/<branch>` or `.worktrees/<repo>/<branch>` of the session's
   directory opens as a Herdr workspace, grouped under its repository
+- `host-guard`: refuses an agent's `bash`, `bg_start`, or codemode call that
+  kills by name or pattern (`pkill`, `killall`, `kill $(pgrep …)`) or deletes a
+  glob under `/tmp`, in every session, and points it at `bg_kill` or a PID it
+  started
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the

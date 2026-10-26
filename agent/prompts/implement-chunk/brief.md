@@ -17,8 +17,12 @@ CONTEXT     pointers to the tickets, spec, Terms, contract notes, files, and PRs
             tagged with its source as in orders.md. Paste each upstream report in full,
             since a subagent never sees its siblings
 SKILLS      by name
-ACCEPTANCE  each Done-when item verbatim with its check, grouped by ticket for a chain.
-            Implementers add "the Definition of Done"
+ACCEPTANCE  each Done-when item quoted with its check, grouped by ticket for a chain,
+            never a stricter paraphrase. An expected value the ticket does not state,
+            such as an exit code on a live input, comes from a run at base. A line-count
+            or output-size bar compares against the base branch run uncached just before
+            the merge, and leaves out lines that grow with the test count, such as
+            test-reporter dot lines. Implementers add "the Definition of Done"
 VERIFY      exact commands or the verification skill, with known gotchas. A gate over a
             minute runs through bg_start into evidence/<unit>/<gate>.log, so a timeout
             keeps the log

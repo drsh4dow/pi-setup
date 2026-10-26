@@ -14,6 +14,7 @@ from manim import (
     UL,
     UP,
     AnimationGroup,
+    Arc,
     Arrow,
     Circle,
     Group,
@@ -32,11 +33,16 @@ from manim import (
 from PIL import Image
 
 from . import theme as T
-from .text import edge_point, faded, hidden, mark_text, mix, reveal, text
+from .text import edge_point, faded, fit, hidden, mark_text, mix, remakeable, reveal, text, verb
 
 
 def icon(kind: str, color: str, size: float = 0.32) -> VMobject:
-    """A small mark: "check", "cross", "dot", or "ring"."""
+    """A small mark: "check", "cross", "dot", "ring", or "nobody" (no person in the loop)."""
+    if kind == "nobody":
+        head = Circle(radius=0.17, stroke_color=color, stroke_width=4).move_to([0, 0.2, 0])
+        body = Arc(radius=0.3, start_angle=0, angle=np.pi, stroke_color=color, stroke_width=4).move_to([0, -0.2, 0])
+        slash = Line([-0.42, -0.42, 0], [0.42, 0.42, 0], stroke_color=color, stroke_width=5)
+        return VGroup(head, body, slash).scale(size / 0.5)
     if kind == "check":
         m = VMobject(stroke_color=color, stroke_width=5)
         m.set_points_as_corners([[-0.5, 0, 0], [-0.15, -0.38, 0], [0.55, 0.42, 0]])
@@ -48,17 +54,22 @@ def icon(kind: str, color: str, size: float = 0.32) -> VMobject:
     elif kind == "ring":
         m = Circle(radius=0.42, stroke_width=4, stroke_color=color)
     else:
-        raise ValueError(f"icon kind must be check, cross, dot, or ring, not {kind!r}")
+        raise ValueError(f"icon kind must be check, cross, dot, ring, or nobody, not {kind!r}")
     return m.scale(size)
 
 
+@remakeable
 class Tag(VGroup):
-    """A pill of words in the color of its meaning, with an optional icon in front."""
+    """A pill of words in the color of its meaning, with an optional icon in front; with `width`
+    its words wrap and shrink to fit it; with `height` its pill trims its padding to stay that tall."""
 
-    def __init__(self, words: str, color: str = T.DIM, icon_kind: str | None = None, size: float = T.SMALL):
-        label = text(words, size=size, color=color)
+    def __init__(self, words: str, color: str = T.DIM, icon_kind: str | None = None, size: float = T.SMALL,
+                 width: float | None = None, height: float | None = None):
+        room = None if width is None else width - 0.5 - (0.48 if icon_kind else 0.0)
+        label = text(words, size=size, color=color, width=room)
         inner = VGroup(icon(icon_kind, color), label).arrange(RIGHT, buff=0.16) if icon_kind else VGroup(label)
-        box = RoundedRectangle(width=inner.width + 0.5, height=inner.height + 0.3, corner_radius=0.12,
+        tall = inner.height + 0.3 if height is None else max(inner.height + 0.08, min(inner.height + 0.3, height))
+        box = RoundedRectangle(width=inner.width + 0.5, height=tall, corner_radius=0.12,
                                stroke_color=color, stroke_width=2, fill_color=color, fill_opacity=0.10)
         super().__init__(box.move_to(inner), inner)
         self._cv_name = f'Tag "{words}"'
@@ -96,21 +107,27 @@ class Grid:
         return np.array([self.left + c * (self.w + self.gap) + w / 2, self.top - r * (self.h + self.gap) - h / 2, 0])
 
     def put(self, mob, c: int, r: int = 0, cs: int = 1, rs: int = 1, align=ORIGIN):
-        """Move `mob` into a block; `align` (e.g. LEFT, UP) pins it to that edge of the block."""
+        """Fit `mob` into a block (shrinking it, never its text below the minimum) and move it there;
+        `align` (e.g. LEFT, UP) pins it to that edge of the block. Blocks never overlap."""
         w, h = self.size(cs, rs)
+        fit(mob, w, h)
         mob.move_to(self.cell(c, r, cs, rs) + np.array([align[0] * w / 2, align[1] * h / 2, 0]), aligned_edge=align)
         return mob
 
 
 class Number(VGroup):
-    """A number that ticks to new values and recolors, in the serif voice: Number(99.99, "${:,.2f}")."""
+    """A number that ticks to new values and recolors, in the serif voice, with an optional
+    `label` under it: Number(4, "{:,.0f} min", label="gifts table locked")."""
 
     def __init__(self, value: float, fmt: str = "{:,.0f}", size: float = T.NUMBER, color: str = T.TEXT,
-                 align=ORIGIN):
+                 align=ORIGIN, label: str | None = None):
         self.value, self.fmt, self.size, self.color_, self.align = value, fmt, size, color, align
         self._cache: dict = {}
         self.body = self._render(value, color)
         super().__init__(self.body)
+        if label:
+            self.caption = text(label, size=T.SMALL, color=T.DIM, width=max(4.0, self.body.width), align=ORIGIN)
+            self.add(self.caption.next_to(self.body, DOWN, buff=0.3))
         self._cv_name = f"Number {fmt.format(value)}"
 
     def _render(self, value: float, color) -> VMobject:
@@ -119,6 +136,7 @@ class Number(VGroup):
             self._cache[key] = text(key[0], size=self.size, color=color, font=T.SERIF, kind="number")
         return self._cache[key].copy()
 
+    @verb
     def tick(self, to: float, color: str | None = None, run_time: float = 1.2) -> UpdateFromAlphaFunc:
         """Animation: count to `to`, fading to `color` on the way."""
         v0, c0, c1 = self.value, self.color_, color or self.color_
@@ -159,6 +177,7 @@ class Shot(Group):
         k = self.image.width / (self.crop[2] - self.crop[0])
         return self.image.get_corner(UL) + np.array([(x - self.crop[0]) * k, -(y - self.crop[1]) * k, 0])
 
+    @verb
     def box(self, x0: float, y0: float, x1: float, y1: float, color: str = T.YELLOW):
         """Animation: outline source pixels (x0, y0)-(x1, y1) of the screenshot in `color`."""
         a, b = self.px(x0, y0), self.px(x1, y1)
@@ -175,6 +194,7 @@ class Tiles(VGroup):
         self.cols, self.step, self.color_ = cols, size + gap, color
         super().__init__(*(self._tile(size, color) for _ in range(n)))
         self._layout(self, cols)
+        self.move_to(ORIGIN)
         self._cv_name = f"Tiles {n}"
 
     @staticmethod
@@ -187,6 +207,7 @@ class Tiles(VGroup):
         for k, t in enumerate(tiles):
             t.move_to(origin + np.array([(k % cols) * self.step, -(k // cols) * self.step, 0]))
 
+    @verb
     def tint(self, indices, color: str, run_time: float = 0.8) -> UpdateFromAlphaFunc:
         """Animation: recolor the tiles at `indices`."""
         picked = [(self[i], self[i].get_fill_color()) for i in indices]
@@ -197,6 +218,7 @@ class Tiles(VGroup):
 
         return UpdateFromAlphaFunc(self, update, run_time=run_time)
 
+    @verb
     def reflow(self, n: int, cols: int, run_time: float = 1.4) -> UpdateFromAlphaFunc:
         """Animation: grow (or shrink) to `n` tiles in rows of `cols`, keeping the top-left corner."""
         origin = self[0].get_center()
@@ -224,6 +246,7 @@ class Tiles(VGroup):
         return UpdateFromAlphaFunc(self, update, run_time=run_time)
 
 
+@remakeable
 class Bars(VGroup):
     """Horizontal bars that compare values: Bars([("before", 840, T.RED), ("after", 35, T.GREEN)], "{:,.0f} ms").
 
@@ -248,8 +271,10 @@ class Bars(VGroup):
             self.rows.append((row, value, full))
             parts.append(hidden(row))
         super().__init__(*parts)
+        self.move_to(ORIGIN)
         self._cv_name = "Bars"
 
+    @verb
     def grow(self, *indices: int, run_time: float = 1.4):
         """Animation: reveal rows `indices` (all when empty), bars growing and numbers counting."""
         picked = [self.rows[i] for i in (indices or range(len(self.rows)))]
@@ -274,19 +299,23 @@ class Bars(VGroup):
         return UpdateFromAlphaFunc(self, update, run_time=run_time, introducer=True)
 
 
+@remakeable
 class Options(VGroup):
     """Side-by-side options, each a title over a body (lines of text or a mobject); pick(i) recommends one."""
 
     def __init__(self, items: list[tuple[str, object]], width: float = 12.6, gap: float = 0.5):
         cols = []
         w = (width - gap * (len(items) - 1)) / len(items)
+        room = w - 0.9
         for title, body in items:
-            head = text(title, size=T.LABEL + 4)
+            head = text(title, size=T.LABEL + 4, width=room)
             if isinstance(body, str):
                 body = [body]
             if isinstance(body, list):
-                body = VGroup(*(text(line, size=T.SMALL, color=T.DIM) for line in body)).arrange(
+                body = VGroup(*(text(line, size=T.SMALL, color=T.DIM, width=room) for line in body)).arrange(
                     DOWN, aligned_edge=LEFT, buff=0.22)
+            else:
+                fit(body, room, 3.0)
             inner = VGroup(head, body).arrange(DOWN, aligned_edge=LEFT, buff=0.45)
             cols.append(inner)
         h = max(c.height for c in cols) + 0.9
@@ -302,6 +331,7 @@ class Options(VGroup):
         self.arrange(RIGHT, buff=gap, aligned_edge=UP)
         self._cv_name = "Options"
 
+    @verb
     def pick(self, i: int, note: str = "my pick", run_time: float = 1.0):
         """Animation: outline option `i` in yellow with `note` under it, and dim the others."""
         target = self.panels[i].copy().set_stroke(T.YELLOW, width=4)

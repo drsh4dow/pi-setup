@@ -8,42 +8,52 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { cacheRoot, dig, type Env, geminiListener, type Listener, type Timing } from "./narration.ts";
 
-/** Smallest em size, in pixels at 1080p, that each kind of text may have on screen. */
-export const MIN_PX: Readonly<Record<string, number>> = { caption: 44, label: 36, number: 48, code: 32 };
+/** Smallest em size, in pixels at 1080p, that each kind of text may have on screen. Shared with
+ *  the primitives, which fit themselves to it. */
+export const MIN_PX: Readonly<Record<string, number>> = readMinPx();
 /** The burned-in captions: em size, ASS font size (Inter's line is 1.21 em), and margin. */
 export const CAPTION = { em: 48, assSize: 58, marginV: 40, lines: 2 } as const;
 /** Content must stay above the caption band, which two caption lines can fill. */
 export const BAND_TOP = 1080 - CAPTION.marginV - CAPTION.lines * CAPTION.assSize - 4;
 const SLACK = 6;
 
-type Box = [number, number, number, number];
-type Point = [number, number];
-export type Element = { name: string; box: Box; seg?: [Point, Point]; over: number[]; texts: [string, number, string, Box][] };
-export type Probe = { beat: number; name: string; kind: "mid" | "end"; frame: number; skipped: boolean; elements: Element[] };
-export type Note = { beat: number; name: string; kind: "note"; problem: boolean; message: string };
-export type Start = { beat: number; name: string; kind: "start"; frame: number };
-export type Probes = { fps: number; records: (Probe | Note | Start)[] };
-
-export function readProbes(files: string[]): Probes {
-  const out: Probes = { fps: 0, records: [] };
-  for (const file of files) {
-    const data: unknown = JSON.parse(readFileSync(file, "utf8"));
-    const fps = dig(data, "fps");
-    const records = dig(data, "records");
-    if (typeof fps !== "number" || !Array.isArray(records)) throw new Error(`${file} is not a probes file`);
-    out.fps = fps;
-    out.records.push(...records.filter(isRecord));
-  }
-  out.records.sort((a, b) => a.beat - b.beat);
-  return out;
+function readMinPx(): Record<string, number> {
+  const file = fileURLToPath(new URL("../python/catchup_video/limits.json", import.meta.url));
+  const min = dig(JSON.parse(readFileSync(file, "utf8")), "min_px");
+  if (typeof min !== "object" || min === null) throw new Error(`${file} has no min_px`);
+  return Object.fromEntries(Object.entries(min).map(([k, v]) => [k, Number(v)]));
 }
 
-function isRecord(r: unknown): r is Probe | Note | Start {
+type Box = [number, number, number, number];
+type Point = [number, number];
+export type Element = {
+  name: string; box: Box; seg?: [Point, Point]; over: number[]; texts: [string, number, string, Box][];
+  /** Elements of one open piece (a Branches graph) are laid out by it; the check skips overlaps among them. */
+  group?: number;
+  /** Faint enough to be background: others may sit on it. */
+  ghost?: boolean;
+};
+/** A frame the clock measured, `frame` counted from its beat's first frame. */
+export type Probe = { kind: "mid" | "end"; frame: number; skipped: boolean; elements: Element[] };
+export type Note = { kind: "note"; problem: boolean; message: string };
+export type BeatProbes = { index: number; name: string; frames: number; records: (Probe | Note)[] };
+export type Probes = { fps: number; beats: BeatProbes[] };
+
+/** A beat's records as the render cached them (beat.json). */
+export function readBeat(file: string, index: number, name: string): BeatProbes {
+  const data: unknown = JSON.parse(readFileSync(file, "utf8"));
+  const frames = dig(data, "frames");
+  const records = dig(data, "records");
+  if (typeof frames !== "number" || !Array.isArray(records)) throw new Error(`${file} is not a beat record`);
+  return { index, name, frames, records: records.filter(isRecord) };
+}
+
+function isRecord(r: unknown): r is Probe | Note {
   const kind = dig(r, "kind");
-  return typeof dig(r, "beat") === "number" && typeof dig(r, "name") === "string" &&
-    (kind === "mid" || kind === "end" || kind === "note" || kind === "start");
+  return kind === "mid" || kind === "end" || kind === "note";
 }
 
 const overlaps = (a: Box, b: Box) =>
@@ -68,53 +78,58 @@ function segmentHits(seg: [Point, Point], box: Box): boolean {
   return lo < hi;
 }
 
+function elementProblems(els: Element[], add: (message: string) => void): void {
+  for (const [i, e] of els.entries()) {
+    const [x0, y0, x1, y1] = e.box;
+    const out = [["left", -x0], ["top", -y0], ["right", x1 - 1920], ["bottom", y1 - 1080]] as const;
+    for (const [side, by] of out) if (by > 2) add(`${e.name} leaves the frame on the ${side} by ${Math.round(by)} px`);
+    if (y1 - BAND_TOP > 2 && y1 <= 1080 + 2) add(`${e.name} reaches ${Math.round(y1 - BAND_TOP)} px into the caption band`);
+    for (const [kind, em, words] of e.texts) {
+      const min = MIN_PX[kind] ?? MIN_PX.label ?? 0;
+      if (em < min - 0.5) add(`${e.name}: ${kind} text "${words}" is ${Math.round(em)} px, below the ${min} px minimum`);
+    }
+    for (const [a, ta] of e.texts.entries()) {
+      for (const tb of e.texts.slice(a + 1)) {
+        if (overlaps(ta[3], tb[3])) add(`${e.name}: text "${ta[2]}" overlaps text "${tb[2]}"`);
+      }
+    }
+    for (const [j, f] of els.entries()) {
+      if (j <= i || e.over.includes(j) || f.over.includes(i)) continue;
+      if (e.group !== undefined && e.group === f.group) continue;
+      let textHit = false;
+      for (const ta of e.texts) {
+        for (const tb of f.texts) {
+          if (!overlaps(ta[3], tb[3])) continue;
+          textHit = true;
+          add(`text "${ta[2]}" of ${e.name} overlaps text "${tb[2]}" of ${f.name}`);
+        }
+      }
+      if (textHit || e.ghost || f.ghost) continue;
+      let hit: boolean;
+      if (e.seg && f.seg) hit = false;
+      else if (e.seg) hit = segmentHits(e.seg, f.box);
+      else if (f.seg) hit = segmentHits(f.seg, e.box);
+      else hit = overlaps(e.box, f.box);
+      if (hit) add(`${e.name} overlaps ${f.name}`);
+    }
+  }
+}
+
 /** Overlaps, frame exits, caption-band intrusions, and text below its minimum, by beat and element. */
 export function geometryProblems(probes: Probes): string[] {
   const found = new Map<string, string[]>();
-  const add = (p: { beat: number; name: string }, when: string, message: string) => {
-    const key = `beat ${p.beat} (${p.name}): ${message}`;
-    found.set(key, [...(found.get(key) ?? []), when]);
-  };
-  for (const r of probes.records) {
-    if (r.kind === "note") {
-      if (r.problem) add(r, "", r.message);
-      continue;
-    }
-    if (r.kind !== "mid" && r.kind !== "end") continue;
-    if (r.skipped) continue;
-    const els = r.elements;
-    for (const [i, e] of els.entries()) {
-      const [x0, y0, x1, y1] = e.box;
-      const out = [["left", -x0], ["top", -y0], ["right", x1 - 1920], ["bottom", y1 - 1080]] as const;
-      for (const [side, by] of out) if (by > 2) add(r, r.kind, `${e.name} leaves the frame on the ${side} by ${Math.round(by)} px`);
-      if (y1 - BAND_TOP > 2 && y1 <= 1080 + 2) add(r, r.kind, `${e.name} reaches ${Math.round(y1 - BAND_TOP)} px into the caption band`);
-      for (const [kind, em, words] of e.texts) {
-        const min = MIN_PX[kind] ?? MIN_PX.label ?? 0;
-        if (em < min - 0.5) add(r, r.kind, `${e.name}: ${kind} text "${words}" is ${Math.round(em)} px, below the ${min} px minimum`);
+  for (const beat of probes.beats) {
+    const add = (when: string, message: string) => {
+      const key = `beat ${beat.index} (${beat.name}): ${message}`;
+      found.set(key, [...(found.get(key) ?? []), when]);
+    };
+    for (const r of beat.records) {
+      if (r.kind === "note") {
+        if (r.problem) add("", r.message);
+        continue;
       }
-      for (const [a, ta] of e.texts.entries()) {
-        for (const tb of e.texts.slice(a + 1)) {
-          if (overlaps(ta[3], tb[3])) add(r, r.kind, `${e.name}: text "${ta[2]}" overlaps text "${tb[2]}"`);
-        }
-      }
-      for (const [j, f] of els.entries()) {
-        if (j <= i || e.over.includes(j) || f.over.includes(i)) continue;
-        let textHit = false;
-        for (const ta of e.texts) {
-          for (const tb of f.texts) {
-            if (!overlaps(ta[3], tb[3])) continue;
-            textHit = true;
-            add(r, r.kind, `text "${ta[2]}" of ${e.name} overlaps text "${tb[2]}" of ${f.name}`);
-          }
-        }
-        if (textHit) continue;
-        let hit: boolean;
-        if (e.seg && f.seg) hit = false;
-        else if (e.seg) hit = segmentHits(e.seg, f.box);
-        else if (f.seg) hit = segmentHits(f.seg, e.box);
-        else hit = overlaps(e.box, f.box);
-        if (hit) add(r, r.kind, `${e.name} overlaps ${f.name}`);
-      }
+      if (r.skipped) continue;
+      elementProblems(r.elements, (message) => add(r.kind, message));
     }
   }
   return [...found].map(([key, whens]) => {
@@ -137,16 +152,19 @@ export type Shot = { beat: number; name: string; kind: "mid" | "end"; file: stri
 export function writeFrames(video: string, probes: Probes, dir: string): { shots: Shot[]; sheets: string[] } {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const first = probes.records.find((r): r is Start => r.kind === "start")?.frame ?? 0;
   const shots: Shot[] = [];
-  for (const r of probes.records) {
-    if (r.kind !== "mid" && r.kind !== "end") continue;
-    const frame = (r.kind === "mid" ? r.frame : r.frame - 1) - first;
-    const file = join(dir, `beat-${String(r.beat).padStart(2, "0")}-${r.kind}.png`);
-    run("ffmpeg", ["-v", "error", "-y", "-ss", Math.max(0, (frame - 0.5) / probes.fps).toFixed(4), "-i", video,
-      "-frames:v", "1", file]);
-    if (!existsSync(file)) throw new Error(`no frame ${frame} in ${video} for beat ${r.beat} (${r.name}) ${r.kind}; the video is shorter than its beats`);
-    shots.push({ beat: r.beat, name: r.name, kind: r.kind, file });
+  let first = 0; // the beat's first frame in the video
+  for (const beat of probes.beats) {
+    for (const r of beat.records) {
+      if (r.kind === "note") continue;
+      const frame = first + (r.kind === "mid" ? r.frame : r.frame - 1);
+      const file = join(dir, `beat-${String(beat.index).padStart(2, "0")}-${r.kind}.png`);
+      run("ffmpeg", ["-v", "error", "-y", "-ss", Math.max(0, (frame - 0.5) / probes.fps).toFixed(4), "-i", video,
+        "-frames:v", "1", file]);
+      if (!existsSync(file)) throw new Error(`no frame ${frame} in ${video} for beat ${beat.index} (${beat.name}) ${r.kind}; the video is shorter than its beats`);
+      shots.push({ beat: beat.index, name: beat.name, kind: r.kind, file });
+    }
+    first += beat.frames;
   }
   const sheets: string[] = [];
   for (let k = 0; k * 8 < shots.length; k++) {

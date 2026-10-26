@@ -1,27 +1,36 @@
 """Video: a MovingCameraScene that runs on the narration clock.
 
-A story subclasses Video and writes one method per beat, decorated with @beat.
-Each method starts when its words start. `self.at("words")` waits for a phrase.
-The clock counts frames exactly, so a story can render in beat-sized chunks in
-parallel and the chunks join without drift. An animation that would cross a
-beat's midpoint is moved so it lands before or starts after it, and the clock
-records every element's geometry at each beat's midpoint and end for the check.
+A story subclasses Video and writes one method per beat, decorated with @beat. Each method
+starts when its words start, and `self.at("words")` waits for a phrase. The clock counts frames
+exactly, so a story renders in beat-sized chunks in parallel and the chunks join without drift.
+
+The clock fits motion to the beat: an animation that would run past the beat's end is sped up
+to fit, up to twice its speed, and one that would cross the beat's midpoint lands on it or starts
+after it, so the midpoint frame the check reads is settled. Anything brought on stage is kept
+inside the stage and above the caption band. At each beat's midpoint and end the clock records
+every element's geometry for the check.
+
+Each beat's render is cached under a key of everything its frames depend on (see state.py); a
+beat whose key is cached is executed without drawing, and the caller reuses the cached frames.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from pathlib import Path
 
 import numpy as np
 from manim import (
-    AnimationGroup,
+    DOWN,
     DR,
     LEFT,
+    RIGHT,
     UL,
     UP,
+    AnimationGroup,
     FadeIn,
     FadeOut,
     Group,
@@ -42,28 +51,43 @@ from manim import (
 from manim.animation.animation import prepare_animation
 from manim.utils.exceptions import EndSceneEarlyException
 
+from . import report, state
 from . import theme as T
+from .text import em_px, fit, label_of
+
+SQUEEZE = 0.5  # an animation may run at up to 1 / SQUEEZE times its speed to fit its beat
+MIN_RUN = 0.3  # seconds; no animation is sped up below this
+GHOST = 0.3  # elements fainter than this are background: others may sit on them
+EDGE = 6.75  # the stage's left and right limits for anything brought on, in Manim units
 
 
 def beat(say: str, show: str | None = None, pause: float | None = None, lead: float = 0.0,
          transition: bool = False):
-    """Mark a Video method as one narration beat: `say` is spoken, `show` captioned (digits allowed).
-
-    `pause` is the silence before the beat, `lead` starts its motion that many seconds
-    before its words, and `transition=True` lets its motion run across the midpoint.
-    """
+    """Mark a Video method as one narration beat: `say` is spoken (audio tags like "[curious]" shape the voice and are never captioned), `show` captioned (digits allowed), `pause` the silence before it, `lead` starts its motion earlier, `transition=True` lets motion cross its midpoint."""
 
     def mark(fn):
         fn._cv_beat = {"name": fn.__name__, "say": " ".join(say.split()),
-                       "show": " ".join((show or say).split()), "pause": pause, "lead": lead,
+                       "show": " ".join((show or strip_tags(say)).split()), "pause": pause, "lead": lead,
                        "transition": transition}
         return fn
 
     return mark
 
 
+_TAG = re.compile(r"\[[^\]]*\]")
+
+
+def strip_tags(s: str) -> str:
+    """`s` without its audio tags."""
+    return " ".join(_TAG.sub(" ", s).split())
+
+
 def beats_of(cls) -> list:
-    return [fn for fn in vars(cls).values() if callable(fn) and hasattr(fn, "_cv_beat")]
+    fns = [fn for fn in vars(cls).values() if callable(fn) and hasattr(fn, "_cv_beat")]
+    taken = [fn.__name__ for fn in fns if hasattr(Video, fn.__name__)]
+    if taken:
+        raise SystemExit(f"beat method(s) {', '.join(taken)} replace Video's own; rename them (e.g. {taken[0]}_beat)")
+    return fns
 
 
 def over(mob, *targets):
@@ -82,6 +106,23 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9$.%]+", " ", s.lower()).strip()
 
 
+def _leaves(anims):
+    for a in anims:
+        if isinstance(a, AnimationGroup):
+            yield from _leaves(a.animations)
+        else:
+            yield a
+
+
+def _box(m) -> tuple[float, float, float, float]:
+    (x0, y1, _), (x1, y0, _) = m.get_corner(UL), m.get_corner(DR)
+    return x0, y0, x1, y1
+
+
+def _overlap(a, b) -> float:
+    return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
 class Video(MovingCameraScene):
     voice = "Iapetus"
 
@@ -94,8 +135,10 @@ class Video(MovingCameraScene):
         self._frame = 0
         self._b = None
         self._pins: list = []
-        self._records: list = []
         self.header = None
+        self._out: list = []
+        report._sinks.append(lambda message: self._note(message, problem=True))
+        self._base_attrs = set(vars(self)) | {"_base_attrs"}
 
     def construct(self):
         timing = json.loads(Path(os.environ["CATCHUP_TIMING"]).read_text())
@@ -105,32 +148,59 @@ class Video(MovingCameraScene):
             raise SystemExit(f"timing.json is stale: story beats {names}, timing beats "
                              f"{[b['name'] for b in timing['beats']]}")
         lo, hi = (int(x) for x in os.environ.get("CATCHUP_BEATS", f"1-{len(fns)}").split("-"))
+        cache = os.environ.get("CATCHUP_BEAT_CACHE")
+        quality = f"{config.pixel_width}x{config.pixel_height}@{self._fps}"
+        story_path = os.environ["CATCHUP_STORY"]
         tb = timing["beats"]
         slot = [max(0.0, b["start"] - fn._cv_beat["lead"]) for b, fn in zip(tb, fns)]
         slot.append(timing["total"])
-        try:
-            for i, (fn, b) in enumerate(zip(fns, tb), 1):
-                if i > hi:
-                    raise EndSceneEarlyException()
-                self.renderer._original_skipping_status = i < lo
-                if i == lo:
-                    self._records.append({"beat": i, "name": fn.__name__, "kind": "start", "frame": self._frame})
-                self._b = {"index": i, "name": fn.__name__, "phrases": b["phrases"],
-                           "transition": fn._cv_beat["transition"], "rec": i >= lo,
-                           "mid_f": round((b["start"] + b["end"]) / 2 * self._fps),
-                           "end_f": round(slot[i] * self._fps), "mid_done": False}
-                self._advance(round(slot[i - 1] * self._fps))
-                fn(self)
-                late = self._frame - self._b["end_f"]
-                if late > 0:
-                    self._note(f"runs {late / self._fps:.2f}s past its slot, into the next beat; "
-                               "shorten its animations or start them earlier", problem=True)
-                self._advance(self._b["end_f"])
-                self._probe("end")
-        finally:
-            out = os.environ.get("CATCHUP_PROBES")
-            if out:
-                Path(out).write_text(json.dumps({"fps": self._fps, "records": self._records}))
+        writer = self.renderer.file_writer
+        for i, (fn, b) in enumerate(zip(fns, tb), 1):
+            if i > hi:
+                raise EndSceneEarlyException()
+            t0 = 0.0 if i == 1 else slot[i - 1]
+            f0 = round(t0 * self._fps)
+            f1 = round(slot[i] * self._fps)
+            local = self._local_timing(fn, b, t0, slot[i - 1], f1 - f0)
+            start = self._frame  # later than f0 when the beat before ran over
+            key = cached = None
+            if i >= lo:
+                attrs = sorted(set(vars(self)) - self._base_attrs) + ["_pins", "header"]
+                key = state.beat_key(fn=fn, beat_fns=fns, story_path=story_path, quality=quality,
+                                     timing={**local, "late": start - f0}, state=state.stage(self, attrs))
+                cached = bool(cache) and (Path(cache) / key / "beat.json").is_file()
+            draw = i >= lo and not cached
+            self.renderer._original_skipping_status = not draw
+            first = len(writer.partial_movie_files)
+            self._b = {"index": i, "name": fn.__name__, "phrases": b["phrases"], "t0": t0, "f0": f0,
+                       "start": start, "transition": fn._cv_beat["transition"], "rec": draw, "records": [],
+                       "mid_f": f0 + round(local["mid"] * self._fps), "end_f": f1, "mid_done": False,
+                       "cue": None, "since_cue": []}
+            self._advance(f0 + round(local["begin"] * self._fps))
+            fn(self)
+            late = self._frame - self._b["end_f"]
+            if late > 0:
+                self._late(late)
+            self._advance(self._b["end_f"])
+            self._probe("end")
+            if i >= lo:
+                self._out.append({"index": i, "name": fn.__name__, "key": key, "cached": cached, "start": start,
+                                  "frames": self._frame - start, "records": self._b["records"],
+                                  "segments": [str(p) for p in writer.partial_movie_files[first:] if p]})
+
+    def _local_timing(self, fn, b, t0: float, begin: float, frames: int) -> dict:
+        """A beat's timing from the start of its frames: what its drawing depends on."""
+        def rel(t: float) -> float:
+            return round(t - t0, 3)
+
+        return {"begin": rel(begin), "mid": rel((b["start"] + b["end"]) / 2), "frames": frames,
+                "transition": fn._cv_beat["transition"],
+                "phrases": [[p["text"], p["said"], rel(p["start"]), rel(p["end"])] for p in b["phrases"]]}
+
+    def _f(self, t: float) -> int:
+        """The frame of narration time `t`, counted from the current beat's first frame."""
+        b = self._b
+        return b["f0"] + round((t - b["t0"]) * self._fps)
 
     def _frames(self, run_time: float) -> int:
         return len(np.arange(0, run_time, 1 / self._fps))
@@ -165,21 +235,22 @@ class Video(MovingCameraScene):
     def play(self, *args, **kwargs):
         self._play(args, kwargs)
 
-    def _play(self, args, kwargs, after=None):
+    def _play(self, args, kwargs, after=None, place=True):
         anims = [prepare_animation(a) for a in args]
+        b = self._b
         if anims and all(isinstance(a, Wait) for a in anims):
             run_time = kwargs.get("run_time", max(a.run_time for a in anims))
-            return self._wait(max(1, round(run_time * self._fps)))
+            n = max(1, round(run_time * self._fps))
+            return self._wait(min(n, b["end_f"] - self._frame) if b else n)
+        if place:
+            self._keep_new_on_stage(anims)
         run_time = kwargs.get("run_time") or self.get_run_time(anims)
-        n = self._frames(run_time)
-        b = self._b
-        if b and not b["mid_done"] and not b["transition"] and self._frame < b["mid_f"] < self._frame + n:
-            before = b["mid_f"] - self._frame
-            if 2 * before >= n:  # mostly done by the midpoint: land on it
-                kwargs["run_time"] = (before - 0.5) / self._fps
-                n = before
-            else:  # barely started: start right after it
-                self._wait(before)
+        want = self._frames(run_time)
+        n = self._fit(b, want) if b else want
+        if n != want:
+            kwargs["run_time"] = (n - 0.5) / self._fps
+        if b:
+            b["since_cue"].append((anims, want / self._fps))
         super().play(*anims, **kwargs)
         _carry_text_marks(anims)
         self._tick(n)
@@ -188,17 +259,39 @@ class Video(MovingCameraScene):
         if b and not b["mid_done"] and self._frame >= b["mid_f"]:
             self._probe("mid")
 
+    def _fit(self, b, n: int) -> int:
+        """The frames an animation of `n` frames gets, never fewer than SQUEEZE of them: moved off
+        the beat's midpoint (landing on it, or starting after it) and sped up to end with the beat.
+        When neither side of the midpoint has room even at that speed, it runs across it."""
+        floor = max(math.ceil(n * SQUEEZE), min(n, round(MIN_RUN * self._fps)))
+        mid, end = b["mid_f"], b["end_f"]
+        if not b["mid_done"] and not b["transition"] and self._frame < mid < self._frame + n:
+            before, after = mid - self._frame, end - mid
+            if 2 * before >= n and before >= floor:
+                return before  # mostly done by the midpoint: land on it
+            if after >= n:
+                self._wait(before)  # barely started: start right after it
+                return n
+            if max(before, after) >= floor:
+                if before >= after:
+                    return before
+                self._wait(before)
+                return after
+        left = end - self._frame
+        return n if n <= left else max(left, floor)
+
+    def _late(self, late: int) -> None:
+        b = self._b
+        played = ", ".join(f"{_anim_label(a)} ({t:.1f}s)" for anims, t in b["since_cue"] for a in anims[:1])
+        where = f'after "{b["cue"]}"' if b["cue"] else "in this beat"
+        self._note(f"runs {late / self._fps:.2f}s past its slot even with its animations sped up to twice their "
+                   f"speed; {where} it plays {played or 'nothing'}: cut one of them, or start it at an earlier "
+                   "phrase (self.at) or before the words (lead=)", problem=True)
+
     def add_mobjects_from_animations(self, animations):
         # Manim adds an AnimationGroup's synthetic Group to the scene, which pulls its
         # mobjects out of their pieces; add only what each inner animation brings.
-        def flat(anims):
-            for a in anims:
-                if isinstance(a, AnimationGroup):
-                    yield from flat(a.animations)
-                else:
-                    yield a
-
-        super().add_mobjects_from_animations(list(flat(animations)))
+        super().add_mobjects_from_animations(list(_leaves(animations)))
 
     def at(self, words: str | int, offset: float = 0.0) -> None:
         """Wait until the narration reaches `words` (a phrase index, or words in the beat)."""
@@ -219,22 +312,22 @@ class Video(MovingCameraScene):
             else:
                 raise ValueError(f"beat {b['name']}: no phrase contains {words!r}; phrases: "
                                  f"{[p['text'] for p in b['phrases']]}")
-        target = round((t + offset) * self._fps)
+        target = min(self._f(t + offset), b["end_f"])
         if self._frame - target > 0.25 * self._fps:
             self._note(f"cue {words!r} comes {(self._frame - target) / self._fps:.2f}s before the "
                        "previous animation ends, so its motion starts late")
         self._advance(target)
+        b["cue"], b["since_cue"] = words, []
 
     def hold(self, seconds: float) -> None:
-        """Wait `seconds` on the clock."""
-        self._wait(max(1, round(seconds * self._fps)))
+        """Wait `seconds` on the clock, at most until the beat ends."""
+        self._wait(max(1, min(round(seconds * self._fps), self._b["end_f"] - self._frame)))
 
     # ---- records for the check -----------------------------------------------
 
     def _note(self, message: str, problem: bool = False) -> None:
         if self._b and self._b["rec"]:
-            self._records.append({"beat": self._b["index"], "name": self._b["name"], "kind": "note",
-                                  "problem": problem, "message": message})
+            self._b["records"].append({"kind": "note", "problem": problem, "message": message})
 
     def _probe(self, at: str) -> None:
         b = self._b
@@ -250,53 +343,85 @@ class Video(MovingCameraScene):
         def px(p):
             return [round((p[0] - cx) / w * 1920 + 960, 1), round((cy - p[1]) / h * 1080 + 540, 1)]
 
-        elements = list(self._elements())
+        found = list(self._elements())
+        elements = [m for m, _ in found]
+        groups: dict[int, int] = {}
         out = []
-        for m in elements:
+        for m, group in found:
             allowed = {id(f) for t in getattr(m, "_cv_over", []) for f in t.get_family()}
             over_ix = [j for j, o in enumerate(elements)
                        if o is not m and (allowed & {id(f) for f in o.get_family()}
                                           or id(m) in {id(f) for t in getattr(o, "_cv_over", [])
                                                        for f in t.get_family()})]
-            item = {"name": _label(m), "box": [*px(m.get_corner(UL)), *px(m.get_corner(DR))],
-                    "over": over_ix, "texts": []}
+            item = {"name": label_of(m), "box": [*px(m.get_corner(UL)), *px(m.get_corner(DR))],
+                    "over": over_ix, "texts": [], "ghost": bool(_opacity(m) < GHOST)}
+            if group is not None:
+                item["group"] = groups.setdefault(group, len(groups))
             if isinstance(m, Line):
                 item["seg"] = [px(m.get_start()), px(m.get_end())]
             for t in m.get_family():
                 if isinstance(t, Text) and t.submobjects and _opacity(t) > 0.05:
-                    item["texts"].append([getattr(t, "_cv_kind", "label"), round(_em_px(t) * zoom, 1),
+                    item["texts"].append([getattr(t, "_cv_kind", "label"), round(em_px(t) * zoom, 1),
                                           t.original_text.lstrip("\u2502")[:40],
                                           [*px(t.get_corner(UL)), *px(t.get_corner(DR))]])
             out.append(item)
         # A transition beat's motion runs through its midpoint, so its geometry there is not
         # recorded, but its frame is still taken at the midpoint itself.
-        self._records.append({"beat": b["index"], "name": b["name"], "kind": at,
-                              "frame": b["mid_f"] if at == "mid" else self._frame,
-                              "skipped": at == "mid" and b["transition"], "elements": out})
+        b["records"].append({"kind": at, "frame": (b["mid_f"] if at == "mid" else self._frame) - b["start"],
+                             "skipped": at == "mid" and b["transition"], "elements": out})
 
     def _elements(self):
+        """Each element on stage, with the open piece (such as Branches) it belongs to, if any."""
         frame = self.camera.frame
 
-        def walk(m):
+        def walk(m, group):
             if m is frame or _opacity(m) <= 0.05:
                 return
-            if type(m) in (VGroup, Group):
+            if group is None and getattr(m, "_cv_open", False):
                 for s in m.submobjects:
-                    yield from walk(s)
+                    yield from walk(s, id(m))
+            elif type(m) in (VGroup, Group):
+                for s in m.submobjects:
+                    yield from walk(s, group)
             elif m.has_points() or m.submobjects or isinstance(m, ImageMobject):
-                yield m
+                yield m, group
 
         for m in self.mobjects:
-            yield from walk(m)
+            yield from walk(m, None)
 
     # ---- staging helpers -----------------------------------------------------
+
+    def _stage_top(self) -> float:
+        return T.TOP if self.header is not None else T.CEIL
+
+    def _keep_new_on_stage(self, anims) -> None:
+        """Fit what these animations bring on stage inside it, moved as one, above the captions."""
+        frame = self.camera.frame
+        if abs(frame.width - config.frame_width) > 1e-3 or np.abs(frame.get_center()).max() > 1e-3:
+            return  # the camera is flying; the dive and pull_back place their own pieces
+        present = {id(m) for m in self.get_mobject_family_members()}
+        new = []
+        for a in _leaves(anims):
+            m = a.mobject
+            if m is not frame and id(m) not in present and m not in new:
+                new.append(m)
+        if not new:
+            return
+        group = new[0] if len(new) == 1 else Group(*new)
+        top = self._stage_top()
+        fit(group, 2 * EDGE, top - T.FLOOR)
+        x0, y0, x1, y1 = _box(group)
+        dx = -EDGE - x0 if x0 < -EDGE else (EDGE - x1 if x1 > EDGE else 0.0)
+        dy = T.FLOOR - y0 if y0 < T.FLOOR else (top - y1 if y1 > top else 0.0)
+        if dx or dy:
+            group.shift([dx, dy, 0])
 
     def pin(self, *mobs):
         """Keep `mobs` on stage through clear()."""
         self._pins += mobs
 
     def show(self, *mobs, run_time: float = 0.8, lag: float = 0.15):
-        """Fade `mobs` in, one after another, rising slightly."""
+        """Fade `mobs` in, one after another, rising slightly; they are kept on stage."""
         self.play(LaggedStart(*(FadeIn(m, shift=0.15 * UP) for m in mobs), lag_ratio=lag),
                   run_time=run_time)
 
@@ -309,6 +434,32 @@ class Video(MovingCameraScene):
         gone = self._unpinned(keep)
         if gone or extra:
             self.play(*(FadeOut(m) for m in gone), *extra, run_time=run_time)
+
+    def beside(self, mob, target, side=None, buff: float = 0.3):
+        """Place `mob` next to `target` on the first side (right, below, left, above, or only
+        `side`) where it stays on stage and clear of everything shown; returns `mob`."""
+        mine = {id(f) for f in [*mob.get_family(), *target.get_family()]}
+        boxes = [_box(m) for m, _ in self._elements()
+                 if _opacity(m) >= GHOST and not mine & {id(f) for f in m.get_family()}]
+        top = self._stage_top()
+        best = None
+        for d in [side] if side is not None else [RIGHT, DOWN, LEFT, UP]:
+            mob.next_to(target, d, buff=buff)
+            x0, y0, x1, y1 = box = _box(mob)
+            out = max(0.0, -EDGE - x0) + max(0.0, x1 - EDGE) + max(0.0, T.FLOOR - y0) + max(0.0, y1 - top)
+            score = (out > 0.01, sum(_overlap(box, o) for o in boxes), out)
+            if score[:2] == (False, 0.0):
+                return mob
+            if best is None or score < best[0]:
+                best = (score, d)
+        mob.next_to(target, best[1], buff=buff)
+        return mob
+
+    def recap(self, graph, cues: dict[int, str], color: str = T.YELLOW):
+        """Call out each PR of `graph` as the narration reaches its words: recap({51: "merge the cache"})."""
+        for n, words in cues.items():
+            self.at(words)
+            self.play(graph.point(n, color))
 
     def _unpinned(self, keep=()) -> list:
         kept = {id(f) for m in [*self._pins, *keep, self.header] if m is not None for f in m.get_family()}
@@ -323,7 +474,7 @@ class Video(MovingCameraScene):
             raise ValueError("pull_back(graph) before diving into another PR")
         gone = self._unpinned([graph])
         anims, settle = self._fly(graph, n, zoom, inward=True)
-        self._play([*anims, *(FadeOut(m) for m in gone)], {"run_time": run_time}, settle)
+        self._play([*anims, *(FadeOut(m) for m in gone)], {"run_time": run_time}, settle, place=False)
 
     def pull_back(self, graph, run_time: float = 1.5, zoom: float = 4.0):
         """Fade the chapter out while the camera flies back out to the whole graph; the header returns to its node."""
@@ -331,7 +482,8 @@ class Video(MovingCameraScene):
             raise ValueError("dive(graph, n) before pulling back")
         gone = self._unpinned([graph])
         anims, settle = self._fly(graph, self.header._cv_pr, zoom, inward=False)
-        self._play([*anims, *(FadeOut(m, rate_func=_early) for m in gone)], {"run_time": run_time}, settle)
+        self._play([*anims, *(FadeOut(m, rate_func=_early) for m in gone)], {"run_time": run_time}, settle,
+                   place=False)
 
     def _fly(self, graph, n, zoom, inward):
         frame = self.camera.frame
@@ -340,8 +492,7 @@ class Video(MovingCameraScene):
         start = graph.label(n).copy()
         head = graph.header_for(n)
         if inward:
-            flier = start.copy()
-            self.add(flier)
+            flier = start.copy()  # enters with the flight's first frame, not before the clock waits
         else:
             flier = self.header
             self._pins.remove(flier)
@@ -374,25 +525,34 @@ class Video(MovingCameraScene):
         def settle():
             frame.set(width=w0).move_to(c0)
             if inward:
-                flier.become(head)
-                flier._cv_pr, flier._cv_name = n, f"header #{n}"
-                self.header = flier
-                self.pin(flier)
+                # The header itself replaces the flier, so its text keeps its own measured size.
+                self.remove(flier)
+                head._cv_pr, head._cv_name = n, f"header #{n}"
+                self.add(head)
+                self.header = head
+                self.pin(head)
             else:
                 graph.visibility(1.0)
                 self.remove(flier)
                 self.header = None
 
-        return [UpdateFromAlphaFunc(frame, move_frame), UpdateFromAlphaFunc(graph, fade_graph),
-                UpdateFromAlphaFunc(flier, place)], settle
+        flight = UpdateFromAlphaFunc(frame, move_frame)
+        flight._cv_verb = "dive" if inward else "pull_back"
+        return [flight, UpdateFromAlphaFunc(graph, fade_graph),
+                UpdateFromAlphaFunc(flier, place, introducer=inward)], settle
+
+
+def _anim_label(a) -> str:
+    named = getattr(a, "_cv_verb", None)
+    if named:
+        return named
+    inner = next(iter(_leaves([a])), a)
+    return f"{type(inner).__name__} {label_of(inner.mobject)}"
 
 
 def _carry_text_marks(anims) -> None:
     """After Transform(a, b), `a` shows b's words: give its texts b's names and em sizes too."""
-    for a in anims:
-        if isinstance(a, AnimationGroup):
-            _carry_text_marks(a.animations)
-            continue
+    for a in _leaves(anims):
         target = getattr(a, "target_copy", None)
         if not isinstance(a, Transform) or target is None:
             continue
@@ -415,16 +575,6 @@ def _early(t: float) -> float:
     return rate_functions.smooth(min(1.0, t / 0.4))
 
 
-def _label(m) -> str:
-    named = getattr(m, "_cv_name", None)
-    if named:
-        return named
-    if isinstance(m, Text):
-        return f'Text "{m.original_text[:32]}"'
-    c = m.get_center()
-    return f"{type(m).__name__} at ({c[0]:.1f}, {c[1]:.1f})"
-
-
 def _opacity(m) -> float:
     best = 0.0
     for f in m.get_family():
@@ -436,10 +586,3 @@ def _opacity(m) -> float:
         if best > 0.05:
             break
     return best
-
-
-def _em_px(t: Text) -> float:
-    ref = getattr(t, "_cv_ref", None)
-    if ref is not None and ref.width > 0:
-        return t._cv_px * ref.width / t._cv_w0
-    return t.font_size * T.PX

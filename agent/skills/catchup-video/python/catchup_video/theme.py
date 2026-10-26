@@ -1,5 +1,6 @@
 """Palette, type, sizes, and the stage. Each color keeps one meaning for the whole video."""
 
+import json
 from pathlib import Path
 
 import manimpango
@@ -46,6 +47,11 @@ NUMBER = 68
 HEADER = 52
 
 
+# The smallest em size, in pixels at 1080p, each kind of text may have on screen. The check
+# reads the same file, so a primitive that fits itself and the check agree on the floor.
+MIN_PX: dict[str, float] = json.loads((Path(__file__).with_name("limits.json")).read_text())["min_px"]
+
+
 def fs(px: float) -> float:
     """Manim font_size for an em of `px` pixels at 1080p."""
     return px / PX
@@ -55,4 +61,6 @@ def fs(px: float) -> float:
 LEFT, RIGHT = -6.6, 6.6
 TOP = 2.9  # below the header row
 HEADER_Y = 3.45
+CEIL = 3.7  # the top of the stage while no chapter header is pinned
 FLOOR = -2.6  # captions own the band below this line
+UNIT_PX = 135  # pixels per Manim unit at 1080p

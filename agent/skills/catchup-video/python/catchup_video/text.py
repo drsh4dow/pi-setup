@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import re
 from difflib import SequenceMatcher
+from functools import lru_cache
 
 from manim import (
+    DOWN,
     LEFT,
     UL,
     UP,
@@ -25,6 +29,7 @@ from pygments.lexers import get_lexer_by_name
 from pygments.token import Comment, Keyword, Name, Number, Operator, Punctuation, String
 
 from . import theme as T
+from .report import problem
 
 
 def mix(c0, c1, a: float):
@@ -41,10 +46,180 @@ def mark_text(t: Text, kind: str, px: float) -> Text:
     return t
 
 
-def text(s: str, size: float = T.LABEL, color: str = T.TEXT, font: str = T.SANS, kind: str = "label") -> Text:
-    """Words on stage: Inter at `size` em px (1080p). Use font=T.SERIF for the math voice."""
-    t = Text(s, font=font, font_size=T.fs(size), color=color, disable_ligatures=True, line_spacing=0.9)
+def em_px(t: Text) -> float:
+    """The em size of `t` in pixels at 1080p, as it stands after any scaling."""
+    ref = getattr(t, "_cv_ref", None)
+    if ref is not None and ref.width > 0 and getattr(t, "_cv_w0", 0) > 0:
+        return t._cv_px * ref.width / t._cv_w0
+    return t.font_size * T.PX
+
+
+def label_of(m) -> str:
+    """The name the check reports `m` by."""
+    named = getattr(m, "_cv_name", None)
+    if named:
+        return named
+    if isinstance(m, Text):
+        return f'Text "{m.original_text[:32]}"'
+    c = m.get_center()
+    return f"{type(m).__name__} at ({c[0]:.1f}, {c[1]:.1f})"
+
+
+def readable_scale(mob) -> float:
+    """The smallest factor `mob` may be scaled by with every text in it at or above its minimum."""
+    floor = 0.0
+    for t in mob.get_family():
+        if isinstance(t, Text) and t.submobjects:
+            floor = max(floor, T.MIN_PX.get(getattr(t, "_cv_kind", "label"), T.MIN_PX["label"]) / em_px(t))
+    return floor
+
+
+def verb(fn):
+    """Name the animation a piece's method returns ("Options.pick"), so the clock can say what to cut."""
+    @functools.wraps(fn)
+    def named(self, *args, **kw):
+        anim = fn(self, *args, **kw)
+        anim._cv_verb = f"{type(self).__name__}.{fn.__name__}"
+        return anim
+
+    return named
+
+
+def remakeable(cls):
+    """Class decorator: fit() rebuilds an instance at the width (and height) it must fit, so its
+    words wrap and its parts reflow instead of shrinking."""
+    init = cls.__init__
+    params = inspect.signature(init).parameters
+
+    @functools.wraps(init)
+    def __init__(self, *args, **kw):
+        init(self, *args, **kw)
+        if type(self) is cls:
+            def remake(w, h):
+                extra = {"width": w, **({"height": h} if h is not None and "height" in params else {})}
+                return cls(*args, **{**kw, **extra})
+
+            self._cv_remake = remake
+
+    cls.__init__ = __init__
+    return cls
+
+
+def _remade(mob, width, height) -> None:
+    """Rebuild `mob` in place at `width` x `height`, keeping its center and its identity."""
+    center = mob.get_center()
+    fresh = mob._cv_remake(width if width is not None else mob.width, height)
+    mob.__class__ = fresh.__class__
+    mob.__dict__.clear()
+    mob.__dict__.update(fresh.__dict__)
+    mob.move_to(center)
+
+
+def fit(mob, width: float | None = None, height: float | None = None):
+    """Fit `mob` into `width` x `height` (Manim units): a piece rebuilds itself at that size, and
+    anything else scales down, never its text below the minimum.
+
+    When even the minimum does not fit, `mob` stays at the minimum and the beat reports it."""
+    over = (width is not None and mob.width > width + 1e-6) or (height is not None and mob.height > height + 1e-6)
+    if over and hasattr(mob, "_cv_remake"):
+        _remade(mob, width, height)
+    k = 1.0
+    if width is not None and mob.width > width:
+        k = width / mob.width
+    if height is not None and mob.height > height:
+        k = min(k, height / mob.height)
+    if k >= 1.0:
+        return mob
+    floor = min(1.0, readable_scale(mob))
+    if k < floor - 1e-6:
+        need = f"{mob.width * floor * T.UNIT_PX:.0f} x {mob.height * floor * T.UNIT_PX:.0f} px"
+        room = f"{(width or mob.width) * T.UNIT_PX:.0f} x {(height or mob.height) * T.UNIT_PX:.0f} px"
+        problem(f"{label_of(mob)} needs {need} with its text at the minimum size, and its room is {room}: "
+                "cut its words or give it more room")
+        k = floor
+    return mob.scale(k, about_point=mob.get_center())
+
+
+def _line(s: str, size: float, color, font: str, kind: str) -> Text:
+    t = Text(s, font=font, font_size=T.fs(size), color=color, disable_ligatures=True)
     return mark_text(t, kind, size)
+
+
+@lru_cache(maxsize=4096)
+def _width(s: str, size: float, font: str) -> float:
+    return Text(s, font=font, font_size=T.fs(size), disable_ligatures=True).width
+
+
+def _greedy(words: list[str], size: float, font: str, width: float) -> list[str]:
+    rows: list[str] = []
+    for w in words:
+        if rows and _width(f"{rows[-1]} {w}", size, font) <= width:
+            rows[-1] = f"{rows[-1]} {w}"
+        else:
+            rows.append(w)
+    return rows
+
+
+def _wrap(words: list[str], size: float, font: str, width: float) -> list[str]:
+    """Words broken into lines no wider than `width` where a word allows it, as even as the same
+    number of lines allows, so no line is left with one short word."""
+    rows = _greedy(words, size, font, width)
+    if len(rows) < 2:
+        return rows
+    lo, hi = max(_width(w, size, font) for w in words), width
+    for _ in range(8):
+        mid = (lo + hi) / 2
+        if len(_greedy(words, size, font, mid)) <= len(rows):
+            hi = mid
+        else:
+            lo = mid
+    return _greedy(words, size, font, hi)
+
+
+_FLAT = set("abcdefhiklmnorstuvwxzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
+
+def baseline(t) -> float:
+    """The y of `t`'s baseline: the bottom of its letters that do not descend below it."""
+    texts = [m for m in t.get_family() if isinstance(m, Text)]
+    for m in texts[:1]:
+        chars = m.original_text if len(m.original_text) == len(m.submobjects) else m.original_text.replace(" ", "")
+        glyphs = [g for ch, g in zip(chars, m.submobjects) if ch in _FLAT]
+        if glyphs:
+            return max(g.get_bottom()[1] for g in glyphs)
+    return t.get_bottom()[1]
+
+
+def text(s: str, size: float = T.LABEL, color: str = T.TEXT, font: str = T.SANS, kind: str = "label",
+         width: float | None = None, lines: int = 2, align=LEFT):
+    """Words on stage at `size` em px (1080p). Given `width` (Manim units), they wrap onto up to
+    `lines` lines and then shrink to fit it, never below the minimum. Use font=T.SERIF for math."""
+    made = _text(s, size, color, font, kind, width, lines, align)
+    made._cv_remake = lambda w, h: _text(s, size, color, font, kind, w, lines, align)
+    return made
+
+
+def _text(s, size, color, font, kind, width, lines, align):
+    if width is None or _width(s, size, font) <= width:
+        return _line(s, size, color, font, kind)
+    words = s.split()
+    floor = T.MIN_PX.get(kind, T.MIN_PX["label"])
+    px = size
+    rows = _wrap(words, px, font, width)
+    while px > floor and (len(rows) > lines or any(_width(r, px, font) > width for r in rows)):
+        px = max(floor, px * 0.95)
+        rows = _wrap(words, px, font, width)
+    widest = max(_width(r, px, font) for r in rows)
+    if len(rows) > lines or widest > width + 1e-6:
+        keep = max(1, int(len(s) * min(lines / len(rows), width / widest)))
+        problem(f'text "{s[:40]}" does not fit {width * T.UNIT_PX:.0f} px in {lines} line(s) at the '
+                f"{floor:.0f} px minimum: cut it to about {keep} characters or give it more room")
+    if len(rows) == 1:
+        return _line(rows[0], px, color, font, kind)
+    block = VGroup(*(_line(r, px, color, font, kind) for r in rows)).arrange(DOWN, buff=0.28 * px / T.UNIT_PX,
+                                                                           aligned_edge=align)
+    block._cv_name = f'Text "{s[:32]}"'
+    return block
 
 
 def faded(mob, k: float = 0.4) -> Transform:
@@ -134,17 +309,22 @@ def _syntax(tok) -> str:
     return next((T.SYNTAX[key] for base, key in _LEXER_COLORS if tok in base), T.SYNTAX["name"])
 
 
+@remakeable
 class Code(VGroup):
     """Syntax-colored code on a panel. Lines are numbered from 1, like an editor."""
 
     STRUT = "\u2502"
-    _state = ("src", "lines", "panel", "path_label", "bands", "_tokens", "_rows")
+    _state = ("src", "lines", "panel", "path_label", "bands", "_tokens", "_rows", "size", "pitch", "char_w")
+    PAD = 0.38
 
-    def __init__(self, src: str, lang: str = "python", path: str | None = None, size: float = T.CODE):
+    def __init__(self, src: str, lang: str = "python", path: str | None = None, size: float = T.CODE,
+                 width: float = T.RIGHT - T.LEFT, height: float = T.TOP - T.FLOOR):
+        """Code that fits `width` x `height` (default: the stage), shrinking to the minimum code size."""
         super().__init__()
-        self.lang, self.path, self.size = lang, path, size
         self.src = src.expandtabs(4).rstrip("\n")
         rows = self.src.split("\n")
+        size = self._fitting_size(rows, size, width, height - (0.45 if path else 0.0), path)
+        self.lang, self.path, self.size, self.max_w, self.max_h = lang, path, size, width, height
         em = size / 135
         self.pitch, self.char_w = 1.45 * em, 0.6 * em
         runs = self._runs(rows)
@@ -167,7 +347,7 @@ class Code(VGroup):
             self._tokens.append(("\n", []))
             self.lines.add(mark_text(line, "code", size))
         self._rows = rows
-        pad = 0.38
+        pad = self.PAD
         width = max(len(r) for r in rows) * self.char_w + 2 * pad
         height = len(rows) * self.pitch + 1.4 * pad
         self.panel = RoundedRectangle(width=width, height=height, corner_radius=0.12, stroke_color=T.FAINT,
@@ -178,11 +358,31 @@ class Code(VGroup):
         self.add(self.panel, self.bands, self.lines)
         self.path_label = None
         if path:
-            self.path_label = text(path, size=T.SMALL, color=T.DIM, font=T.MONO)
+            self.path_label = text(path, size=T.SMALL, color=T.DIM, font=T.MONO, width=max(width, 3.0), lines=1)
             self.path_label.next_to(self.panel, UP, buff=0.14, aligned_edge=LEFT)
             self.add(self.path_label)
         self.move_to([0, 0, 0])
         self._cv_name = f'Code "{path or rows[0].strip()[:28]}"'
+
+    @classmethod
+    def _fitting_size(cls, rows: list[str], size: float, width: float, height: float, path) -> float:
+        cols = max(len(r) for r in rows) or 1
+        by_width = (width - 2 * cls.PAD) / (cols * 0.6) * 135
+        by_height = (height - 1.4 * cls.PAD) / (len(rows) * 1.45) * 135
+        fitted = min(size, by_width, by_height)
+        floor = T.MIN_PX["code"]
+        if fitted < floor:
+            what = f'Code "{path or rows[0].strip()[:28]}"'
+            if by_width < floor:
+                most = int((width - 2 * cls.PAD) / (0.6 * floor / 135))
+                problem(f"{what} has lines of {cols} characters; at the {floor:.0f} px minimum its room fits "
+                        f"{most}: break or cut its long lines")
+            else:
+                most = int((height - 1.4 * cls.PAD) / (1.45 * floor / 135))
+                problem(f"{what} has {len(rows)} lines; at the {floor:.0f} px minimum its room fits {most}: "
+                        "show fewer lines")
+            fitted = floor
+        return fitted
 
     def _runs(self, rows: list[str]) -> list[list[tuple[str, str, int]]]:
         out: list[list[tuple[str, str, int]]] = [[] for _ in rows]
@@ -200,7 +400,7 @@ class Code(VGroup):
 
     def line_y(self, i: int) -> float:
         """Vertical center of line `i` (from 1)."""
-        return self.panel.get_top()[1] - 0.7 * 0.38 - (i - 0.5) * self.pitch
+        return self.panel.get_top()[1] - 0.7 * self.PAD - (i - 0.5) * self.pitch
 
     def _band(self, first: int, last: int, color: str, opacity: float) -> VGroup:
         h = (last - first + 1) * self.pitch
@@ -210,16 +410,30 @@ class Code(VGroup):
         gutter = Rectangle(width=0.07, height=h, stroke_width=0, fill_color=color, fill_opacity=1)
         return VGroup(band, gutter.move_to([self.panel.get_left()[0] + 0.06, y, 0]))
 
+    @verb
     def highlight(self, first: int, last: int | None = None, color: str = T.YELLOW) -> Transform:
         """Animation: a band over lines `first`..`last` with a gutter mark in `color`."""
         band = hidden(self._band(first, last or first, color, 0.16))
         self.bands.add(band)
         return reveal(band)
 
+    def note(self, line: int, words: str, color: str = T.YELLOW, icon_kind: str | None = None):
+        """A Tag pointing at line `line`: right of the panel when the stage has room, else under it.
+        Show it like any mobject: self.show(code.note(3, "locks the table", T.RED))."""
+        from .parts import Tag
+
+        tag = Tag(words, color, icon_kind, width=4.2)
+        tag.move_to([self.panel.get_right()[0] + 0.3 + tag.width / 2, self.line_y(line), 0])
+        if tag.get_right()[0] > T.RIGHT + 0.05:
+            tag.next_to(self.panel, DOWN, buff=0.3).align_to(self.panel, LEFT)
+        tag._cv_name = f'Code note "{words}"'
+        return tag
+
+    @verb
     def change(self, new_src: str, run_time: float = 2.4) -> Animation:
         """Animation: edit the code in place. Removed text turns red and leaves, kept text glides
         to its new place, added text arrives in green with a green gutter mark on its line."""
-        target = Code(new_src, self.lang, self.path, self.size)
+        target = Code(new_src, self.lang, self.path, self.size, self.max_w, self.max_h)
         target.shift(self.panel.get_corner(UL) - target.panel.get_corner(UL))
         return _Morph(self, target, marks=True, run_time=run_time)
 
@@ -241,15 +455,22 @@ class Code(VGroup):
 _EQ_TOKEN = re.compile(r"\$?\d[\d,]*(?:\.\d+)?|[A-Za-z_]\w*|\S")
 
 
+@remakeable
 class Eq(VGroup):
     """A line of math in the serif voice, e.g. Eq("$100.00 ÷ 3"); colors maps substrings to colors."""
 
     _state = ("expr", "body", "_tokens")
 
     def __init__(self, expr: str, size: float = T.NUMBER, colors: dict[str, str] | None = None,
-                 color: str = T.TEXT):
+                 color: str = T.TEXT, width: float = T.RIGHT - T.LEFT):
         super().__init__()
-        self.expr, self.size, self.color_ = expr, size, color
+        wide = _width(expr, size, T.SERIF)
+        if wide > width:
+            size = max(T.MIN_PX["number"], size * width / wide)
+            if _width(expr, size, T.SERIF) > width + 1e-6:
+                problem(f'Eq "{expr[:28]}" does not fit {width * T.UNIT_PX:.0f} px at the '
+                        f'{T.MIN_PX["number"]:.0f} px minimum: split it or cut terms')
+        self.expr, self.size, self.color_, self.max_w = expr, size, color, width
         self.body = text(expr, size=size, color=color, font=T.SERIF, kind="number")
         glyphs = self.body.submobjects  # one per character, spaces included (disable_ligatures)
         for sub, col in (colors or {}).items():
@@ -260,9 +481,10 @@ class Eq(VGroup):
         self.add(self.body)
         self._cv_name = f'Eq "{expr[:28]}"'
 
+    @verb
     def change(self, new_expr: str, colors: dict[str, str] | None = None, run_time: float = 1.6) -> Animation:
         """Animation: transform into `new_expr`; shared tokens glide, the rest fade out and in."""
-        target = Eq(new_expr, self.size, colors, self.color_).move_to(self.get_center())
+        target = Eq(new_expr, self.size, colors, self.color_, self.max_w).move_to(self.get_center())
         return _Morph(self, target, marks=False, run_time=run_time)
 
     def _fading(self):

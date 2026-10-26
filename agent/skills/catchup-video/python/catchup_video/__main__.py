@@ -33,10 +33,14 @@ def beats(path: Path) -> None:
 
 
 def render(path: Path, quality: str, out: Path) -> None:
+    """Draw the beats in CATCHUP_BEATS that are not in CATCHUP_BEAT_CACHE, file each drawn beat
+    there as beat.mp4 and beat.json, and print every beat's cache key and first frame."""
     from manim import config, tempconfig
 
     width, height, fps = (854, 480, 15) if quality == "draft" else (1920, 1080, 60)
     os.environ["CATCHUP_STORY_DIR"] = str(path.parent.resolve())
+    os.environ["CATCHUP_STORY"] = str(path.resolve())
+    cache = Path(os.environ["CATCHUP_BEAT_CACHE"])
     story = load_story(path)
     settings = {"pixel_width": width, "pixel_height": height, "frame_rate": fps, "media_dir": str(out),
                 "disable_caching": True, "progress_bar": "none", "verbosity": "WARNING",
@@ -45,7 +49,34 @@ def render(path: Path, quality: str, out: Path) -> None:
         config.background_color = "#0F1218"
         scene = story()
         scene.render()
-        print(json.dumps({"video": str(scene.renderer.file_writer.movie_file_path)}))
+        beats = scene._out
+    for b in beats:
+        if not b["cached"]:
+            _file_beat(cache / b["key"], b, fps)
+    print(json.dumps({"beats": [{k: b[k] for k in ("index", "name", "key", "cached", "start")} for b in beats]}))
+
+
+def _file_beat(dest: Path, b: dict, fps: int) -> None:
+    """Join a beat's Manim segments into dest/beat.mp4, then write dest/beat.json last, so a beat
+    is in the cache only once both are whole."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(dir=dest.parent, prefix=".tmp-"))
+    listing = tmp / "segments.txt"
+    listing.write_text("".join(f"file '{s}'\n" for s in b["segments"]))
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy",
+                        str(tmp / "beat.mp4")], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"could not join beat {b['index']} ({b['name']}): {r.stderr[-400:]}")
+    listing.unlink()
+    (tmp / "beat.json").write_text(json.dumps({"fps": fps, "frames": b["frames"], "records": b["records"]}))
+    if dest.exists():
+        shutil.rmtree(tmp)
+        return
+    tmp.rename(dest)
 
 
 def _sig(obj, skip_self: bool) -> str:
@@ -69,6 +100,8 @@ def _sig(obj, skip_self: bool) -> str:
                 shown = next((k for k, v in directions.items() if np.array_equal(v, d)), repr(d.tolist()))
             elif isinstance(d, (bool, type(None))):
                 shown = repr(d)
+            elif isinstance(d, tuple):
+                shown = "(" + ", ".join(names.get(x, repr(x)) for x in d) + ")"
             else:
                 shown = names.get(d, repr(d))
             parts.append(f"{p.name}={shown}")
@@ -80,19 +113,22 @@ def _doc(obj) -> str:
 
 
 def reference() -> None:
-    from . import PRIMITIVES, theme as T
+    from . import PIECES, PRIMITIVES, theme as T
     from .clock import Video, beat
 
-    out = ["Primitives (from catchup_video import *):", ""]
-    for p in PRIMITIVES:
-        out.append(f"{p.__name__}{_sig(p, inspect.isclass(p))}  # {_doc(p)}")
-        if inspect.isclass(p):
-            for k, v in vars(p).items():
-                if not k.startswith("_") and inspect.isfunction(v):
-                    out.append(f"    .{k}{_sig(v, True)}  # {_doc(v)}")
+    def entries(items):
+        for p in items:
+            yield f"{p.__name__}{_sig(p, inspect.isclass(p))}  # {_doc(p)}"
+            if inspect.isclass(p):
+                for k, v in vars(p).items():
+                    if not k.startswith("_") and inspect.isfunction(v):
+                        yield f"    .{k}{_sig(v, True)}  # {_doc(v)}"
+
+    out = ["Primitives (from catchup_video import *):", "", *entries(PRIMITIVES), "",
+           "Pieces for the moves explainers repeat; each fits the width it is given:", "", *entries(PIECES)]
     out += ["", "The story (class Story(Video), one method per beat):", "",
             f"@beat{_sig(beat, False)}  # {_doc(beat)}"]
-    for k in ("at", "hold", "show", "hide", "clear", "pin", "dive", "pull_back"):
+    for k in ("at", "hold", "show", "hide", "clear", "pin", "beside", "dive", "pull_back", "recap"):
         v = getattr(Video, k)
         out.append(f"self.{k}{_sig(v, True)}  # {_doc(v)}")
     out += ["self.header  # the pinned chapter header after dive(), else None",
@@ -104,8 +140,10 @@ def reference() -> None:
             f"  Fonts: T.SANS ({T.SANS}) labels, T.SERIF ({T.SERIF}) numbers and math, T.MONO ({T.MONO}) code.",
             f"  Sizes (em px at 1080p): T.LABEL {T.LABEL}, T.SMALL {T.SMALL}, T.CODE {T.CODE}, "
             f"T.NUMBER {T.NUMBER}, T.HEADER {T.HEADER}.",
-            f"  Stage (Manim units): x {T.LEFT}..{T.RIGHT}, y {T.FLOOR}..{T.TOP} below the header row; "
-            "captions own the band under T.FLOOR."]
+            f"  Stage (Manim units): x {T.LEFT}..{T.RIGHT}, y {T.FLOOR}..{T.TOP} below the header row "
+            f"(..{T.CEIL} with no header); captions own the band under T.FLOOR.",
+            "  Pieces start centered at ORIGIN: place them with Grid.put, beside, next_to, or move_to; "
+            "the stage keeps them inside it."]
     print("\n".join(out))
 
 

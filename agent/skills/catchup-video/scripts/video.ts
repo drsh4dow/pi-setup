@@ -5,13 +5,13 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { BAND_TOP, CAPTION, check, MIN_PX, readProbes } from "./check.ts";
-import { type Beat, cacheRoot, dig, narrate, parseTiming, type Timing } from "./narration.ts";
+import { BAND_TOP, CAPTION, check, MIN_PX, type Probes, readBeat } from "./check.ts";
+import { type Beat, cacheRoot, dig, narrate, parseTiming, stripTags, type Timing } from "./narration.ts";
 
 const SKILL = dirname(dirname(fileURLToPath(import.meta.url)));
 const PYTHON_DIR = join(SKILL, "python");
@@ -20,45 +20,61 @@ const EXAMPLE = join(SKILL, "example", "story.py");
 
 const HELP = `Narrated catchup videos in the 3Blue1Brown style, built on Manim.
 
+  node video.ts primitives                       every piece, one line each, and a worked story
   node video.ts new STORY.py [--from SKELETON]   write a story with one empty method per beat
-  node video.ts narrate STORY.py                 synthesize and verify the voice (cached per clip)
-  node video.ts draft STORY.py [--beat NAME|N]   480p15 render of the story or one beat, then check
-  node video.ts render STORY.py                  narrate, render 1080p60, then check everything
+  node video.ts draft STORY.py [--beat NAME|N]   voice, 480p15 render, and check (seconds per beat)
+  node video.ts render STORY.py                  voice, 1080p60 render, and the full check
   node video.ts check STORY.py [--draft]         check the last render again
-  node video.ts primitives                       the primitives, one line each, and a worked story
+  node video.ts narrate STORY.py                 synthesize the voice alone
   node video.ts setup                            install the render environment now
 
 Options: --jobs N renders N chunks in parallel (default: all cores); --no-listen skips
 transcribing the voice in the check.
 
-The skeleton is one beat per line: the words spoken, and optionally " || " and the caption
-when it should differ (digits: "fifty gifts || 50 gifts"). STORY.py then holds those words in
-@beat decorators over empty methods; fill each method with what the viewer should see while its
-words play. Nothing on screen is prefab: compose primitives (run primitives). Put the one picture
-the video keeps returning to on stage first (for PRs, a Branches graph: dive into a PR for its
-chapter, pull_back at the end), and change it rather than cutting away.
+One shot, in this order:
+  1. Write the narration, one beat per line: what is spoken, and " || " plus the caption when it
+     should differ ("fifty gifts || 50 gifts"). Run new STORY.py --from that file.
+  2. Run primitives once, then fill every method in one pass. Put the one picture the video
+     returns to on stage first (for PRs, a Branches graph): dive into a PR for its chapter,
+     pull_back after it, recap the calls at the end. Prefer the pieces (Flow, Correction, Tally,
+     Compare, Code.note) to hand-built groups; they fit themselves.
+  3. Draft once. Read every problem line and look at every sheet in STORY.build/draft/frames.
+  4. Fix what the check and the sheets show. The next draft or render redraws only the beats
+     whose code, words, or starting picture changed; the rest come from the cache.
+  5. Render once: it reuses the voice and draws every beat at 1080p60 in parallel. A fix after it
+     redraws only the beats it touched. Share the video when the check is clean.
+
+Layout is the toolkit's job: every piece fits itself to the stage (x -6.6..6.6, y down to
+T.FLOOR, above the captions), wraps or shrinks its words but never below the minimums, and
+anything brought on stage is kept inside it. Grid(n).put(piece, i) gives a piece its own cell;
+self.beside(piece, target) puts it next to target where nothing else is. A layout problem in the
+check means the request does not fit at the minimum size: cut words or give the piece more room.
 
 Timing: each beat method starts when its words start (lead= starts it earlier); self.at("words")
-waits for a phrase. Motion settles before a beat's midpoint: the clock moves an animation that
-would cross it, unless the beat is @beat(..., transition=True). Draft without a voice runs at
-reading pace; run narrate first to draft against the real voice.
+waits for a phrase. The clock fits motion to the beat: an animation that would run past the beat's
+end is sped up, up to twice its speed; past that the check names what to cut. Motion settles before
+a beat's midpoint (the clock moves an animation that would cross it) unless the beat is
+@beat(..., transition=True).
+
+Voice: ElevenLabs eleven_v4 (ELEVENLABS_API_KEY), voice Mark, then Gemini TTS (GEMINI_API_KEY; the
+story's voice = "...", default Iapetus), then captions only. A beat's words may carry v4 audio tags
+for delivery, such as "[thoughtful]", "[curious]", "[sighs]", or "[short pause]": they shape the
+ElevenLabs voice and never reach captions, cues, or checks. Every clip is cached in
+~/.cache/catchup-video/tts and requested five at a time; a beat whose words did not change is never
+synthesized again. The environment is installed there with uv on first run.
 
 Sizes are em pixels at 1080p. Minimums: ${Object.entries(MIN_PX).map(([k, v]) => `${k} ${v}`).join(", ")}.
-Captions are burned in at ${CAPTION.em} px; keep content above y = ${BAND_TOP} px (T.FLOOR in the story).
+Captions are burned in at ${CAPTION.em} px below y = ${BAND_TOP} px (T.FLOOR in the story).
 
 Output, next to STORY.py: STORY.mp4 (render) or STORY.draft.mp4, and STORY.build/<final|draft>/frames
 with beat-NN-mid.png and beat-NN-end.png for every beat, plus sheet-N.png contact sheets (four beats
-each, rows are beats, midpoint left and end right). Look at every frame before you share the video.
+each, rows are beats, midpoint left and end right). Look at every sheet before you share the video.
 
 The check reads Manim's own geometry at each beat's midpoint and end: elements that overlap, leave
-the frame, enter the caption band, or have text below its minimum. On a voiced render it also checks
-that each beat's voice starts with its captions, that caption breaks fall in pauses, and that a
-transcript of the video's audio says each beat's words.
-Exit codes: 0 clean, 1 problems (one line each, naming beat and element), 2 could not run.
-
-Voice: ElevenLabs (ELEVENLABS_API_KEY) -> Gemini TTS (GEMINI_API_KEY; the story's voice = "...",
-default Iapetus; every clip is transcribed and checked against its words) -> captions only. Clips are
-cached in ~/.cache/catchup-video/tts, and the environment is installed there with uv on first run.`;
+the frame, enter the caption band, or have text below its minimum, and what a piece could not fit.
+On a voiced render it also checks that each beat's voice starts with its captions, that caption
+breaks fall in pauses, and that a transcript of the video's audio says each beat's words.
+Exit codes: 0 clean, 1 problems (one line each, naming beat and element), 2 could not run.`;
 
 /** The render could not run: a missing tool, a broken story, a failed process. Exit 2. */
 class CouldNotRun extends Error {}
@@ -98,6 +114,9 @@ function py(args: string[], extra: Record<string, string> = {}): string {
 
 const tail = (text: string, n = 25) => text.trim().split("\n").slice(-n).join("\n");
 
+/** Where each beat's render is kept, by the key of everything its frames depend on. */
+const beatCache = () => env.CATCHUP_BEAT_CACHE ?? join(cacheRoot(env), "beats");
+
 // ---- story -------------------------------------------------------------------------
 
 type StoryBeat = Beat & { transition: boolean; lead: number };
@@ -121,12 +140,17 @@ function loadStory(path: string | undefined): Story {
   return { path: abs, build: abs.replace(/\.py$/, ".build"), voice: String(dig(data, "voice") ?? "Iapetus"), beats };
 }
 
+/** Names a beat method must not take: Video's own methods and Manim Scene's. */
+const VIDEO_NAMES = new Set(["at", "hold", "show", "hide", "clear", "pin", "dive", "pull_back", "beside", "recap", "play",
+  "add", "remove", "wait", "render", "setup", "construct", "header", "camera"]);
+
 function skeleton(file: string, lines: string[]): void {
   const used = new Set<string>();
   const methods = lines.map((line) => {
     const [say = "", show] = line.split(" || ").map((s) => s.trim());
-    let name = say.toLowerCase().replace(/[^a-z0-9 ]+/g, "").split(/\s+/).filter(Boolean).slice(0, 4).join("_") || "beat";
+    let name = stripTags(say).text.toLowerCase().replace(/[^a-z0-9 ]+/g, "").split(/\s+/).filter(Boolean).slice(0, 4).join("_") || "beat";
     if (/^\d/.test(name)) name = `b_${name}`;
+    if (VIDEO_NAMES.has(name)) name += "_beat";
     while (used.has(name)) name += "_";
     used.add(name);
     const args = [JSON.stringify(say), ...(show ? [`show=${JSON.stringify(show)}`] : [])].join(", ");
@@ -158,21 +182,28 @@ function partition(slots: number[], jobs: number): [number, number][] {
   return out;
 }
 
-function runChunk(story: Story, mode: Mode, dir: string, range: [number, number], timingFile: string): Promise<string> {
+type ChunkBeat = { index: number; name: string; key: string; cached: boolean; start: number };
+
+/** Render the beats in `range` that are not cached; every beat in it is then in the cache. */
+function runChunk(story: Story, mode: Mode, dir: string, range: [number, number], timingFile: string, cache: string): Promise<ChunkBeat[]> {
   mkdirSync(dir, { recursive: true });
   return new Promise((done, fail) => {
     const child = spawn(python(), ["-m", "catchup_video", "render", story.path, "--quality", mode, "--out", dir], {
       env: { ...env, PYTHONPATH: PYTHON_DIR, CATCHUP_TIMING: timingFile, CATCHUP_BEATS: `${range[0]}-${range[1]}`,
-        CATCHUP_PROBES: join(dir, "probes.json") },
+        CATCHUP_BEAT_CACHE: cache },
     });
     let out = "";
     let err = "";
     child.stdout.on("data", (d: Buffer) => (out += d.toString()));
     child.stderr.on("data", (d: Buffer) => (err += d.toString()));
     child.on("close", (code) => {
-      const video = dig(JSON.parse(out.trim().split("\n").at(-1) || "{}"), "video");
-      if (code === 0 && typeof video === "string") done(video);
-      else fail(new CouldNotRun(`rendering beats ${range[0]}-${range[1]} failed:\n${tail(err)}`));
+      const beats = dig(JSON.parse(out.trim().split("\n").at(-1) || "{}"), "beats");
+      if (code === 0 && Array.isArray(beats)) {
+        done(beats.map((b: unknown): ChunkBeat => ({
+          index: Number(dig(b, "index")), name: String(dig(b, "name")), key: String(dig(b, "key")),
+          cached: dig(b, "cached") === true, start: Number(dig(b, "start")),
+        })));
+      } else fail(new CouldNotRun(`rendering beats ${range[0]}-${range[1]} failed:\n${tail(err)}`));
     });
   });
 }
@@ -206,13 +237,13 @@ function captions(timing: Timing, file: string, offset: number, beats: Set<strin
   writeFileSync(file, `${lines.join("\n")}\n`);
 }
 
-type Rendered = { video: string; dir: string; timing: Timing; offset: number; seconds: number };
+type Rendered = { video: string; seconds: number; drawn: number; cached: number };
 
 async function render(story: Story, mode: Mode, only: string | undefined, jobs: number): Promise<Rendered> {
   const t0 = performance.now();
   const dir = join(story.build, mode);
   const timing = await narrate({ beats: story.beats, outDir: join(story.build, "narration"), voice: story.voice, env,
-    offline: mode === "draft", log });
+    offline: false, log });
   mkdirSync(dir, { recursive: true });
   const timingFile = join(dir, "timing.json");
   writeFileSync(timingFile, JSON.stringify(timing, null, 2));
@@ -225,28 +256,45 @@ async function render(story: Story, mode: Mode, only: string | undefined, jobs: 
     const slots = timing.beats.map((b, i) => (timing.beats[i + 1]?.start ?? timing.total) - b.start);
     ranges = partition(slots, Math.max(1, Math.min(jobs, story.beats.length)));
   }
+  const cache = beatCache();
   rmSync(join(dir, "chunks"), { recursive: true, force: true });
-  const videos = await Promise.all(ranges.map((r, i) => runChunk(story, mode, join(dir, "chunks", String(i)), r, timingFile)));
-  const probes = readProbes(ranges.map((_, i) => join(dir, "chunks", String(i), "probes.json")));
-  const startFrame = probes.records.find((r) => r.kind === "start");
-  const offset = startFrame && startFrame.kind === "start" ? startFrame.frame / probes.fps : 0;
-  const names = new Set(story.beats.slice((ranges[0]?.[0] ?? 1) - 1, ranges.at(-1)?.[1]).map((b) => b.name));
-  const list = join(dir, "chunks.txt");
-  writeFileSync(list, videos.map((v) => `file '${v}'\n`).join(""));
+  const beats = (await Promise.all(ranges.map((r, i) => runChunk(story, mode, join(dir, "chunks", String(i)), r, timingFile, cache))))
+    .flat().sort((a, b) => a.index - b.index);
+  const fps = mode === "final" ? 60 : 15;
+  const first = beats[0];
+  const offset = first ? first.start / fps : 0;
+  const names = new Set(beats.map((b) => b.name));
+  const list = join(dir, "beats.txt");
+  writeFileSync(list, beats.map((b) => `file '${join(cache, b.key, "beat.mp4")}'\n`).join(""));
   const ass = join(dir, "captions.ass");
   captions(timing, ass, offset, names);
   const stem = story.path.replace(/\.py$/, "");
   const out = mode === "final" ? `${stem}.mp4` : only ? `${stem}.draft-${only}.mp4` : `${stem}.draft.mp4`;
-  const fps = mode === "final" ? 60 : 15;
   const audio = timing.audio ? ["-ss", offset.toFixed(3), "-i", join(story.build, "narration", timing.audio)] : [];
   const r = sh("ffmpeg", ["-hide_banner", "-loglevel", "warning", "-y", "-f", "concat", "-safe", "0", "-i", list, ...audio,
     "-map", "0:v", ...(audio.length ? ["-map", "1:a", "-af", "apad", "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-shortest"] : []),
-    "-vf", `subtitles=${ass}:fontsdir=${FONTS}`, "-c:v", "libx264", "-preset", mode === "final" ? "medium" : "veryfast",
+    "-vf", `subtitles=${ass}:fontsdir=${FONTS}`, "-c:v", "libx264", "-preset", "veryfast",
     "-crf", mode === "final" ? "18" : "24", "-pix_fmt", "yuv420p", "-r", String(fps), "-movflags", "+faststart", out]);
   if (r.status !== 0) throw new CouldNotRun(`ffmpeg could not finish the video:\n${tail(r.stderr)}`);
   if (/glyph.*not found|fontselect.*(fallback|not found)/i.test(r.stderr)) throw new CouldNotRun(`captions lost their font:\n${tail(r.stderr)}`);
-  writeFileSync(join(dir, "render.json"), JSON.stringify({ video: out, offset }));
-  return { video: out, dir, timing, offset, seconds: (performance.now() - t0) / 1000 };
+  writeFileSync(join(dir, "render.json"), JSON.stringify({ video: out, offset, fps, beats }));
+  const drawn = beats.filter((b) => !b.cached).length;
+  return { video: out, seconds: (performance.now() - t0) / 1000, drawn, cached: beats.length - drawn };
+}
+
+/** The records of the last render's beats, read from the beat cache. */
+function lastProbes(meta: unknown): Probes {
+  const cache = beatCache();
+  const beats = dig(meta, "beats");
+  if (!Array.isArray(beats)) throw new CouldNotRun("the last render left no beats; render again");
+  return {
+    fps: Number(dig(meta, "fps")),
+    beats: beats.map((b: unknown) => {
+      const file = join(cache, String(dig(b, "key")), "beat.json");
+      if (!existsSync(file)) throw new CouldNotRun(`${file} is gone from the cache; render again`);
+      return readBeat(file, Number(dig(b, "index")), String(dig(b, "name")));
+    }),
+  };
 }
 
 async function report(story: Story, mode: Mode, listen: boolean): Promise<number> {
@@ -254,9 +302,8 @@ async function report(story: Story, mode: Mode, listen: boolean): Promise<number
   const meta: unknown = JSON.parse(readFileSync(join(dir, "render.json"), "utf8"));
   const timing = parseTiming(JSON.parse(readFileSync(join(dir, "timing.json"), "utf8")));
   const video = String(dig(meta, "video"));
-  const chunks = readdirSync(join(dir, "chunks")).map((c) => join(dir, "chunks", c, "probes.json")).filter((f) => existsSync(f));
   const result = await check({
-    video, timing, probes: readProbes(chunks), framesDir: join(dir, "frames"),
+    video, timing, probes: lastProbes(meta), framesDir: join(dir, "frames"),
     audio: mode === "final", listen, offset: Number(dig(meta, "offset") ?? 0), env,
   });
   console.log(`video: ${video}`);
@@ -311,7 +358,8 @@ async function main(): Promise<number> {
       const story = loadStory(file);
       const mode: Mode = command === "render" ? "final" : "draft";
       const r = await render(story, mode, values.beat, jobs);
-      log(`rendered ${values.beat ? `beat ${values.beat}` : `${story.beats.length} beats`} (${mode}) in ${r.seconds.toFixed(1)}s`);
+      log(`rendered ${values.beat ? `beat ${values.beat}` : `${story.beats.length} beats`} (${mode}) in ${r.seconds.toFixed(1)}s: ` +
+        `${r.drawn} drawn, ${r.cached} unchanged from the cache`);
       return report(story, mode, !values["no-listen"]);
     }
     case "check":

@@ -25,10 +25,12 @@ When the shape of that interface is itself in question (how deep the module is, 
 
 ## The loop
 
-Work in **vertical slices**: one test, one implementation, repeat, each test a **tracer bullet** that responds to what the last cycle taught you.
+Work in **vertical slices**: one test, one implementation, repeat, each test a **tracer bullet** that responds to what the last cycle taught you. Tests written in bulk before the code verify _imagined_ behavior: they test the shape of things rather than user-facing behavior, go insensitive to real changes, and commit to a test structure before you understand the implementation.
+
+Read [examples.md](examples.md) before writing the first test. It pairs a good and a bad test for each rule below, including a red run that fails for the wrong reason.
 
 1. **Pick one slice.** One seam, one test, one minimal implementation per cycle. For a bug, the first slice is the smallest test that would have caught it.
-2. **Write the test and run it red.** Confirm it fails for the intended reason. If it passes, or fails for an unrelated reason, fix the test before touching the code.
+2. **Write the test and run it red.** Confirm it fails for the intended reason. If it passes, or fails for an unrelated reason, fix the test before touching the code. A missing export, a typo, or broken setup is an unrelated reason: stub the code so the run reaches the assertion.
 3. **Write only enough code to pass it.** Don't anticipate future tests or add speculative features.
 4. **Run it green**, with the tests nearby, then take the next slice.
 
@@ -39,6 +41,8 @@ The loop is done when every behavior the ticket or bug names has a green test at
 Tests verify behavior through public interfaces, not implementation details. A good test reads like a specification: "user can checkout with valid cart" tells you exactly what capability exists. Name it in the glossary's terms.
 
 Expected values must come from an independent source of truth: a known-good literal, a worked example, the spec. Judge each test with the [principle-test-behavior-not-implementation](../principle-test-behavior-not-implementation/SKILL.md) skill's two imagined edits, which also define the tautological tests to leave out.
+
+Fake only at **system boundaries**: external APIs such as payment or email, time, randomness, and sometimes the database or file system, where a test database is often better. Run your own modules and internal collaborators for real. At a boundary, pass the dependency in instead of constructing it inside the code, and give each external operation its own function, so each fake returns one shape and the test shows which operations it exercises.
 
 - Change a test only when the expected behavior changed, and keep its assertions as strict as the contract.
 - Make a flaky behavior deterministic in the test where you can, and name the signal it locks down.

@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
-import { type Beat, narrate, splitPhrases, stripTags } from "../narration.ts";
+import { type Beat, narrate, splitPhrases, stripTags, wordsMatch } from "../narration.ts";
 
 const ELEVEN_KEY = "eleven-secret-key-123";
 const GEMINI_KEY = "gemini-secret-key-456";
@@ -196,5 +196,24 @@ describe("a beat's audio tags", () => {
     // The break is where the comma was spoken, not shifted by the tag characters before it.
     const at = (beat?.phrases[0]?.end ?? 0) - (beat?.start ?? 0);
     assert.ok(at > 1.0 && at < 1.3, `break at ${at}`);
+  });
+});
+
+describe("hearing the words a beat should say", () => {
+  const said = "The draft said a revert undoes it. AWS blocks old Node, so rollback now restores version five.";
+
+  test("a transcriber's split and joined words still match", () => {
+    const heard = "The draft said a revert undoes it. A WS blocks old node, so roll back now restores version five.";
+
+    assert.ok(wordsMatch(said, heard) >= 0.97, `${wordsMatch(said, heard)}`);
+    assert.equal(wordsMatch("Approve the monorepo pair.", "Approve the mono repo pair."), 1);
+  });
+
+  test("a replaced, dropped, or added word does not", () => {
+    for (const heard of [
+      said.replace("five", "nine"),
+      said.replace(" now", ""),
+      `Thoughtful. ${said}`,
+    ]) assert.ok(wordsMatch(said, heard) < 0.97, `${heard}: ${wordsMatch(said, heard)}`);
   });
 });

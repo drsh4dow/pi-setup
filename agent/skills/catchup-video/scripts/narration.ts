@@ -53,8 +53,11 @@ const ATTEMPTS = 4;
 const PARALLEL = { elevenlabs: 5, gemini: 3 } as const;
 /** A provider that has not answered a request within this many seconds falls through. */
 const REQUEST_BUDGET_SEC = 75;
+/** At or above this match the voice says the beat's words; below JUDGE_SCORE it does not, and
+ *  between the two a judge listens again. A number written as digits in the script and heard
+ *  as words ("Parent360", "parent three sixty") lands between them. */
 const PASS_SCORE = 0.97;
-const JUDGE_SCORE = 0.8;
+const JUDGE_SCORE = 0.7;
 const CHECK_MODEL = "gemini-3.8-flash";
 const GEMINI_MODELS = ["gemini-3.8-flash-tts", "gemini-2.5-pro-preview-tts"];
 const ELEVEN_MODEL = "eleven_v4";
@@ -327,21 +330,40 @@ function elevenLabs(v: Voice, key: string, env: Env): Provider {
 
 const wordsOf = (text: string) => text.toLowerCase().replaceAll("-", " ").replaceAll("'", "").match(/[a-z0-9]+/g) ?? [];
 
-/** How closely `heard` matches `expected`, 0..1, with a penalty per extra word (a spoken
- *  style instruction shows up as extra words). */
+/** Most words a transcriber splits one word into, or joins into one ("mono repo", "A WS"). */
+const MAX_RUN = 3;
+
+/** How closely `heard` matches `expected`, 0..1, word by word. A run of words on one side
+ *  matches a run on the other when their letters are the same, so "mono repo" for "monorepo"
+ *  costs nothing while "nine" for "five" costs a word. Each heard word left unmatched beyond
+ *  the expected ones costs extra: a spoken style instruction shows up as added words. */
 export function wordsMatch(expected: string, heard: string): number {
   const a = wordsOf(expected);
   const b = wordsOf(heard);
   if (b.length === 0) return 0;
-  const lcs: number[][] = Array.from({ length: a.length + 1 }, () => Array<number>(b.length + 1).fill(0));
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      const row = lcs[i] ?? [];
-      row[j] = a[i - 1] === b[j - 1] ? (lcs[i - 1]?.[j - 1] ?? 0) + 1 : Math.max(lcs[i - 1]?.[j] ?? 0, row[j - 1] ?? 0);
+  // best[i][j]: the most words matched in a[i..] and b[j..], as [expected words, heard words].
+  type Matched = readonly [number, number];
+  const none: Matched = [0, 0];
+  const best = Array.from({ length: a.length + 1 }, () => Array<Matched>(b.length + 1).fill(none));
+  const at = (i: number, j: number): Matched => best[i]?.[j] ?? none;
+  const more = (x: Matched, y: Matched) => (y[0] + y[1] > x[0] + x[1] ? y : x);
+  for (let i = a.length; i >= 0; i--) {
+    for (let j = b.length; j >= 0; j--) {
+      let most = more(at(i + 1, j), at(i, j + 1));
+      for (let p = 1; p <= MAX_RUN && i + p <= a.length; p++) {
+        const said = a.slice(i, i + p).join("");
+        for (let q = 1; q <= MAX_RUN && j + q <= b.length; q++) {
+          const rest = at(i + p, j + q);
+          if (b.slice(j, j + q).join("") === said) most = more(most, [p + rest[0], q + rest[1]]);
+        }
+      }
+      const row = best[i];
+      if (row !== undefined) row[j] = most;
     }
   }
-  const common = lcs[a.length]?.[b.length] ?? 0;
-  return (2 * common) / (a.length + b.length) - 0.05 * Math.max(0, b.length - a.length);
+  const [inA, inB] = at(0, 0);
+  const added = Math.max(0, b.length - inB - (a.length - inA));
+  return (inA + inB) / (a.length + b.length) - 0.05 * added;
 }
 
 export type Listener = { listen: (pcm: Buffer, expected: string) => Promise<{ ok: boolean; heard: string }> };

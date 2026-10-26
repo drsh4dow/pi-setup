@@ -326,7 +326,8 @@ const ticketLine = /^\s*(Closes|Fixes|Resolves|Part of|Depends on|Refs:?)\s/i;
 // Two short paragraphs. The longest of three hand-written multi-ticket Whys ran 166 words.
 const whyWordCap = 180;
 
-// A PR title becomes a commit subject, and writing-good-commits keeps a header within 72.
+// A squash merge makes the PR title a commit subject, and writing-good-commits keeps a header
+// within 72.
 const prTitleCap = 72;
 
 // Words from a multi-PR run that only its orchestrator understands.
@@ -350,17 +351,14 @@ function historyWarnings(body: Body): Finding[] {
 
 function titleFindings(kind: Kind, title: string): Finding[] {
   const length = [...title].length;
-  const tooLong: Finding[] =
-    kind === "pr" && length > prTitleCap
-      ? [
-          {
-            where: "title",
-            message: `title is ${length} characters, cut it to ${prTitleCap} or fewer`,
-          },
-        ]
-      : [];
+  const form = titleFormFindings(kind, title);
 
-  return [...tooLong, ...titleFormFindings(kind, title)];
+  if (kind !== "pr" || length <= prTitleCap) return form;
+
+  return [
+    { where: "title", message: `title is ${length} characters, cut it to ${prTitleCap} or fewer` },
+    ...form,
+  ];
 }
 
 function titleFormFindings(kind: Kind, title: string): Finding[] {

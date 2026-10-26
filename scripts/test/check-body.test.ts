@@ -91,6 +91,12 @@ test("caps a PR title at 72 characters, the commit subject limit", (t) => {
   assert.equal(longResult.status, 1);
   assert.deepEqual(longResult.lines, ["title: title is 94 characters, cut it to 72 or fewer"]);
 
+  const oneOver = "fix(babysit): print a no-checks row at once for repos that lack CI checks";
+  const oneOverResult = check(t, noCiBody, ["pr", "--title", oneOver]);
+
+  assert.equal(oneOverResult.status, 1);
+  assert.deepEqual(oneOverResult.lines, ["title: title is 73 characters, cut it to 72 or fewer"]);
+
   const fits = "fix(babysit): print a no-checks row at once on repos that lack CI checks";
   const fitsResult = check(t, noCiBody, ["pr", "--title", fits]);
 

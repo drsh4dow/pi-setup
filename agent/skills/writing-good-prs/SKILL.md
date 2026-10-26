@@ -217,10 +217,10 @@ Write the body to a file and run both gates.
 
    A delegate launches no subagent, so it writes the body file and names this read in its report for its parent to run.
 
-Publish the same file with `scripts/publish-pr.ts create <body-file> --title "<title>"` or `scripts/publish-pr.ts edit <number> <body-file> --title "<title>"`, never with a bare `gh pr create --body-file` or `gh pr edit --body-file`. `create` also takes `--base`, `--head`, and `--repo`, `edit` takes `--repo`, and both take `--template`. Keep the title out of the body file.
+Publish the same file with `scripts/publish-pr.ts create <body-file> --title "<title>"` or `scripts/publish-pr.ts edit <number> <body-file> --title "<title>"`, never with a bare `gh pr create --body-file` or `gh pr edit --body-file`. Both verbs take `--repo` and `--template`, and `create` also takes `--base` and `--head`. Keep the title out of the body file.
 
-- It reruns check-body and calls no `gh` unless check-body exits 0.
-- On `edit`, it keeps each `## ` section that the live body has and the file lacks, such as a plan a bot appended, in its live position, and prints `publish-pr: kept "## <heading>" from the live body` for each. If you deleted that section on purpose, say so in your report.
+- It reruns check-body and calls `gh` only after check-body exits 0.
+- On `edit`, it keeps each `## ` section that the live body has and the file lacks, such as a plan a bot appended, after the section it followed in the live body, and prints `publish-pr: kept "## <heading>" from the live body` for each. If you deleted that section on purpose, say so in your report.
 - It reads the PR back and compares it with what it sent, ignoring line ends and trailing newlines. On a difference it prints the changed lines.
 
-Its exit code is 0 when the PR is published and reads back the same, 1 when check-body found problems, 64 for a bad argument, 2 when a `gh` call failed or check-body could not run, and 3 when the readback differs.
+Its exit code is 0 when the PR is published and reads back the same, 1 when check-body found problems, 64 for a bad argument or an unreadable body or template file, 2 when a `gh` call failed or check-body could not run, and 3 when the readback differs.

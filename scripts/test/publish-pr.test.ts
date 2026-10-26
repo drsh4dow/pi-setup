@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { Schema } from "effect";
 
@@ -12,8 +20,8 @@ const publisher = new URL(
 ).pathname;
 
 // A stand-in for gh. It records each call, with the content of any --body-file, serves the
-// live body from live.md, stores what create and edit publish, and reads it back, changed as
-// the readback file says. A fail-<verb> file makes that verb exit 1.
+// live body from live.md until create or edit publishes, then reads back what they published,
+// changed as the readback file says. A fail-<verb> file makes that verb exit 1.
 const stubGh = `#!/usr/bin/env node
 const fs = process.getBuiltinModule("node:fs");
 const path = process.getBuiltinModule("node:path");
@@ -36,14 +44,18 @@ if (verb === "create" || verb === "edit") {
   fs.writeFileSync(file("title.txt"), option("--title"));
   fs.writeFileSync(file("published.md"), fs.readFileSync(bodyFile, "utf8"));
   process.stdout.write("https://github.com/acme/widgets/pull/7\\n");
-} else if (verb === "view" && option("--json") === "body") {
-  process.stdout.write(JSON.stringify({ body: read("live.md", "") }) + "\\n");
+} else if (verb === "view" && option("--json") === "title,body" && !fs.existsSync(file("published.md"))) {
+  process.stdout.write(JSON.stringify({ title: "live title", body: read("live.md", "") }) + "\\n");
 } else if (verb === "view" && option("--json") === "title,body") {
   const published = read("published.md", "");
   const mode = read("readback", "exact");
   const body =
-    mode === "newline" ? published + "\\n" : mode === "changed" ? published.replace("twelve", "ten") : published;
-  process.stdout.write(JSON.stringify({ title: read("title.txt", ""), body }) + "\\n");
+    mode === "newline" ? published + "\\n"
+    : mode === "crlf" ? published.replaceAll("\\n", "\\r\\n")
+    : mode === "changed" ? published.replace("twelve", "ten")
+    : published;
+  const title = read("title.txt", "");
+  process.stdout.write(JSON.stringify({ title: mode === "retitled" ? title + " again" : title, body }) + "\\n");
 } else {
   process.stderr.write("stub gh: unexpected call " + args.join(" ") + "\\n");
   process.exit(9);
@@ -60,15 +72,28 @@ type Call = typeof Call.Type;
 
 const parseCall = Schema.decodeUnknownSync(Schema.fromJsonString(Call));
 
-type Stub = { live?: string; readback?: "exact" | "newline" | "changed"; fail?: string };
+type Stub = {
+  live?: string;
+  readback?: "exact" | "newline" | "crlf" | "changed" | "retitled";
+  fail?: string;
+};
 
-// Runs publish-pr with the stub gh first on PATH. "BODY" in args stands for the body file.
-function publish(t: TestContext, body: string, args: string[], stub: Stub = {}) {
+// Stands in publish-pr's arguments for the path of the body file the test writes.
+const bodyFile = Symbol("body file");
+
+// Runs publish-pr with a PATH that holds only the stub gh and node, so no call reaches the real gh.
+function publish(
+  t: TestContext,
+  body: string,
+  args: (string | typeof bodyFile)[],
+  stub: Stub = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "publish-pr-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const gh = join(root, "gh");
   writeFileSync(gh, stubGh);
   chmodSync(gh, 0o755);
+  symlinkSync(process.execPath, join(root, "node"));
 
   const stubFiles: [string, string | undefined][] = [
     ["live.md", stub.live],
@@ -86,11 +111,8 @@ function publish(t: TestContext, body: string, args: string[], stub: Stub = {}) 
 
   const result = spawnSync(
     publisher,
-    args.map((arg) => (arg === "BODY" ? file : arg)),
-    {
-      encoding: "utf8",
-      env: { ...process.env, PATH: `${root}${delimiter}${process.env.PATH ?? ""}` },
-    },
+    args.map((arg) => (arg === bodyFile ? file : arg)),
+    { encoding: "utf8", env: { ...process.env, PATH: root } },
   );
 
   const log = join(root, "calls.jsonl");
@@ -132,7 +154,7 @@ const longTitle =
   "fix(babysit): watch-pr status-only exits at once with a no-checks row on repos that have no CI";
 
 test("refuses to publish a body check-body rejects, and calls no gh", (t) => {
-  const rejected = publish(t, body, ["edit", "7", "BODY", "--title", longTitle]);
+  const rejected = publish(t, body, ["edit", "7", bodyFile, "--title", longTitle]);
 
   assert.equal(rejected.status, 1);
   assert.match(rejected.stdout, /title is 94 characters/);
@@ -140,7 +162,7 @@ test("refuses to publish a body check-body rejects, and calls no gh", (t) => {
 });
 
 test("refuses a bad argument with exit 64, from itself or from check-body, and calls no gh", (t) => {
-  const unknown = publish(t, body, ["create", "BODY", "--title", title, "--draft"]);
+  const unknown = publish(t, body, ["create", bodyFile, "--title", title, "--draft"]);
 
   assert.equal(unknown.status, 64);
   assert.match(unknown.stderr, /publish-pr: /);
@@ -148,7 +170,7 @@ test("refuses a bad argument with exit 64, from itself or from check-body, and c
 
   const missingTemplate = publish(t, body, [
     "create",
-    "BODY",
+    bodyFile,
     "--title",
     title,
     "--template",
@@ -159,20 +181,20 @@ test("refuses a bad argument with exit 64, from itself or from check-body, and c
   assert.match(missingTemplate.stderr, /check-body: .*cannot read/);
   assert.deepEqual(missingTemplate.calls, []);
 
-  const noTitle = publish(t, body, ["edit", "7", "BODY"]);
+  const noTitle = publish(t, body, ["edit", "7", bodyFile]);
 
   assert.equal(noTitle.status, 64);
   assert.deepEqual(noTitle.calls, []);
 });
 
 test("creates a PR from a passing body and reads it back", (t) => {
-  const result = publish(t, body, ["create", "BODY", "--title", title, "--base", "main"]);
+  const result = publish(t, body, ["create", bodyFile, "--title", title, "--base", "main"]);
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(
     result.calls.map((call) => call.args.filter((arg) => !arg.startsWith("/"))),
     [
-      ["pr", "create", "--title", title, "--body-file", "--base", "main"],
+      ["pr", "create", "--base", "main", "--title", title, "--body-file"],
       ["pr", "view", "https://github.com/acme/widgets/pull/7", "--json", "title,body"],
     ],
   );
@@ -189,13 +211,13 @@ test("keeps each section a bot added to the live body, in its live position, and
   const live = body.replace("## Evidence", `${preview}\n## Evidence`) + `\n${plan}`;
   const edited = body.replace("twelve minutes", "twelve minutes per PR");
 
-  const result = publish(t, edited, ["edit", "7", "BODY", "--title", title], { live });
+  const result = publish(t, edited, ["edit", "7", bodyFile, "--title", title], { live });
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(
     result.calls.map((call) => call.args.filter((arg) => !arg.startsWith("/"))),
     [
-      ["pr", "view", "7", "--json", "body"],
+      ["pr", "view", "7", "--json", "title,body"],
       ["pr", "edit", "7", "--title", title, "--body-file"],
       ["pr", "view", "7", "--json", "title,body"],
     ],
@@ -217,7 +239,7 @@ test("keeps each section a bot added to the live body, in its live position, and
 
 test("publishes the file unchanged when the live body has no section the file lacks", (t) => {
   const edited = body.replace("twelve minutes", "twelve minutes per PR");
-  const result = publish(t, edited, ["edit", "7", "BODY", "--title", title], { live: body });
+  const result = publish(t, edited, ["edit", "7", bodyFile, "--title", title], { live: body });
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.calls[1]?.body, edited);
@@ -225,14 +247,35 @@ test("publishes the file unchanged when the live body has no section the file la
 });
 
 test("accepts a readback that differs from the sent body by one trailing newline", (t) => {
-  const result = publish(t, body, ["edit", "7", "BODY", "--title", title], { readback: "newline" });
+  const result = publish(t, body, ["edit", "7", bodyFile, "--title", title], {
+    readback: "newline",
+  });
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, "");
 });
 
+test("accepts a readback that stores the sent body with CRLF line ends", (t) => {
+  const result = publish(t, body, ["edit", "7", bodyFile, "--title", title], { readback: "crlf" });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+});
+
+test("fails with exit 3 and names both titles when the readback title changed", (t) => {
+  const result = publish(t, body, ["edit", "7", bodyFile, "--title", title], {
+    readback: "retitled",
+  });
+
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /^publish-pr: title read back as .* again", sent "fix\(babysit\)/m);
+  assert.doesNotMatch(result.stdout, /published/);
+});
+
 test("fails with exit 3 and the diff when the readback body changed", (t) => {
-  const result = publish(t, body, ["edit", "7", "BODY", "--title", title], { readback: "changed" });
+  const result = publish(t, body, ["edit", "7", bodyFile, "--title", title], {
+    readback: "changed",
+  });
 
   assert.equal(result.status, 3);
   assert.match(result.stderr, /^publish-pr: -3: .*wait twelve minutes/m);
@@ -241,7 +284,7 @@ test("fails with exit 3 and the diff when the readback body changed", (t) => {
 });
 
 test("fails with exit 2 when a gh call fails, and reads nothing back", (t) => {
-  const result = publish(t, body, ["edit", "7", "BODY", "--title", title], { fail: "edit" });
+  const result = publish(t, body, ["edit", "7", bodyFile, "--title", title], { fail: "edit" });
 
   assert.equal(result.status, 2);
   assert.match(result.stderr, /gh: HTTP 502/);

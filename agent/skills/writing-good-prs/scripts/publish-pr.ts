@@ -22,7 +22,7 @@ type Arguments = {
   template: string | undefined;
 };
 
-type PullRequest = { title: string | undefined; body: string };
+type PullRequest = { title: string; body: string };
 
 class Failure {
   readonly message: string;
@@ -85,13 +85,16 @@ function parseArguments(argv: readonly string[]): Arguments | Failure {
   };
 }
 
-// check-body.ts sits beside this file. It prints its own findings.
+// An option and its value, or nothing when the value is absent.
+function flag(name: string, value: string | undefined): string[] {
+  return value === undefined ? [] : [name, value];
+}
+
 function checkBody(args: Arguments): number {
   const script = join(dirname(process.argv[1] ?? "."), "check-body.ts");
-  const template = args.template === undefined ? [] : ["--template", args.template];
   const result = spawnSync(
     process.execPath,
-    [script, "pr", args.bodyFile, "--title", args.title, ...template],
+    [script, "pr", args.bodyFile, "--title", args.title, ...flag("--template", args.template)],
     { stdio: "inherit" },
   );
 
@@ -115,28 +118,31 @@ function gh(args: readonly string[]): string | Failure {
   return result.stdout;
 }
 
-// Parse gh's JSON rather than use --jq, which appends a newline to a body that already ends in one.
-function parsePullRequest(text: string): PullRequest | Failure {
+function viewPullRequest(pr: string, repo: string | undefined): PullRequest | Failure {
+  const output = gh(["pr", "view", pr, "--json", "title,body", ...flag("--repo", repo)]);
+
+  if (output instanceof Failure) return output;
+
   let value: unknown;
 
   try {
-    value = JSON.parse(text);
+    value = JSON.parse(output);
   } catch {
-    return new Failure(`gh pr view printed no JSON: ${text.slice(0, 200)}`);
+    return new Failure(`gh pr view printed no JSON: ${output.slice(0, 200)}`);
   }
 
   if (
     typeof value !== "object" ||
     value === null ||
+    !("title" in value) ||
+    typeof value.title !== "string" ||
     !("body" in value) ||
     typeof value.body !== "string"
   ) {
-    return new Failure("gh pr view printed no body");
+    return new Failure("gh pr view printed no title and body");
   }
 
-  const title = "title" in value && typeof value.title === "string" ? value.title : undefined;
-
-  return { title, body: value.body };
+  return { title: value.title, body: value.body };
 }
 
 type Block = { heading: string | undefined; text: string };
@@ -196,45 +202,50 @@ function normalize(heading: string) {
 }
 
 // `gh pr edit --body-file` replaces the whole body, which drops a section a bot appended, such
-// as a plan or a deploy preview. Each ## section the live body has and the file lacks is kept
-// after the nearest section before it that the file has, or first when none precedes it.
-function keepLiveSections(file: string, live: string): { body: string; kept: string[] } {
-  const ours = blocks(file);
+// as a plan or a deploy preview. Each ## section the live body has and the draft lacks is kept
+// after the nearest section before it that the draft has, or first when none precedes it.
+function keepLiveSections(draft: string, live: string): { body: string; kept: string[] } {
+  const ours = blocks(draft);
   const known = new Set(
     ours.flatMap((block) => (block.heading === undefined ? [] : [normalize(block.heading)])),
   );
-  const after = new Map<string | undefined, Block[]>();
+  const after = new Map<string | undefined, { heading: string; text: string }[]>();
   let anchor: string | undefined;
 
-  for (const block of blocks(live.replaceAll("\r\n", "\n"))) {
-    if (block.heading === undefined) continue;
+  for (const { heading, text } of blocks(live.replaceAll("\r\n", "\n"))) {
+    if (heading === undefined) continue;
 
-    const key = normalize(block.heading);
+    const key = normalize(heading);
 
     if (known.has(key)) {
       anchor = key;
     } else {
-      after.set(anchor, [...(after.get(anchor) ?? []), block]);
+      after.set(anchor, [...(after.get(anchor) ?? []), { heading, text }]);
     }
   }
 
-  if (after.size === 0) return { body: file, kept: [] };
+  if (after.size === 0) return { body: draft, kept: [] };
 
+  const kept: string[] = [];
+
+  // blocks() starts with the preamble, whose key is undefined, so sections that no draft section
+  // precedes land after it. Each key is taken once, so a heading the draft repeats adds nothing.
   const merged = ours.flatMap((block) => {
     const key = block.heading === undefined ? undefined : normalize(block.heading);
     const theirs = after.get(key) ?? [];
     after.delete(key);
-    return [{ block, kept: false }, ...theirs.map((live) => ({ block: live, kept: true }))];
+
+    for (const section of theirs) kept.push(section.heading);
+
+    return [block, ...theirs];
   });
 
   return {
     body: `${merged
-      .map(({ block }) => block.text)
+      .map((block) => block.text)
       .filter((text) => text !== "")
       .join("\n\n")}\n`,
-    kept: merged.flatMap(({ block, kept }) =>
-      kept && block.heading !== undefined ? [block.heading] : [],
-    ),
+    kept,
   };
 }
 
@@ -270,7 +281,7 @@ function comparable(body: string) {
 function readbackFindings(title: string, body: string, pr: PullRequest): string[] {
   const findings: string[] = [];
 
-  if (pr.title?.trim() !== title.trim()) {
+  if (pr.title.trim() !== title.trim()) {
     findings.push(`title read back as ${JSON.stringify(pr.title)}, sent ${JSON.stringify(title)}`);
   }
 
@@ -286,17 +297,16 @@ function readbackFindings(title: string, body: string, pr: PullRequest): string[
   return findings;
 }
 
-function publish(args: Arguments, file: string): number {
-  const repo = args.repo === undefined ? [] : ["--repo", args.repo];
-  let body = file;
+function publish(args: Arguments, draft: string): number {
+  const { target } = args;
+  let body = draft;
 
-  if (args.target.kind === "edit") {
-    const view = gh(["pr", "view", args.target.number, "--json", "body", ...repo]);
-    const live = view instanceof Failure ? view : parsePullRequest(view);
+  if (target.kind === "edit") {
+    const live = viewPullRequest(target.number, args.repo);
 
     if (live instanceof Failure) return ghFailed(live);
 
-    const merged = keepLiveSections(file, live.body);
+    const merged = keepLiveSections(draft, live.body);
 
     for (const heading of merged.kept)
       console.log(`publish-pr: kept "## ${heading}" from the live body`);
@@ -307,42 +317,33 @@ function publish(args: Arguments, file: string): number {
   const dir = mkdtempSync(join(tmpdir(), "publish-pr-"));
 
   try {
-    const bodyFile = join(dir, "body.md");
-    writeFileSync(bodyFile, body);
+    const sentFile = join(dir, "body.md");
+    writeFileSync(sentFile, body);
 
-    const sent =
-      args.target.kind === "edit"
-        ? gh([
-            "pr",
-            "edit",
-            args.target.number,
-            "--title",
-            args.title,
-            "--body-file",
-            bodyFile,
-            ...repo,
-          ])
-        : gh([
-            "pr",
-            "create",
-            "--title",
-            args.title,
-            "--body-file",
-            bodyFile,
-            ...(args.target.base === undefined ? [] : ["--base", args.target.base]),
-            ...(args.target.head === undefined ? [] : ["--head", args.target.head]),
-            ...repo,
-          ]);
+    const verb =
+      target.kind === "edit"
+        ? ["edit", target.number]
+        : ["create", ...flag("--base", target.base), ...flag("--head", target.head)];
 
-    if (sent instanceof Failure) return ghFailed(sent);
+    const output = gh([
+      "pr",
+      ...verb,
+      "--title",
+      args.title,
+      "--body-file",
+      sentFile,
+      ...flag("--repo", args.repo),
+    ]);
 
-    const url = sent.trim().split("\n").at(-1) ?? "";
-    const pr = args.target.kind === "edit" ? args.target.number : url;
+    if (output instanceof Failure) return ghFailed(output);
+
+    // gh prints the PR's URL. create needs it to find the PR; edit names it only in the log.
+    const printedUrl = output.trim().split("\n").at(-1) ?? "";
+    const pr = target.kind === "edit" ? target.number : printedUrl;
 
     if (pr === "") return ghFailed(new Failure("gh pr create printed no PR URL"));
 
-    const view = gh(["pr", "view", pr, "--json", "title,body", ...repo]);
-    const readBack = view instanceof Failure ? view : parsePullRequest(view);
+    const readBack = viewPullRequest(pr, args.repo);
 
     if (readBack instanceof Failure) return ghFailed(readBack);
 
@@ -352,7 +353,7 @@ function publish(args: Arguments, file: string): number {
 
     if (findings.length > 0) return 3;
 
-    console.log(`publish-pr: published ${url === "" ? `#${pr}` : url}`);
+    console.log(`publish-pr: published ${printedUrl === "" ? `#${pr}` : printedUrl}`);
     return 0;
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -376,10 +377,10 @@ function main(): number {
 
   if (checked !== 0) return checked;
 
-  let body: string;
+  let draft: string;
 
   try {
-    body = readFileSync(args.bodyFile, "utf8");
+    draft = readFileSync(args.bodyFile, "utf8");
   } catch (error) {
     console.error(
       `publish-pr: cannot read ${args.bodyFile}: ${error instanceof Error ? error.message : error}`,
@@ -387,7 +388,7 @@ function main(): number {
     return 64;
   }
 
-  return publish(args, body);
+  return publish(args, draft);
 }
 
 process.exitCode = main();

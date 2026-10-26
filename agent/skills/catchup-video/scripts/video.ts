@@ -35,18 +35,21 @@ One shot, in this order:
   1. Write the narration, one beat per line: what is spoken, and " || " plus the caption when it
      should differ ("fifty gifts || 50 gifts"). Run new STORY.py --from that file.
   2. Run primitives once, then fill every method in one pass. Put the one picture the video
-     returns to on stage first (for PRs, a Branches graph): dive into a PR for its chapter,
-     pull_back after it, recap the calls at the end. Prefer the pieces (Flow, Correction, Tally,
-     Compare, Code.note) to hand-built groups; they fit themselves.
+     returns to on stage first (for PRs, a Branches graph): dive into a PR for its chapter (the
+     graph folds into a strip at the left that stays on screen and shows each mark as the chapter
+     earns it), pull_back after it, recap the calls at the end. Give every beat that is not a
+     transition something new to show. Prefer the pieces (Flow, Correction, Tally, Compare,
+     Code.note) to hand-built groups; they fit themselves.
   3. Draft once. Read every problem line and look at every sheet in STORY.build/draft/frames.
   4. Fix what the check and the sheets show. The next draft or render redraws only the beats
      whose code, words, or starting picture changed; the rest come from the cache.
   5. Render once: it reuses the voice and draws every beat at 1080p60 in parallel. A fix after it
      redraws only the beats it touched. Share the video when the check is clean.
 
-Layout is the toolkit's job: every piece fits itself to the stage (x -6.6..6.6, y down to
-T.FLOOR, above the captions), wraps or shrinks its words but never below the minimums, and
-anything brought on stage is kept inside it. Grid(n).put(piece, i) gives a piece its own cell;
+Layout is the toolkit's job: every piece fits itself to the stage (x -6.6..6.6, or right of the
+graph's strip in a chapter; y down to T.FLOOR, above the captions), wraps or shrinks its words but
+never below the minimums, and anything brought on stage is kept inside it. clear(extra=[...])
+fades the old stage out before the new one shows. Grid(n).put(piece, i) gives a piece its own cell;
 self.beside(piece, target) puts it next to target where nothing else is. A layout problem in the
 check means the request does not fit at the minimum size: cut words or give the piece more room.
 
@@ -70,8 +73,11 @@ Output, next to STORY.py: STORY.mp4 (render) or STORY.draft.mp4, and STORY.build
 with beat-NN-mid.png and beat-NN-end.png for every beat, plus sheet-N.png contact sheets (four beats
 each, rows are beats, midpoint left and end right). Look at every sheet before you share the video.
 
-The check reads Manim's own geometry at each beat's midpoint and end: elements that overlap, leave
-the frame, enter the caption band, or have text below its minimum, and what a piece could not fit.
+The check reads Manim's own geometry at each beat's midpoint and end: elements that overlap (and
+parts of one piece, such as a graph's titles and tags, that overlap), leave the frame, enter the
+caption band, or have text below its minimum; what a piece could not fit; and a beat that is not a
+transition whose stage at both its midpoint and end shows only the header, or the picture the beat
+before it ended on.
 On a voiced render it also checks that each beat's voice starts with its captions, that caption
 breaks fall in pauses, and that a transcript of the video's audio says each beat's words.
 Exit codes: 0 clean, 1 problems (one line each, naming beat and element), 2 could not run.`;

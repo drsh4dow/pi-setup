@@ -1,4 +1,5 @@
-"""Branches: the git graph of the base branch with one branch per PR, which the camera dives into.
+"""Branches: the git graph of the base branch with one branch per PR, which folds into a strip at
+the stage's left edge for each PR's chapter, so the picture stays on screen the whole video.
 
 It lays itself out for 1 to 40 PRs: one column while its labels fit at or above the minimum
 size (up to 12 PRs), then two or three columns. A title longer than its row is shortened with an
@@ -10,12 +11,27 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from manim import DOWN, LEFT, RIGHT, UP, CubicBezier, Dot, Line, UpdateFromAlphaFunc, VGroup, VMobject, rate_functions
+from manim import (
+    DOWN,
+    LEFT,
+    RIGHT,
+    UP,
+    AnimationGroup,
+    CubicBezier,
+    Dot,
+    Line,
+    RoundedRectangle,
+    Transform,
+    UpdateFromAlphaFunc,
+    VGroup,
+    VMobject,
+    rate_functions,
+)
 
 from . import theme as T
 from .parts import Tag, icon
 from .report import problem
-from .text import baseline, label_of, mix, text, verb
+from .text import baseline, label_of, look, mix, remember, text, verb
 
 ROWS_TOP = 3.55  # the overview may use the header row: a dive lifts the title there
 BASE_ROOM = 0.55  # under the trunks, for the base branch's name
@@ -59,7 +75,7 @@ class Branches(VGroup):
     """The base branch with one branch per PR, ending in the PR's node and title; fits 1 to 40 PRs.
 
     Play draw() to bring it in, mark()/ring() to show a PR's state, point() to call a PR out, and
-    Video.dive(graph, n) / Video.pull_back(graph) to fly the camera into a PR for its chapter."""
+    Video.dive(graph, n) / Video.pull_back(graph) to fold it into a strip for PR n's chapter."""
 
     def __init__(self, prs: dict[int, str], base: str = "main"):
         super().__init__()
@@ -75,6 +91,8 @@ class Branches(VGroup):
         self._rows: dict[int, dict] = {}
         self._v = 1.0
         self._gone: set[int] = set()
+        self.trunks: list[Line] = []
+        self.strip: Strip | None = None  # the folded graph while a chapter is on
         items = list(prs.items())
         for c in range(cols):
             chunk = items[c * rows:(c + 1) * rows]
@@ -84,6 +102,7 @@ class Branches(VGroup):
             ys = [top - 0.6 * pitch - k * pitch for k in range(len(chunk))]
             trunk = Line([xm, top, 0], [xm, ys[-1] - 0.4 * pitch, 0], stroke_color=T.FAINT, stroke_width=4)
             trunk._cv_name = "Branches trunk"
+            self.trunks.append(trunk)
             self.add(trunk)
             if c == 0:
                 self.base = text(base, size=T.SMALL, color=T.DIM, font=T.MONO, width=cw - 0.3, lines=1)
@@ -117,8 +136,10 @@ class Branches(VGroup):
         name._cv_name = f"Branches #{num} title"
         label = VGroup(number, name)
         marks, rings = VGroup(), VGroup()
-        self._rows[num] = {"node": node, "label": label, "number": number, "title": name, "full": title,
-                           "marks": marks, "rings": rings, "icons": [], "tag": None, "right": right}
+        # "state" is the row's latest mark as its icon kind and color: what the strip shows.
+        self._rows[num] = {"curve": curve, "node": node, "label": label, "number": number, "title": name,
+                           "full": title, "marks": marks, "rings": rings, "icons": [], "tag": None, "right": right,
+                           "state": None}
         self.add(curve, node, label, marks, rings)
 
     def _remember(self, mob=None):
@@ -146,7 +167,7 @@ class Branches(VGroup):
         return parts
 
     def node(self, n: int) -> Dot:
-        """PR `n`'s node, the dot the camera dives into."""
+        """PR `n`'s node."""
         return self._rows[n]["node"]
 
     def label(self, n: int) -> VGroup:
@@ -163,10 +184,10 @@ class Branches(VGroup):
         head = VGroup(number, name).arrange(RIGHT, buff=0.22, aligned_edge=DOWN)
         return head.move_to([T.LEFT, T.HEADER_Y, 0], aligned_edge=LEFT)
 
-    def visibility(self, v: float, hidden: int | None = None) -> None:
-        """Show the graph at opacity `v` (0..1), keeping PR `hidden`'s title out of sight."""
+    def visibility(self, v: float, hidden=()) -> None:
+        """Show the graph at opacity `v` (0..1), keeping the parts in `hidden` out of sight."""
         self._v = v
-        self._gone = {id(m) for m in self._rows[hidden]["label"].get_family()} if hidden is not None else set()
+        self._gone = {id(f) for m in hidden for f in m.get_family()}
         self._fade(self, 1.0)
 
     @verb
@@ -192,7 +213,8 @@ class Branches(VGroup):
              run_time: float = 0.6):
         """Animation: a state mark after PR `n`'s title, e.g. mark(51, "approved"). A row keeps one
         word mark (a new one replaces it) and any number of icon marks (words=None); the title
-        shortens to make room. Played inside a chapter, it appears on pull_back."""
+        shortens to make room. Played inside a chapter, it shows in the strip as its icon at once,
+        and whole on pull_back."""
         row = self._rows[n]
         new = (Tag(words, color, icon_kind, size=min(T.SMALL, self.size), height=0.85 * self.pitch) if words
                else icon(icon_kind, color, 0.4))
@@ -235,7 +257,11 @@ class Branches(VGroup):
             else:
                 moves.append((p, p.get_center().copy(), target))
             x += p.width + 0.2
-        return self._change(born, gone, moves, run_time)
+        row["state"] = ((icon_kind or "dot") if words else icon_kind, color)
+        change = self._change(born, gone, moves, run_time)
+        if self.strip is None:
+            return change
+        return AnimationGroup(change, self.strip.mark(n, *row["state"], run_time=run_time))
 
     @verb
     def ring(self, n: int, color: str = T.YELLOW, run_time: float = 0.6):
@@ -246,12 +272,83 @@ class Branches(VGroup):
         row["rings"].add(ring)
         self._remember(ring)
         self._fade(ring, 0.0)
-        return self._change([ring], [], [], run_time)
+        change = self._change([ring], [], [], run_time)
+        if self.strip is None:
+            return change
+        return AnimationGroup(change, self.strip.ring(n, color, run_time=run_time))
 
     @verb
     def point(self, n: int, color: str = T.YELLOW, keep: bool = False, run_time: float = 0.8) -> UpdateFromAlphaFunc:
         """Animation: call PR `n` out, its title flashing in `color` and back, or staying in it with keep=True."""
+        if self.strip is not None:
+            return self.strip.point(n, color, keep, run_time)
         return flash(self._rows[n]["label"], color, keep, run_time)
+
+    def fold(self, n: int, head) -> Fold:
+        """The animation that folds the graph into a strip for PR `n`'s chapter: each branch, node,
+        ring, and number glides to its place in the strip, each mark fades into its icon there, the
+        rest fades, and PR `n`'s title becomes `head`. Video.dive plays it."""
+        strip = Strip(self, n)
+        pairs = self._pairs(strip)
+        hidden = [full for full, _ in pairs if full is not None] + [self.label(n)]
+        movers, anims = [], []
+        for full, part in pairs:
+            mover = full.copy() if full is not None else _clear(part)
+            movers.append(mover)
+            anims.append(Transform(mover, part))
+        flier = self.label(n).copy()
+        movers.append(flier)
+        anims.append(Transform(flier, head))
+
+        def fade(g, a):
+            self.visibility(1 - rate_functions.smooth(min(1.0, 2 * a)), hidden=hidden)
+
+        anims.append(UpdateFromAlphaFunc(self, fade))
+        return Fold(anims, movers, strip)
+
+    def unfold(self, head) -> Fold:
+        """The animation that grows the strip back into the whole graph, the header returning to its
+        row as its title; marks played in the chapter show whole. Video.pull_back plays it."""
+        strip = self.strip
+        pairs = self._pairs(strip)
+        hidden = [full for full, _ in pairs if full is not None] + [self.label(strip.focus)]
+        movers, anims = [], []
+        for full, part in pairs:
+            mover = part.copy()
+            movers.append(mover)
+            anims.append(Transform(mover, self._shown(full) if full is not None else _clear(part)))
+        flier = head.copy()
+        movers.append(flier)
+        anims.append(Transform(flier, self._shown(self.label(strip.focus))))
+
+        def fade(g, a):
+            self.visibility(rate_functions.smooth(max(0.0, 2 * a - 1)), hidden=hidden)
+
+        anims.append(UpdateFromAlphaFunc(self, fade))
+        return Fold(anims, movers, strip)
+
+    def _pairs(self, strip: Strip) -> list:
+        """Each strip part with the part of the whole graph it folds from, or None when it has none."""
+        pairs = [(self.trunks[0], strip.trunk), (None, strip.band)]
+        for k, row in self._rows.items():
+            part = strip.rows[k]
+            pairs += [(row["curve"], part["curve"]), (row["node"], part["node"])]
+            if part["ring"] is not None:
+                pairs.append((row["rings"][-1], part["ring"]))
+            if part["number"] is not None:
+                pairs.append((row["number"] if k != strip.focus else None, part["number"]))
+            if part["pip"] is not None:
+                pairs.append((None, part["pip"]))  # a mark fades between its tag and its icon in place
+        return pairs
+
+    def _shown(self, mob):
+        """A copy of `mob` with the look it has when the graph is fully shown."""
+        shown = mob.copy()
+        for m in shown.get_family():
+            base = getattr(m, "_cv_base", None)
+            if base is not None:
+                m.set_fill(opacity=base[0], family=False).set_stroke(opacity=base[1], family=False)
+        return shown
 
     def _change(self, born, gone, moves, run_time):
         def update(g, a):
@@ -285,3 +382,125 @@ def flash(label, color: str, keep: bool, run_time: float) -> UpdateFromAlphaFunc
         g.scale(1 + 0.06 * swell, about_point=left)
 
     return UpdateFromAlphaFunc(label, update, run_time=run_time)
+
+
+class Fold:
+    """A fold or unfold of the graph: its animations, the stand-ins they move (taken off stage when
+    they end), and the strip."""
+
+    def __init__(self, anims: list, movers: list, strip: Strip):
+        self.anims, self.movers, self.strip = anims, movers, strip
+
+
+def _clear(mob):
+    """A fully transparent copy of `mob`: what a part that has no counterpart fades from or to."""
+    return mob.copy().set_opacity(0)
+
+
+STRIP_PITCH = 0.62  # the strip's largest row pitch
+STRIP_GAP = 0.5  # between the strip and the chapter's pieces
+
+
+class Strip(VGroup):
+    """The graph folded to one column at the stage's left edge while PR `focus`'s chapter plays:
+    every PR's branch and node, its number while numbers fit at the minimum size (up to about 15
+    PRs), and its latest mark as an icon in the mark's color. The focused row is highlighted."""
+
+    def __init__(self, graph: Branches, focus: int):
+        super().__init__()
+        self.focus = focus
+        n = len(graph._rows)
+        pitch = min(STRIP_PITCH, (T.TOP - T.FLOOR - 0.3) / n)
+        size = min(T.SMALL, pitch * T.UNIT_PX / 1.3)
+        numbered = size >= T.MIN_PX["label"]
+        size = max(size, T.MIN_PX["label"])
+        self.pip_size = min(0.3, 0.8 * pitch)
+        radius = min(0.1, 0.3 * pitch)
+        self.ring_size = min(pitch, (radius + 0.1) / 0.42)
+        top = (T.TOP + T.FLOOR) / 2 + n * pitch / 2
+        x0 = T.LEFT + 0.1
+        xn = x0 + 0.35
+        numbers = {k: text(f"#{k}", size=size, color=T.TEXT if k == focus else T.DIM, font=T.SERIF)
+                   for k in graph._rows if numbered or k == focus}
+        num_x = xn + radius + 0.15
+        pip_x = num_x + max(t.width for t in numbers.values()) + 0.15 if numbered else xn + radius + 0.15
+        self.trunk = Line([x0, top, 0], [x0, top - (n - 0.2) * pitch, 0], stroke_color=T.FAINT, stroke_width=3)
+        self.rows: dict[int, dict] = {}
+        for k, (num, row) in enumerate(graph._rows.items()):
+            y = top - (k + 0.5) * pitch
+            self.rows[num] = self._row(num, row, y, x0, xn, radius * (1.3 if num == focus else 1.0), pitch)
+            self.rows[num]["pip_at"] = np.array([pip_x + self.pip_size / 2, y, 0])
+            number = numbers.get(num)
+            if number is not None:
+                at = num_x if numbered else pip_x + 1.1 * self.pip_size + 0.15
+                number.move_to([at, y, 0], aligned_edge=LEFT).shift(UP * (y - _cap_middle(number)))
+                self.rows[num]["number"] = number
+            if row["state"] is not None:
+                self.rows[num]["pip"] = icon(*row["state"], self.pip_size).move_to(self.rows[num]["pip_at"])
+        self.right = max(pip_x + 1.1 * self.pip_size, *(t.get_right()[0] for t in numbers.values()))
+        focused = self.rows[focus]["node"].get_y()
+        self.band = RoundedRectangle(width=self.right - x0 + 0.3, height=0.94 * pitch, corner_radius=min(0.12, 0.3 * pitch),
+                                     stroke_color=T.FAINT, stroke_width=1.5, fill_color=T.PANEL, fill_opacity=1)
+        self.band.move_to([(x0 - 0.15 + self.right + 0.15) / 2, focused, 0])
+        self.add(self.band, self.trunk)
+        for part in self.rows.values():
+            self.add(*(m for m in (part["curve"], part["node"], part["ring"], part["number"], part["pip"]) if m is not None))
+        self._cv_name, self._cv_chrome = "Branches strip", True
+
+    def _row(self, num: int, row: dict, y: float, x0: float, xn: float, radius: float, pitch: float) -> dict:
+        fork = np.array([x0, y + 0.5 * pitch, 0])
+        end = np.array([xn, y, 0])
+        dim = 1.0 if num == self.focus else 0.5
+        curve = CubicBezier(fork, [x0, y, 0], [x0 + 0.1, y, 0], end, stroke_color=T.FAINT, stroke_width=3)
+        node = Dot(end, radius=radius, color=T.BLUE, fill_opacity=dim)
+        ring = None
+        if len(row["rings"]):
+            ring = icon("ring", row["rings"][-1].get_stroke_color(), self.ring_size).move_to(end)
+        return {"curve": curve, "node": node, "ring": ring, "number": None, "pip": None}
+
+    def _cv_parts(self):
+        """What must never overlap, for the check: each row's node (with its ring), number, and mark."""
+        parts = []
+        for num, part in self.rows.items():
+            parts.append((f"#{num} node", VGroup(*(m for m in (part["node"], part["ring"]) if m is not None))))
+            parts += [(f"#{num} {what}", part[what]) for what in ("number", "pip") if part[what] is not None]
+        return parts
+
+    @verb
+    def mark(self, n: int, kind: str, color: str, run_time: float = 0.6) -> UpdateFromAlphaFunc:
+        """Animation: PR `n`'s latest mark, as an icon; it replaces the one before."""
+        part = self.rows[n]
+        old, new = part["pip"], icon(kind, color, self.pip_size).move_to(part["pip_at"])
+        part["pip"] = new
+        self.add(new)
+        return self._swap(old, new, run_time)
+
+    @verb
+    def ring(self, n: int, color: str, run_time: float = 0.6) -> UpdateFromAlphaFunc:
+        """Animation: a ring around PR `n`'s node; it replaces the one before."""
+        part = self.rows[n]
+        old = part["ring"]
+        part["ring"] = icon("ring", color, self.ring_size).move_to(part["node"])
+        self.add(part["ring"])
+        return self._swap(old, part["ring"], run_time)
+
+    @verb
+    def point(self, n: int, color: str, keep: bool, run_time: float) -> UpdateFromAlphaFunc:
+        """Animation: call PR `n` out in the strip, its number (or node) flashing in `color`."""
+        part = self.rows[n]
+        return flash(part["number"] if part["number"] is not None else part["node"], color, keep, run_time)
+
+    def _swap(self, old, new, run_time: float) -> UpdateFromAlphaFunc:
+        remember(new)
+        look(new, 0)
+
+        def update(g, a):
+            if old is not None:
+                look(old, 1 - rate_functions.smooth(min(1.0, 2 * a)))
+            look(new, rate_functions.smooth(max(0.0, 2 * a - 1)))
+            if a >= 1 and old is not None and old in self.submobjects:
+                self.remove(old)
+
+        if old is not None:
+            remember(old)
+        return UpdateFromAlphaFunc(self, update, run_time=run_time)

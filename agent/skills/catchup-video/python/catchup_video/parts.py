@@ -89,10 +89,12 @@ def arrow(a, b, color: str = T.DIM, buff: float = 0.12) -> Arrow:
 
 
 class Grid:
-    """Cells over the stage (between the header row and the caption band), counted from 0."""
+    """Cells over the stage (between the header row and the caption band, right of the graph strip
+    in a chapter), counted from 0."""
 
-    def __init__(self, cols: int, rows: int = 1, left: float = T.LEFT, right: float = T.RIGHT,
+    def __init__(self, cols: int, rows: int = 1, left: float | None = None, right: float = T.RIGHT,
                  top: float = T.TOP, bottom: float = T.FLOOR, gap: float = 0.4):
+        left = T.STAGE.left if left is None else left
         self.cols, self.rows, self.gap = cols, rows, gap
         self.left, self.top = left, top
         self.w = (right - left - gap * (cols - 1)) / cols

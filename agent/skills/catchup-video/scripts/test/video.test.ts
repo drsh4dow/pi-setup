@@ -164,7 +164,53 @@ test("a change of stage never shows the old stage through the new one", () => {
   assert.deepEqual(both, [], "frames that show red and blue at once");
 });
 
-test("pieces fit themselves: forty PRs, wrapped words, a long pipeline with notes on neighbors, and wide code check clean", () => {
+test("in a chapter the graph folds into a strip that keeps every PR's node, and the chapter's pieces sit beside it", () => {
+  const prs = Array.from({ length: 12 }, (_, k) => `${401 + k}: "Change number ${k + 1} to the ledger"`);
+  const file = story(`
+    @beat("Twelve pull requests moved while you were away.")
+    def graph(self):
+        self.graph = Branches({${prs.join(", ")}})
+        self.play(self.graph.draw())
+
+    @beat("First, the third one.", transition=True)
+    def third(self):
+        self.dive(self.graph, 403)
+
+    @beat("Its code, its pipeline, and the two ways to ship it, while the graph stays in view.")
+    def chapter(self):
+        g = Grid(2)
+        code = g.put(Code("total = round(sum(lines), 2)"), 0)
+        flow = g.put(Flow(["merge", "test", "deploy"]), 1)
+        self.show(code, flow)
+        pick = Options([("Ship it this week", ["one deploy window"]), ("Wait for the release", ["no extra window"])])
+        self.clear(extra=[FadeIn(pick)])
+        self.play(self.graph.mark(403, "your call", T.YELLOW, "dot"))
+
+    @beat("Back to all twelve.", transition=True)
+    def back(self):
+        self.pull_back(self.graph)
+`);
+  const r = video(["draft", file]);
+  assert.equal(r.code, 0, r.out + r.err);
+  assert.match(r.out, /check: clean/);
+  // The strip holds the stage's left edge (x < 110 px at 480p); each PR's node is a blue dot there.
+  const png = file.replace(/story\.py$/, "story.build/draft/frames/beat-03-end.png");
+  const rgb = spawnSync("ffmpeg", ["-v", "error", "-i", png, "-vf", "crop=110:400:0:40", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]).stdout;
+  let nodes = 0;
+  let inNode = false;
+  for (let y = 0; y < 400; y++) {
+    let blue = false;
+    for (let x = 0; x < 110 && !blue; x++) {
+      const [red = 0, green = 0, b = 0] = rgb.subarray((y * 110 + x) * 3, (y * 110 + x) * 3 + 3);
+      blue = b > red + 40 && green > red + 20;
+    }
+    if (blue && !inNode) nodes++;
+    inNode = blue;
+  }
+  assert.equal(nodes, 12, "blue nodes in the strip");
+});
+
+test("pieces fit themselves: forty PRs and their strip, wrapped words, a long pipeline with notes on neighbors, and wide code check clean", () => {
   const prs = Array.from({ length: 40 }, (_, k) => `${200 + k}: "Change ${k} with a title long enough to need shortening"`);
   const file = story(`
     @beat("Forty pull requests moved, and three are marked.")
@@ -186,6 +232,11 @@ test("pieces fit themselves: forty PRs, wrapped words, a long pipeline with note
         flow = Flow(["merge", "build", "deploy", "watch"])
         self.clear(extra=[flow.grow()])
         self.play(flow.flag(1, "nobody reviews the build"), flow.flag(2, "deploys on its own"))
+
+    @beat("Into one of the forty, whose strip has a node for every one.", transition=True)
+    def into(self):
+        self.dive(self.graph, 220)
+        self.play(self.graph.mark(220, color=T.YELLOW, icon_kind="dot"), self.graph.ring(221))
 `);
   const r = video(["draft", file]);
   assert.equal(r.code, 0, r.out + r.err);

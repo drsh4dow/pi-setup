@@ -64,3 +64,15 @@ HEADER_Y = 3.45
 CEIL = 3.7  # the top of the stage while no chapter header is pinned
 FLOOR = -2.6  # captions own the band below this line
 UNIT_PX = 135  # pixels per Manim unit at 1080p
+
+
+class Stage:
+    """Where a beat's pieces go: its left edge moves right while a chapter's graph strip holds the
+    left of the frame. The clock sets it; Grid, beside, and the clock's own fitting read it. A
+    process renders one Video, so one stage serves it."""
+
+    def __init__(self) -> None:
+        self.left = LEFT
+
+
+STAGE = Stage()

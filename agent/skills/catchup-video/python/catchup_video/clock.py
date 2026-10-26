@@ -40,7 +40,6 @@ from manim import (
     MovingCameraScene,
     Text,
     Transform,
-    UpdateFromAlphaFunc,
     VGroup,
     VMobject,
     Wait,
@@ -52,6 +51,7 @@ from manim.animation.animation import prepare_animation
 from manim.utils.exceptions import EndSceneEarlyException
 
 from . import report, state
+from .graph import STRIP_GAP
 from . import theme as T
 from .text import em_px, fit, label_of
 
@@ -59,7 +59,7 @@ SQUEEZE = 0.5  # an animation may run at up to 1 / SQUEEZE times its speed to fi
 MIN_RUN = 0.3  # seconds; no animation is sped up below this
 GHOST = 0.3  # elements fainter than this are background: others may sit on them
 CLEAR_TIME = 0.4  # seconds clear() takes to fade the old stage out
-EDGE = 6.75  # the stage's left and right limits for anything brought on, in Manim units
+MARGIN = 0.15  # how far past the stage's sides a piece may reach, in Manim units
 
 
 def beat(say: str, show: str | None = None, pause: float | None = None, lead: float = 0.0,
@@ -137,6 +137,7 @@ class Video(MovingCameraScene):
         self._b = None
         self._pins: list = []
         self.header = None
+        T.STAGE.left = T.LEFT
         self._out: list = []
         report._sinks.append(lambda message: self._note(message, problem=True))
         self._base_attrs = set(vars(self)) | {"_base_attrs"}
@@ -394,11 +395,16 @@ class Video(MovingCameraScene):
     def _stage_top(self) -> float:
         return T.TOP if self.header is not None else T.CEIL
 
+    @staticmethod
+    def _sides() -> tuple[float, float]:
+        """The left and right limits of anything brought on stage."""
+        return T.STAGE.left - MARGIN, T.RIGHT + MARGIN
+
     def _keep_new_on_stage(self, anims) -> None:
         """Fit what these animations bring on stage inside it, moved as one, above the captions."""
         frame = self.camera.frame
         if abs(frame.width - config.frame_width) > 1e-3 or np.abs(frame.get_center()).max() > 1e-3:
-            return  # the camera is flying; the dive and pull_back place their own pieces
+            return  # a story's own camera move places its own pieces
         present = {id(m) for m in self.get_mobject_family_members()}
         new = []
         for a in _leaves(anims):
@@ -409,9 +415,10 @@ class Video(MovingCameraScene):
             return
         group = new[0] if len(new) == 1 else Group(*new)
         top = self._stage_top()
-        fit(group, 2 * EDGE, top - T.FLOOR)
+        left, right = self._sides()
+        fit(group, right - left, top - T.FLOOR)
         x0, y0, x1, y1 = _box(group)
-        dx = -EDGE - x0 if x0 < -EDGE else (EDGE - x1 if x1 > EDGE else 0.0)
+        dx = left - x0 if x0 < left else (right - x1 if x1 > right else 0.0)
         dy = T.FLOOR - y0 if y0 < T.FLOOR else (top - y1 if y1 > top else 0.0)
         if dx or dy:
             group.shift([dx, dy, 0])
@@ -445,11 +452,12 @@ class Video(MovingCameraScene):
         boxes = [_box(p) for m in self._elements() if _opacity(m) >= GHOST
                  for p in _solid(m) if not mine & {id(f) for f in p.get_family()}]
         top = self._stage_top()
+        left, right = self._sides()
         best = None
         for d in [side] if side is not None else [RIGHT, DOWN, LEFT, UP]:
             mob.next_to(target, d, buff=buff)
             x0, y0, x1, y1 = box = _box(mob)
-            out = max(0.0, -EDGE - x0) + max(0.0, x1 - EDGE) + max(0.0, T.FLOOR - y0) + max(0.0, y1 - top)
+            out = max(0.0, left - x0) + max(0.0, x1 - right) + max(0.0, T.FLOOR - y0) + max(0.0, y1 - top)
             score = (out > 0.01, sum(_overlap(box, o) for o in boxes), out)
             if score[:2] == (False, 0.0):
                 return mob
@@ -470,80 +478,49 @@ class Video(MovingCameraScene):
         return [m for m in self.mobjects
                 if m is not self.camera.frame and not kept & {id(f) for f in m.get_family()}]
 
-    # ---- the PR graph camera ---------------------------------------------------
+    # ---- the PR graph's chapters ------------------------------------------------
 
-    def dive(self, graph, n: int, run_time: float = 1.5, zoom: float = 4.0):
-        """Fly the camera into PR `n`'s node; its title lifts out to become the header."""
+    def dive(self, graph, n: int, run_time: float = 1.5):
+        """Open PR `n`'s chapter: the graph folds into a strip at the stage's left edge that keeps
+        every PR's node, PR `n`'s highlighted, and its title lifts out to become the header. The
+        chapter's pieces get the rest of the stage; marks played in it show in the strip at once."""
         if self.header is not None:
             raise ValueError("pull_back(graph) before diving into another PR")
         gone = self._unpinned([graph])
-        anims, settle = self._fly(graph, n, zoom, inward=True)
-        self._play([*anims, *(FadeOut(m) for m in gone)], {"run_time": run_time}, settle, place=False)
+        head = graph.header_for(n)
+        head._cv_pr, head._cv_name, head._cv_chrome = n, f"header #{n}", True
+        fold = graph.fold(n, head)
+        fold.anims[0]._cv_verb = "dive"
 
-    def pull_back(self, graph, run_time: float = 1.5, zoom: float = 4.0):
-        """Fade the chapter out while the camera flies back out to the whole graph; the header returns to its node."""
+        def settle():
+            self.remove(*fold.movers)
+            self.add(fold.strip, head)
+            self.pin(graph, fold.strip, head)
+            self.header, graph.strip = head, fold.strip
+            T.STAGE.left = fold.strip.right + STRIP_GAP
+
+        self._play([*fold.anims, *(FadeOut(m) for m in gone)], {"run_time": run_time}, settle, place=False)
+
+    def pull_back(self, graph, run_time: float = 1.5):
+        """Close the chapter: its pieces fade, the strip grows back into the whole graph, and the
+        header returns to its row as its title."""
         if self.header is None:
             raise ValueError("dive(graph, n) before pulling back")
         gone = self._unpinned([graph])
-        anims, settle = self._fly(graph, self.header._cv_pr, zoom, inward=False)
-        self._play([*anims, *(FadeOut(m, rate_func=_early) for m in gone)], {"run_time": run_time}, settle,
-                   place=False)
-
-    def _fly(self, graph, n, zoom, inward):
-        frame = self.camera.frame
-        c0, w0 = frame.get_center().copy(), frame.width
-        node = graph.node(n).get_center()
-        start = graph.label(n).copy()
-        head = graph.header_for(n)
-        if inward:
-            flier = start.copy()  # enters with the flight's first frame, not before the clock waits
-        else:
-            flier = self.header
-            self._pins.remove(flier)
-
-        def step(a):
-            return rate_functions.smooth(a if inward else 1 - a)
-
-        def frame_at(t):
-            return c0 + (node - c0) * t, w0 / zoom ** t
-
-        def move_frame(m, a):
-            center, w = frame_at(step(a))
-            m.set(width=w).move_to(center)
-
-        def fade_graph(m, a):
-            graph.visibility(max(0.0, 1 - 1.7 * step(a)), hidden=n)
-
-        def place(m, a):
-            t = step(a)
-            if t == 0:
-                m.become(start)
-                return
-            center, w = frame_at(t)
-            k = w / w0  # world units per screen unit
-            m.become(head)
-            m.scale(interpolate(start.height / head.height, 1, t) * k, about_point=head.get_left())
-            m.move_to(center + (interpolate(start.get_left(), head.get_left(), t) - c0) * k,
-                      aligned_edge=LEFT)
+        head, strip = self.header, graph.strip
+        fold = graph.unfold(head)
+        fold.anims[0]._cv_verb = "pull_back"
+        self.remove(strip, head)
+        self._pins = [m for m in self._pins if m is not graph and m is not strip and m is not head]
+        self.header, graph.strip = None, None
+        T.STAGE.left = T.LEFT
 
         def settle():
-            frame.set(width=w0).move_to(c0)
-            if inward:
-                # The header itself replaces the flier, so its text keeps its own measured size.
-                self.remove(flier)
-                head._cv_pr, head._cv_name, head._cv_chrome = n, f"header #{n}", True
-                self.add(head)
-                self.header = head
-                self.pin(head)
-            else:
-                graph.visibility(1.0)
-                self.remove(flier)
-                self.header = None
+            self.remove(*fold.movers)
+            graph.visibility(1.0)
 
-        flight = UpdateFromAlphaFunc(frame, move_frame)
-        flight._cv_verb = "dive" if inward else "pull_back"
-        return [flight, UpdateFromAlphaFunc(graph, fade_graph),
-                UpdateFromAlphaFunc(flier, place, introducer=inward)], settle
+        self._play([*fold.anims, *(FadeOut(m, rate_func=_early) for m in gone)], {"run_time": run_time}, settle,
+                   place=False)
 
 
 def _anim_label(a) -> str:

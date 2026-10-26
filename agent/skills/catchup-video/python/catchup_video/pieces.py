@@ -15,40 +15,18 @@ from manim import (
     UP,
     Dot,
     Group,
-    ImageMobject,
     Line,
     RoundedRectangle,
     UpdateFromAlphaFunc,
     VGroup,
-    VMobject,
     rate_functions,
 )
 
 from . import theme as T
 from .parts import Number, Tag, Tiles, arrow
-from .text import fit, label_of, mix, remakeable, text, verb
+from .text import fit, label_of, look, mix, remakeable, remember, text, verb
 
 WIDE = T.RIGHT - T.LEFT
-
-
-def _remember(mob) -> None:
-    for m in mob.get_family():
-        if isinstance(m, VMobject):
-            m._cv_base = (m.get_fill_opacity(), m.get_stroke_opacity())
-        elif isinstance(m, ImageMobject):
-            m._cv_base = (m.fill_opacity, 0.0)
-
-
-def _look(mob, k: float) -> None:
-    """Set `mob` to `k` of the look it was built with."""
-    for m in mob.get_family():
-        base = getattr(m, "_cv_base", None)
-        if base is None:
-            continue
-        if isinstance(m, ImageMobject):
-            m.set_opacity(base[0] * k)
-        else:
-            m.set_fill(opacity=base[0] * k, family=False).set_stroke(opacity=base[1] * k, family=False)
 
 
 def _window(a: float, k: int, n: int, span: float = 0.5) -> float:
@@ -92,7 +70,7 @@ class Flow(VGroup):
         self.notes = VGroup()
         super().__init__(*self.steps, *self.arrows, self.notes)
         self.move_to(ORIGIN)
-        _remember(self)
+        remember(self)
         self._cv_name = "Flow"
 
     def _cv_parts(self):
@@ -107,7 +85,7 @@ class Flow(VGroup):
 
         def update(m, a):
             for k, part in enumerate(order):
-                _look(part, _window(a, k, len(order)))
+                look(part, _window(a, k, len(order)))
 
         return UpdateFromAlphaFunc(self, update, run_time=run_time, introducer=True)
 
@@ -138,11 +116,11 @@ class Flow(VGroup):
             tag.set_x(self.steps[i].get_x())
         tag._cv_step, tag._cv_name = i, f'Flow note "{words}"'
         self.notes.add(tag)
-        _remember(tag)
-        _look(tag, 0)
+        remember(tag)
+        look(tag, 0)
 
         def update(m, a):
-            _look(tag, rate_functions.smooth(a))
+            look(tag, rate_functions.smooth(a))
 
         return UpdateFromAlphaFunc(self, update, run_time=run_time)
 
@@ -178,9 +156,9 @@ class Correction(VGroup):
                          stroke_color=T.RED, stroke_width=7)
         self.line._cv_name = "Correction strike"
         super().__init__(self.label, self.said, self.line, self.actual)
-        _remember(self)
-        _look(self.line, 0)
-        _look(self.actual, 0)
+        remember(self)
+        look(self.line, 0)
+        look(self.actual, 0)
         self._cv_name = f'Correction "{said[:24]}"'
 
     def _cv_parts(self):
@@ -196,7 +174,7 @@ class Correction(VGroup):
         def update(m, a):
             s = rate_functions.smooth(a)
             self.line.pointwise_become_partial(full, 0, max(1e-3, s))
-            _look(self.line, 1)
+            look(self.line, 1)
             self.said.set_fill(mix(c0, T.DIM, s))
 
         return UpdateFromAlphaFunc(self, update, run_time=run_time)
@@ -209,7 +187,7 @@ class Correction(VGroup):
         def update(m, a):
             s = rate_functions.smooth(a)
             self.actual.move_to(end + DOWN * 0.2 * (1 - s))
-            _look(self.actual, s)
+            look(self.actual, s)
 
         return UpdateFromAlphaFunc(self, update, run_time=run_time)
 
@@ -230,7 +208,7 @@ class Tally(VGroup):
         self.legend.next_to(self.tiles, DOWN, buff=0.45)
         self.groups = groups
         super().__init__(self.tiles, self.legend)
-        _remember(self)
+        remember(self)
         self._cv_name = "Tally"
 
     def _cv_parts(self):
@@ -266,10 +244,10 @@ class Tally(VGroup):
 
         def update(m, a):
             for k, tile in enumerate(self.tiles):
-                _look(tile, _window(a, k, len(self.tiles), 0.3))
+                look(tile, _window(a, k, len(self.tiles), 0.3))
             for t, item in zip(ticks, self.legend):
                 t.update_function(t.mobject, a)
-                _look(item[1], min(1.0, 3 * a))
+                look(item[1], min(1.0, 3 * a))
 
         return UpdateFromAlphaFunc(self, update, run_time=run_time, introducer=True)
 
@@ -285,8 +263,8 @@ class Tally(VGroup):
         after = [t.get_fill_color() for t in target]
         old = self.legend
         new = self._legend(groups, max(old.width, 4.0)).move_to(old)
-        _remember(new)
-        _look(new, 0)
+        remember(new)
+        look(new, 0)
         self.add(new)
         self.legend, self.groups = new, groups
 
@@ -294,8 +272,8 @@ class Tally(VGroup):
             s = rate_functions.smooth(a)
             for t, c0, c1 in zip(self.tiles, before, after):
                 t.set_fill(mix(c0, c1, s))
-            _look(old, 1 - min(1.0, 2 * s))
-            _look(new, max(0.0, 2 * s - 1))
+            look(old, 1 - min(1.0, 2 * s))
+            look(new, max(0.0, 2 * s - 1))
             if a >= 1 and old in self.submobjects:
                 self.remove(old)
 
@@ -328,9 +306,9 @@ class Compare(Group):
                            np.array([self.right.get_left()[0] - 0.1, mid, 0]))
         super().__init__(self.left, self.arrow, self.right)
         self.move_to(ORIGIN)
-        _remember(self)
-        _look(self.right, 0)
-        _look(self.arrow, 0)
+        remember(self)
+        look(self.right, 0)
+        look(self.arrow, 0)
         self._cv_name = "Compare"
 
     def _cv_parts(self):
@@ -344,9 +322,9 @@ class Compare(Group):
         end = self.right.get_center().copy()
 
         def update(m, a):
-            _look(self.arrow, _window(a, 0, 2))
+            look(self.arrow, _window(a, 0, 2))
             s = _window(a, 1, 2)
             self.right.move_to(end + LEFT * 0.25 * (1 - s))
-            _look(self.right, s)
+            look(self.right, s)
 
         return UpdateFromAlphaFunc(self, update, run_time=run_time)

@@ -20,6 +20,7 @@ from manim import (
     Text,
     Transform,
     VGroup,
+    VMobject,
     interpolate_color,
     rate_functions,
 )
@@ -232,6 +233,27 @@ def faded(mob, k: float = 0.4) -> Transform:
             m.set_fill(opacity=min(1, m.get_fill_opacity() * k), family=False)
             m.set_stroke(opacity=min(1, m.get_stroke_opacity() * k), family=False)
     return Transform(mob, target)
+
+
+def remember(mob) -> None:
+    """Record the look `mob` has now, so look(mob, k) can set any part of it."""
+    for m in mob.get_family():
+        if isinstance(m, VMobject):
+            m._cv_base = (m.get_fill_opacity(), m.get_stroke_opacity())
+        elif isinstance(m, ImageMobject):
+            m._cv_base = (m.fill_opacity, 0.0)
+
+
+def look(mob, k: float) -> None:
+    """Set `mob` to `k` of the look remember(mob) recorded."""
+    for m in mob.get_family():
+        base = getattr(m, "_cv_base", None)
+        if base is None:
+            continue
+        if isinstance(m, ImageMobject):
+            m.set_opacity(base[0] * k)
+        else:
+            m.set_fill(opacity=base[0] * k, family=False).set_stroke(opacity=base[1] * k, family=False)
 
 
 def reveal(child, target=None) -> Transform:

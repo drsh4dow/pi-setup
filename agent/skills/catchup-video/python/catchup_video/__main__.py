@@ -142,7 +142,8 @@ def reference() -> None:
             f"  Sizes (em px at 1080p): T.LABEL {T.LABEL}, T.SMALL {T.SMALL}, T.CODE {T.CODE}, "
             f"T.NUMBER {T.NUMBER}, T.HEADER {T.HEADER}.",
             f"  Stage (Manim units): x {T.LEFT}..{T.RIGHT}, y {T.FLOOR}..{T.TOP} below the header row "
-            f"(..{T.CEIL} with no header); captions own the band under T.FLOOR.",
+            f"(..{T.CEIL} with no header); captions own the band under T.FLOOR. In a chapter the graph's "
+            "strip holds the left edge, and the stage starts right of it (T.STAGE.left).",
             "  Pieces start centered at ORIGIN: place them with Grid.put, beside, next_to, or move_to; "
             "the stage keeps them inside it."]
     print("\n".join(out))

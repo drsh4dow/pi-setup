@@ -68,6 +68,8 @@ try {
     "package.json",
     "tsconfig.json",
     "vite.config.ts",
+    // vite.config.ts imports it to build its eval fixture ignores.
+    "scripts/eval-fixture-folders.ts",
     "cli/dumpfile/tsconfig.json",
   ]) {
     const destination = join(fixture, path);

@@ -257,6 +257,23 @@ test("a graph of two columns folds into its strip and back without drawing any t
   assert.match(r.out, /check: clean/);
 });
 
+test("a recap's call-out never pushes a PR's title into its tag", () => {
+  const file = story(`
+    @beat("Two pull requests: the first has a long title and is approved.")
+    def graph(self):
+        self.graph = Branches({51: "Show fifty gifts on every page of the registry and the wish list", 52: "Fix split gifts"})
+        self.play(self.graph.draw())
+        self.play(self.graph.mark(51, "approved"))
+
+    @beat("So: merge the long one, then the short one.", transition=True)
+    def calls(self):
+        self.recap(self.graph, {51: "merge the long", 52: "the short"})
+`);
+  const r = video(["draft", file]);
+  assert.equal(r.code, 0, r.out + r.err);
+  assert.match(r.out, /check: clean/);
+});
+
 test("pieces fit themselves: forty PRs and their strip, wrapped words, a long pipeline with notes on neighbors, and wide code check clean", () => {
   const prs = Array.from({ length: 40 }, (_, k) => `${200 + k}: "Change ${k} with a title long enough to need shortening"`);
   const file = story(`

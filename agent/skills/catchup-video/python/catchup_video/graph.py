@@ -309,18 +309,14 @@ class Branches(VGroup):
 
 
 def flash(label, color: str, keep: bool, run_time: float) -> UpdateFromAlphaFunc:
-    """Animation: `label` swells a little to the right of its left edge and tints to `color`, then
-    returns (keeping the tint with `keep`), so it never reaches what sits left of it (its node)."""
-    parts = [(m, m.copy()) for m in label.get_family() if m.has_points()]
-    left = label.get_left()
+    """Animation: `label` tints to `color` and back (keeping the tint with `keep`) where it is, so
+    it never reaches its node or its marks."""
+    parts = [(m, m.get_fill_color()) for m in label.get_family() if m.has_points()]
 
     def update(g, a):
-        swell = rate_functions.there_and_back(a)
-        tint = rate_functions.smooth(a) if keep else swell
-        for m, m0 in parts:
-            m.become(m0)
-            m.set_fill(mix(m0.get_fill_color(), color, tint), family=False)
-        g.scale(1 + 0.06 * swell, about_point=left)
+        tint = rate_functions.smooth(a) if keep else rate_functions.there_and_back(a)
+        for m, c0 in parts:
+            m.set_fill(mix(c0, color, tint), family=False)
 
     return UpdateFromAlphaFunc(label, update, run_time=run_time)
 

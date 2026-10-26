@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { type CliRuntime, main, parseArgs } from "./cli.ts";
 import { fakeReader, passingCheck } from "./fakes.test-helper.ts";
 import { renderJson, renderPretty } from "./render.ts";
+import { WatcherQueryError } from "./github.ts";
 import type { GitHubReader, WatcherVerdict } from "./types.ts";
 import { parsePrNumber } from "./types.ts";
 
@@ -251,6 +252,93 @@ describe("main", () => {
         pr: { kind: "ready-pr", proof: { gate: { reviewDecision: "REVIEW_REQUIRED" } } },
       },
     });
+  });
+
+  const noChecks = {
+    fastPath: {
+      kind: "unusable",
+      exitCode: 1,
+      stderr: "no checks reported on the 'feature' branch\n",
+    },
+    rollupPages: [{ kind: "no-rollup" }],
+    commitRollups: [{ oid: "head", state: null }],
+  } as const;
+
+  it("reports a PR with no checks at once with --status-only", async () => {
+    const json = testRuntime(fakeReader(noChecks));
+    const code = await main(
+      ["--owner", "owner", "--repo", "repo", "--pr", "1", "--status-only"],
+      json.runtime
+    );
+    expect(code).toBe(0);
+    expect(json.stdout).toHaveLength(1);
+    expect(JSON.parse(json.stdout[0] ?? "")).toMatchObject({
+      kind: "STATUS",
+      exitCode: 0,
+      rows: [{ kind: "open", ci: { kind: "ci-no-checks" } }],
+    });
+
+    const pretty = testRuntime(fakeReader(noChecks));
+    await main(
+      ["--owner", "owner", "--repo", "repo", "--pr", "1", "--status-only", "--pretty"],
+      pretty.runtime
+    );
+    expect(pretty.stdout.join("")).toContain(
+      "| [#1](https://github.com/owner/repo/pull/1) | ➖ no checks | ✅ | ✅ |"
+    );
+  });
+
+  it("reports a PR with no checks as READY in watch mode", async () => {
+    const harness = testRuntime(fakeReader(noChecks));
+    const code = await main(
+      ["--owner", "owner", "--repo", "repo", "--pr", "1"],
+      harness.runtime
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(harness.stdout[0] ?? "")).toMatchObject({
+      kind: "READY",
+      scope: { pr: { kind: "ready-pr", proof: { ci: { kind: "ci-no-checks" } } } },
+    });
+  });
+
+  it("still retries a failed rollup read on a PR with no checks", async () => {
+    const base = fakeReader(noChecks);
+    let failNext = true;
+    const reader: GitHubReader = {
+      ...base,
+      async checkRollupPage(context, after) {
+        if (failNext) {
+          failNext = false;
+          throw new WatcherQueryError({
+            kind: "command-exit",
+            retryable: true,
+            detail: "HTTP 502",
+            code: 1,
+          });
+        }
+        return base.checkRollupPage(context, after);
+      },
+    };
+    const slept: number[] = [];
+    const stdout: string[] = [];
+    const code = await main(
+      ["--owner", "owner", "--repo", "repo", "--pr", "1", "--status-only"],
+      {
+        reader,
+        clock: {
+          now: () => 0,
+          observedAt: () => "2026-07-26T00:00:00.000Z",
+          async sleep(seconds) {
+            slept.push(seconds);
+          },
+        },
+        stdout: (value) => stdout.push(value),
+        stderr: () => {},
+      }
+    );
+    expect(code).toBe(0);
+    expect(slept).toEqual([60]);
+    expect(stdout.map((line) => JSON.parse(line).kind)).toEqual(["RETRY", "STATUS"]);
   });
 
   it("shows help without touching the reader", async () => {

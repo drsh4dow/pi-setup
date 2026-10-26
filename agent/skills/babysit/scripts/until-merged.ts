@@ -42,6 +42,8 @@ import {
   renderMonitor,
 } from "./monitor-verdict.ts";
 import {
+  classifyCi,
+  isCiClear,
   mergeAssessment,
   queryBackoffSeconds,
   readyContribution,
@@ -430,46 +432,7 @@ async function readCi(
   facts: T.PullRequestFacts
 ): Promise<T.CiState> {
   const checks = await resolveChecks(reader, facts.context);
-  const merge = await mergeAssessment(reader, facts);
-  const failed = nonEmpty(
-    checks.checks.filter(
-      (check): check is T.FailedCheck => check.kind === "failed"
-    )
-  );
-  const pending = nonEmpty(
-    checks.checks.filter(
-      (check): check is T.PendingCheck => check.kind === "pending"
-    )
-  );
-  const base = {
-    source: checks.source,
-    all: checks.checks,
-    hadPreviousPassingCi: merge.hadPreviousPassingCi,
-  };
-  if (failed !== null)
-    return {
-      ...base,
-      kind: "ci-failing",
-      failed,
-      pending: pending ?? [],
-      github: merge.github,
-    };
-  if (merge.github.kind === "refused")
-    return {
-      ...base,
-      kind: "ci-github-rejected",
-      failed: [],
-      pending: pending ?? [],
-      github: merge.github,
-    };
-  if (pending !== null) return { ...base, kind: "ci-pending", failed: [], pending };
-  return {
-    ...base,
-    kind: "ci-clean",
-    failed: [],
-    pending: [],
-    github: merge.github,
-  };
+  return classifyCi(checks, await mergeAssessment(reader, facts));
 }
 
 function observeCi(
@@ -486,7 +449,7 @@ function observeCi(
       ci,
     });
   else setCondition(step, environment, "failing-checks", head, null);
-  if (ci.kind === "ci-clean" && step.pr.ciRecoveryOwed) {
+  if (isCiClear(ci) && step.pr.ciRecoveryOwed) {
     queue(step, environment, {
       id: attentionId(environment.repository, [
         step.pr.number,
@@ -495,7 +458,7 @@ function observeCi(
       ]),
       kind: "ci-recovered",
       excerpt: `CI on #${step.pr.number} is clean again at ${head ?? "unknown head"}`,
-      detail: { head, checks: ci.all },
+      detail: { head, checks: ci.kind === "ci-clean" ? ci.all : [] },
     });
     step.pr = { ...step.pr, ciRecoveryOwed: false };
   }
@@ -509,8 +472,7 @@ function mergeReadyProof(
   feedback: FeedbackSnapshot,
   allowDraft: boolean
 ): T.ReadyPr | null {
-  if (ci.kind !== "ci-clean" || mergeability(facts) !== "mergeable")
-    return null;
+  if (!isCiClear(ci) || mergeability(facts) !== "mergeable") return null;
   if (feedback.threads.some((thread) => !thread.isResolved)) return null;
   const ready = readyContribution(
     {

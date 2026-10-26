@@ -66,6 +66,8 @@ export interface StoredItem {
   readonly pr: T.PrNumber;
   readonly kind: AttentionKind;
   readonly acknowledged: boolean;
+  /** A bot's revision in a resolved thread: it rides the next batch but never wakes the agent alone. */
+  readonly held: boolean;
   readonly observedAt: string;
   readonly excerpt: string;
   readonly detail: unknown;
@@ -233,6 +235,8 @@ function storedItem(value: unknown, path: string): StoredItem {
     pr: prNumber(raw.pr, `${path}.pr`),
     kind: oneOf(raw.kind, ATTENTION_KINDS, `${path}.kind`),
     acknowledged: flag(raw.acknowledged, `${path}.acknowledged`),
+    // A watcher from before held items wrote no field; its items all wake.
+    held: raw.held === undefined ? false : flag(raw.held, `${path}.held`),
     observedAt: text(raw.observedAt, `${path}.observedAt`),
     excerpt: text(raw.excerpt, `${path}.excerpt`),
     detail: raw.detail,

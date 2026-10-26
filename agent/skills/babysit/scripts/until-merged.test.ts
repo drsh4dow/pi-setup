@@ -209,6 +209,7 @@ function comment(
   return {
     id,
     authorLogin: author,
+    authorIsBot: false,
     body,
     url: `https://github.com/owner/repo/pull/1#${id}`,
     createdAt: "2026-01-01T00:00:00Z",
@@ -226,6 +227,14 @@ function review(
     state: reviewState,
     submittedAt: "2026-01-01T00:00:00Z",
   };
+}
+/** A comment by a GraphQL Bot account, whose login has no [bot] suffix. */
+function botComment(
+  id: string,
+  body: string,
+  updatedAt = "2026-01-01T00:00:00Z"
+): FeedbackComment {
+  return { ...comment(id, "coderabbitai", body, updatedAt), authorIsBot: true };
 }
 function thread(
   id: string,
@@ -477,6 +486,140 @@ describe("feedback revisions", () => {
     expect(result.items[0]?.detail.body).toBe(huge);
     expect(last).toMatchObject({ batch: { count: 30 } });
     expect(JSON.stringify(last).length).toBeLessThan(24 * 1024);
+  });
+});
+
+describe("bot revisions in resolved threads", () => {
+  const finding = botComment("d1", "Rename this helper.");
+  const answered = comment("d2", "operator", "Renamed in abc123.");
+  const addressed = botComment(
+    "d1",
+    "Rename this helper.\n\n✅ Addressed in commit abc123",
+    "2026-01-01T01:00:00Z"
+  );
+  const offer = botComment("d3", "Would you also like a GitHub issue to track it?");
+  const resolved = (...comments: FeedbackComment[]) =>
+    thread("t-done", true, comments);
+
+  it("holds a bot's edit and reply in a resolved thread until news wakes the agent", async () => {
+    const scene = world();
+    scene.feedback.set(1, feedback({ threads: [resolved(finding, answered)] }));
+    expect((await watch(scene)).code).toBe(5);
+
+    scene.feedback.set(
+      1,
+      feedback({ threads: [resolved(addressed, answered, offer)] })
+    );
+    const held = await watch(scene);
+    expect(held.code).toBe(5);
+    expect(held.records.map((record) => record.kind)).not.toContain("ATTENTION");
+
+    scene.feedback.set(
+      1,
+      feedback({
+        threads: [
+          resolved(addressed, answered, offer),
+          thread("t-open", false, [comment("o1", "alice", "please fix")]),
+        ],
+      })
+    );
+    const news = await watch(scene);
+    expect(news.code).toBe(8);
+    expect(news.items.map((item) => item.detail.body)).toEqual([
+      addressed.body,
+      offer.body,
+      "please fix",
+    ]);
+  });
+
+  it("holds bot revisions that arrive while the agent handles a batch", async () => {
+    const scene = world();
+    scene.feedback.set(
+      1,
+      feedback({
+        comments: [comment("c1", "alice", "please rename")],
+        threads: [resolved(finding, answered)],
+      })
+    );
+    const first = await watch(scene);
+    expect(first.items.map((item) => item.detail.body)).toEqual(["please rename"]);
+
+    scene.feedback.set(
+      1,
+      feedback({
+        comments: [comment("c1", "alice", "please rename")],
+        threads: [resolved(finding, answered, offer)],
+      })
+    );
+    const rearmed = await watch(scene, acks(first.items));
+    expect(rearmed.code).toBe(5);
+
+    scene.feedback.set(
+      1,
+      feedback({
+        comments: [
+          comment("c1", "alice", "please rename"),
+          comment("c2", "alice", "and one more"),
+        ],
+        threads: [resolved(finding, answered, offer)],
+      })
+    );
+    const news = await watch(scene);
+    expect(news.code).toBe(8);
+    expect(news.items.map((item) => item.detail.body)).toEqual([
+      offer.body,
+      "and one more",
+    ]);
+  });
+
+  it("delivers held bot revisions when the PR merges, then finishes", async () => {
+    const scene = world();
+    scene.feedback.set(1, feedback({ threads: [resolved(finding, answered)] }));
+    await watch(scene);
+    scene.feedback.set(1, feedback({ threads: [resolved(finding, answered, offer)] }));
+    expect((await watch(scene)).code).toBe(5);
+
+    scene.facts.set(1, { state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" });
+    const merged = await watch(scene);
+    expect(merged.code).toBe(8);
+    expect(merged.items.map((item) => item.detail.body)).toEqual([offer.body]);
+    const done = await watch(scene, acks(merged.items));
+    expect(done.code).toBe(0);
+    expect(done.records.at(-1)).toMatchObject({ kind: "FINISHED" });
+  });
+
+  it("wakes on a bot's edit or reply in an open thread", async () => {
+    const scene = world();
+    const open = (...comments: FeedbackComment[]) =>
+      thread("t-open", false, comments);
+    scene.feedback.set(1, feedback({ threads: [open(finding)] }));
+    const first = await watch(scene);
+    expect(first.items.map((item) => item.detail.body)).toEqual([finding.body]);
+
+    scene.feedback.set(1, feedback({ threads: [open(addressed, offer)] }));
+    const revised = await watch(scene, acks(first.items));
+    expect(revised.code).toBe(8);
+    expect(revised.items.map((item) => item.detail.body)).toEqual([
+      addressed.body,
+      offer.body,
+    ]);
+  });
+
+  it("still delivers items from state written before items could be held", async () => {
+    const scene = world();
+    scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "hi")] }));
+    const first = await watch(scene);
+    const path = join(state, "state.json");
+    const saved: { items: Record<string, unknown>[] } = JSON.parse(
+      readFileSync(path, "utf8")
+    );
+    for (const item of saved.items) delete item.held;
+    writeFileSync(path, JSON.stringify(saved));
+    const again = await watch(scene);
+    expect(again.code).toBe(8);
+    expect(again.items.map((item) => item.id)).toEqual(
+      first.items.map((item) => item.id)
+    );
   });
 });
 

@@ -25,7 +25,7 @@ This command is _informed_ by the project's domain model and built on a shared d
 
 Read the project's domain glossary (`GLOSSARY.md`) and any ADRs in the area you're touching first, where `docs/agents/domain.md` says they live.
 
-Then have a subagent in the `how explorer` role of the **subagents** skill walk the codebase. Don't follow rigid heuristics; explore organically and note where you experience friction:
+Then have a subagent per the **subagents** skill walk the codebase. Don't follow rigid heuristics; explore organically and note where you experience friction:
 
 - Where does understanding one concept require bouncing between many small modules?
 - Where are modules **shallow**, with an interface nearly as complex as the implementation?

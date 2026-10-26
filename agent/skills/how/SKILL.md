@@ -9,7 +9,7 @@ user-invokable: false
 
 Explore the codebase to answer "how does X work?" questions. Produce architectural explanations at the level of a senior engineer onboarding onto a subsystem, enough to build a working mental model, not so much that it reads like annotated source code.
 
-Every spawn is a subagent per the subagents skill, with a write scope that changes nothing. Explorers use the `how explorer` role in the subagents skill, and every explainer uses the `how explainer` role. Pick each subagent's thinking level for the job, per the subagents skill.
+Every spawn is a subagent per the subagents skill, with a write scope that changes nothing.
 
 ## 1. Assess complexity
 

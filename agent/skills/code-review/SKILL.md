@@ -43,7 +43,7 @@ A diff that touches only prose runs spec-fidelity, standards, and unslop, plus s
 
 ## 4. Assign models
 
-Each persona runs the model of its seat's role in the **subagents** skill's model table: `code-review detail personas` for a detail seat, `code-review taste personas` for a taste seat. Detail lenses go to the family that is exhaustive on edge cases, and taste lenses to the family that judges shape and prose, so the panel mixes families either way. Pick each thinking level for the job, per the **subagents** skill.
+A detail seat takes the **subagents** skill's `code-review detail personas` role, and a taste seat runs `anthropic/claude-opus-5-5`.
 
 ## 5. Launch the panel
 
@@ -60,7 +60,7 @@ $HOME/.pi/agent/skills/subagents/scripts/launch.ts \
   --append "<this skill's directory>/personas/<persona>.md" \
   --append "<this skill's directory>/references/finding-format.md" \
   --model <model> \
-  --thinking <level> \
+  --thinking high \
   --name "subagent: code-review <persona>" \
   > "<review folder>/<persona>.md"
 ```

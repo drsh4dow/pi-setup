@@ -24,19 +24,19 @@ When the user names another session, find its file the way the **recall** skill 
 
 Start three subagents together, per the **subagents** skill. Reviewers use MCP tools to look up the tickets, chat threads, and observability traces the transcript references.
 
-Each reviewer and the synthesizer run the role named below in the subagents skill's model table. Pick each subagent's thinking level for the job, per the **subagents** skill.
+The divergent reviewer takes the subagents skill's `reflect divergent` role.
 
-| Lens | Role | Prompt template |
-|---|---|---|
-| Judgment | `reflect judgment, synthesizer` | `references/judgment-reviewer.md` |
-| Tooling | `reflect tooling` | `references/tooling-reviewer.md` |
-| Divergent | `reflect divergent` | `references/divergent-reviewer.md` |
+| Lens | Prompt template |
+|---|---|
+| Judgment | `references/judgment-reviewer.md` |
+| Tooling | `references/tooling-reviewer.md` |
+| Divergent | `references/divergent-reviewer.md` |
 
 Pass each template verbatim, substituting the transcript path or digest and the project's repository root where marked. Reviewers return findings in their final report.
 
 ## 3. Synthesize
 
-One subagent in the `reflect judgment, synthesizer` role. It spot-verifies citations through MCP. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list. Save it verbatim to `reflect/<YYYY-MM-DD>-<session-id>.md` in the state folder, so the proposal and the user's approval survive a compaction.
+One subagent. It spot-verifies citations through MCP. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list. Save it verbatim to `reflect/<YYYY-MM-DD>-<session-id>.md` in the state folder, so the proposal and the user's approval survive a compaction.
 
 ## 4. Structural enforcement check
 

@@ -49,7 +49,7 @@ Summarize what you found, then take the sections in order, per the **grilling** 
 
 **B. Domain docs and base glossary.** Write the single-context layout without asking, unless exploration found monorepo signals. Then offer multi-context.
 
-For the base glossary, a brownfield repository seeds it from the code. Run a subagent in the `how explorer` role of the **subagents** skill to propose five to fifteen candidate terms, each with the code that uses it. A greenfield repository seeds it from the user: ask for the core nouns of the domain, or skip the glossary until the first term is settled. Resolve each term with the user per the **domain-modeling** skill and write it in that skill's glossary format. Leave `docs/adr/` until the first decision needs recording. Template: [domain.md](domain.md).
+For the base glossary, a brownfield repository seeds it from the code. Run a subagent per the **subagents** skill to propose five to fifteen candidate terms, each with the code that uses it. A greenfield repository seeds it from the user: ask for the core nouns of the domain, or skip the glossary until the first term is settled. Resolve each term with the user per the **domain-modeling** skill and write it in that skill's glossary format. Leave `docs/adr/` until the first decision needs recording. Template: [domain.md](domain.md).
 
 **C. Standards and guardrails.** Show the standards sources and guardrail commands you found, each with where you found it, and every failing or missing guardrail. Offer to record them as found. Adding a missing guardrail is separate work: record it as a finding in the file rather than building it here. Template: [standards.md](standards.md).
 

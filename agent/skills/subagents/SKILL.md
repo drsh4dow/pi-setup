@@ -32,56 +32,25 @@ blocks any spawn the kind does not allow.
 
 ## Models
 
-Each subagent runs the model and thinking level of its role. Skills and
-playbooks name the role, such as "the `how explorer` role".
+Every subagent runs at `--thinking high`, on the model of the role a skill or
+playbook names.
 
-The families differ in strength. `openai/gpt-6.1-sol` is exhaustive on
-details and edge cases: boundaries, proofs, exploits, spec gaps. Opus has
-taste: it writes, plans, and implements best, and judges whether code reads
-well and has the simplest shape. Give a new role the family whose strength the
-job needs.
+- `openai/gpt-6.1-sol` is exhaustive on details and edge cases: boundaries,
+  proofs, exploits, spec gaps. It runs `cross-family reviewer`,
+  `code-review detail personas`, `reflect divergent`, and `researcher`.
+- `anthropic/claude-opus-5-5` has taste: it writes, plans, and implements
+  best, and judges whether code reads well and has the simplest shape. It runs
+  every other role.
+- A panel runs one subagent per model, for independent judgment:
+  `arena runners`, `architect runners`, and `architect reviewers`. The
+  `arena cross-judge pool` seats one judge, on the model the candidates did
+  not use when possible.
 
-Scouts report findings that their parent checks or combines before anything
-depends on them, each with the file, line, commit, or PR it rests on. Work that
-an agent builds on without re-checking, or that the user is asked to agree to,
-takes the row for that work, such as `mapper` or `modeler`, never a scout row
-at a higher level.
-
-| Role | Returns | Model | Thinking |
-| --- | --- | --- | --- |
-| `how explorer`, `why investigators`, `swarm scouts` | Referenced findings for the parent to check and combine: located code, traced flows, excerpts, candidates, read-only slice verdicts | `anthropic/claude-opus-5-5` | `low` |
-| `mapper` | Exploration notes an agent reads instead of the code | `anthropic/claude-opus-5-5` | `medium` |
-| `modeler` | Contract notes and statecharts drawn for agreement: the names, seams, shapes, and rules others build on | `anthropic/claude-opus-5-5` | `high` |
-| `hardest tasks` | Code for the subtlest units | `anthropic/claude-opus-5-5` | `high` |
-| `feature, refactoring`, `bug-fix`, `perf-issue`, `hillclimb` | Code, branch topology, PR upkeep | `anthropic/claude-opus-5-5` | `medium` |
-| `reflect tooling` | Tooling fixes | `anthropic/claude-opus-5-5` | `medium` |
-| `judgment and prose`, `how explainer`, `why synthesizer`, `reflect judgment, synthesizer` | Prose and decisions a human reads | `anthropic/claude-opus-5-5` | `high` |
-| `swarm workers` | Lane work that writes, verifies, or measures | `anthropic/claude-opus-5-5` | `high` |
-| `code-review taste personas` | Readability and shape findings | `anthropic/claude-opus-5-5` | `high` |
-| `cross-family reviewer`, `code-review detail personas`, `reflect divergent`, `researcher` | Findings exhaustive on details: edge cases, failures, proofs, cited sources | `openai/gpt-6.1-sol` | `high` |
-| `arena runners`, `architect runners`, `architect reviewers` | Independent candidates and reviews | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
-| `arena cross-judge pool` | Independent judgments | `anthropic/claude-opus-5-5`, `openai/gpt-6.1-sol` | `high` |
-
-A role with two models is a panel: run one subagent per model, so the panel
-size equals the number of models. Panels mix model families because their
-value is independent judgment. From the cross-judge pool, pick one model whose
-family differs from the candidates being judged, when possible.
-
-A reviewer or verifier that must run on a different model family from the
-work's author takes the `cross-family reviewer` role. When the author ran on
-`openai/gpt-6.1-sol`, run it on `anthropic/claude-opus-5-5` at `high` instead.
-
-Before each spawn, start from the role's row and set the thinking level the
-job needs, between `low` and `high`: one step up for the hardest or subtlest
-work, one or two steps down for routine work. Change only the thinking level and keep the model the
-role names, so a panel stays diverse. When a scout's report fails a spot
-check, such as a wrong reference or a missed file, rerun that slice at
-`medium`.
-
-If a model fails to launch, retry that seat once on the same model, then
-rerun it at `high` on the other family's model. A seat that had to differ in
-family from the author or from its panel has then lost that independence:
-say so in your report, beside the seat's output.
+A new role takes the model whose strength the job needs. A reviewer or verifier
+that must differ in family from the work's author takes the
+`cross-family reviewer` role, on the model the author did not use. If a model fails to
+launch, retry the seat once, then rerun it on the other model, and report each
+cross-family or panel seat that lost its independence.
 
 ## Prepare
 
@@ -151,7 +120,7 @@ $HOME/.pi/agent/skills/subagents/scripts/launch.ts \
   --brief "<state folder>/<brief>.md" \
   --orders "<state folder>/orders.md" \
   --model <model> \
-  --thinking <level> \
+  --thinking high \
   --name "subagent: <short assignment>"
 ```
 

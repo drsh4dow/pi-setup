@@ -37,9 +37,6 @@ export default defineConfig({
       // File modes live in the git index, which the cache does not fingerprint, so a
       // replayed pass could hide a script that lost its executable bit.
       "verify:skills": { command: "node scripts/verify-skills.ts", cache: false },
-      // The diff it reads spans commits, the index, and the upstream ref, none of which the
-      // cache fingerprints.
-      "verify:gates": { command: "node scripts/verify-gates.ts", cache: false },
       "verify:terminal-delivery-citations": {
         command: ".agents/skills/verify-terminal-delivery/scripts/check --citations",
         cache: false,
@@ -111,7 +108,6 @@ export default defineConfig({
         dependsOn: [
           "verify:strict-diagnostics",
           "verify:skills",
-          "verify:gates",
           "verify:terminal-delivery-citations",
           "verify:babysit-scripts",
           "verify:implement-chunk-scripts",

@@ -7,6 +7,7 @@ on:
     paths: &paths
       - agent/skills/catchup-video/**
       - .github/workflows/catchup-video.yml
+      - scripts/ci/**
       - vite.config.ts
       - package.json
       - bun.lock
@@ -22,14 +23,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: voidzero-dev/setup-vp@v1.21.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
         with:
           run-install: false
           cache: true
-      # ffmpeg joins the beats; cairo, pango, and pkg-config build the Manim wheels uv installs.
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config
-      - uses: astral-sh/setup-uv@v10.3.2
+      # ffmpeg joins the beats.
+      # The pinned build comes from GitHub, not the apt mirror, whose stalls held jobs for 15 minutes.
+      - id: ffmpeg
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci-ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('scripts/ci/install-ffmpeg.sh') }}
+      - run: scripts/ci/install-ffmpeg.sh ~/.cache/ci-ffmpeg
+      # Saved right away, so a run whose checks fail still warms the next one.
+      - if: steps.ffmpeg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci-ffmpeg
+          key: ${{ steps.ffmpeg.outputs.cache-primary-key }}
+      # cairo, pango, and pkg-config build the Manim wheels uv installs. Their .debs are cached per
+      # runner image, because each one depends on the exact versions of the libraries the image ships.
+      - id: image
+        run: echo "version=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - id: header-debs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci-header-debs
+          key: header-debs-${{ steps.image.outputs.version }}-${{ hashFiles('.github/workflows/catchup-video.yml', 'scripts/ci/install-debs.sh') }}
+      - run: scripts/ci/install-debs.sh ~/.cache/ci-header-debs libcairo2-dev libpango1.0-dev pkg-config
+      - if: steps.header-debs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ci-header-debs
+          key: ${{ steps.header-debs.outputs.cache-primary-key }}
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: agent/skills/catchup-video/python/uv.lock

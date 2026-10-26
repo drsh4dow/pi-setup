@@ -2,15 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { spawnGuard } from "../delegate-guard.ts";
+import type { ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+
+import delegateGuardExtension, { spawnGuard } from "../delegate-guard.ts";
+import { extensionTestAdapter, unsafeFixture } from "./adapter.ts";
+import {
+  DELEGATE,
+  OWNER,
+  UNATTENDED,
+  decodeDecision,
+  delegateArgv,
+  ownerArgv,
+  rootArgv,
+} from "./guard-fixtures.ts";
 
 const skill = readFileSync(new URL("../../skills/subagents/SKILL.md", import.meta.url), "utf8");
-
-const UNATTENDED = "/h/.pi/agent/skills/subagents/unattended.md";
-
-const OWNER = "/h/.pi/agent/skills/subagents/owner.md";
-
-const DELEGATE = "/h/.pi/agent/skills/subagents/delegate.md";
 
 const DELEGATE_BLOCK = /^Delegates spawn nothing/;
 
@@ -22,10 +28,6 @@ function guardFor(argv: readonly string[]): (command: string) => string | undefi
 
   return guard;
 }
-
-const delegateArgv = ["node", "pi", "--print", "--append-system-prompt", UNATTENDED];
-
-const ownerArgv = [...delegateArgv, "--append-system-prompt", OWNER];
 
 test("the subagents skill's launch block starts a delegate, which an owner may run", () => {
   const launch = skill.match(/## Launch[\s\S]*?```bash\n([\s\S]*?)```/)?.[1];
@@ -84,7 +86,7 @@ test("an owner's launcher run is judged by its last --kind", () => {
 });
 
 test("a process without unattended.md is a root and gets no guard", () => {
-  assert.equal(spawnGuard(["node", "pi"]), undefined);
+  assert.equal(spawnGuard(rootArgv), undefined);
   assert.equal(
     spawnGuard(["node", "pi", "--print", "--append-system-prompt", DELEGATE]),
     undefined,
@@ -128,6 +130,41 @@ test("commands that are not pi print launches pass", () => {
     assert.equal(delegateGuard(command), undefined, command);
     assert.equal(ownerGuard(command), undefined, command);
   }
+});
+
+test("a quoted launch string is a search pattern, not a launch", () => {
+  const delegateGuard = guardFor(delegateArgv);
+  const ownerGuard = guardFor(ownerArgv);
+
+  for (const command of [
+    'rg "foo; pi --print" .',
+    "grep -n 'a; pi-subagent b' f",
+    "grep -nE 'x|pi-subagent y' f",
+    'grep -n "a && ~/.pi/agent/skills/subagents/scripts/launch.ts --kind owner" f',
+  ]) {
+    assert.equal(delegateGuard(command), undefined, command);
+    assert.equal(ownerGuard(command), undefined, command);
+  }
+});
+
+test("a launch inside a bash -c, sh -c, or eval string is judged like a direct one", () => {
+  const delegateGuard = guardFor(delegateArgv);
+  const ownerGuard = guardFor(ownerArgv);
+  const delegateLaunch = `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE}`;
+
+  for (const command of [
+    "bash -c 'pi --print hi'",
+    'sh -c "cd /tmp/app && pi -p hi"',
+    "timeout 900 bash -lc 'pi-subagent --model m'",
+    "eval 'pi --print hi'",
+  ]) {
+    assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
+    assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
+  }
+
+  assert.match(delegateGuard(`bash -c '${delegateLaunch} hi'`) ?? "", DELEGATE_BLOCK);
+  assert.equal(ownerGuard(`bash -c '${delegateLaunch} hi'`), undefined);
+  assert.equal(delegateGuard("bash -c \"grep -n 'a; pi --print' f\""), undefined);
 });
 
 test("an owner's guard judges each launch by its own appends", () => {
@@ -215,4 +252,110 @@ test("an owner's pi-subagent launch with delegate.md is allowed", () => {
     ),
     undefined,
   );
+});
+
+test("a launch inside a command substitution is judged like a direct one", () => {
+  const delegateGuard = guardFor(delegateArgv);
+  const ownerGuard = guardFor(ownerArgv);
+
+  for (const command of [
+    'echo "$(true; pi --print hi)"',
+    'echo "$(true; pi-subagent --model m)"',
+    "out=$(pi --print hi)",
+    "echo `pi -p hi`",
+    'echo "`pi-subagent --model m`"',
+    "cat <<EOF\n$(pi --print hi)\nEOF",
+  ]) {
+    assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
+    assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
+  }
+
+  for (const command of [
+    "grep -n '$(pi --print hi)' notes.md",
+    "echo '`pi-subagent --model m`'",
+    "cat <<'EOF'\n$(pi --print hi)\nEOF",
+  ]) {
+    assert.equal(delegateGuard(command), undefined, command);
+    assert.equal(ownerGuard(command), undefined, command);
+  }
+});
+
+test("a launch inside a subshell, a brace group, or a compound command is judged like a direct one", () => {
+  const delegateGuard = guardFor(delegateArgv);
+  const ownerGuard = guardFor(ownerArgv);
+
+  for (const command of [
+    "(pi --print hi)",
+    "{ pi-subagent --model m; }",
+    "if true; then pi --print hi; fi",
+    "while true; do pi-subagent --model m; done",
+  ]) {
+    assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
+    assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
+  }
+});
+
+test("a delegate session's bash and bg_start calls are refused a launch, and other tools are not judged", async () => {
+  const launchArgv = process.argv;
+  process.argv = [...delegateArgv];
+  const adapter = extensionTestAdapter();
+
+  try {
+    delegateGuardExtension(adapter.api);
+  } finally {
+    process.argv = launchArgv;
+  }
+
+  const call = async (toolName: string, input: Record<string, string>) =>
+    decodeDecision(
+      await adapter.emit(
+        "tool_call",
+        unsafeFixture<ToolCallEvent>({ type: "tool_call", toolCallId: "call-1", toolName, input }),
+        unsafeFixture<ExtensionContext>({}),
+      ),
+    );
+
+  const [bashLaunch, bgStartLaunch, bashVerify, bgStartVerify, write] = await Promise.all([
+    call("bash", { command: "pi --print hi" }),
+    call("bg_start", { command: "pi --print hi" }),
+    call("bash", { command: "vp run verify" }),
+    call("bg_start", { command: "vp run verify" }),
+    call("write", { path: "notes.md", content: "pi --print hi" }),
+  ]);
+
+  assert.match(bashLaunch?.reason ?? "", DELEGATE_BLOCK);
+  assert.match(bgStartLaunch?.reason ?? "", DELEGATE_BLOCK);
+  assert.equal(bashVerify, undefined);
+  assert.equal(bgStartVerify, undefined);
+  assert.equal(write, undefined);
+});
+
+test("a launch string handed to a program that runs it is judged like a direct one", () => {
+  const delegateGuard = guardFor(delegateArgv);
+  const ownerGuard = guardFor(ownerArgv);
+
+  for (const command of [
+    'tmux new-session -d "pi --print hi"',
+    'ssh host "cd /repo && pi-subagent --model m"',
+    'watch "pi -p hi"',
+    'script -c "pi --print hi"',
+    'echo "pi --print hi" | bash',
+  ]) {
+    assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
+    assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
+  }
+
+  assert.equal(
+    ownerGuard(`tmux new-session -d "pi --print --append-system-prompt ${DELEGATE} hi"`),
+    undefined,
+  );
+  assert.equal(
+    ownerGuard(`pi --print --append-system-prompt ${DELEGATE} "never run pi --print"`),
+    undefined,
+  );
+
+  for (const command of ['echo "pi --print hi"', 'printf "%s\\n" "a; pi-subagent b"']) {
+    assert.equal(delegateGuard(command), undefined, command);
+    assert.equal(ownerGuard(command), undefined, command);
+  }
 });

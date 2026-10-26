@@ -249,9 +249,9 @@ class Branches(VGroup):
         return self._change([ring], [], [], run_time)
 
     @verb
-    def point(self, n: int, color: str = T.YELLOW, run_time: float = 0.8) -> UpdateFromAlphaFunc:
-        """Animation: call PR `n` out, its title flashing in `color` and back."""
-        return flash(self._rows[n]["label"], color, run_time)
+    def point(self, n: int, color: str = T.YELLOW, keep: bool = False, run_time: float = 0.8) -> UpdateFromAlphaFunc:
+        """Animation: call PR `n` out, its title flashing in `color` and back, or staying in it with keep=True."""
+        return flash(self._rows[n]["label"], color, keep, run_time)
 
     def _change(self, born, gone, moves, run_time):
         def update(g, a):
@@ -270,17 +270,18 @@ class Branches(VGroup):
         return UpdateFromAlphaFunc(self, update, run_time=run_time)
 
 
-def flash(label, color: str, run_time: float) -> UpdateFromAlphaFunc:
+def flash(label, color: str, keep: bool, run_time: float) -> UpdateFromAlphaFunc:
     """Animation: `label` swells a little to the right of its left edge and tints to `color`, then
-    returns, so it never reaches what sits left of it (its node)."""
+    returns (keeping the tint with `keep`), so it never reaches what sits left of it (its node)."""
     parts = [(m, m.copy()) for m in label.get_family() if m.has_points()]
     left = label.get_left()
 
     def update(g, a):
-        s = rate_functions.there_and_back(a)
+        swell = rate_functions.there_and_back(a)
+        tint = rate_functions.smooth(a) if keep else swell
         for m, m0 in parts:
             m.become(m0)
-            m.set_fill(mix(m0.get_fill_color(), color, s), family=False)
-        g.scale(1 + 0.06 * s, about_point=left)
+            m.set_fill(mix(m0.get_fill_color(), color, tint), family=False)
+        g.scale(1 + 0.06 * swell, about_point=left)
 
     return UpdateFromAlphaFunc(label, update, run_time=run_time)

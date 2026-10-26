@@ -38,9 +38,15 @@ export type Element = {
   ghost?: boolean;
 };
 /** A frame the clock measured, `frame` counted from its beat's first frame. */
-export type Probe = { kind: "mid" | "end"; frame: number; skipped: boolean; elements: Element[] };
+export type Probe = {
+  kind: "mid" | "end"; frame: number; skipped: boolean; elements: Element[];
+  /** A hash of everything the frame draws: equal looks are the same picture. */
+  look: string;
+  /** Nothing is on stage but the chapter header. */
+  empty: boolean;
+};
 export type Note = { kind: "note"; problem: boolean; message: string };
-export type BeatProbes = { index: number; name: string; frames: number; records: (Probe | Note)[] };
+export type BeatProbes = { index: number; name: string; frames: number; transition: boolean; records: (Probe | Note)[] };
 export type Probes = { fps: number; beats: BeatProbes[] };
 
 /** A beat's records as the render cached them (beat.json). */
@@ -49,7 +55,7 @@ export function readBeat(file: string, index: number, name: string): BeatProbes 
   const frames = dig(data, "frames");
   const records = dig(data, "records");
   if (typeof frames !== "number" || !Array.isArray(records)) throw new Error(`${file} is not a beat record`);
-  return { index, name, frames, records: records.filter(isRecord) };
+  return { index, name, frames, transition: dig(data, "transition") === true, records: records.filter(isRecord) };
 }
 
 function isRecord(r: unknown): r is Probe | Note {
@@ -154,6 +160,27 @@ export function geometryProblems(probes: Probes): string[] {
     const at = [...new Set(whens.filter(Boolean))];
     return at.length ? key.replace("): ", `) ${at.join(" and ")}: `) : key;
   });
+}
+
+/** Beats that leave the stage idle: from the midpoint to the end a beat shows nothing but the
+ *  header, or the same picture the beat before it ended on. A transition beat may do either. */
+export function idleProblems(probes: Probes): string[] {
+  const problems: string[] = [];
+  let before: Probe | undefined;
+  for (const beat of probes.beats) {
+    const mid = beat.records.find((r): r is Probe => r.kind === "mid");
+    const end = beat.records.find((r): r is Probe => r.kind === "end");
+    if (mid && end && !beat.transition) {
+      const where = `beat ${beat.index} (${beat.name})`;
+      if (mid.empty && end.empty) {
+        problems.push(`${where}: nothing but the header is on stage at its midpoint and end: show what its words say, or make it a transition`);
+      } else if (before && mid.look === before.look && end.look === before.look) {
+        problems.push(`${where}: the stage at its midpoint and end is the picture the beat before ended on: show what its words add, or make it a transition`);
+      }
+    }
+    before = end;
+  }
+  return problems;
 }
 
 // ---- frames -----------------------------------------------------------------------
@@ -282,7 +309,7 @@ export type CheckInput = {
 export type CheckResult = { problems: string[]; shots: Shot[]; sheets: string[]; skipped: string[] };
 
 export async function check(c: CheckInput): Promise<CheckResult> {
-  const problems = geometryProblems(c.probes);
+  const problems = [...geometryProblems(c.probes), ...idleProblems(c.probes)];
   const { shots, sheets } = writeFrames(c.video, c.probes, c.framesDir);
   const skipped: string[] = [];
   if (c.audio && c.timing.provider !== "none") {

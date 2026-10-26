@@ -72,7 +72,8 @@ def _file_beat(dest: Path, b: dict, fps: int) -> None:
     if r.returncode != 0:
         raise SystemExit(f"could not join beat {b['index']} ({b['name']}): {r.stderr[-400:]}")
     listing.unlink()
-    (tmp / "beat.json").write_text(json.dumps({"fps": fps, "frames": b["frames"], "records": b["records"]}))
+    (tmp / "beat.json").write_text(json.dumps({"fps": fps, "frames": b["frames"], "transition": b["transition"],
+                                                 "records": b["records"]}))
     if dest.exists():
         shutil.rmtree(tmp)
         return

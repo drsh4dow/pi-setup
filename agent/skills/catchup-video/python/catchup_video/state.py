@@ -120,6 +120,33 @@ def stage(scene, story_attrs: list[str]) -> str:
     return h.h.hexdigest()
 
 
+def look(scene) -> str:
+    """What the frame draws, as one hash: the camera, and every visible shape's points and colors
+    and every visible image. Two frames with the same look show the same picture."""
+    h = _Hasher()
+    frame = scene.camera.frame
+    h.array([*frame.get_center(), frame.width])
+    for m in scene.mobjects:
+        for f in m.get_family():
+            if f is frame:
+                continue
+            if isinstance(f, VMobject) and f.has_points() and _drawn(f):
+                h.put(type(f).__name__, f.stroke_width)
+                h.array(f.points)
+                h.array(f.fill_rgbas)
+                h.array(f.stroke_rgbas)
+            elif isinstance(f, ImageMobject) and f.fill_opacity > 0.01:
+                h.array(f.points)
+                h.put(f.fill_opacity, hashlib.sha256(f.pixel_array.tobytes()).digest())
+    return h.h.hexdigest()[:32]
+
+
+def _drawn(m: VMobject) -> bool:
+    stroke = m.stroke_rgbas[:, 3].max() if m.stroke_width > 0 and len(m.stroke_rgbas) else 0.0
+    fill = m.fill_rgbas[:, 3].max() if len(m.fill_rgbas) else 0.0
+    return max(stroke, fill) > 0.01
+
+
 @lru_cache(maxsize=8)
 def _module_parts(path: str, beat_sources: tuple[str, ...]) -> tuple[str, str]:
     """The story's code outside its beats, and the hash of every image it names."""

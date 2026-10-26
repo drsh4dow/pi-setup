@@ -31,7 +31,7 @@ const probe = (file: string, entries: string) =>
 const timingOf = (file: string): { total: number; beats: { start: number }[] } =>
   JSON.parse(fs.readFileSync(file.replace(/\.py$/, ".build/draft/timing.json"), "utf8"));
 
-test("a story written from a skeleton drafts clean in parallel chunks that join without drift", () => {
+test("a story written from a skeleton drafts in parallel chunks that join without drift, and the check names its empty beats", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catchup-video-"));
   const file = path.join(dir, "story.py");
   const made = video(["new", file], "Two changes landed.\nFifty gifts per page || 50 gifts per page\n[curious] One waits on you.\nRecap.\n");
@@ -42,8 +42,11 @@ test("a story written from a skeleton drafts clean in parallel chunks that join 
   assert.match(skeleton, /def recap_beat\(self\)/, "a beat named like a Video method gets a suffix");
 
   const r = video(["draft", file, "--jobs", "3"]);
-  assert.equal(r.code, 0, r.out + r.err);
-  assert.match(r.out, /check: clean/);
+  assert.equal(r.code, 1, r.out + r.err);
+  const problems = r.out.split("\n").filter((l) => l.startsWith("beat "));
+  assert.deepEqual(problems.map((l) => l.replace(/\).*/, ")")), ["beat 1 (two_changes_landed)", "beat 2 (fifty_gifts_per_page)",
+    "beat 3 (one_waits_on_you)", "beat 4 (recap_beat)"]);
+  for (const p of problems) assert.match(p, /: nothing but the header is on stage at its midpoint and end: show what its words say, or make it a transition$/);
   const frames = fs.readdirSync(path.join(dir, "story.build", "draft", "frames"));
   assert.equal(frames.filter((f) => /^beat-\d\d-(mid|end)\.png$/.test(f)).length, 8);
   assert.ok(frames.includes("sheet-1.png"));
@@ -102,12 +105,38 @@ test("an animation longer than its beat is sped up to end with it, and the video
 
     @beat("And the next beat starts on time.")
     def next_one(self):
-        pass
+        self.show(name(Circle(), "circle").shift(RIGHT * 3))
 `);
   const r = video(["draft", file]);
   assert.equal(r.code, 0, r.out + r.err);
   assert.match(r.out, /check: clean/);
   assert.equal(Number(probe(file.replace(/\.py$/, ".draft.mp4"), "stream=nb_read_frames")), Math.round(timingOf(file).total * 15));
+});
+
+test("the check names a beat that leaves the stage idle, unless it is a transition", () => {
+  const file = story(`
+    @beat("A square comes in.")
+    def one(self):
+        self.show(name(Square(2), "square"))
+
+    @beat("Nothing new is shown while these words play out.")
+    def same(self):
+        pass
+
+    @beat("A transition may hold the picture.", transition=True)
+    def held(self):
+        pass
+
+    @beat("The stage is cleared and left empty for these words.")
+    def emptied(self):
+        self.clear()
+`);
+  const r = video(["draft", file]);
+  assert.equal(r.code, 1, r.out + r.err);
+  assert.deepEqual(r.out.split("\n").filter((l) => l.startsWith("beat ")), [
+    "beat 2 (same): the stage at its midpoint and end is the picture the beat before ended on: show what its words add, or make it a transition",
+    "beat 4 (emptied): nothing but the header is on stage at its midpoint and end: show what its words say, or make it a transition",
+  ]);
 });
 
 test("pieces fit themselves: forty PRs, wrapped words, a long pipeline with notes on neighbors, and wide code check clean", () => {

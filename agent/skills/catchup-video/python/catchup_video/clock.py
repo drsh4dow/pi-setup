@@ -185,7 +185,8 @@ class Video(MovingCameraScene):
             self._probe("end")
             if i >= lo:
                 self._out.append({"index": i, "name": fn.__name__, "key": key, "cached": cached, "start": start,
-                                  "frames": self._frame - start, "records": self._b["records"],
+                                  "frames": self._frame - start, "transition": fn._cv_beat["transition"],
+                                  "records": self._b["records"],
                                   "segments": [str(p) for p in writer.partial_movie_files[first:] if p]})
 
     def _local_timing(self, fn, b, t0: float, begin: float, frames: int) -> dict:
@@ -367,7 +368,8 @@ class Video(MovingCameraScene):
         # A transition beat's motion runs through its midpoint, so its geometry there is not
         # recorded, but its frame is still taken at the midpoint itself.
         b["records"].append({"kind": at, "frame": (b["mid_f"] if at == "mid" else self._frame) - b["start"],
-                             "skipped": at == "mid" and b["transition"], "elements": out})
+                             "skipped": at == "mid" and b["transition"], "elements": out,
+                             "look": state.look(self), "empty": all(getattr(m, "_cv_chrome", False) for m in elements)})
 
     def _elements(self):
         """Each element on stage: a piece, a text, or a shape, with plain groups opened."""
@@ -452,10 +454,11 @@ class Video(MovingCameraScene):
         return mob
 
     def recap(self, graph, cues: dict[int, str], color: str = T.YELLOW):
-        """Call out each PR of `graph` as the narration reaches its words: recap({51: "merge the cache"})."""
+        """Call out each PR of `graph` as the narration reaches its words, its title staying in `color`:
+        recap(graph, {51: "merge the cache"})."""
         for n, words in cues.items():
             self.at(words)
-            self.play(graph.point(n, color))
+            self.play(graph.point(n, color, keep=True))
 
     def _unpinned(self, keep=()) -> list:
         kept = {id(f) for m in [*self._pins, *keep, self.header] if m is not None for f in m.get_family()}
@@ -523,7 +526,7 @@ class Video(MovingCameraScene):
             if inward:
                 # The header itself replaces the flier, so its text keeps its own measured size.
                 self.remove(flier)
-                head._cv_pr, head._cv_name = n, f"header #{n}"
+                head._cv_pr, head._cv_name, head._cv_chrome = n, f"header #{n}", True
                 self.add(head)
                 self.header = head
                 self.pin(head)

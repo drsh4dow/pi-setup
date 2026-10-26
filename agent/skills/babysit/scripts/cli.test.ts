@@ -301,6 +301,34 @@ describe("main", () => {
     });
   });
 
+  it("retries instead of READY when the head gains a check rollup after a no-checks read", async () => {
+    for (const [mergeStateStatus, state] of [
+      ["BLOCKED", "PENDING"],
+      ["UNSTABLE", "FAILURE"],
+      ["CLEAN", "ERROR"],
+      ["CLEAN", "SUCCESS"],
+    ] as const) {
+      const harness = testRuntime(
+        fakeReader({
+          ...noChecks,
+          facts: { mergeStateStatus },
+          commitRollups: [{ oid: "head", state }],
+        })
+      );
+      const code = await main(
+        ["--owner", "owner", "--repo", "repo", "--pr", "1", "--max-query-errors", "1"],
+        harness.runtime
+      );
+      const verdict = JSON.parse(harness.stdout.at(-1) ?? "");
+      expect([mergeStateStatus, state, code, verdict.kind]).toEqual([
+        mergeStateStatus,
+        state,
+        7,
+        "BLOCKER",
+      ]);
+    }
+  });
+
   it("still retries a failed rollup read on a PR with no checks", async () => {
     const base = fakeReader(noChecks);
     let failNext = true;

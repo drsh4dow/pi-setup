@@ -48,9 +48,7 @@ playbook names.
 
 A new role takes the model whose strength the job needs. A reviewer or verifier
 that must differ in family from the work's author takes the
-`cross-family reviewer` role, on the model the author did not use. If a model fails to
-launch, retry the seat once, then rerun it on the other model, and report each
-cross-family or panel seat that lost its independence.
+`cross-family reviewer` role, on the model the author did not use.
 
 ## Prepare
 
@@ -159,6 +157,18 @@ orders as a system update after the earlier text, so the launcher opens the
 directive with a note that the update is current. `--dry-run` runs every check, then
 prints the command, the content of every append with the orders' line count,
 and the prompt, and starts no Pi.
+
+## Retry
+
+Retry a failed child by how it failed:
+
+- Cap hit, or out of memory on an idle host: respawn with a smaller scope.
+- Out of memory on a loaded host: respawn as-is once the host has headroom,
+  which the brief launcher waits for.
+- Network drop: retry as-is.
+- Launch failure or tool error: retry once, then rerun on the other model, and
+  report each cross-family or panel seat that lost its independence.
+- Unknown: retry once.
 
 ## Use the report
 

@@ -34,21 +34,7 @@ Read [examples.md](examples.md) before writing the first test. It pairs a good a
 3. **Write only enough code to pass it.** Don't anticipate future tests or add speculative features.
 4. **Run it green**, with the tests nearby, then take the next slice.
 
-The loop is done when every behavior the ticket or bug names has a green test at an agreed seam, or a recorded reason under "When a failing test is impractical", and each new test survives the two imagined edits below. Then dogfood it. Refactoring is not part of the loop. It belongs to the review stage (see the [code-review](../code-review/SKILL.md) skill), not the red-green implementation cycle.
-
-## Dogfood the real thing
-
-A green suite proves the code against its tests and fakes. Most bugs live where the code meets something real: an adapter's translation, an error shape, a timeout, two events in an order nobody wrote a test for. Keep the suite fast, and find those bugs by using the real thing.
-
-1. **Drive it like a chaotic user.** Run the real app, CLI, or service with its real boundaries through the project's verification skill, a project-local skill such as `.agents/skills/verify-<app>/` that launches the app and drives its features. Cover every feature in its feature map that the change touches, then leave the happy path the way real users do: steps in the wrong order, a double submit, an interrupt or kill mid-operation, a restart, empty, huge, or malformed input, two sessions at once, a slow or failing external service. Run every contract suite the verification skill lists for a service the change touches.
-2. **Turn each bug into a slice.** Write the smallest test at a seam that reproduces it, run it red, fix the code, and run it green. When only the real boundary reproduces the bug, record the drive steps that do, and run them red before the fix and green after.
-3. **Drive again after the fixes.** Dogfooding is done when a drive over the same features finds no new bug.
-
-When two fixes fail the same drive, or a third bug turns up at the same boundary, stop fixing. The design of that boundary is the suspect premise: apply the [principle-attack-the-premise](../principle-attack-the-premise/SKILL.md) skill before the next fix.
-
-When the project has no verification skill, drive the real thing by hand: a tmux session for a CLI or TUI, the [agent-browser](../agent-browser/SKILL.md) skill for a web UI, real requests for a service. Then recommend the user run the [create-verification-skill](../create-verification-skill/SKILL.md) skill. When a drive shows that the verification skill's steps or feature map no longer match the app, report it and recommend the [maintain-verification-skill](../maintain-verification-skill/SKILL.md) skill.
-
-When the behavior depends on the order of events, such as concurrency, retries, cancellation, or a lifecycle or state machine, each test and each drive samples one order. If a project-local skill model-checks or proves that code, follow it for this change. If none covers it, name the gap in the report and recommend the [create-formal-verification-skill](../create-formal-verification-skill/SKILL.md) skill. When a formal check fails on code this change did not touch, the verification may be stale: recommend the [maintain-formal-verification-skill](../maintain-formal-verification-skill/SKILL.md) skill.
+The loop is done when every behavior the ticket or bug names has a green test at an agreed seam, or a recorded reason under "When a failing test is impractical", and each new test survives the two imagined edits below. Then dogfood the change per the [principle-prove-it-works](../principle-prove-it-works/SKILL.md) skill's "Dogfood the real thing" section, which also says what a drive reports. Refactoring is not part of the loop. It belongs to the review stage (see the [code-review](../code-review/SKILL.md) skill), not the red-green implementation cycle.
 
 ## What a good test is
 
@@ -75,7 +61,3 @@ When the only test path is one of those, or the reproduction is vague or needs p
 - Each slice's red run: the command and the failure it produced.
 - The green run of every new test, and the nearby checks you ran.
 - Each behavior with no red run, why, and the closest check you used instead.
-- The features you drove, the off-path cases you tried, and each bug the drive found with its slice or drive steps.
-- Each contract suite you ran against a sandbox, and its result.
-- Each premise you attacked, and what the evidence showed.
-- Each verification or formal verification skill you recommended, and the gap it would close.

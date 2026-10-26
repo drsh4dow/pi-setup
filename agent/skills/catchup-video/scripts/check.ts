@@ -31,8 +31,9 @@ type Box = [number, number, number, number];
 type Point = [number, number];
 export type Element = {
   name: string; box: Box; seg?: [Point, Point]; over: number[]; texts: [string, number, string, Box][];
-  /** Elements of one open piece (a Branches graph) are laid out by it; the check skips overlaps among them. */
-  group?: number;
+  /** The named parts of a composite piece (a graph's nodes, titles, and marks; an option's cards)
+   *  that must never overlap one another. Other elements keep clear of these, not of the piece's box. */
+  parts?: [string, Box][];
   /** Faint enough to be background: others may sit on it. */
   ghost?: boolean;
 };
@@ -78,6 +79,9 @@ function segmentHits(seg: [Point, Point], box: Box): boolean {
   return lo < hi;
 }
 
+/** What of an element others must keep clear of: its named parts, or its whole box. */
+const solids = (e: Element): [string, Box][] => e.parts?.map(([part, box]) => [`${e.name} ${part}`, box]) ?? [[e.name, e.box]];
+
 function elementProblems(els: Element[], add: (message: string) => void): void {
   for (const [i, e] of els.entries()) {
     const [x0, y0, x1, y1] = e.box;
@@ -93,9 +97,12 @@ function elementProblems(els: Element[], add: (message: string) => void): void {
         if (overlaps(ta[3], tb[3])) add(`${e.name}: text "${ta[2]}" overlaps text "${tb[2]}"`);
       }
     }
+    const parts = e.parts ?? [];
+    for (const [a, [pa, ba]] of parts.entries()) {
+      for (const [pb, bb] of parts.slice(a + 1)) if (overlaps(ba, bb)) add(`${e.name}: ${pa} overlaps ${pb}`);
+    }
     for (const [j, f] of els.entries()) {
       if (j <= i || e.over.includes(j) || f.over.includes(i)) continue;
-      if (e.group !== undefined && e.group === f.group) continue;
       let textHit = false;
       for (const ta of e.texts) {
         for (const tb of f.texts) {
@@ -104,15 +111,26 @@ function elementProblems(els: Element[], add: (message: string) => void): void {
           add(`text "${ta[2]}" of ${e.name} overlaps text "${tb[2]}" of ${f.name}`);
         }
       }
-      if (textHit || e.ghost || f.ghost) continue;
-      let hit: boolean;
-      if (e.seg && f.seg) hit = false;
-      else if (e.seg) hit = segmentHits(e.seg, f.box);
-      else if (f.seg) hit = segmentHits(f.seg, e.box);
-      else hit = overlaps(e.box, f.box);
-      if (hit) add(`${e.name} overlaps ${f.name}`);
+      if (textHit || e.ghost || f.ghost || (e.seg && f.seg)) continue;
+      const hit = solidHit(e, f);
+      if (hit) add(`${hit[0]} overlaps ${hit[1]}`);
     }
   }
+}
+
+/** The first pair of solids of `e` and `f` that overlap, by name. */
+function solidHit(e: Element, f: Element): [string, string] | null {
+  for (const [na, ba] of solids(e)) {
+    for (const [nb, bb] of solids(f)) if (meets(e, ba, f, bb)) return [na, nb];
+  }
+  return null;
+}
+
+/** Whether solid `ba` of `e` meets solid `bb` of `f`; a line meets only what it crosses. */
+function meets(e: Element, ba: Box, f: Element, bb: Box): boolean {
+  if (e.seg) return segmentHits(e.seg, bb);
+  if (f.seg) return segmentHits(f.seg, ba);
+  return overlaps(ba, bb);
 }
 
 /** Overlaps, frame exits, caption-band intrusions, and text below its minimum, by beat and element. */

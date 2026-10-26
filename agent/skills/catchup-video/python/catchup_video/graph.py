@@ -10,12 +10,12 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from manim import DOWN, LEFT, RIGHT, UP, CubicBezier, Dot, Indicate, Line, UpdateFromAlphaFunc, VGroup, VMobject, rate_functions
+from manim import DOWN, LEFT, RIGHT, UP, CubicBezier, Dot, Line, UpdateFromAlphaFunc, VGroup, VMobject, rate_functions
 
 from . import theme as T
 from .parts import Tag, icon
 from .report import problem
-from .text import baseline, text, verb
+from .text import baseline, label_of, mix, text, verb
 
 ROWS_TOP = 3.55  # the overview may use the header row: a dive lifts the title there
 BASE_ROOM = 0.55  # under the trunks, for the base branch's name
@@ -75,7 +75,6 @@ class Branches(VGroup):
         self._rows: dict[int, dict] = {}
         self._v = 1.0
         self._gone: set[int] = set()
-        self._cv_open = True  # the check sees its rows, not one box around the whole graph
         items = list(prs.items())
         for c in range(cols):
             chunk = items[c * rows:(c + 1) * rows]
@@ -135,6 +134,16 @@ class Branches(VGroup):
                 continue
             f = 0.0 if id(m) in self._gone else self._v
             m.set_fill(opacity=base[0] * k * f, family=False).set_stroke(opacity=base[1] * k * f, family=False)
+
+    def _cv_parts(self):
+        """What must never overlap, for the check: each row's node (with its rings), number,
+        title, and marks, and the base branch's name."""
+        parts = [("base", self.base)]
+        for n, row in self._rows.items():
+            parts += [(f"#{n} node", VGroup(row["node"], *row["rings"])), (f"#{n} number", row["number"]),
+                      (f"#{n} title", row["title"])]
+            parts += [(f"#{n} {label_of(m).removeprefix(f'Branches #{n} ')}", m) for m in row["marks"]]
+        return parts
 
     def node(self, n: int) -> Dot:
         """PR `n`'s node, the dot the camera dives into."""
@@ -240,17 +249,18 @@ class Branches(VGroup):
         return self._change([ring], [], [], run_time)
 
     @verb
-    def point(self, n: int, color: str = T.YELLOW, run_time: float = 0.8) -> Indicate:
+    def point(self, n: int, color: str = T.YELLOW, run_time: float = 0.8) -> UpdateFromAlphaFunc:
         """Animation: call PR `n` out, its title flashing in `color` and back."""
-        return Indicate(self._rows[n]["label"], color=color, scale_factor=1.06, run_time=run_time)
+        return flash(self._rows[n]["label"], color, run_time)
 
     def _change(self, born, gone, moves, run_time):
         def update(g, a):
             s = rate_functions.smooth(a)
+            # What leaves is gone before what replaces it shows, so the two never read as one.
             for m in born:
-                self._fade(m, s)
+                self._fade(m, rate_functions.smooth(max(0.0, 2 * a - 1)))
             for _, m in gone:
-                self._fade(m, 1 - s)
+                self._fade(m, 1 - rate_functions.smooth(min(1.0, 2 * a)))
             for m, p0, p1 in moves:
                 m.move_to(p0 + (p1 - p0) * s)
             if a >= 1:
@@ -258,3 +268,19 @@ class Branches(VGroup):
                     parent.remove(m)
 
         return UpdateFromAlphaFunc(self, update, run_time=run_time)
+
+
+def flash(label, color: str, run_time: float) -> UpdateFromAlphaFunc:
+    """Animation: `label` swells a little to the right of its left edge and tints to `color`, then
+    returns, so it never reaches what sits left of it (its node)."""
+    parts = [(m, m.copy()) for m in label.get_family() if m.has_points()]
+    left = label.get_left()
+
+    def update(g, a):
+        s = rate_functions.there_and_back(a)
+        for m, m0 in parts:
+            m.become(m0)
+            m.set_fill(mix(m0.get_fill_color(), color, s), family=False)
+        g.scale(1 + 0.06 * s, about_point=left)
+
+    return UpdateFromAlphaFunc(label, update, run_time=run_time)

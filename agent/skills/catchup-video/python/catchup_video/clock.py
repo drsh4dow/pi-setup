@@ -343,11 +343,9 @@ class Video(MovingCameraScene):
         def px(p):
             return [round((p[0] - cx) / w * 1920 + 960, 1), round((cy - p[1]) / h * 1080 + 540, 1)]
 
-        found = list(self._elements())
-        elements = [m for m, _ in found]
-        groups: dict[int, int] = {}
+        elements = list(self._elements())
         out = []
-        for m, group in found:
+        for m in elements:
             allowed = {id(f) for t in getattr(m, "_cv_over", []) for f in t.get_family()}
             over_ix = [j for j, o in enumerate(elements)
                        if o is not m and (allowed & {id(f) for f in o.get_family()}
@@ -355,8 +353,9 @@ class Video(MovingCameraScene):
                                                        for f in t.get_family()})]
             item = {"name": label_of(m), "box": [*px(m.get_corner(UL)), *px(m.get_corner(DR))],
                     "over": over_ix, "texts": [], "ghost": bool(_opacity(m) < GHOST)}
-            if group is not None:
-                item["group"] = groups.setdefault(group, len(groups))
+            if hasattr(m, "_cv_parts"):
+                item["parts"] = [[part, [*px(p.get_corner(UL)), *px(p.get_corner(DR))]]
+                                 for part, p in m._cv_parts() if _opacity(p) >= GHOST]
             if isinstance(m, Line):
                 item["seg"] = [px(m.get_start()), px(m.get_end())]
             for t in m.get_family():
@@ -371,23 +370,20 @@ class Video(MovingCameraScene):
                              "skipped": at == "mid" and b["transition"], "elements": out})
 
     def _elements(self):
-        """Each element on stage, with the open piece (such as Branches) it belongs to, if any."""
+        """Each element on stage: a piece, a text, or a shape, with plain groups opened."""
         frame = self.camera.frame
 
-        def walk(m, group):
+        def walk(m):
             if m is frame or _opacity(m) <= 0.05:
                 return
-            if group is None and getattr(m, "_cv_open", False):
+            if type(m) in (VGroup, Group):
                 for s in m.submobjects:
-                    yield from walk(s, id(m))
-            elif type(m) in (VGroup, Group):
-                for s in m.submobjects:
-                    yield from walk(s, group)
+                    yield from walk(s)
             elif m.has_points() or m.submobjects or isinstance(m, ImageMobject):
-                yield m, group
+                yield m
 
         for m in self.mobjects:
-            yield from walk(m, None)
+            yield from walk(m)
 
     # ---- staging helpers -----------------------------------------------------
 
@@ -439,8 +435,8 @@ class Video(MovingCameraScene):
         """Place `mob` next to `target` on the first side (right, below, left, above, or only
         `side`) where it stays on stage and clear of everything shown; returns `mob`."""
         mine = {id(f) for f in [*mob.get_family(), *target.get_family()]}
-        boxes = [_box(m) for m, _ in self._elements()
-                 if _opacity(m) >= GHOST and not mine & {id(f) for f in m.get_family()}]
+        boxes = [_box(p) for m in self._elements() if _opacity(m) >= GHOST
+                 for p in _solid(m) if not mine & {id(f) for f in p.get_family()}]
         top = self._stage_top()
         best = None
         for d in [side] if side is not None else [RIGHT, DOWN, LEFT, UP]:
@@ -573,6 +569,13 @@ def _carry_text_marks(anims) -> None:
 def _early(t: float) -> float:
     """Ease that finishes in the first 40% of the animation, so a chapter is gone before the graph returns."""
     return rate_functions.smooth(min(1.0, t / 0.4))
+
+
+def _solid(m) -> list:
+    """What of `m` others must keep clear of: the parts a piece names, or `m` whole."""
+    if hasattr(m, "_cv_parts"):
+        return [p for _, p in m._cv_parts() if _opacity(p) >= GHOST]
+    return [m]
 
 
 def _opacity(m) -> float:

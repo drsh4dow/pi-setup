@@ -72,6 +72,7 @@ class Tag(VGroup):
         box = RoundedRectangle(width=inner.width + 0.5, height=tall, corner_radius=0.12,
                                stroke_color=color, stroke_width=2, fill_color=color, fill_opacity=0.10)
         super().__init__(box.move_to(inner), inner)
+        self.words = words
         self._cv_name = f'Tag "{words}"'
 
 
@@ -272,7 +273,13 @@ class Bars(VGroup):
             parts.append(hidden(row))
         super().__init__(*parts)
         self.move_to(ORIGIN)
+        self.labels = [lab for lab, _, _ in rows]
         self._cv_name = "Bars"
+
+    def _cv_parts(self):
+        """What must never overlap, for the check: each row's label, bar, and number."""
+        return [(f'{what} "{name}"', m) for name, (row, _, _) in zip(self.labels, self.rows)
+                for what, m in zip(("label", "bar", "number"), row)]
 
     @verb
     def grow(self, *indices: int, run_time: float = 1.4):
@@ -329,7 +336,13 @@ class Options(VGroup):
             groups.append(VGroup(panel, c))
         super().__init__(*groups)
         self.arrange(RIGHT, buff=gap, aligned_edge=UP)
+        self.titles = [title for title, _ in items]
         self._cv_name = "Options"
+
+    def _cv_parts(self):
+        """What must never overlap, for the check: each card and each pick's note."""
+        cards = [(f'card "{t}"', g) for t, g in zip(self.titles, self.submobjects)]
+        return cards + [(f'pick "{n.words}"', n) for n in self.submobjects[len(self.titles):]]
 
     @verb
     def pick(self, i: int, note: str = "my pick", run_time: float = 1.0):

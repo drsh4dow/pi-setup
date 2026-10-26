@@ -26,7 +26,7 @@ from manim import (
 
 from . import theme as T
 from .parts import Number, Tag, Tiles, arrow
-from .text import fit, mix, remakeable, text, verb
+from .text import fit, label_of, mix, remakeable, text, verb
 
 WIDE = T.RIGHT - T.LEFT
 
@@ -95,6 +95,10 @@ class Flow(VGroup):
         _remember(self)
         self._cv_name = "Flow"
 
+    def _cv_parts(self):
+        """What must never overlap, for the check: each step and each note."""
+        return [(label_of(m).removeprefix("Flow "), m) for m in [*self.steps, *self.notes]]
+
     @verb
     def grow(self, run_time: float = 1.6) -> UpdateFromAlphaFunc:
         """Animation: bring the steps in from left to right, each arrow before its step."""
@@ -125,9 +129,13 @@ class Flow(VGroup):
              run_time: float = 0.6) -> UpdateFromAlphaFunc:
         """Animation: a note under step `i`, e.g. flag(2, "no human checks it"); icon "nobody" by default."""
         tag = Tag(words, color, icon_kind, width=min(WIDE, 2 * self.cell + 0.75))
-        below = [n for n in self.notes if getattr(n, "_cv_step", None) == i]
-        anchor = below[-1] if below else self.steps[i]
-        tag.next_to(anchor, DOWN, buff=0.3)
+        tag.next_to(self.steps[i], DOWN, buff=0.3)
+        # A note wider than its step stacks under any note it would reach, never over it.
+        x0, x1 = tag.get_left()[0], tag.get_right()[0]
+        reached = [n for n in self.notes if n.get_left()[0] < x1 and n.get_right()[0] > x0]
+        if reached:
+            tag.next_to(min(reached, key=lambda n: n.get_bottom()[1]), DOWN, buff=0.3)
+            tag.set_x(self.steps[i].get_x())
         tag._cv_step, tag._cv_name = i, f'Flow note "{words}"'
         self.notes.add(tag)
         _remember(tag)
@@ -175,6 +183,10 @@ class Correction(VGroup):
         _look(self.actual, 0)
         self._cv_name = f'Correction "{said[:24]}"'
 
+    def _cv_parts(self):
+        """What must never overlap, for the check: the label, what was said, and what is true."""
+        return [("label", self.label), ("said", self.said), ("actual", self.actual)]
+
     @verb
     def strike(self, run_time: float = 0.8) -> UpdateFromAlphaFunc:
         """Animation: a red line crosses out what was said, which dims."""
@@ -220,6 +232,10 @@ class Tally(VGroup):
         super().__init__(self.tiles, self.legend)
         _remember(self)
         self._cv_name = "Tally"
+
+    def _cv_parts(self):
+        """What must never overlap, for the check: the tiles and each kind in the legend."""
+        return [("tiles", self.tiles), *((f'legend "{name}"', item) for (name, _, _), item in zip(self.groups, self.legend))]
 
     @staticmethod
     def _paint(tiles, groups) -> None:
@@ -316,6 +332,11 @@ class Compare(Group):
         _look(self.right, 0)
         _look(self.arrow, 0)
         self._cv_name = "Compare"
+
+    def _cv_parts(self):
+        """What must never overlap, for the check: the two sides."""
+        return [(self.left._cv_name.removeprefix("Compare "), self.left),
+                (self.right._cv_name.removeprefix("Compare "), self.right)]
 
     @verb
     def reveal(self, run_time: float = 1.0) -> UpdateFromAlphaFunc:

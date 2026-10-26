@@ -70,6 +70,30 @@ test("the check names the beat and element of every problem and exits 1", () => 
   assert.match(r.out, /^beat 2 \(long\): runs [\d.]+s past its slot even with its animations sped up to twice their speed; in this beat it plays FadeIn Square at .* \(9\.0s\): cut one of them/m);
 });
 
+test("the check sees the parts of a composite piece and names the two that overlap", () => {
+  const file = story(`
+    @beat("Two pull requests, and the second one's number is pushed into its node.")
+    def graph(self):
+        self.graph = Branches({51: "Fix split gifts", 52: "Show fifty gifts"})
+        self.graph.label(52).shift(LEFT * 0.6)
+        self.add(self.graph)
+
+    @beat("Two options, and the second card is pushed over the first.")
+    def cards(self):
+        self.clear()
+        pick = Options([("Keep it", ["simple"]), ("Change it", ["costly"])])
+        pick.submobjects[1].shift(LEFT * 3)
+        self.add(pick)
+`);
+  const r = video(["draft", file]);
+  assert.equal(r.code, 1, r.out + r.err);
+  const problems = r.out.split("\n").filter((l) => l.startsWith("beat "));
+  assert.deepEqual(problems, [
+    "beat 1 (graph) mid and end: Branches: #52 node overlaps #52 number",
+    'beat 2 (cards) mid and end: Options: card "Keep it" overlaps card "Change it"',
+  ]);
+});
+
 test("an animation longer than its beat is sped up to end with it, and the video keeps its length", () => {
   const file = story(`
     @beat("Short words here.")
@@ -86,7 +110,7 @@ test("an animation longer than its beat is sped up to end with it, and the video
   assert.equal(Number(probe(file.replace(/\.py$/, ".draft.mp4"), "stream=nb_read_frames")), Math.round(timingOf(file).total * 15));
 });
 
-test("pieces fit themselves: forty PRs, wrapped words, a long pipeline, and wide code check clean", () => {
+test("pieces fit themselves: forty PRs, wrapped words, a long pipeline with notes on neighbors, and wide code check clean", () => {
   const prs = Array.from({ length: 40 }, (_, k) => `${200 + k}: "Change ${k} with a title long enough to need shortening"`);
   const file = story(`
     @beat("Forty pull requests moved, and three are marked.")
@@ -102,6 +126,12 @@ test("pieces fit themselves: forty PRs, wrapped words, a long pipeline, and wide
         code = g.put(Code("total = split_shares(price, guests)\\n" * 3, path="src/a/long/path/to/checkout.py"), 1, 0)
         flow = g.put(Flow(["open", "build", "test", "review", "stage", "deploy", "watch"]), 0, 1, cs=2)
         self.clear(extra=[FadeIn(words), FadeIn(code), flow.grow()])
+
+    @beat("Two neighboring steps get a note each, and the notes stay apart.")
+    def notes(self):
+        flow = Flow(["merge", "build", "deploy", "watch"])
+        self.clear(extra=[flow.grow()])
+        self.play(flow.flag(1, "nobody reviews the build"), flow.flag(2, "deploys on its own"))
 `);
   const r = video(["draft", file]);
   assert.equal(r.code, 0, r.out + r.err);

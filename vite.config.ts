@@ -21,7 +21,7 @@ const ignoredFiles = [
   "oxlint/anti-slop/**",
 ];
 
-// Every task verify runs except the catchup-video renders, which verify adds itself.
+// Every task verify runs except the catchup-video renders, which verify:all adds itself.
 const verifyChecks = [
   "verify:strict-diagnostics",
   "verify:skills",
@@ -135,13 +135,17 @@ export default defineConfig({
         "node scripts/verify-docs.ts",
       ],
       // The dependencies run concurrently; vp check runs once they pass.
-      verify: {
+      "verify:all": {
         command: "vp check",
         dependsOn: [...verifyChecks, "verify:catchup-video-scripts"],
       },
+      "verify:checks": { command: "vp check", dependsOn: verifyChecks },
+      // Each runs its inner task and, when a task fails, ends with that task's output and lists
+      // the tasks the runner killed because of it. A cached pass would replay a stale result.
+      verify: { command: "node scripts/verify.ts verify:all", cache: false },
       // CI runs this, and runs verify:catchup-video-scripts in its own workflow only when the
       // skill changes, because the Manim renders take three minutes.
-      "verify:without-video": { command: "vp check", dependsOn: verifyChecks },
+      "verify:without-video": { command: "node scripts/verify.ts verify:checks", cache: false },
     },
   },
   // Pi rewrites agent/settings.json with its own JSON formatting whenever a setting changes.

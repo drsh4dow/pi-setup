@@ -1,6 +1,7 @@
-import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { commandIndex, simpleCommands } from "../lib/shell-command.ts";
+import { refuseCommands } from "../lib/command-tool-call.ts";
+import { basename, commandArgv, isShell, pipelines } from "../lib/shell-command.ts";
 
 type LaunchKind = "root" | "owner" | "delegate";
 
@@ -13,6 +14,21 @@ const OWNER_PROMPT = "skills/subagents/owner.md";
 const DELEGATE_PROMPT = "skills/subagents/delegate.md";
 
 const LAUNCHER = "skills/subagents/scripts/launch.ts";
+
+// Commands that only print or search their arguments, so a launch string in one is text.
+const TEXT_COMMANDS: ReadonlySet<string> = new Set([
+  "ack",
+  "ag",
+  "echo",
+  "egrep",
+  "fgrep",
+  "grep",
+  "printf",
+  "rg",
+]);
+
+// An argument with a blank or a separator may be a command line that its program runs.
+const COMMAND_LINE = /[\s;&|]/;
 
 const DELEGATE_REASON =
   "Delegates spawn nothing. Finish your piece, and name in your report the helper your parent should spawn.";
@@ -56,30 +72,44 @@ function isLauncher(word: string): boolean {
 // `pi-subagent` needs no flag to launch, so it counts only in command position.
 // Otherwise `rg pi-subagent` and `test -x .../pi-subagent` would read as launches.
 function piSubagentLaunch(argv: readonly string[]): PiLaunchArgv | undefined {
-  const index = commandIndex(argv);
-  const commandWord = argv[index];
+  const launch = commandArgv(argv);
+  const commandWord = launch[0] ?? "";
 
-  if (commandWord === undefined || !(isPiSubagent(commandWord) || isLauncher(commandWord)))
-    return undefined;
-
-  return argv.slice(index);
+  return isPiSubagent(commandWord) || isLauncher(commandWord) ? launch : undefined;
 }
 
+function launchOf(argv: readonly string[]): PiLaunchArgv | undefined {
+  const subagentLaunch = piSubagentLaunch(argv);
+
+  if (subagentLaunch !== undefined) return subagentLaunch;
+
+  const piIndex = argv.findIndex(isPi);
+
+  if (piIndex === -1) return undefined;
+
+  const launch = argv.slice(piIndex);
+
+  return launch.some((word) => word === "--print" || word === "-p") ? launch : undefined;
+}
+
+// A program such as `tmux new-session -d "…"`, `ssh host "…"`, or `watch "…"` runs its
+// quoted argument as a command line, so that argument is judged as one. A launch's own
+// arguments are its prompt, and a text command's are text unless its pipeline feeds a shell.
 function subagentLaunches(command: string): PiLaunchArgv[] {
-  return simpleCommands(command).flatMap((argv) => {
-    const subagentLaunch = piSubagentLaunch(argv);
+  return pipelines(command).flatMap((pipeline) => {
+    const feedsShell = pipeline.slice(1).some(({ argv }) => isShell(argv[0] ?? ""));
 
-    if (subagentLaunch !== undefined) return [subagentLaunch];
+    return pipeline.flatMap(({ argv }) => {
+      const launch = launchOf(argv);
 
-    const piIndex = argv.findIndex(isPi);
+      if (launch !== undefined) return [launch];
 
-    if (piIndex === -1) return [];
+      const [word = "", ...args] = commandArgv(argv);
 
-    const launch = argv.slice(piIndex);
+      if (TEXT_COMMANDS.has(basename(word)) && !feedsShell) return [];
 
-    if (!launch.some((word) => word === "--print" || word === "-p")) return [];
-
-    return [launch];
+      return args.filter((arg) => COMMAND_LINE.test(arg)).flatMap(subagentLaunches);
+    });
   });
 }
 
@@ -140,17 +170,5 @@ export default function delegateGuard(pi: ExtensionAPI): void {
 
   if (blockReason === undefined) return;
 
-  pi.on("tool_call", (event) => {
-    const runsCommand =
-      isToolCallEventType("bash", event) ||
-      isToolCallEventType<"bg_start", { command: string }>("bg_start", event);
-
-    if (!runsCommand) return undefined;
-
-    const reason = blockReason(event.input.command);
-
-    if (reason === undefined) return undefined;
-
-    return { block: true, reason };
-  });
+  refuseCommands(pi, blockReason);
 }

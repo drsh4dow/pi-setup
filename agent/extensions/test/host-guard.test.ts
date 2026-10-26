@@ -2,49 +2,20 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import { Schema } from "effect";
 
 import hostGuardExtension from "../host-guard.ts";
 import { extensionTestAdapter, unsafeFixture } from "./adapter.ts";
-
-const UNATTENDED = "/h/.pi/agent/skills/subagents/unattended.md";
-
-const OWNER = "/h/.pi/agent/skills/subagents/owner.md";
-
-const DELEGATE = "/h/.pi/agent/skills/subagents/delegate.md";
-
-const rootArgv = ["node", "pi"];
-
-const delegateArgv = [
-  "node",
-  "pi",
-  "--print",
-  "--append-system-prompt",
-  UNATTENDED,
-  "--append-system-prompt",
-  DELEGATE,
-];
-
-const ownerArgv = [
-  "node",
-  "pi",
-  "--print",
-  "--append-system-prompt",
-  UNATTENDED,
-  "--append-system-prompt",
-  OWNER,
-];
+import {
+  type Refusal,
+  decodeDecision,
+  delegateArgv,
+  ownerArgv,
+  rootArgv,
+} from "./guard-fixtures.ts";
 
 const sessions = [rootArgv, ownerArgv, delegateArgv];
 
 const commandTools = ["bash", "bg_start"] as const;
-
-// A `tool_call` handler blocks with `{ block: true, reason }` and lets a call run with `undefined`.
-const Refusal = Schema.Struct({ block: Schema.Literal(true), reason: Schema.String });
-
-type Refusal = typeof Refusal.Type;
-
-const decodeDecision = Schema.decodeUnknownSync(Schema.UndefinedOr(Refusal));
 
 interface AgentCall {
   readonly argv: readonly string[];
@@ -52,7 +23,6 @@ interface AgentCall {
   readonly command: string;
 }
 
-// Runs `run` in a Pi process launched with `argv`, restoring the real argv before it yields.
 function withLaunchArgv<T>(argv: readonly string[], run: () => T): T {
   const launchArgv = process.argv;
   process.argv = [...argv];
@@ -93,6 +63,17 @@ function assertKillRefused(refusal: Refusal | undefined, label: string): void {
 function assertTmpGlobRefused(refusal: Refusal | undefined, label: string): void {
   assert.ok(refusal, `${label} is refused`);
   assert.match(refusal.reason, /exact path/, `${label}: the reason names deleting by exact path`);
+  // Each bash call is a new shell, so the fix must not depend on a variable set in an earlier call.
+  assert.match(
+    refusal.reason,
+    /the path mktemp printed/,
+    `${label}: the reason names mktemp's path`,
+  );
+  assert.doesNotMatch(refusal.reason, /\$\w/, `${label}: the reason names no shell variable`);
+}
+
+function assertRuns(refusal: Refusal | undefined, label: string): void {
+  assert.equal(refusal, undefined, `${label} runs`);
 }
 
 async function assertEach(
@@ -148,6 +129,12 @@ test("a kill of the PIDs a name search found is refused", async () => {
       "kill `pidof node`",
       "pgrep -f vitest | xargs kill",
       "ps aux | grep vitest | awk '{print $2}' | xargs -r kill -9",
+      "pidof node | xargs kill",
+      "kill $(ps -C node -o pid=)",
+      "pgrep -f x | xargs -n 1 kill",
+      "pgrep -f x | xargs -rI{} timeout 5 kill {}",
+      "(pgrep -f x) | xargs kill",
+      "kill $(echo $(pgrep -f x))",
     ]),
     assertKillRefused,
   );
@@ -166,7 +153,7 @@ test("a glob delete under /tmp is refused, pointing at the exact path you create
   );
 });
 
-test("every agent session refuses them, from bash and bg_start alike", async () => {
+test("every agent session refuses a pattern kill and a /tmp glob delete, from bash and bg_start alike", async () => {
   await assertEach(everySession(KILL_BY_PATTERN), assertKillRefused);
   await assertEach(everySession(TMP_GLOB_DELETES), assertTmpGlobRefused);
 });
@@ -187,9 +174,7 @@ test("targeted kills, deletes, and reads run", async () => {
       "rg -n 'killall|rm -rf /tmp/' docs",
       "ps aux | grep vitest",
     ]),
-    (refusal, label) => {
-      assert.equal(refusal, undefined, `${label} runs`);
-    },
+    assertRuns,
   );
 });
 
@@ -204,9 +189,7 @@ test("a quoted kill or delete string is a search pattern, not a command", async 
       "grep -n 'x; rm -rf /tmp/aa-*' notes.md",
       "ls # then; pkill -f b",
     ]),
-    (refusal, label) => {
-      assert.equal(refusal, undefined, `${label} runs`);
-    },
+    assertRuns,
   );
 });
 
@@ -233,9 +216,7 @@ test("a kill or delete inside a bash -c, sh -c, zsh -c, or eval string is refuse
       "bash script.sh pkill",
       "ssh host 'echo hi'",
     ]),
-    (refusal, label) => {
-      assert.equal(refusal, undefined, `${label} runs`);
-    },
+    assertRuns,
   );
 });
 
@@ -260,4 +241,95 @@ test("a tool that runs no command is not judged by its text", async () => {
   });
 
   assert.equal(refusal, undefined);
+});
+
+test("a kill or delete inside a command substitution is refused", async () => {
+  await assertEach(
+    rootBash([
+      'echo "$(pkill -f vitest)"',
+      "echo $(pkill -f vitest)",
+      "echo `pkill -f vitest`",
+      "printf '%s' \"$(killall java)\"",
+      'echo "`pkill node`"',
+      "x=$(pkill -f y)",
+      'bash -c "echo hi" "$(pkill -f vitest)"',
+      "bash -c 'echo $(pkill -f vitest)'",
+      "diff <(pkill -f x) f",
+      "cat <<EOF\n$(pkill -f x)\nEOF",
+      "echo $(( $(pkill -f x) + 1 ))",
+      "echo $((1 << 2))\npkill node",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(rootBash(["echo $(rm -rf /tmp/aa-*)"]), assertTmpGlobRefused);
+  await assertEach(
+    everySession([
+      "echo '$(pkill -f vitest)'",
+      "grep -n '`killall java`' notes.md",
+      'echo "$(cat pids.txt)"',
+      "cat <<'EOF'\n$(pkill -f x)\nEOF",
+      'grep -n "$(printf "%s" "a; pkill -f vitest")" notes.md',
+    ]),
+    assertRuns,
+  );
+});
+
+test("a kill or delete after a subshell, brace, or reserved word is refused", async () => {
+  await assertEach(
+    rootBash([
+      "(pkill -f vitest)",
+      "{ pkill -f vitest; }",
+      "if true; then pkill -f vitest; fi",
+      "if ! pgrep -f x; then :; else killall java; fi",
+      "while true; do pkill node; done",
+      "until false; do pkill node; done",
+      'for f in a b; do pkill -f "$f"; done',
+      "! pkill node",
+      "bash -c '(pkill -f vitest)'",
+      "stop() { pkill -f vitest; }",
+      "function stop { pkill -f vitest; }",
+      "case $x in a) pkill -f vitest;; esac",
+      "time pkill node",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(
+    rootBash(["(rm -rf /tmp/aa-*)", "{ cd /x && rm -rf /tmp/tmp.*/w; }", "rm -rf /tmp/@(aa|bb)*"]),
+    assertTmpGlobRefused,
+  );
+  await assertEach(
+    everySession([
+      'for f in pkill killall; do echo "$f"; done',
+      "names=(pkill killall)",
+      "if grep -q 'pkill -f' notes.md; then echo found; fi",
+      "{ echo '(pkill -f vitest)'; }",
+    ]),
+    assertRuns,
+  );
+});
+
+test("a PID search feeds xargs kill only through the same pipeline", async () => {
+  await assertEach(
+    everySession([
+      "pgrep -af vitest; cat pids.txt | xargs kill",
+      "pgrep -af vitest && cat pids.txt | xargs kill",
+      "pgrep -af vitest\ncat pids.txt | xargs kill",
+      "pgrep -af vitest | xargs echo kill",
+      "pgrep -af vitest | xargs -I kill echo kill",
+    ]),
+    assertRuns,
+  );
+});
+
+test("a shell's -c operand is read after long options that take an argument", async () => {
+  await assertEach(
+    rootBash(["bash --rcfile x -c 'pkill y'", "bash --norc --init-file x -c 'killall java'"]),
+    assertKillRefused,
+  );
+  await assertEach(rootBash(["bash --rcfile x script.sh pkill"]), assertRuns);
+});
+
+test("an array assignment with an operator inside is judged without hanging", async () => {
+  await assertEach(rootBash(["arr=(a>b) && pkill node"]), assertKillRefused);
+  await assertEach(rootBash(["arr=(a;b|c&d<e"]), assertRuns);
 });

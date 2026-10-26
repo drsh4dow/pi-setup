@@ -13,7 +13,7 @@ This directory is the maintained source for verifying what a user of this Pi con
 ## Driving conventions
 
 - Start each recipe from a fresh launch unless it says otherwise. Model turns add history that later recipes do not expect.
-- Wait on the exact notice or line a step names. Use `$CP wait`, never a fixed sleep.
+- Wait on the exact notice or line a step names with `$CP wait`, and on a prompt's turn end with `$CP wait-turn`, never on a fixed sleep.
 - Treat quoted prompts and slash commands as literal.
 - Read side effects from `$($CP path <RUN_ID> agent)`, never from the live `~/.pi/agent`.
 - Restore nothing by hand. `$CP stop` deletes the scratch state and keeps the evidence.

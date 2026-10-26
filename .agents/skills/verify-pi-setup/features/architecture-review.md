@@ -26,14 +26,13 @@ Preconditions:
 
 - **Autocomplete.** For each prefix `gril`, `codebase-d`, `domain-m`, and `improve`, run `$CP keys RUN -l '/skill:<prefix>'`, snap, and run `$CP keys RUN C-u`. Only `grill-with-docs` and `improve-codebase-architecture` appear.
 - **Report.** Run `$CP send RUN "/skill:improve-codebase-architecture Don't open the report in a browser, just print its path."` and `$CP wait RUN 'like to explore' 1500`. The reply names the report path. Copy the report into the evidence directory.
-- **Grilling.** Run `$CP send RUN 'Explore your top recommendation.'`, then send `yes` after each round that ends the turn. Grilling ends on a summary that asks `Is this the shared understanding?`. Send `yes` to it as well, and the session reads `architect/SKILL.md`.
-- **Architect and sketch review.** Wait on each turn's end. The session reads `arena/SKILL.md` and `architect/references/sketch-reviewer-prompt.md`, and `bg_start` launches `pi-subagent` runners named for the arena and the sketch reviewers.
+- **Grilling.** Run `$CP send RUN 'Explore your top recommendation.'` and `$CP wait-turn RUN 1500`, then send `yes` after each round that ends the turn. Grilling ends on a summary that asks `Is this the shared understanding?`. Send `yes` to it as well, and the session reads `architect/SKILL.md`.
+- **Architect and sketch review.** Wait on each turn's end with `$CP wait-turn RUN 1500`, and on the reviewers with `$CP wait-idle RUN 3600`. The session reads `arena/SKILL.md` and `architect/references/sketch-reviewer-prompt.md`, and `bg_start` launches `pi-subagent` runners named for the arena and the sketch reviewers.
 - **Checkpoint.** After the reviewers report, a turn ends on a grilling round (`❓ **Q1**`) about the sketch, with the review's fixed findings listed above it. `git -C "$($CP path RUN scratch)/workspace" status --short` shows no change to the existing source files. Stop here, without answering.
-- **Proof.** Copy the session file from `$($CP path RUN scratch)/sessions` into the evidence directory before `$CP stop RUN`.
+- **Proof.** Copy the session file from `$($CP path RUN sessions)` into the evidence directory before `$CP stop RUN`.
 
 ## Gotchas
 
-- A turn's last screen stays visible while the next turn runs, so a `$CP wait` on a footer string such as `TPS` returns at once. Detect a turn's end in the session file instead: a new assistant message with `"stopReason":"stop"`.
 - The session's system prompt lists every model-visible skill with its `SKILL.md` path, so a grep of the session file for `arena/SKILL.md` matches before the skill is read. Count only tool-call arguments that name the path.
 - While arena's runners or the sketch reviewers run, the parent can end a turn with a pending status. Answer only a turn whose last message asks a question, and let a completion start the next turn.
 - The report step runs `xdg-open` unless the prompt says not to, which opens a browser on the operator's desktop.

@@ -3,14 +3,18 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+
+// Every folder a test makes goes under this one, removed when the file's tests end.
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "visualize-test-"));
+after(() => fs.rmSync(SCRATCH, { recursive: true, force: true }));
 
 const SCRIPT = fileURLToPath(new URL("../visualize.ts", import.meta.url));
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function scratch(files: Record<string, string>) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "visualize-"));
+  const dir = fs.mkdtempSync(path.join(SCRATCH, "visualize-"));
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), text);
   return dir;
 }

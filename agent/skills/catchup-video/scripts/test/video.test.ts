@@ -3,14 +3,18 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+
+// Every folder a test makes goes under this one, removed when the file's tests end.
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "catchup-video-test-"));
+after(() => fs.rmSync(SCRATCH, { recursive: true, force: true }));
 
 const VIDEO = fileURLToPath(new URL("../video.ts", import.meta.url));
 // Without keys a draft finds no voice provider and times its beats at reading pace. The beats it
 // draws go to a cache of the test's own.
 const ENV = { ...process.env, GEMINI_API_KEY: "", ELEVENLABS_API_KEY: "",
-  CATCHUP_BEAT_CACHE: fs.mkdtempSync(path.join(os.tmpdir(), "catchup-beats-")) };
+  CATCHUP_BEAT_CACHE: fs.mkdtempSync(path.join(SCRATCH, "catchup-beats-")) };
 
 function video(args: string[], input?: string) {
   const r = spawnSync(process.execPath, [VIDEO, ...args], { encoding: "utf8", env: ENV, input, maxBuffer: 1 << 26 });
@@ -18,7 +22,7 @@ function video(args: string[], input?: string) {
 }
 
 function story(source: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catchup-video-"));
+  const dir = fs.mkdtempSync(path.join(SCRATCH, "catchup-video-"));
   const file = path.join(dir, "story.py");
   fs.writeFileSync(file, `from catchup_video import *\n\n\nclass Story(Video):\n${source}`);
   return file;
@@ -32,7 +36,7 @@ const timingOf = (file: string): { total: number; beats: { start: number }[] } =
   JSON.parse(fs.readFileSync(file.replace(/\.py$/, ".build/draft/timing.json"), "utf8"));
 
 test("a story written from a skeleton drafts in parallel chunks that join without drift, and the check names its empty beats", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catchup-video-"));
+  const dir = fs.mkdtempSync(path.join(SCRATCH, "catchup-video-"));
   const file = path.join(dir, "story.py");
   const made = video(["new", file], "Two changes landed.\nFifty gifts per page || 50 gifts per page\n[curious] One waits on you.\nRecap.\n");
   assert.equal(made.code, 0, made.out + made.err);

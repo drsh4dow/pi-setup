@@ -8,6 +8,10 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { type Beat, narrate, splitPhrases, stripTags, wordsMatch } from "../narration.ts";
 
+// Every folder a test makes goes under this one, removed when the file's tests end.
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "catchup-narration-test-"));
+after(() => fs.rmSync(SCRATCH, { recursive: true, force: true }));
+
 const ELEVEN_KEY = "eleven-secret-key-123";
 const GEMINI_KEY = "gemini-secret-key-456";
 
@@ -71,7 +75,7 @@ describe("narration falls through its providers", () => {
   let state: ReturnType<typeof stub>;
   let heard = (_: Call) => "";
   let tts = audio;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catchup-narration-"));
+  const dir = fs.mkdtempSync(path.join(SCRATCH, "catchup-narration-"));
   before(async () => {
     state = stub({
       eleven: (c) => [401, { detail: { status: "payment_issue", message: `key ${c.key} has no credit` } }],
@@ -179,7 +183,7 @@ describe("a beat's audio tags", () => {
   test("reach ElevenLabs and nothing else: captions, cue words, and phrase timing come from the spoken words", async () => {
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "catchup-tags-"));
+    const dir = fs.mkdtempSync(path.join(SCRATCH, "catchup-tags-"));
     const timing = await narrate({
       beats: [{ name: "tagged", say: "[curious] Fifty gifts load per page, | [short pause] and search got faster.",
         show: "50 gifts load per page, | and search got faster.", pause: null }],

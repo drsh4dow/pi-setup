@@ -172,3 +172,110 @@ test("reports inventory drift from tracked components", (t) => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Installed extensions.*example.*missing/s);
 });
+
+// A SKILL.md whose frontmatter sets the given invocation keys, as `key: value` lines.
+function skill(frontmatter: Record<string, boolean>) {
+  const lines = Object.entries(frontmatter).map(([key, value]) => `${key}: ${value}`);
+
+  return ["---", "description: Example.", ...lines, "---", "", "# Skill", ""].join("\n");
+}
+
+// An inventory whose skills section is one table with a Who column, one row per entry.
+function whoInventory(rows: Record<string, string>) {
+  const table = [
+    "| Skill | Who | Use it to |",
+    "| ----- | --- | --------- |",
+    ...Object.entries(rows).map(([name, who]) => `| \`${name}\` | ${who} | Do a thing |`),
+  ].join("\n");
+
+  return validInventory.replace(
+    "### Installed skills\n\n- `example`",
+    `### Installed skills\n\n#### Build it\n\n${table}`,
+  );
+}
+
+const skillsByWho = {
+  "agent/skills/manual/SKILL.md": skill({ "disable-model-invocation": true }),
+  "agent/skills/automatic/SKILL.md": skill({ "user-invokable": false }),
+  "agent/skills/either/SKILL.md": skill({}),
+  "agent/skills/explicit/SKILL.md": skill({
+    "disable-model-invocation": false,
+    "user-invokable": true,
+  }),
+};
+
+test("accepts Who entries that match each skill's frontmatter", (t) => {
+  const root = repository(
+    t,
+    whoInventory({
+      automatic: "agent",
+      either: "both",
+      example: "both",
+      explicit: "both",
+      manual: "you",
+    }),
+    skillsByWho,
+  );
+
+  const result = run(root);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("reports each Who entry that disagrees with its skill's frontmatter", (t) => {
+  const root = repository(
+    t,
+    whoInventory({
+      automatic: "both",
+      either: "you",
+      example: "both",
+      explicit: "agent",
+      manual: "both",
+    }),
+    skillsByWho,
+  );
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(result.stderr.trim().split("\n").toSorted(), [
+    "docs/inventory.md Installed skills: automatic is listed as both, agent/skills/automatic/SKILL.md frontmatter makes it agent",
+    "docs/inventory.md Installed skills: either is listed as you, agent/skills/either/SKILL.md frontmatter makes it both",
+    "docs/inventory.md Installed skills: explicit is listed as agent, agent/skills/explicit/SKILL.md frontmatter makes it both",
+    "docs/inventory.md Installed skills: manual is listed as both, agent/skills/manual/SKILL.md frontmatter makes it you",
+  ]);
+});
+
+test("reports a skill whose frontmatter leaves no one able to start it", (t) => {
+  const root = repository(t, whoInventory({ example: "both", stuck: "you" }), {
+    "agent/skills/stuck/SKILL.md": skill({
+      "disable-model-invocation": true,
+      "user-invokable": false,
+    }),
+  });
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.equal(
+    result.stderr.trim(),
+    "agent/skills/stuck/SKILL.md: disable-model-invocation: true and user-invokable: false leave no one able to start it",
+  );
+});
+
+test("reports a skill whose frontmatter does not parse instead of crashing", (t) => {
+  const root = repository(t, whoInventory({ broken: "both", example: "both" }), {
+    "agent/skills/broken/SKILL.md": [
+      "---",
+      "disable-model-invocation: true",
+      "disable-model-invocation: false",
+      "---",
+      "",
+    ].join("\n"),
+  });
+
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /^agent\/skills\/broken\/SKILL\.md: frontmatter does not parse: Map keys must be unique/m,
+  );
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
+});

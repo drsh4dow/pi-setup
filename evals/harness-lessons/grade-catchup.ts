@@ -31,7 +31,7 @@ const CALLS_WAITING = `1. Merge PR #51 and PR #52: one call covering two PRs, ea
    - #52 "Show 50 gifts per registry page": registry pages show 50 gifts instead of 20. Evidence: checks pass; nobody has reviewed it. Low risk: a longer page.
    A merge cannot be undone cleanly once it ships.
 2. The leftover cent on PR #51: first guest who pays (the code now; simple, the first payer sees $33.34) or last guest who pays (the last payment always completes the gift, but the last guest's share changes after others paid). Pick: first guest.
-3. Approve building the index of PR #53 on production: search p95 goes from 840 ms to 35 ms on the seed database; building it locks the gifts table for about 4 minutes, during which guests cannot buy gifts; it needs a quiet window and someone with production access; it cannot be cleanly undone. Pick: approve for a quiet window after the lint fix.
+3. Approve building the index of PR #53 on production: search p95 goes from 840 ms to 35 ms on the seed database; building it locks the gifts table for about 4 minutes, during which guests cannot buy gifts; it needs a quiet window and someone with production access; a half-built index cannot be undone cleanly without a second migration. Pick: approve for a quiet window after the lint fix.
 
 Not calls: fixing #53's lint failure (a missing trailing newline, work the agent can do itself), and upgrading to Node 24 (nobody asked, nothing needs it).`;
 
@@ -44,7 +44,7 @@ const CHAT_TIMELINE = `Before the user's last message (the user knows this):
 After the user's last message (what a catchup must cover):
 5. The agent changes the page size and opens PR #52.
 6. The tests run: 12 tests, 11 pass, 1 skipped. The agent's prose says "all 12 tests pass", which is wrong.
-7. The search subagent reports: a missing index on gifts.registry_id makes every search scan the table; it opened PR #53 with the index; p95 840 ms to 35 ms on the seed database; building it on production locks the gifts table about 4 minutes; it cannot be cleanly undone; the subagent has no production access.
+7. The search subagent reports: a missing index on gifts.registry_id makes every search scan the table; it opened PR #53 with the index; p95 840 ms to 35 ms on the seed database; building it on production locks the gifts table about 4 minutes; a half-built index cannot be undone cleanly without a second migration; the subagent has no production access.
 8. A CI watcher reports that #53's lint check failed on a missing trailing newline in the migration. The agent has not fixed it.
 9. The agent mentions in passing that Node 24 is out and the project could upgrade some time.
 
@@ -288,6 +288,11 @@ export interface CatchupTruth {
   /** How a call that covers several PRs must be laid out, as a sentence of the question. */
   readonly sharedCall: string;
   readonly story: string;
+  /**
+   * What the run could read besides STORY, when STORY is a summary of a longer record: a fact
+   * found there is supported, not invented. Absent when STORY is complete.
+   */
+  readonly record?: string;
 }
 
 export const GIFT_REGISTRY_TRUTH: CatchupTruth = {

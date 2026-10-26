@@ -25,7 +25,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join, relative } from "node:path";
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 import type { CatchupTruth } from "./grade-catchup.ts";
 import { unknown, type Unknown } from "./metrics.ts";
 import { liveStateFolder } from "./state-folder.ts";
@@ -230,6 +230,72 @@ export function section(markdown: string, heading: string): string | undefined {
 
 export const CALLS_HEADING = "## Calls waiting on the user";
 
+const RecordLine = Schema.Struct({
+  message: Schema.optional(
+    Schema.Struct({
+      role: Schema.String,
+      content: Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]),
+    }),
+  ),
+});
+
+const decodeRecordLine = Schema.decodeUnknownOption(Schema.fromJsonString(RecordLine));
+
+const TextPart = Schema.Struct({ type: Schema.Literal("text"), text: Schema.String });
+
+const isText = Schema.is(TextPart);
+
+const isString = Schema.is(Schema.String);
+
+const PrState = Schema.Struct({
+  url: Schema.String,
+  title: Schema.String,
+  state: Schema.String,
+  mergeStateStatus: Schema.optional(Schema.String),
+  reviewDecision: Schema.optional(Schema.String),
+});
+
+const decodePrStates = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(PrState)));
+
+/**
+ * What a recorded run could read besides story.md: what the user and the agent wrote from the
+ * window's start to the cut, and each PR's state in the snapshot the gh stub serves. story.md is
+ * a summary of hours of work, so a fact a run took from these is not invented.
+ */
+export function recordedRecord(dir = recordingDir()): string {
+  const recording = loadRecording(dir);
+  const files = recordingFiles(dir);
+
+  const said = readFileSync(files.session, "utf8")
+    .split("\n")
+    .slice(recording.windowStart - 1)
+    .flatMap((line) => {
+      const message = Option.getOrUndefined(decodeRecordLine(line))?.message;
+
+      if (message === undefined || (message.role !== "user" && message.role !== "assistant"))
+        return [];
+
+      const parts = isString(message.content)
+        ? [message.content]
+        : message.content.filter(isText).map((part) => part.text);
+
+      return parts.filter((text) => text.trim() !== "").map((text) => `${message.role}: ${text}`);
+    });
+
+  const prs = decodePrStates(readFileSync(files.prs, "utf8")).map(
+    (pr) =>
+      `${pr.url} "${pr.title}": ${pr.state}, merge state ${pr.mergeStateStatus ?? "unknown"}, review ${pr.reviewDecision ?? "none"}`,
+  );
+
+  return [
+    "The chat from the user's last message to the cut:",
+    ...said,
+    "",
+    "The PRs as the gh stub serves them:",
+    ...prs,
+  ].join("\n");
+}
+
 /** The recording's ground truth, or why there is none. */
 export function recordedTruth(): CatchupTruth | Unknown {
   const story = recordingFiles(recordingDir()).story;
@@ -244,5 +310,6 @@ export function recordedTruth(): CatchupTruth | Unknown {
     sharedCall:
       "For a call that covers several PRs, each PR needs its own line with its own change, evidence, and risk.",
     story: text,
+    record: recordedRecord(),
   };
 }

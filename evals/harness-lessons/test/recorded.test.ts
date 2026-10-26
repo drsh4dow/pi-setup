@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { catchupStubPaths } from "../catchup-stubs.ts";
 import { redact } from "../record-session.ts";
-import { recordedStubEnv, section, snapshotState } from "../recorded.ts";
+import { recordedRecord, recordedStubEnv, section, snapshotState } from "../recorded.ts";
 import { temporary } from "./support.ts";
 
 test("a recording replaces each secret format and says on which lines it found it", () => {
@@ -96,4 +96,63 @@ test("the recorded gh stub serves a snapshot PR read-only and refuses to merge i
   assert.notEqual(merge.status, 0);
   assert.match(merge.stderr, /can only read/);
   assert.match(merge.log, /"outcome":"refused"/);
+});
+
+/** A session line: a message of `role` whose content is `parts`, or plain text. */
+interface Part {
+  readonly type: string;
+  readonly text?: string;
+  readonly thinking?: string;
+}
+
+const line = (role: string, content: string | readonly Part[]) =>
+  JSON.stringify({ type: "message", message: { role, content } });
+
+test("a recording's record is what was said from the window's start, and each PR's state", () => {
+  const dir = temporary(mkdtempSync(join(tmpdir(), "recording-")));
+
+  writeFileSync(
+    join(dir, "recording.json"),
+    JSON.stringify({
+      source: "s.jsonl",
+      cwd: "/repo",
+      ownStateFolders: [],
+      branch: "main",
+      commit: "abc",
+      windowStart: 2,
+      cut: 4,
+      cutAt: "2026-10-23T17:05:52.369Z",
+      prs: [],
+      redactions: [],
+    }),
+  );
+  writeFileSync(
+    join(dir, "session.jsonl"),
+    [
+      line("user", "before the window"),
+      line("user", "give me the links"),
+      line("assistant", [
+        { type: "thinking", thinking: "private" },
+        { type: "text", text: "dms#17 is behind." },
+      ]),
+      line("toolResult", [{ type: "text", text: "tool output" }]),
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(dir, "prs.json"),
+    JSON.stringify([
+      {
+        url: "https://github.com/o/dms/pull/17",
+        title: "Lock certifi",
+        state: "OPEN",
+        mergeStateStatus: "BEHIND",
+      },
+    ]),
+  );
+
+  const record = recordedRecord(dir);
+
+  assert.match(record, /user: give me the links\nassistant: dms#17 is behind\./);
+  assert.doesNotMatch(record, /before the window|private|tool output/);
+  assert.match(record, /pull\/17 "Lock certifi": OPEN, merge state BEHIND, review none/);
 });

@@ -36,19 +36,23 @@ Pass each template verbatim, substituting the transcript path or digest and the 
 
 ## 3. Synthesize
 
-One subagent in the `reflect judgment, synthesizer` role. It spot-verifies citations through MCP. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list. Save it verbatim to `reflect/<YYYY-MM-DD>-<session-id>.md` in the state folder, so approval and filing survive a compaction.
+One subagent in the `reflect judgment, synthesizer` role. It spot-verifies citations through MCP. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list. Save it verbatim to `reflect/<YYYY-MM-DD>-<session-id>.md` in the state folder, so the proposal and the user's approval survive a compaction.
 
 ## 4. Structural enforcement check
 
 Move any Accepted item that a lint rule, script, metadata flag, or runtime check would enforce more reliably to Backlog. See the **encode-lessons-in-structure** principle skill.
 
-## 5. Apply
+## 5. Propose, then wait
 
-Present the synthesizer's full Accepted / Rejected / Backlog output and wait for explicit approval before applying any Accepted edit. The user picks the subset and may redirect routings. Skill changes affect every future agent in the org. Do not auto-apply.
+Present the synthesizer's Accepted / Rejected / Backlog output in one message, then end the turn. Show each Backlog item as a proposed ticket in three lines: its target repository (the harness repository for a harness item, the project repository for a project item), the problem it would track, and what the ticket would ask for. Ticket bodies come later, for approved items only.
 
-File each Backlog item without waiting, through the issue tracker record (`docs/agents/issue-tracker.md`) of the repository its layer names: the harness repository for a harness item, the project repository for a project item. Only the Accepted list waits for approval.
+The user picks the subset of each list, may redirect routings, and may reword a proposed ticket. Apply and file only what the user approves: skill changes reach every future agent, and tickets land in a tracker other people read. Record the approved subset in the state file.
 
-Follow each approved row's Routing exactly:
+## 6. Apply and file
+
+Write and file each approved Backlog item under the **writing-good-tickets** skill, through the issue tracker record (`docs/agents/issue-tracker.md`) of its target repository.
+
+Follow each approved Accepted row's Routing exactly:
 
 - Trivial existing-skill edit (a one-line bullet, a tightened sentence, a stale fact corrected): the parent does it directly.
 - Substantive existing-skill edit (a new section, a new pattern table, more than ~10 lines): write it under the **writing-for-agents** skill.
@@ -58,7 +62,7 @@ Follow each approved row's Routing exactly:
 
 If your environment ships a SKILL.md validator, run it on every touched skill before declaring done.
 
-## 6. Summarize for the user
+## 7. Summarize for the user
 
 Short list, no preamble:
 

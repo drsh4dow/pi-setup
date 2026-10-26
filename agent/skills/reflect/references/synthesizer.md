@@ -55,4 +55,4 @@ For each rejected finding:
 
 ## Backlog
 
-For each item, name its layer (harness or project), then describe the pattern, what was hit, and the suggested mechanism. The parent files each through the issue tracker of that layer's repository.
+For each item, name its layer (harness or project), then describe the pattern, what was hit, and the suggested mechanism. The parent proposes each to the user and files only the approved ones in that layer's repository.

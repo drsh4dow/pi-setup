@@ -1,5 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type CliRuntime, main, parseArgs } from "./cli.ts";
+import type { FeedbackReader } from "./feedback.ts";
 import { botReview, fakeReader, passingCheck } from "./fakes.test-helper.ts";
 import { WatcherQueryError } from "./github.ts";
 import { renderJson, renderPretty } from "./render.ts";
@@ -8,7 +12,13 @@ import { parsePrNumber } from "./types.ts";
 
 const silentIo = { stdout: () => {}, stderr: () => {} };
 
-function testRuntime(reader: GitHubReader): {
+/** A home directory nothing may write to, for runs that must not touch state. */
+const unwritableHome = "/nonexistent/watch-pr-home";
+
+function testRuntime(
+  reader: GitHubReader,
+  home = unwritableHome
+): {
   readonly runtime: CliRuntime;
   readonly stdout: string[];
   readonly stderr: string[];
@@ -29,6 +39,7 @@ function testRuntime(reader: GitHubReader): {
       },
       stdout: (value) => stdout.push(value),
       stderr: (value) => stderr.push(value),
+      home,
     },
   };
 }
@@ -104,20 +115,104 @@ describe("parseArgs", () => {
   });
 });
 
-it("rejects monitor flags outside --until-merged and status-only monitoring as usage", async () => {
+it("refuses monitor flags outside the until-merged watch, and mixed modes, as usage", async () => {
+  const id = "a".repeat(64);
   const invalid = [
-    ["--state", "/tmp/x"],
-    ["--ack", "a".repeat(64)],
-    ["--until-merged"],
+    ["--until-ready", "--state", "/tmp/x"],
+    ["--until-ready", "--ack", id],
+    ["--status-only", "--state", "/tmp/x"],
+    ["--status-only", "--ack", id],
+    ["--until-ready", "--until-merged"],
+    ["--until-ready", "--status-only"],
+    ["--until-merged", "--status-only"],
     ["--until-merged", "--state", "/tmp/x", "--status-only"],
     ["--until-merged", "--state", "/tmp/x", "--ack", "not-an-id"],
   ];
   for (const argv of invalid) {
     const harness = testRuntime(fakeReader());
-    expect(await main(argv, harness.runtime)).toBe(64);
+    expect([argv, await main(argv, harness.runtime)]).toEqual([argv, 64]);
     expect(harness.stdout).toEqual([]);
     expect(harness.stderr.join("")).toContain("error:");
   }
+});
+
+describe("watch lifetime", () => {
+  const scope = ["--owner", "owner", "--repo", "repo", "--pr", "1"];
+  const noFeedback: FeedbackReader = {
+    async feedback() {
+      return { viewerLogin: "viewer", reviews: [], comments: [], threads: [] };
+    },
+  };
+  const merged = { facts: { state: "MERGED", mergedAt: "2026-01-02T00:00:00Z" } } as const;
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "watch-pr-home-"));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+  const records = (stdout: readonly string[]) =>
+    stdout
+      .join("")
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line): unknown => JSON.parse(line));
+  const babysitState = (...path: string[]) =>
+    join(home, ".local", "state", "pi-agent", "repo", "babysit", ...path);
+
+  it("watches until merged by default and finishes on a merged PR", async () => {
+    const harness = testRuntime(fakeReader(merged), home);
+    expect(await main(scope, harness.runtime, noFeedback)).toBe(0);
+    expect(records(harness.stdout).at(-1)).toMatchObject({
+      kind: "FINISHED",
+      exitCode: 0,
+      result: { kind: "all-merged" },
+    });
+  });
+
+  it("wakes with an attention batch on an open green PR by default", async () => {
+    const harness = testRuntime(fakeReader(), home);
+    expect(await main(scope, harness.runtime, noFeedback)).toBe(8);
+    expect(records(harness.stdout).at(-1)).toMatchObject({ kind: "ATTENTION", exitCode: 8 });
+  });
+
+  it("stops at READY on the same open green PR with --until-ready", async () => {
+    const harness = testRuntime(fakeReader(), home);
+    expect(await main([...scope, "--until-ready"], harness.runtime)).toBe(0);
+    expect(records(harness.stdout).at(-1)).toMatchObject({ kind: "READY", exitCode: 0 });
+  });
+
+  it("keeps the default state under the babysit state folder for one PR", async () => {
+    const harness = testRuntime(fakeReader(), home);
+    await main(scope, harness.runtime, noFeedback);
+    expect(readdirSync(babysitState("1")).sort()).toContain("state.json");
+    expect(harness.stderr.join("")).toContain(babysitState("1"));
+  });
+
+  it("keeps the default state of a stack under its root PR", async () => {
+    const queued = testRuntime(fakeReader(merged), home);
+    const queue = ["--owner", "owner", "--repo", "repo", "--queued-stack", "--stack-prs", "10,11"];
+    expect(await main(queue, queued.runtime, noFeedback)).toBe(0);
+    expect(readdirSync(babysitState("10-stack"))).toContain("state.json");
+
+    const connected = testRuntime(fakeReader(merged), home);
+    expect(await main([...scope, "--stack"], connected.runtime, noFeedback)).toBe(0);
+    expect(readdirSync(babysitState("1-stack"))).toContain("state.json");
+  });
+
+  it("still honours --until-merged with or without --state", async () => {
+    const explicit = join(home, "explicit");
+    const withState = testRuntime(fakeReader(merged), home);
+    expect(
+      await main([...scope, "--until-merged", "--state", explicit], withState.runtime, noFeedback)
+    ).toBe(0);
+    expect(readdirSync(explicit)).toContain("state.json");
+    expect(existsSync(babysitState())).toBe(false);
+
+    const derived = testRuntime(fakeReader(merged), home);
+    expect(await main([...scope, "--until-merged"], derived.runtime, noFeedback)).toBe(0);
+    expect(readdirSync(babysitState("1"))).toContain("state.json");
+  });
 });
 
 describe("rendering", () => {
@@ -216,7 +311,7 @@ describe("main", () => {
     });
     const harness = testRuntime(reader);
     const code = await main(
-      ["--owner", "owner", "--repo", "repo", "--pr", "1"],
+      ["--owner", "owner", "--repo", "repo", "--pr", "1", "--until-ready"],
       harness.runtime
     );
     expect(code).toBe(4);
@@ -231,11 +326,11 @@ describe("main", () => {
     });
   });
 
-  it("still returns READY for a green unreviewed PR without --until-merged", async () => {
+  it("returns READY for a green unreviewed PR with --until-ready", async () => {
     const reader = fakeReader({ facts: { reviewDecision: "REVIEW_REQUIRED" } });
     const harness = testRuntime(reader);
     const code = await main(
-      ["--owner", "owner", "--repo", "repo", "--pr", "1"],
+      ["--owner", "owner", "--repo", "repo", "--pr", "1", "--until-ready"],
       harness.runtime,
       {
         feedback: () => {
@@ -288,10 +383,10 @@ describe("main", () => {
     );
   });
 
-  it("reports a PR with no checks as READY in watch mode", async () => {
+  it("reports a PR with no checks as READY with --until-ready", async () => {
     const harness = testRuntime(fakeReader(noChecks));
     const code = await main(
-      ["--owner", "owner", "--repo", "repo", "--pr", "1"],
+      ["--owner", "owner", "--repo", "repo", "--pr", "1", "--until-ready"],
       harness.runtime
     );
     expect(code).toBe(0);
@@ -316,7 +411,17 @@ describe("main", () => {
         })
       );
       const code = await main(
-        ["--owner", "owner", "--repo", "repo", "--pr", "1", "--max-query-errors", "1"],
+        [
+          "--owner",
+          "owner",
+          "--repo",
+          "repo",
+          "--pr",
+          "1",
+          "--until-ready",
+          "--max-query-errors",
+          "1",
+        ],
         harness.runtime
       );
       const verdict = JSON.parse(harness.stdout.at(-1) ?? "");
@@ -362,6 +467,7 @@ describe("main", () => {
         },
         stdout: (value) => stdout.push(value),
         stderr: () => {},
+        home: unwritableHome,
       }
     );
     expect(code).toBe(0);

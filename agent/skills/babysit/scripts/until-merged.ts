@@ -1,5 +1,6 @@
 import { InvalidArgumentError } from "commander";
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { CliRuntime } from "./cli.ts";
 import type {
   FeedbackReader,
@@ -830,10 +831,11 @@ async function reviseQueuedScope(args: {
 }
 
 export type Lifetime =
-  | { readonly kind: "existing" }
+  | { readonly kind: "until-ready" }
   | {
       readonly kind: "until-merged";
-      readonly stateDirectory: string;
+      /** Null derives the babysit skill's directory from the watched scope. */
+      readonly stateDirectory: string | null;
       readonly acknowledge: readonly AttentionId[];
     };
 export function collectAck(
@@ -855,20 +857,47 @@ export interface UntilMergedCommand {
   readonly mode: T.WatchMode;
   readonly stackPrs: readonly T.PrNumber[];
   readonly polling: T.PollingOptions;
-  readonly stateDirectory: string;
+  readonly stateDirectory: string | null;
   readonly acknowledge: readonly AttentionId[];
 }
+type StatefulCommand = Omit<UntilMergedCommand, "stateDirectory"> & {
+  readonly stateDirectory: string;
+};
 
-async function openLedger(command: UntilMergedCommand): Promise<Ledger> {
-  const { runtime, mode, stateDirectory } = command;
-  const path = statePath(stateDirectory);
-  const saved = loadLedger(stateDirectory);
-  const seed = await resolveContext({
-    reader: runtime.reader,
+/**
+ * The state directory the babysit skill prescribes: `<pr>` for one PR, and
+ * `<root-pr>-stack` for a stack, named by the PR the command passes first.
+ */
+function defaultStateDirectory(home: string, seed: T.PrContext, command: UntilMergedCommand): string {
+  const root = command.stackPrs[0] ?? seed.number;
+  const name = command.mode === "single" ? `${root}` : `${root}-stack`;
+  return join(home, ".local", "state", "pi-agent", seed.repo, "babysit", name);
+}
+
+function statusQueryBlocker(stamp: MonitorStamp, error: unknown): MonitorTerminalVerdict {
+  if (!(error instanceof WatcherQueryError)) throw error;
+  return stamp({
+    kind: "BLOCKER",
+    terminal: true,
+    exitCode: 7,
+    blocker: { kind: "status-query", failures: 1, failure: error.failure },
+  });
+}
+
+function resolveScope(command: UntilMergedCommand): Promise<T.PrContext> {
+  return resolveContext({
+    reader: command.runtime.reader,
     owner: command.owner,
     repo: command.repo,
     pr: command.pr ?? command.stackPrs[0] ?? null,
   });
+}
+
+async function openLedger(command: StatefulCommand): Promise<Ledger> {
+  const { runtime, mode, stateDirectory } = command;
+  const path = statePath(stateDirectory);
+  const saved = loadLedger(stateDirectory);
+  const seed = await resolveScope(command);
   const requested = nonEmpty(command.stackPrs);
   if (saved === null) {
     let scope: T.NonEmpty<T.PrNumber> = [seed.number];
@@ -916,7 +945,7 @@ async function openLedger(command: UntilMergedCommand): Promise<Ledger> {
 }
 
 async function watchLocked(
-  command: UntilMergedCommand,
+  command: StatefulCommand,
   stamp: MonitorStamp,
   print: (verdict: MonitorVerdict) => void
 ): Promise<number> {
@@ -925,13 +954,7 @@ async function watchLocked(
   try {
     opened = await openLedger(command);
   } catch (error) {
-    if (!(error instanceof WatcherQueryError)) throw error;
-    const verdict = stamp({
-      kind: "BLOCKER",
-      terminal: true,
-      exitCode: 7,
-      blocker: { kind: "status-query", failures: 1, failure: error.failure },
-    });
+    const verdict = statusQueryBlocker(stamp, error);
     print(verdict);
     return verdict.exitCode;
   }
@@ -961,23 +984,33 @@ export async function runUntilMerged(
   command: UntilMergedCommand
 ): Promise<number> {
   const { runtime } = command;
+  const stamp = monitorStamp(runtime.clock, command.mode);
+  const print = (verdict: MonitorVerdict): void =>
+    runtime.stdout(renderMonitor(verdict, command.pretty));
   const reportStateError = (error: unknown): number => {
     if (!(error instanceof MonitorStateError)) throw error;
     runtime.stderr(`watch-pr: ${error.message}\n`);
     return 73;
   };
+  let stateDirectory = command.stateDirectory;
+  if (stateDirectory === null) {
+    try {
+      stateDirectory = defaultStateDirectory(runtime.home, await resolveScope(command), command);
+    } catch (error) {
+      const verdict = statusQueryBlocker(stamp, error);
+      print(verdict);
+      return verdict.exitCode;
+    }
+    runtime.stderr(`watch-pr: state ${stateDirectory}\n`);
+  }
   let lock: StateLock;
   try {
-    lock = lockState(command.stateDirectory);
+    lock = lockState(stateDirectory);
   } catch (error) {
     return reportStateError(error);
   }
   try {
-    return await watchLocked(
-      command,
-      monitorStamp(runtime.clock, command.mode),
-      (verdict) => runtime.stdout(renderMonitor(verdict, command.pretty))
-    );
+    return await watchLocked({ ...command, stateDirectory }, stamp, print);
   } catch (error) {
     return reportStateError(error);
   } finally {

@@ -195,6 +195,7 @@ async function watch(scene: World, args: readonly string[] = []): Promise<Watch>
       },
       stdout: (value) => stdout.push(value),
       stderr: (value) => stderr.push(value),
+      home: "/nonexistent/watch-pr-home",
     },
     feedbackFor(scene)
   );

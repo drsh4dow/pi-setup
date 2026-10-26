@@ -13,7 +13,7 @@ Write it the way one engineer explains a change to another: plain words, one ide
 
 ## Title
 
-Follow the subject rules of **writing-good-commits**: `type(scope): subject`, imperative, completing "If merged, this PR will …". Name the one change the PR makes, bounded by what Evidence proves. A title that promises "no process outlives its launcher" fails when Risk lists a process that still does.
+Follow the subject rules of **writing-good-commits**: `type(scope): subject`, imperative, completing "If merged, this PR will …", within 72 characters. Name the one change the PR makes, bounded by what Evidence proves. A title that promises "no process outlives its launcher" fails when Risk lists a process that still does.
 
 ## Body
 
@@ -206,7 +206,7 @@ Its Why lists symbols instead of a story, so the reader never learns what the mo
 
 Write the body to a file and run both gates.
 
-1. **Structure.** Run `scripts/check-body.ts pr <body-file> --title "<title>"`, with `--template <path>` when the repository has a PR template. Fix each printed problem and rerun until it exits 0. Exit 0 means the headings, title, and Why length pass. It says nothing about the case the body makes. A `warning:` line leaves the exit code alone and marks a sentence about how the work was produced. Rewrite it for the reader of this diff, or keep it when that reader needs it to merge or deploy.
+1. **Structure.** Run `scripts/check-body.ts pr <body-file> --title "<title>"`, with `--template <path>` when the repository has a PR template. Fix each printed problem and rerun until it exits 0. Exit 0 means the headings, the title's form and length, and the Why length pass. It says nothing about the case the body makes. A `warning:` line leaves the exit code alone and marks a sentence about how the work was produced. Rewrite it for the reader of this diff, or keep it when that reader needs it to merge or deploy.
 2. **Expert read.** Give one subagent in the `cross-family reviewer` role, per the **subagents** skill, only the title and the body file, with no diff, ticket, or chat. Ask it to:
    1. Retell the problem as one story, and why this fix rather than the alternative.
    2. As an expert in this domain who must own the change, list every question it would need answered to trust the proof. For each, quote the line that answers it, or write `unanswered`.
@@ -217,4 +217,10 @@ Write the body to a file and run both gates.
 
    A delegate launches no subagent, so it writes the body file and names this read in its report for its parent to run.
 
-Publish the same file with `gh pr create --body-file` or `gh pr edit --body-file`.
+Publish the same file with `scripts/publish-pr.ts create <body-file> --title "<title>"` or `scripts/publish-pr.ts edit <number> <body-file> --title "<title>"`, never with a bare `gh pr create --body-file` or `gh pr edit --body-file`. Both verbs take `--repo` and `--template`, and `create` also takes `--base` and `--head`. Keep the title out of the body file.
+
+- It reruns check-body and calls `gh` only after check-body exits 0.
+- On `edit`, it keeps each `## ` section that the live body has and the file lacks, such as a plan a bot appended, after the section it followed in the live body, and prints `publish-pr: kept "## <heading>" from the live body` for each. If you deleted that section on purpose, say so in your report.
+- It reads the PR back and compares it with what it sent, ignoring line ends and trailing newlines. On a difference it prints the changed lines.
+
+Its exit code is 0 when the PR is published and reads back the same, 1 when check-body found problems, 64 for a bad argument or an unreadable body or template file, 2 when a `gh` call failed or check-body could not run, and 3 when the readback differs.

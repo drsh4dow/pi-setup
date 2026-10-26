@@ -2,7 +2,8 @@
 
 Everything this setup installs. `scripts/verify-docs.ts` checks each list
 against the files in the repository, so a new skill, prompt, extension, or
-theme needs a line here.
+theme needs a line here. It also checks each skill's Who entry against that
+skill's frontmatter.
 
 ### Installed skills
 

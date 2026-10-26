@@ -9,6 +9,8 @@ import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import * as BunFileSystem from "@effect/platform-bun/BunFileSystem";
 import { Effect, FileSystem, Result } from "effect";
 
+import { allowsUserInvocation } from "./user-invokable.ts";
+
 const DONE_LABEL = "Done";
 
 const DISABLE_MODEL_INVOCATION_LINE = /^disable-model-invocation\s*:/;
@@ -170,7 +172,7 @@ const listLoadedSkills = Effect.fn("listLoadedSkills")(function* (skills: Skill[
 const isUserInvokable = Effect.fn("isUserInvokable")(function* (filePath: string) {
   return yield* FileSystem.FileSystem.use((fs) => fs.readFileString(filePath)).pipe(
     Effect.provide(BunFileSystem.layer),
-    Effect.map((content) => parseFrontmatter(content).frontmatter["user-invokable"] !== false),
+    Effect.map((content) => allowsUserInvocation(parseFrontmatter(content).frontmatter)),
     Effect.orElseSucceed(() => true),
   );
 });

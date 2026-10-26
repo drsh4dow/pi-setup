@@ -96,8 +96,11 @@ See [docs/development.md](docs/development.md).
 
 ## Credits
 
-Inspired by [pstack](https://github.com/cursor/plugins/tree/main/pstack),
-[Matt Pocock's skills](https://github.com/mattpocock/skills),
-[Addy Osmani's agent-skills](https://github.com/addyosmani/agent-skills), and
-[vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser).
-MIT licensed.
+Many of the skills here started from
+[pstack](https://github.com/cursor/plugins/tree/main/pstack),
+[Matt Pocock's skills](https://github.com/mattpocock/skills), and
+[Addy Osmani's agent-skills](https://github.com/addyosmani/agent-skills). They
+take a lot of their ideas and structure from those collections and are adapted
+to Pi. Browser automation builds on
+[vercel-labs/agent-browser](https://github.com/vercel-labs/agent-browser). MIT
+licensed.

@@ -65,7 +65,7 @@ Splitting one document into two spends one of the two loads, so split only when 
 
 When a skill or rule comes from another author's collection, adapt it into this harness instead of vendoring it:
 
-- Credit the source as inspiration in one line. Drop upstream pins, commit hashes, and sync dates, since the adapted copy tracks no upstream.
+- Credit the source in the README's Credits section, not in the skill. Drop upstream pins, commit hashes, and sync dates, since the adapted copy tracks no upstream.
 - Strip the author's personal conventions, such as their labels, folders, tools, and tracker habits, and route each step through the skills and records this harness already has.
 - Keep the guidance you adopt verbatim, and check each copied span against the source mechanically. Where the host forces a rewrite, compare the rewritten rule with its source for who must do what, to what, and in what scope. Connective words such as "not", "only", and "the caller, not the callee" carry the rule, and a quote check passes over them.
 

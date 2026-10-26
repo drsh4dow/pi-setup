@@ -1,9 +1,5 @@
 # statechart
 
-This skill is adapted from the statechart skill in upstream pstack
-(`https://github.com/cursor/plugins`, `pstack/skills/statechart`), with its
-`.mjs` scripts ported to TypeScript.
-
 `vp run verify:statechart-scripts` type-checks the scripts and runs the tests
 that need no TLC. Before you report a change, also run the TLC tests, which take
 about 6 minutes:

@@ -1,5 +1,5 @@
 // The data that the statechart scripts pass between them. Type stripping erases this whole file,
-// so the port still runs the upstream code line for line.
+// so the scripts run unchanged once types are stripped.
 
 import type { Inputs } from "./snapshot.ts";
 

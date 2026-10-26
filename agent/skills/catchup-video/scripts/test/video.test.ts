@@ -418,3 +418,23 @@ test("primitives lists every piece in one line each and a worked story", () => {
   }
   assert.match(r.out, /class Story\(Video\):/);
 });
+test("a recap whose cues come close together fits its beat", () => {
+  const file = story(`
+    @beat("Five pull requests wait on you.")
+    def graph(self):
+        self.graph = Branches({1: "First", 2: "Second", 3: "Third", 4: "Fourth", 5: "Fifth"})
+        self.play(self.graph.draw())
+
+    @beat("Now for the calls. I'd make them in this order.")
+    def between(self):
+        self.clear(extra=[FadeIn(text("Calls"))])
+
+    @beat("Merge one, two, three, four, five.", transition=True)
+    def calls(self):
+        self.clear(extra=[FadeIn(self.graph)])
+        self.recap(self.graph, {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"})
+`);
+  const r = video(["draft", file]);
+  assert.equal(r.code, 0, r.out + r.err);
+  assert.match(r.out, /check: clean/);
+});

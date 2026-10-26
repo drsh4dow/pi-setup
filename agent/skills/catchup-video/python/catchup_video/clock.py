@@ -126,6 +126,10 @@ def _overlap(a, b) -> float:
     return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
 
 
+# The shortest a recap call-out gets when its cues come close together.
+RECAP_MIN_SEC = 0.25
+
+
 class Video(MovingCameraScene):
     voice = "Iapetus"
 
@@ -309,6 +313,16 @@ class Video(MovingCameraScene):
     def at(self, words: str | int, offset: float = 0.0) -> None:
         """Wait until the narration reaches `words` (a phrase index, or words in the beat)."""
         b = self._b
+        target = self._when(words, offset)
+        if self._frame - target > 0.25 * self._fps:
+            self._note(f"cue {words!r} comes {(self._frame - target) / self._fps:.2f}s before the "
+                       "previous animation ends, so its motion starts late")
+        self._advance(target)
+        b["cue"], b["since_cue"] = words, []
+
+    def _when(self, words: str | int, offset: float = 0.0) -> int:
+        """The frame at which the narration reaches `words`, at most the beat's end."""
+        b = self._b
         if isinstance(words, int):
             t = b["phrases"][words]["start"]
         else:
@@ -325,12 +339,7 @@ class Video(MovingCameraScene):
             else:
                 raise ValueError(f"beat {b['name']}: no phrase contains {words!r}; phrases: "
                                  f"{[p['text'] for p in b['phrases']]}")
-        target = min(self._f(t + offset), b["end_f"])
-        if self._frame - target > 0.25 * self._fps:
-            self._note(f"cue {words!r} comes {(self._frame - target) / self._fps:.2f}s before the "
-                       "previous animation ends, so its motion starts late")
-        self._advance(target)
-        b["cue"], b["since_cue"] = words, []
+        return min(self._f(t + offset), b["end_f"])
 
     def hold(self, seconds: float) -> None:
         """Wait `seconds` on the clock, at most until the beat ends."""
@@ -495,10 +504,14 @@ class Video(MovingCameraScene):
 
     def recap(self, graph, cues: dict[int, str], color: str = T.YELLOW):
         """Call out each PR of `graph` as the narration reaches its words, its title staying in `color`:
-        recap(graph, {51: "merge the cache"})."""
-        for n, words in cues.items():
+        recap(graph, {51: "merge the cache"}). Each call-out is short enough to end by the next cue."""
+        items = list(cues.items())
+        for k, (n, words) in enumerate(items):
             self.at(words)
-            self.play(graph.point(n, color, keep=True))
+            # Each call-out ends by the next cue (or the beat's end), however close they come.
+            until = self._when(items[k + 1][1]) if k + 1 < len(items) else self._b["end_f"]
+            room = (until - self._frame) / self._fps
+            self.play(graph.point(n, color, keep=True, run_time=max(RECAP_MIN_SEC, min(0.8, room))))
 
     def _unpinned(self, keep=()) -> list:
         kept = {id(f) for m in [*self._pins, *keep, self.header] if m is not None for f in m.get_family()}

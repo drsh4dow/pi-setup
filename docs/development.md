@@ -10,20 +10,26 @@ vp run verify
 
 `verify`, like CI, runs credential-free formatting, lint, type,
 diagnostic-enforcement, and behavioral checks. Its tasks live in
-`vite.config.ts` under `verify:all`, which `scripts/verify.ts` runs. CI splits
-it: `check.yml` runs `verify:without-video`, which runs `verify:checks` (every
-task but the Manim renders) through the same script, and `catchup-video.yml`
-runs the renders only when that skill changes. Suites replay from cache when
-their inputs are unchanged, and `vp run verify --no-cache` reruns everything:
-options after `verify` reach the inner run. When a task fails, the task runner
-kills the tasks still running, and each exits 137. Verify then ends with
-`verify: <task> failed (exit <n>)` and that task's output, and lists the killed
-tasks as stopped. A 137 with no failure before it still counts as a failure.
-`verify:babysit-scripts`
-type-checks and tests the `babysit` skill's `watch-pr` against its own
-`tsconfig.json` and locked dependencies. Live Pi integration tests
-need provider credentials and run separately with `vp run test:e2e`. Run them
-after you upgrade Pi.
+`vite.config.ts` under `verify:all`, which `scripts/verify.ts` runs. CI's
+`check.yml` runs `verify:without-video`, which runs `verify:all-without-video`
+through the same script. That task is every task except the Manim renders, and
+`catchup-video.yml` runs those only when that skill changes.
+
+Suites replay from cache when their inputs are unchanged.
+`vp run verify --no-cache` reruns everything, because options after `verify`
+reach the inner run.
+
+When a task fails, the task runner kills the tasks still running, and each
+exits 137. Verify then ends with `verify: <task> failed (exit <n>)` and that
+task's output, and lists the killed tasks as stopped. A 137 with no failure
+before it still counts as a failure. When verify cannot tell which task failed,
+for example because another `vp run` in the same checkout replaced the run
+details, it says so and points at the task output above.
+
+`verify:babysit-scripts` type-checks and tests the `babysit` skill's
+`watch-pr` against its own `tsconfig.json` and locked dependencies. Live Pi
+integration tests need provider credentials and run separately with
+`vp run test:e2e`. Run them after you upgrade Pi.
 
 `scripts/verify-skills.ts` checks the skill packages under
 `agent/skills/` and `.agents/skills/`. It loads them with Pi's own

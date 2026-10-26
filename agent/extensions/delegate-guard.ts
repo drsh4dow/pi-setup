@@ -1,4 +1,7 @@
-import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+import { refuseCommands } from "../lib/command-tool-call.ts";
+import { basename, commandArgv, isShell, pipelines } from "../lib/shell-command.ts";
 
 type LaunchKind = "root" | "owner" | "delegate";
 
@@ -12,41 +15,26 @@ const DELEGATE_PROMPT = "skills/subagents/delegate.md";
 
 const LAUNCHER = "skills/subagents/scripts/launch.ts";
 
+// Commands that only print or search their arguments, so a launch string in one is text.
+const TEXT_COMMANDS: ReadonlySet<string> = new Set([
+  "ack",
+  "ag",
+  "echo",
+  "egrep",
+  "fgrep",
+  "grep",
+  "printf",
+  "rg",
+]);
+
+// An argument with a blank or a separator may be a command line that its program runs.
+const COMMAND_LINE = /[\s;&|]/;
+
 const DELEGATE_REASON =
   "Delegates spawn nothing. Finish your piece, and name in your report the helper your parent should spawn.";
 
 const OWNER_REASON =
   "Owners launch only delegates. Append skills/subagents/delegate.md to every pi-subagent launch, and pass --kind delegate to skills/subagents/scripts/launch.ts, per the subagents skill.";
-
-const HEREDOC = /(?<!<)<<(-?)\s*(['"]?)([^\s'"<>;&|()]+)\2/g;
-
-const LINE_CONTINUATION = /\\\r?\n/g;
-
-const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
-const COMMAND_WRAPPERS: ReadonlySet<string> = new Set([
-  "bash",
-  "env",
-  "exec",
-  "nice",
-  "node",
-  "nohup",
-  "setsid",
-  "sh",
-  "time",
-  "timeout",
-  "zsh",
-]);
-
-const TIMEOUT_DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
-
-// `&` next to `<` or `>` is a redirection such as `2>&1`, not a separator.
-const COMMAND_SEPARATOR = /&&|\|\||;|\||(?<![<>])&(?!>)|\r?\n/;
-
-interface HeredocTerminator {
-  readonly word: string;
-  readonly stripsTabs: boolean;
-}
 
 function appendedPrompts(argv: readonly string[]): string[] {
   return argv.flatMap((arg, index) => {
@@ -68,37 +56,6 @@ function launchKind(argv: readonly string[]): LaunchKind {
   return "delegate";
 }
 
-function withoutHeredocBodies(command: string): string {
-  const kept: string[] = [];
-  const pending: HeredocTerminator[] = [];
-
-  for (const line of command.split("\n")) {
-    const terminator = pending[0];
-
-    if (terminator !== undefined) {
-      const candidate = terminator.stripsTabs ? line.replace(/^\t+/, "") : line;
-
-      if (candidate.replace(/\r$/, "") === terminator.word) pending.shift();
-      continue;
-    }
-
-    kept.push(line);
-
-    for (const match of line.matchAll(HEREDOC)) {
-      pending.push({ word: match[3], stripsTabs: match[1] === "-" });
-    }
-  }
-
-  return kept.join("\n");
-}
-
-function words(simpleCommand: string): string[] {
-  return simpleCommand
-    .split(/\s+/)
-    .filter((word) => word !== "")
-    .map((word) => word.replaceAll(/["']/g, ""));
-}
-
 function isPi(word: string): boolean {
   return word === "pi" || word.endsWith("/pi");
 }
@@ -114,43 +71,45 @@ function isLauncher(word: string): boolean {
 
 // `pi-subagent` needs no flag to launch, so it counts only in command position.
 // Otherwise `rg pi-subagent` and `test -x .../pi-subagent` would read as launches.
-function isWrapperWord(word: string): boolean {
-  return (
-    ENV_ASSIGNMENT.test(word) ||
-    COMMAND_WRAPPERS.has(word) ||
-    word.startsWith("-") ||
-    TIMEOUT_DURATION.test(word)
-  );
-}
-
 function piSubagentLaunch(argv: readonly string[]): PiLaunchArgv | undefined {
-  const commandIndex = argv.findIndex((word) => !isWrapperWord(word));
-  const commandWord = argv[commandIndex];
+  const launch = commandArgv(argv);
+  const commandWord = launch[0] ?? "";
 
-  if (commandWord === undefined || !(isPiSubagent(commandWord) || isLauncher(commandWord)))
-    return undefined;
-
-  return argv.slice(commandIndex);
+  return isPiSubagent(commandWord) || isLauncher(commandWord) ? launch : undefined;
 }
 
+function launchOf(argv: readonly string[]): PiLaunchArgv | undefined {
+  const subagentLaunch = piSubagentLaunch(argv);
+
+  if (subagentLaunch !== undefined) return subagentLaunch;
+
+  const piIndex = argv.findIndex(isPi);
+
+  if (piIndex === -1) return undefined;
+
+  const launch = argv.slice(piIndex);
+
+  return launch.some((word) => word === "--print" || word === "-p") ? launch : undefined;
+}
+
+// A program such as `tmux new-session -d "…"`, `ssh host "…"`, or `watch "…"` runs its
+// quoted argument as a command line, so that argument is judged as one. A launch's own
+// arguments are its prompt, and a text command's are text unless its pipeline feeds a shell.
 function subagentLaunches(command: string): PiLaunchArgv[] {
-  const joined = withoutHeredocBodies(command).replace(LINE_CONTINUATION, " ");
+  return pipelines(command).flatMap((pipeline) => {
+    const feedsShell = pipeline.slice(1).some(({ argv }) => isShell(argv[0] ?? ""));
 
-  return joined.split(COMMAND_SEPARATOR).flatMap((simpleCommand) => {
-    const argv = words(simpleCommand);
-    const subagentLaunch = piSubagentLaunch(argv);
+    return pipeline.flatMap(({ argv }) => {
+      const launch = launchOf(argv);
 
-    if (subagentLaunch !== undefined) return [subagentLaunch];
+      if (launch !== undefined) return [launch];
 
-    const piIndex = argv.findIndex(isPi);
+      const [word = "", ...args] = commandArgv(argv);
 
-    if (piIndex === -1) return [];
+      if (TEXT_COMMANDS.has(basename(word)) && !feedsShell) return [];
 
-    const launch = argv.slice(piIndex);
-
-    if (!launch.some((word) => word === "--print" || word === "-p")) return [];
-
-    return [launch];
+      return args.filter((arg) => COMMAND_LINE.test(arg)).flatMap(subagentLaunches);
+    });
   });
 }
 
@@ -211,17 +170,5 @@ export default function delegateGuard(pi: ExtensionAPI): void {
 
   if (blockReason === undefined) return;
 
-  pi.on("tool_call", (event) => {
-    const runsCommand =
-      isToolCallEventType("bash", event) ||
-      isToolCallEventType<"bg_start", { command: string }>("bg_start", event);
-
-    if (!runsCommand) return undefined;
-
-    const reason = blockReason(event.input.command);
-
-    if (reason === undefined) return undefined;
-
-    return { block: true, reason };
-  });
+  refuseCommands(pi, blockReason);
 }

@@ -18,6 +18,15 @@ test("the prompt names the columns the CLI writes", () => {
   assert.equal(columns("ledger.tsv"), LEDGER_HEADER);
 });
 
+test("the prompt names the unit states the CLI accepts", () => {
+  const prompt = readFileSync(join(promptsDir, "implement-chunk.md"), "utf8");
+
+  assert.equal(
+    prompt.match(/`units.tsv` states: `([^`]+)`/)?.[1],
+    "planned running pr-open merged done abandoned reconciled",
+  );
+});
+
 test("ledger record appends a row and refuses an outcome outside the vocabulary", (t) => {
   const state = scratch(t);
   const ledger = join(state, "ledger.tsv");
@@ -161,9 +170,12 @@ test("unit add and set write units.tsv rows in place", (t) => {
   assert.equal(unit("set", "u1", "state=merged", "final_pr=7").status, 0);
   assert.equal(
     readFileSync(units, "utf8"),
-    [UNITS_HEADER, "u1\tT1\t\t7\tmerged\t\t\t\tbriefs/u1.md", "u2\tT2\t\t\t\t\t\t\t", ""].join(
-      "\n",
-    ),
+    [
+      UNITS_HEADER,
+      "u1\tT1\t\t7\tmerged\t\t\t\tbriefs/u1.md",
+      "u2\tT2\t\t-\tplanned\t\t\t\t",
+      "",
+    ].join("\n"),
   );
 
   for (const refused of [
@@ -171,6 +183,7 @@ test("unit add and set write units.tsv rows in place", (t) => {
     ["set", "u9", "state=merged"],
     ["set", "u1", "verdict=pass"],
     ["set", "u1", "state=two\twords"],
+    ["set", "u1", "state=finished"],
     ["set", "u1"],
   ]) {
     assert.equal(unit(...refused).status, 2, refused.join(" "));

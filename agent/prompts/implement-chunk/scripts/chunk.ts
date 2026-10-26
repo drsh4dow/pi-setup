@@ -23,6 +23,8 @@ import { type Lookup, renderReport, ticketsOf } from "./report.ts";
 import {
   LEDGER_COLUMNS,
   UNIT_COLUMNS,
+  UNIT_STATES,
+  type UnitColumn,
   type Verdict,
   isUnitColumn,
   parseLedger,
@@ -173,11 +175,23 @@ function columnValues(args: readonly string[]): Map<string, string> {
 
     if (values.has(column)) throw new Refusal(`column given twice: ${column}`);
 
-    values.set(column, arg.slice(split + 1));
+    const value = arg.slice(split + 1);
+
+    if (column === "state" && !UNIT_STATES.some((state) => state === value)) {
+      throw new Refusal(`not a unit state: ${value}\nstates: ${UNIT_STATES.join(", ")}`);
+    }
+
+    values.set(column, value);
   }
 
   return values;
 }
+
+/** What `unit add` writes in a column the command leaves out. */
+const NEW_UNIT: Partial<Record<UnitColumn, string>> = {
+  final_pr: "-",
+  state: "planned",
+};
 
 function writeUnit(path: string, mode: string, args: readonly string[]): Result {
   const [id = "", ...assignments] = args;
@@ -196,7 +210,8 @@ function writeUnit(path: string, mode: string, args: readonly string[]): Result 
 
   if (mode === "set" && existing === undefined) throw new Refusal(`${path}: no unit ${id}`);
 
-  const cells = existing ?? UNIT_COLUMNS.map((column) => (column === "id" ? id : ""));
+  const cells =
+    existing ?? UNIT_COLUMNS.map((column) => NEW_UNIT[column] ?? (column === "id" ? id : ""));
 
   if (existing === undefined) lines.push(cells);
 

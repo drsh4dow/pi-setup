@@ -18,6 +18,17 @@ export const UNIT_COLUMNS = [
 
 export type UnitColumn = (typeof UNIT_COLUMNS)[number];
 
+/** A unit's `state`, in lifecycle order. `unit add` starts a row at `planned`. */
+export const UNIT_STATES = [
+  "planned",
+  "running",
+  "pr-open",
+  "merged",
+  "done",
+  "abandoned",
+  "reconciled",
+] as const;
+
 export const LEDGER_COLUMNS = ["pr", "head_sha", "outcome", "evidence", "recorded_at"] as const;
 
 export function isUnitColumn(name: string): name is UnitColumn {

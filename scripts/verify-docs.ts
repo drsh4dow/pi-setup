@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, resolve } from "node:path";
@@ -168,6 +169,97 @@ for (const { heading, actual } of inventory) {
   if (JSON.stringify(expected) !== JSON.stringify(found)) {
     errors.push(
       `${inventoryFile} ${heading}: found [${expected.join(", ")}], documented [${found.join(", ")}]`,
+    );
+  }
+}
+
+// Who can start a skill, as the inventory's Who column states it.
+type Who = "you" | "agent" | "both";
+
+// The two frontmatter keys that decide who can start a skill, as YAML parsed them.
+type InvocationFlags = {
+  readonly "disable-model-invocation"?: unknown;
+  readonly "user-invokable"?: unknown;
+};
+
+// Pi hides a skill from the model only on an explicit `disable-model-invocation: true`, and
+// skill-visibility hides it from /skill: only on an explicit `user-invokable: false`.
+function whoFromFrontmatter(frontmatter: InvocationFlags): Who | "nobody" {
+  const userCanStart = frontmatter["user-invokable"] !== false;
+
+  if (frontmatter["disable-model-invocation"] !== true) return userCanStart ? "both" : "agent";
+
+  return userCanStart ? "you" : "nobody";
+}
+
+const skillWho = new Map<string, Who>();
+
+for (const path of files) {
+  const name = path.match(/^agent\/skills\/([^/]+)\/SKILL\.md$/)?.[1];
+
+  if (name === undefined) continue;
+
+  let frontmatter: InvocationFlags;
+
+  try {
+    frontmatter = parseFrontmatter<InvocationFlags>(
+      readFileSync(resolve(root, path), "utf8"),
+    ).frontmatter;
+  } catch (error) {
+    // The YAML parser's first line names the problem and its position; the rest is a code frame.
+    const reason = error instanceof Error ? error.message.split("\n", 1)[0] : String(error);
+    errors.push(`${path}: frontmatter does not parse: ${reason}`);
+    continue;
+  }
+
+  const who = whoFromFrontmatter(frontmatter);
+
+  if (who === "nobody") {
+    errors.push(
+      `${path}: disable-model-invocation: true and user-invokable: false leave no one able to start it`,
+    );
+  } else {
+    skillWho.set(name, who);
+  }
+}
+
+function tableCells(line: string) {
+  return line
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+// Each row of a table under "### Installed skills" whose header has a Who column.
+function whoRows(markdown: string) {
+  const section = markdown.match(/^### Installed skills\s*$([\s\S]*?)(?=^###? |(?![\s\S]))/m);
+  const lines = section ? section[1].split("\n") : [];
+  const rows: { name: string; who: string }[] = [];
+  let whoColumn = -1;
+
+  for (const [index, line] of lines.entries()) {
+    if (!line.startsWith("|")) {
+      whoColumn = -1;
+    } else if (/^\|[\s:|-]+\|\s*$/.test(line)) {
+      whoColumn = tableCells(lines[index - 1] ?? "").indexOf("Who");
+    } else if (whoColumn !== -1) {
+      const cells = tableCells(line);
+      const name = cells[0]?.match(/`([^`]+)`/)?.[1];
+
+      if (name !== undefined) rows.push({ name, who: cells[whoColumn] ?? "" });
+    }
+  }
+
+  return rows;
+}
+
+for (const { name, who } of whoRows(inventoryText)) {
+  const expected = skillWho.get(name);
+
+  if (expected !== undefined && expected !== who) {
+    errors.push(
+      `${inventoryFile} Installed skills: ${name} is listed as ${who}, agent/skills/${name}/SKILL.md frontmatter makes it ${expected}`,
     );
   }
 }

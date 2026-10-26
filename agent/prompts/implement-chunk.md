@@ -75,7 +75,7 @@ The tickets form a **task graph** of blocking edges. Its **frontier** is the tic
 ### 3. Implement
 
 1. Have a merger create each integration branch from the base branch, or from its parent's integration branch for a final PR that depends on another.
-2. Have implementers take the frontier tickets, each in its own worktree on its own branch, to the Definition of Done in `brief.md`. Each delivers an **intermediate PR** against its integration branch.
+2. Have implementers take the frontier tickets, each in its own worktree on its own branch, to the Definition of Done in `definition-of-done.md`. Each delivers an **intermediate PR** against its integration branch.
 3. When four or more tickets are ready at once, spawn one first as a **pilot**, and fan out once its intermediate PR has a passing verdict. Fix the brief template or the contract notes from what the pilot showed before the rest spawn.
 4. Keep a rolling window of up to ten implementers: when one finishes, spawn the next ready ticket in the same turn you record the completion. Size the launcher's `--min-mem-gib` to the unit's heaviest gate.
 5. A worktree holds only what git tracks, so tests that read gitignored fixtures, local databases, or credentials, and contract suites that need sandbox credentials, can silently skip there. Verify a ticket that depends on untracked material in the main checkout, one unit at a time.
@@ -124,7 +124,7 @@ Intermediate PRs exist for your verification. Final PRs exist for the human's tr
 
 ## The brief
 
-Write each **brief** from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A field you cannot fill is a unit you have not scoped yet. Save the brief in the state folder and launch it; the launcher checks it. Check each path the brief names yourself (`test -e`).
+Write each **brief** from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A field you cannot fill is a unit you have not scoped yet. Save the brief in the state folder and launch it; the launcher checks it. Launch each implementer and verifier with `--append ~/.pi/agent/prompts/implement-chunk/definition-of-done.md`, because its brief names a bar the child cannot otherwise read. Check each path the brief names yourself (`test -e`).
 
 ## Verification
 

@@ -1,2 +1,0 @@
-#!/usr/bin/env bash
-exec node "$(dirname "$(readlink -f "$0")")/../fakegh.ts" "$@"

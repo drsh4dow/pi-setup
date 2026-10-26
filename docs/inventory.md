@@ -34,6 +34,7 @@ theme needs a line here.
 | `swarm`                     | agent | Fan out parallel workers and merge one report        |
 | `background-terminals`      | agent | Run services, watchers, and subagents alongside work |
 | `tdd`                       | agent | Test-first loop for features and bug fixes           |
+| `diagnosing-bugs`           | agent | Find the cause of a hard bug through a red loop      |
 | `typescript-best-practices` | agent | Write TypeScript to this setup's standard            |
 | `frontend-design`           | agent | Give new UI a deliberate visual direction            |
 | `docs-search`               | agent | Check version-sensitive API behavior                 |

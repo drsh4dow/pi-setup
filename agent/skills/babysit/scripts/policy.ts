@@ -155,8 +155,10 @@ export async function readSnapshot(args: {
     threads
   );
   const checks = await resolveChecks(args.reader, args.context);
+  const pendingShortCut =
+    args.pendingHistory === "omit" ? pendingWithoutHistory(checks) : null;
   const ci =
-    (args.pendingHistory === "omit" ? pendingWithoutHistory(checks) : null) ??
+    pendingShortCut ??
     classifyCi(checks, await mergeAssessment(args.reader, facts));
   return {
     kind: "open",

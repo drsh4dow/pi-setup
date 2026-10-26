@@ -1,5 +1,8 @@
 import {
+  REVIEW_STATES,
   at,
+  connectionCursor,
+  drain,
   enumValue,
   list,
   missing,
@@ -135,25 +138,11 @@ function graphqlData(value: unknown, label: string): unknown {
   if (object.errors !== undefined) missing(`${label}.errors`, object.errors);
   return object;
 }
-function connectionCursor(connection: Record<string, unknown>, path: string) {
-  const page = record(connection.pageInfo, `${path}.pageInfo`);
-  if (typeof page.hasNextPage !== "boolean")
-    missing(`${path}.pageInfo.hasNextPage`, page.hasNextPage);
-  if (!page.hasNextPage) return null;
-  return string(page.endCursor, `${path}.pageInfo.endCursor`);
-}
-function author(value: unknown, path: string) {
-  const parsed = parseAuthor(value, `${path}.author`);
-  return {
-    authorLogin: parsed?.login ?? null,
-    authorIsBot: parsed?.isBot ?? false,
-  };
-}
 function parseFeedbackComment(value: unknown, path: string): FeedbackComment {
   const object = record(value, path);
   return {
     id: string(object.id, `${path}.id`),
-    ...author(object.author, path),
+    ...parseAuthor(object.author, `${path}.author`),
     body: string(object.body, `${path}.body`),
     url: string(object.url, `${path}.url`),
     createdAt: string(object.createdAt, `${path}.createdAt`),
@@ -170,20 +159,13 @@ function parseThreadComment(value: unknown, path: string): ThreadComment {
     line: typeof line === "number" ? line : null,
   };
 }
-const REVIEW_STATES = [
-  "APPROVED",
-  "CHANGES_REQUESTED",
-  "COMMENTED",
-  "DISMISSED",
-  "PENDING",
-] as const;
 function parseReview(value: unknown): SubmittedReview | null {
   const object = record(value, "review");
   const state = enumValue(object.state, REVIEW_STATES, "review.state");
   if (state === "PENDING") return null;
   return {
     id: string(object.id, "review.id"),
-    ...author(object.author, "review"),
+    ...parseAuthor(object.author, "review.author"),
     body: string(object.body, "review.body"),
     url: string(object.url, "review.url"),
     state,
@@ -256,23 +238,6 @@ export function parseThreadCommentPage(value: unknown) {
     record(node.comments, "thread node.comments"),
     "thread node.comments"
   );
-}
-async function drain<P extends { readonly endCursor: string | null }>(
-  label: string,
-  fetch: (after: string | null) => Promise<P>,
-  first?: P
-): Promise<T.NonEmpty<P>> {
-  const pages: [P, ...P[]] = [first ?? (await fetch(null))];
-  const cursors = new Set<string>();
-  let after = pages[0].endCursor;
-  while (after !== null) {
-    if (cursors.has(after)) missing(`${label}.pageInfo.endCursor`, after);
-    cursors.add(after);
-    const page = await fetch(after);
-    pages.push(page);
-    after = page.endCursor;
-  }
-  return pages;
 }
 function pageVariables(
   context: T.PrContext,

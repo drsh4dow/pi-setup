@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 
+import { EVAL_FIXTURE_FOLDERS } from "../eval-fixture-folders.ts";
+
 const checker = new URL("../verify-docs.ts", import.meta.url).pathname;
 
 function repository(t: TestContext, inventory: string, extraFiles: Record<string, string> = {}) {
@@ -157,6 +159,40 @@ test("includes directly tracked extension files in the inventory", (t) => {
 
   const result = run(root);
   assert.equal(result.status, 0, result.stderr);
+});
+
+const brokenReadme = "See [design](docs/design.md).\n";
+
+// Absent from the shared list however it grows, so this case keeps checking an unlisted folder.
+const unlistedFolder = `not-${EVAL_FIXTURE_FOLDERS.join("-")}`;
+
+test("skips a broken link under every eval fixture folder", (t) => {
+  const root = repository(
+    t,
+    validInventory,
+    Object.fromEntries(
+      EVAL_FIXTURE_FOLDERS.map((folder) => [`evals/demo/${folder}/case/README.md`, brokenReadme]),
+    ),
+  );
+
+  const result = run(root);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("still checks eval docs outside the eval fixture folders", (t) => {
+  const root = repository(t, validInventory, {
+    "evals/demo/README.md": brokenReadme,
+    "evals/demo/setup/case/README.md": brokenReadme,
+    [`evals/demo/${unlistedFolder}/case/README.md`]: brokenReadme,
+  });
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(result.stderr.trim().split("\n").toSorted(), [
+    "evals/demo/README.md: broken local link docs/design.md",
+    `evals/demo/${unlistedFolder}/case/README.md: broken local link docs/design.md`,
+    "evals/demo/setup/case/README.md: broken local link docs/design.md",
+  ]);
 });
 
 test("reports inventory drift from tracked components", (t) => {

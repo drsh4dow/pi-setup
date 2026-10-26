@@ -1,9 +1,11 @@
 import { effectNative, strict as effectStrict } from "@effect/tsgo/oxlint-presets";
 import { defineConfig } from "vite-plus";
 
-// Reference checkouts, runtime state, installed skills, vendored lint rules, and the
-// projects evals copy for candidates are not application source.
-// Eval change overlays and planted-defect answer keys are fixtures too.
+import { EVAL_FIXTURE_FOLDERS } from "./scripts/eval-fixture-folders.ts";
+
+// Reference checkouts, runtime state, installed skills, vendored lint rules, and
+// eval fixture folders are not application source.
+// Declare a new kind of eval fixture folder in scripts/eval-fixture-folders.ts, not here.
 const ignoredFiles = [
   ".repos/**",
   "agent/npm/**",
@@ -11,10 +13,10 @@ const ignoredFiles = [
   "agent/references/**",
   "agent/sessions/**",
   "agent/skills/*",
-  "evals/*/fixtures/**",
-  "evals/*/changes/**",
-  "evals/*/defects/**",
+  ...EVAL_FIXTURE_FOLDERS.map((folder) => `evals/*/${folder}/**`),
+  // Shell scripts the evals run to prepare their fixtures, which are code, not fixtures.
   "evals/*/setup/**",
+  // Gitignored eval run output.
   "evals/*/results/**",
   "oxlint/anti-slop/**",
 ];

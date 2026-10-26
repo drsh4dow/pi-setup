@@ -4,6 +4,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, extname, resolve } from "node:path";
 
+import { isEvalFixturePath } from "./eval-fixture-folders.ts";
+
 const root = process.cwd();
 
 const files = execFileSync(
@@ -13,8 +15,7 @@ const files = execFileSync(
 )
   .split("\0")
   .filter(Boolean)
-  // An eval's change overlay is a partial tree: its links resolve only once it sits on its fixture.
-  .filter((path) => !/^evals\/[^/]+\/changes\//.test(path))
+  .filter((path) => !isEvalFixturePath(path))
   .filter((path) => existsSync(resolve(root, path)));
 
 const errors: string[] = [];

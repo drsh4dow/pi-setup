@@ -41,7 +41,7 @@ SESSION_IDLE_JQ="$ENDS_TURN_JQ"'
 
 usage() {
   cat <<'EOF'
-control-pi launch [RUN_ID]          start an isolated Pi and wait for its footer
+control-pi launch [RUN_ID]          start an isolated Pi and wait for its footer (RUN_ID: A-Z a-z 0-9 _ -)
 control-pi doctor RUN_ID            read-only health check of the instance
 control-pi send RUN_ID TEXT         type TEXT literally, then press Enter
 control-pi keys RUN_ID KEY...       send tmux key names (C-o, Escape, C-M-m, Down)
@@ -67,7 +67,8 @@ tm() {
 
 bind_run() {
   RUN_ID=${1:-}
-  [[ $RUN_ID =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid run id '$RUN_ID'"
+  [[ $RUN_ID =~ ^[A-Za-z0-9_-]+$ ]] ||
+    die "invalid run id '$RUN_ID': use only letters, digits, '_' and '-'; tmux reads '.' and ':' in a target as separators"
   SCRATCH=$SCRATCH_BASE/$RUN_ID
   AGENT_DIR=$SCRATCH/agent
   EVIDENCE=$EVIDENCE_BASE/$RUN_ID

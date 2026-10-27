@@ -169,6 +169,20 @@ const jobResult = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+test("a run id with a dot is refused at bind time, naming the allowed characters", (t) => {
+  const h = harness(t);
+
+  for (const command of ["launch", "stop"]) {
+    const result = h.cp(command, "r.1");
+
+    assert.equal(result.status, 1, `${command}: ${result.stderr}`);
+    assert.equal(
+      result.stderr,
+      "control-pi: invalid run id 'r.1': use only letters, digits, '_' and '-'; tmux reads '.' and ':' in a target as separators\n",
+    );
+  }
+});
+
 test("every wait on a run that was never launched says the run does not exist, not that Pi exited", (t) => {
   const h = harness(t);
 
@@ -445,12 +459,12 @@ test("wait-idle does not count Pi itself as a background job", (t) => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("wait-idle ignores a process of another run whose id matches this one only as a regex", async (t) => {
-  const h = harness(t, `control-pi.test-${process.pid}`);
+test("wait-idle ignores a process of another run whose id starts with this one", async (t) => {
+  const h = harness(t);
   h.launch();
 
   const other = spawn("sleep", ["30"], {
-    env: { ...process.env, VERIFY_PI_SETUP_RUN: h.run.replace(".", "x") },
+    env: { ...process.env, VERIFY_PI_SETUP_RUN: `${h.run}-other` },
     stdio: "ignore",
   });
 

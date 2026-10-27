@@ -377,6 +377,13 @@ export function probePi(pi: string, env: NodeJS.ProcessEnv): PiRun {
     if (run.error)
       return { kind: "failed", reason: `${pi} --mode rpc did not finish: ${run.error.message}` };
 
+    // Pi exits 0 once stdin closes, so any other status means it broke after listing.
+    if (run.status !== 0)
+      return {
+        kind: "failed",
+        reason: `${pi} --mode rpc exited with ${run.status ?? run.signal}: ${run.stderr.trim()}`,
+      };
+
     return { kind: "ran", load: parsePiOutput(`${run.stdout}\n${run.stderr}`) };
   });
 }

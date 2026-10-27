@@ -26,6 +26,7 @@ import {
   parsePackageStatus,
   parsePiOutput,
   parseShellEnv,
+  probePi,
   resolveCommand,
 } from "../doctor/probe.ts";
 
@@ -167,6 +168,21 @@ test("Pi passes only when it loads every skill of this checkout without errors",
 
   const silent = judgePiLoad({ load: parsePiOutput(""), skillsDir, expectedSkills: 2 });
   assert.equal(silent.status, "fail");
+});
+
+test("a Pi that exits nonzero fails the probe, even after listing every skill", (t) => {
+  const root = scratch(t);
+  const output = listing([join(repo, "agent", "skills", "how", "SKILL.md")]);
+  writeFileSync(join(root, "listing"), output);
+
+  for (const [status, kind] of [
+    [0, "ran"],
+    [1, "failed"],
+  ] as const) {
+    const pi = join(root, `pi-${status}`);
+    executable(pi, `cat > /dev/null; cat "${join(root, "listing")}"; exit ${status}`);
+    assert.equal(probePi(pi, process.env).kind, kind);
+  }
 });
 
 test("a tier's system packages are the keys of its [bootstrap.packages] table alone", () => {

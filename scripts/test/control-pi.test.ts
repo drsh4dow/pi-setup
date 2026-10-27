@@ -214,6 +214,17 @@ test("list shows a valid run and flags a leftover run id it cannot bind, with wh
   );
 });
 
+test("a subcommand given an empty run id says the run id is missing", (t) => {
+  const h = harness(t);
+
+  for (const command of ["stop", "doctor"]) {
+    const result = h.cp(command, "");
+
+    assert.equal(result.status, 1, command);
+    assert.equal(result.stderr, "control-pi: missing RUN_ID\n", command);
+  }
+});
+
 test("list gives the commands that end a dotted leftover's tagged processes and tmux session", async (t) => {
   const h = harness(t);
   const withDirectory = `${h.run}.1`;

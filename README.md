@@ -8,18 +8,21 @@ merge and again after deploy. Clone it to `~/.pi` and Pi loads it as is.
 
 ## Install
 
-Requires [Vite+](https://viteplus.dev/guide/).
+Give your coding agent, such as Pi, Claude Code, Codex, or opencode, this
+prompt:
 
-```bash
-git clone https://github.com/drsh4dow/pi-setup.git ~/.pi   # move an existing ~/.pi aside first
-cd ~/.pi && vp install
-vp install -g @earendil-works/pi-coding-agent
-pi                                                          # then /login
+```text
+Read https://github.com/drsh4dow/pi-setup/blob/main/SETUP.md
+and set up this Pi configuration on my machine.
 ```
+
+The agent asks which optional tools you want, installs Pi and the tools with
+[mise](https://mise.jdx.dev), and runs `mise run doctor` until no check fails.
+To do it yourself, follow the same steps in [SETUP.md](SETUP.md). Then start
+`pi` and run `/login`.
 
 Run `/skill:setup-sh4dow-skills` once in each repository. It records where the
 issues live, where the domain docs are, and which checks the code must pass.
-Web search needs `PERPLEXITY_API_KEY` and `EXA_API_KEY`.
 
 ## Workflow
 

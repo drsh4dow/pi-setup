@@ -9,7 +9,8 @@ Fill each operation with the exact tool or command that performs it, and its req
 - **Publish**:
 - **Fetch**:
 - **Search**:
+- **Edit**:
 - **Comment**:
 - **Nest under a parent**:
 - **Block**:
-- **Close**:
+- **Close**, with how to close one issue as a duplicate of another:

@@ -26,7 +26,7 @@ Launch builds the scratch state from the checkout every time:
 - `auth.json` is a copy of the live one. Launch first refreshes each OAuth token with less than 30 minutes left, in the live directory under Pi's lock, so the scratch copy does not refresh and rotate a token the live session still holds.
 - `PI_*` and `HERDR_*` variables from the caller are dropped, and `HERDR_ENV=0` keeps the instance out of Herdr.
 
-Runs are isolated by run ID and can run side by side. Each uses its own tmux session `vps-<RUN_ID>` on the dedicated tmux socket `verify-pi-setup`. Drive only runs you launched. Never attach to or send keys to the user's own Pi.
+Runs are isolated by run ID and can run side by side. A run ID uses only letters, digits, `_`, and `-`, because tmux reads `.` and `:` in a target as separators. Each uses its own tmux session `vps-<RUN_ID>` on the dedicated tmux socket `verify-pi-setup`. Drive only runs you launched. Never attach to or send keys to the user's own Pi.
 
 ## Doctor
 

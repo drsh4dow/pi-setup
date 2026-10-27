@@ -1,16 +1,28 @@
 // Reads a shell command string into the commands it runs, for the tool-call guards.
-// It is not a full parser. It finds the commands of pipelines and lists, of `( … )`
-// and `{ … }` groups, and after reserved words such as `if`, `then`, and `do`. It
-// also finds them inside `$( … )`, backtick, and `<( … )` substitutions, whether
-// bare, in double quotes, or in an unquoted heredoc body, and in the operand of
-// `bash -c`, `sh -c`, `zsh -c`, `eval`, and `env -S`. It reads the command word
-// past wrappers such as `sudo -u root`, `command`, and `timeout 5`, and leaves
-// `command -v` as the lookup it is. Single-quoted text, and double-quoted
-// text outside a substitution, stays one literal word, so a separator or a command
-// name inside it is never read as a command. Comments, redirections, and quoted
-// heredoc bodies are dropped.
+// It is not a full parser. It finds the commands of pipelines, lists, groups, `case`
+// clauses, and reserved words; inside substitutions, bare, quoted, or in an unquoted
+// heredoc; in `bash -c`, `eval`, and `env -S` operands; in what command-input.ts
+// says a runner such as `tmux new-session` starts; and in the heredoc, here-string,
+// or literal `echo` fed to a shell reading stdin. Quoted text stays one literal
+// word, so a command name inside it is never read as a command. Comments,
+// redirections, and other heredoc bodies are dropped. It nests at most MAX_NESTING deep.
 
-import { commandStart, isShell } from "./command-word.ts";
+import { commandInput, printedText } from "./command-input.ts";
+import {
+  WORD_END,
+  ansiQuoted,
+  at,
+  atWord,
+  backtickBody,
+  extglob,
+  flatWords,
+  isBlank,
+  lineContinuation,
+  skipBlanks,
+  skipCaseSeparators,
+  upTo,
+  type Cursor,
+} from "./shell-cursor.ts";
 
 export { basename, commandArgv, isShell } from "./command-word.ts";
 
@@ -22,7 +34,7 @@ export interface Command {
    * for a `bash -c`, `eval`, or `env -S` whose operand was read into `nested`.
    */
   readonly argv: readonly string[];
-  /** Its substitutions, a group's body, or the operand of `bash -c`, `eval`, or `env -S`. */
+  /** Its substitutions, group and `case` bodies, operands, runner commands, and literal stdin. */
   readonly nested: readonly Script[];
 }
 
@@ -32,12 +44,10 @@ export type Pipeline = readonly Command[];
 /** Pipelines joined by `;`, `&`, `&&`, `||`, or newlines. */
 export type Script = readonly Pipeline[];
 
+/** The deepest nesting of scripts inside scripts that the reader follows. */
+export const MAX_NESTING = 64;
+
 const ARRAY_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=$/;
-
-const SHELL_SHORT_OPTIONS = /^[-+][A-Za-z]+$/;
-
-// bash's long options that take the next word as their argument.
-const SHELL_LONG_OPTIONS_WITH_ARGUMENT: ReadonlySet<string> = new Set(["--init-file", "--rcfile"]);
 
 // Reserved words that may start a command; the command after them still runs.
 const LEADING_RESERVED_WORDS: ReadonlySet<string> = new Set([
@@ -55,14 +65,15 @@ const LEADING_RESERVED_WORDS: ReadonlySet<string> = new Set([
   "while",
 ]);
 
-const WORD_END = /[ \t\r\n;&|()<>]/;
-
 // `?(…)`, `*(…)`, `+(…)`, `@(…)`, and `!(…)` are extended globs, not groups.
 const EXTGLOB_PREFIX = /[?*+@!]$/;
 
 const REDIRECTION = /^(?:&>>|&>|<>|<&|>>|>&|>\||<|>)/;
 
 const LIST_OPERATOR = /^(?:;;&|;;|;&|;|&&|\|\||&)/;
+
+// The operators that end a `case` clause.
+const CLAUSE_END: ReadonlySet<string> = new Set([";;", ";&", ";;&"]);
 
 // Inside double quotes a backslash escapes only these; before anything else it is literal.
 const DOUBLE_QUOTE_ESCAPES: ReadonlySet<string> = new Set(["$", "`", '"', "\\", "\n"]);
@@ -72,16 +83,38 @@ interface HeredocTerminator {
   readonly stripsTabs: boolean;
   // An unquoted delimiter means the body expands substitutions.
   readonly expands: boolean;
+  // The nested scripts of the shell that runs the body, once its command has ended.
+  runsIn: Script[] | undefined;
 }
 
-interface Scanner {
-  readonly text: string;
-  index: number;
+// How deep the scripts being read are nested, shared by every scanner of one command.
+interface Nesting {
+  depth: number;
+  tooDeep: boolean;
+}
+
+interface Scanner extends Cursor {
   heredocs: HeredocTerminator[];
+  readonly nesting: Nesting;
 }
 
-// What a script ends at: the end of the text, `)` of a substitution or subshell, or `}` of a brace group.
-type Closer = "end" | ")" | "}";
+// What a script ends at: the end of the text, `)` of a substitution or subshell, `}` of
+// a brace group, or the `;;` or `esac` that ends a `case` clause.
+type Closer = "end" | ")" | "}" | "clause";
+
+type MutableCommand = Command & { readonly nested: Script[] };
+
+// What a command's redirections give the shell that reads stdin.
+interface Stdin {
+  readonly heredocs: HeredocTerminator[];
+  hereString: string | undefined;
+}
+
+interface Redirection {
+  readonly nested: readonly Script[];
+  readonly heredoc?: HeredocTerminator;
+  readonly hereString?: string;
+}
 
 interface Expanded {
   readonly text: string;
@@ -92,50 +125,9 @@ interface Word extends Expanded {
   readonly raw: string;
 }
 
-function scanner(text: string): Scanner {
-  return { text, index: 0, heredocs: [] };
-}
-
-function at(s: Scanner, offset = 0): string {
-  return s.text[s.index + offset] ?? "";
-}
-
-function isBlank(char: string): boolean {
-  return char === " " || char === "\t" || char === "\r";
-}
-
-function skipBlanks(s: Scanner): void {
-  while (isBlank(at(s))) s.index += 1;
-}
-
-// A backslash-newline joins two lines into one.
-function lineContinuation(s: Scanner): number {
-  if (at(s) !== "\\") return 0;
-
-  if (at(s, 1) === "\n") return 2;
-
-  return at(s, 1) === "\r" && at(s, 2) === "\n" ? 3 : 0;
-}
-
-function backtickBody(s: Scanner): string {
-  let body = "";
-  s.index += 1;
-
-  while (s.index < s.text.length && at(s) !== "`") {
-    const next = at(s, 1);
-
-    if (at(s) === "\\" && (next === "`" || next === "\\" || next === "$")) {
-      body += next;
-      s.index += 2;
-    } else {
-      body += at(s);
-      s.index += 1;
-    }
-  }
-
-  s.index = Math.min(s.index + 1, s.text.length);
-
-  return body;
+// A scanner over `text`, nested in `parent`'s command when it has one.
+function scanner(text: string, parent?: Scanner): Scanner {
+  return { text, index: 0, heredocs: [], nesting: parent?.nesting ?? { depth: 0, tooDeep: false } };
 }
 
 // `$(( … ))`: only the substitutions inside it run commands.
@@ -168,7 +160,7 @@ function arithmetic(s: Scanner): Script[] {
 
 // A `$( … )` or backtick substitution starting at the scanner, read as a script.
 function substitution(s: Scanner): Script | undefined {
-  if (at(s) === "`") return parseScript(scanner(backtickBody(s)), "end");
+  if (at(s) === "`") return parseScript(scanner(backtickBody(s), s), "end");
 
   if (at(s) !== "$" || at(s, 1) !== "(" || at(s, 2) === "(") return undefined;
 
@@ -214,16 +206,6 @@ function expandingText(s: Scanner, close: '"' | undefined): Expanded {
   return { text, nested };
 }
 
-// The text up to the next `close`, with the scanner moved past it.
-function upTo(s: Scanner, close: string): string {
-  const found = s.text.indexOf(close, s.index);
-  const end = found === -1 ? s.text.length : found;
-  const text = s.text.slice(s.index, end);
-  s.index = Math.min(end + 1, s.text.length);
-
-  return text;
-}
-
 // The words of an array assignment `name=( … )`, which are values, not commands.
 function arrayElements(s: Scanner): Script[] {
   const nested: Script[] = [];
@@ -237,20 +219,6 @@ function arrayElements(s: Scanner): Script[] {
   s.index = Math.min(s.index + 1, s.text.length);
 
   return nested;
-}
-
-function extglob(s: Scanner): void {
-  let depth = 0;
-
-  while (s.index < s.text.length) {
-    const char = at(s);
-    s.index += char === "\\" ? 2 : 1;
-
-    if (char === "(") depth += 1;
-    else if (char === ")") depth -= 1;
-
-    if (depth === 0) return;
-  }
 }
 
 function readWord(s: Scanner): Word {
@@ -305,29 +273,12 @@ function readWord(s: Scanner): Word {
   return { text, raw: s.text.slice(start, s.index), nested };
 }
 
-// `$'…'` ANSI-C quoting: a backslash escapes the next character, so `\'` does not close it.
-function ansiQuoted(s: Scanner): string {
-  let text = "";
-  s.index += 1;
-
-  while (s.index < s.text.length && at(s) !== "'") {
-    if (at(s) === "\\") s.index += 1;
-
-    text += at(s);
-    s.index += 1;
-  }
-
-  s.index = Math.min(s.index + 1, s.text.length);
-
-  return text;
-}
-
 // A redirection at the scanner: its target is dropped, but the target's substitutions still run.
-function redirection(s: Scanner): Script[] {
+function redirection(s: Scanner): Redirection {
   if ((at(s) === "<" || at(s) === ">") && at(s, 1) === "(") {
     s.index += 2;
 
-    return [parseScript(s, ")")];
+    return { nested: [parseScript(s, ")")] };
   }
 
   if (s.text.startsWith("<<", s.index) && at(s, 2) !== "<") {
@@ -335,13 +286,17 @@ function redirection(s: Scanner): Script[] {
     s.index += stripsTabs ? 3 : 2;
     skipBlanks(s);
     const delimiter = readWord(s);
-    s.heredocs.push({
+
+    const heredoc: HeredocTerminator = {
       word: delimiter.text,
       stripsTabs,
       expands: !/['"\\]/.test(delimiter.raw),
-    });
+      runsIn: undefined,
+    };
 
-    return [];
+    s.heredocs.push(heredoc);
+
+    return { nested: [], heredoc };
   }
 
   const operator = s.text.startsWith("<<<", s.index)
@@ -350,12 +305,16 @@ function redirection(s: Scanner): Script[] {
 
   s.index += operator.length;
   skipBlanks(s);
+  const target = readWord(s);
 
-  return [...readWord(s).nested];
+  return operator === "<<<"
+    ? { nested: target.nested, hereString: target.text }
+    : { nested: target.nested };
 }
 
-// Skips the heredoc bodies that start on the line after their `<<`, returning the
-// substitutions of each body whose delimiter was unquoted.
+// Skips the heredoc bodies that start on the line after their `<<`. It reads a body
+// that a shell runs as a script into that shell's command, and returns the
+// substitutions of each other body whose delimiter was unquoted.
 function heredocBodies(s: Scanner): Script[] {
   const nested: Script[] = [];
 
@@ -378,9 +337,10 @@ function heredocBodies(s: Scanner): Script[] {
       s.index = lineEnd + 1;
     }
 
-    if (terminator.expands) {
-      nested.push(...expandingText(scanner(s.text.slice(bodyStart, bodyEnd)), undefined).nested);
-    }
+    const body = scanner(s.text.slice(bodyStart, bodyEnd), s);
+
+    if (terminator.runsIn !== undefined) terminator.runsIn.push(parseScript(body, "end"));
+    else if (terminator.expands) nested.push(...expandingText(body, undefined).nested);
   }
 
   s.heredocs = [];
@@ -388,77 +348,125 @@ function heredocBodies(s: Scanner): Script[] {
   return nested;
 }
 
-function shellCommandOperand(args: readonly string[]): string | undefined {
-  let readsCommand = false;
-  let skipsArgument = false;
-  let optionsEnded = false;
+function toCommand(
+  s: Scanner,
+  argv: readonly string[],
+  nested: readonly Script[],
+  stdin: Stdin,
+): MutableCommand {
+  const input = commandInput(argv);
 
-  for (const word of args) {
-    if (skipsArgument) {
-      skipsArgument = false;
-      continue;
+  switch (input.kind) {
+    case "none":
+      return { argv, nested: [...nested] };
+    case "operand":
+      return { argv: [], nested: [...nested, parseScript(scanner(input.text, s), "end")] };
+    case "runner":
+      return {
+        argv,
+        nested: [...nested, ...input.commands.map((line) => parseScript(scanner(line, s), "end"))],
+      };
+    case "stdin": {
+      const command = { argv, nested: [...nested] };
+
+      for (const heredoc of stdin.heredocs) heredoc.runsIn = command.nested;
+
+      if (stdin.hereString !== undefined) {
+        command.nested.push(parseScript(scanner(stdin.hereString, s), "end"));
+      }
+
+      return command;
     }
 
-    if (!optionsEnded && word === "--") {
-      optionsEnded = true;
-      continue;
+    default: {
+      const unexpected: never = input;
+
+      return unexpected;
     }
+  }
+}
 
-    if (!optionsEnded && word.startsWith("--")) {
-      skipsArgument = SHELL_LONG_OPTIONS_WITH_ARGUMENT.has(word);
-      continue;
+// A shell that reads stdin runs the text an `echo` or `printf` before it prints.
+function feedPrintedText(s: Scanner, pipeline: readonly MutableCommand[]): void {
+  pipeline.forEach((command, index) => {
+    const printed = index === 0 ? undefined : printedText(pipeline[index - 1]?.argv ?? []);
+
+    if (printed !== undefined && commandInput(command.argv).kind === "stdin") {
+      command.nested.push(parseScript(scanner(printed, s), "end"));
     }
+  });
+}
 
-    if (optionsEnded || !SHELL_SHORT_OPTIONS.test(word)) return readsCommand ? word : undefined;
+// A clause's patterns, up to and past its `)`. They are words, never commands.
+function casePatterns(s: Scanner): Script[] {
+  const nested: Script[] = [];
 
-    if (word.startsWith("-") && word.includes("c")) readsCommand = true;
+  while (s.index < s.text.length && at(s) !== ")") {
+    const word = readWord(s);
+    nested.push(...word.nested);
 
-    // `-o pipefail` and `-O extglob` take the next word as their argument.
-    skipsArgument = /[oO]$/.test(word);
+    // A blank or `|` between patterns.
+    if (word.raw === "") s.index += 1;
   }
 
-  return undefined;
+  s.index = Math.min(s.index + 1, s.text.length);
+
+  return nested;
 }
 
-// The command string that `bash -c '…'`, `sh -c "…"`, `zsh -c …`, `eval …`, or `env -S '…'` runs.
-function commandString(argv: readonly string[]): string | undefined {
-  const start = commandStart(argv, isShell);
+// The rest of a `case` statement after its `case` word, through `esac`: the
+// substitutions of its subject and patterns, and each clause's body as a script.
+function caseStatement(s: Scanner): Script[] {
+  skipBlanks(s);
+  const nested: Script[] = [...readWord(s).nested];
+  skipCaseSeparators(s);
 
-  if (start.kind === "commandLine") return start.text;
+  if (atWord(s, "in")) s.index += "in".length;
 
-  const { index } = start;
-  const word = argv[index] ?? "";
+  while (s.index < s.text.length) {
+    skipCaseSeparators(s);
 
-  if (isShell(word)) return shellCommandOperand(argv.slice(index + 1));
+    if (atWord(s, "esac")) {
+      s.index += "esac".length;
+      break;
+    }
 
-  if (word === "eval") return argv.slice(index + 1).join(" ");
+    if (at(s) === "(") s.index += 1;
 
-  return undefined;
-}
+    nested.push(...casePatterns(s), parseScript(s, "clause"));
+  }
 
-function toCommand(argv: readonly string[], nested: readonly Script[]): Command {
-  const operand = commandString(argv);
-
-  if (operand === undefined) return { argv, nested };
-
-  return { argv: [], nested: [...nested, parseScript(scanner(operand), "end")] };
+  return nested;
 }
 
 function parseScript(s: Scanner, closer: Closer): Script {
+  // Past the limit, mark the command too deep and skip the rest of it.
+  if (s.nesting.depth > MAX_NESTING) {
+    s.nesting.tooDeep = true;
+    s.index = s.text.length;
+
+    return [];
+  }
+
+  s.nesting.depth += 1;
+
   const script: Pipeline[] = [];
-  let pipeline: Command[] = [];
+  let pipeline: MutableCommand[] = [];
   let argv: string[] = [];
   let nested: Script[] = [];
+  let stdin: Stdin = { heredocs: [], hereString: undefined };
 
   const endCommand = (): void => {
-    if (argv.length > 0 || nested.length > 0) pipeline.push(toCommand(argv, nested));
+    if (argv.length > 0 || nested.length > 0) pipeline.push(toCommand(s, argv, nested, stdin));
 
     argv = [];
     nested = [];
+    stdin = { heredocs: [], hereString: undefined };
   };
 
   const endPipeline = (): void => {
     endCommand();
+    feedPrintedText(s, pipeline);
 
     if (pipeline.length > 0) script.push(pipeline);
 
@@ -487,6 +495,8 @@ function parseScript(s: Scanner, closer: Closer): Script {
     } else if (listOperator !== undefined && !(char === "&" && at(s, 1) === ">")) {
       endPipeline();
       s.index += listOperator.length;
+
+      if (closer === "clause" && CLAUSE_END.has(listOperator)) break;
     } else if (char === "(" && argv.length > 0 && /^\(\s*\)/.test(s.text.slice(s.index))) {
       // `name()` defines a function. Its name is not a command, and its body follows.
       upTo(s, ")");
@@ -502,18 +512,31 @@ function parseScript(s: Scanner, closer: Closer): Script {
 
       if (closer === ")") break;
 
-      // An unmatched `)`, such as a `case` pattern's, ends the command before it.
+      // An unmatched `)` ends the command before it.
       endPipeline();
     } else if (char === "<" || char === ">" || char === "&") {
-      nested.push(...redirection(s));
+      const found = redirection(s);
+      nested.push(...found.nested);
+
+      if (found.heredoc !== undefined) stdin.heredocs.push(found.heredoc);
+
+      if (found.hereString !== undefined) stdin.hereString = found.hereString;
     } else {
+      const start = s.index;
       const word = readWord(s);
       const startsCommand = argv.length === 0 && nested.length === 0;
 
       if (startsCommand && closer === "}" && word.raw === "}") break;
 
+      if (startsCommand && closer === "clause" && word.raw === "esac") {
+        s.index = start;
+        break;
+      }
+
       if ((startsCommand || argv[0] === "function") && word.raw === "{") {
         nested.push(parseScript(s, "}"));
+      } else if (startsCommand && word.raw === "case") {
+        nested.push(...caseStatement(s));
       } else if (startsCommand && LEADING_RESERVED_WORDS.has(word.raw)) {
         // The command after the reserved word starts here.
       } else if (/^\d+$/.test(word.raw) && (at(s) === "<" || at(s) === ">")) {
@@ -526,6 +549,7 @@ function parseScript(s: Scanner, closer: Closer): Script {
   }
 
   endPipeline();
+  s.nesting.depth -= 1;
 
   return script;
 }
@@ -537,9 +561,35 @@ function everyPipeline(script: Script): Pipeline[] {
   ]);
 }
 
-/** Every pipeline the command string runs, those nested inside its commands included. */
+/** A command string read into every pipeline it runs, or found nested past MAX_NESTING. */
+export type ParsedCommand =
+  | { readonly kind: "pipelines"; readonly pipelines: readonly Pipeline[] }
+  | { readonly kind: "too-deep"; readonly limit: number };
+
+function read(command: string) {
+  const s = scanner(command);
+  const all = everyPipeline(parseScript(s, "end"));
+
+  return { all, tooDeep: s.nesting.tooDeep };
+}
+
+export function parseCommand(command: string): ParsedCommand {
+  const { all, tooDeep } = read(command);
+
+  return tooDeep ? { kind: "too-deep", limit: MAX_NESTING } : { kind: "pipelines", pipelines: all };
+}
+
+/**
+ * Every pipeline the command string runs, those nested inside its commands included.
+ * A command nested past MAX_NESTING also gets its text read flat, as flatWords does,
+ * so a guard still sees the command words of the part it could not parse.
+ */
 export function pipelines(command: string): readonly Pipeline[] {
-  return everyPipeline(parseScript(scanner(command), "end"));
+  const { all, tooDeep } = read(command);
+
+  if (!tooDeep) return all;
+
+  return [...all, ...flatWords(command).map((argv) => [{ argv, nested: [] }])];
 }
 
 /** The command and every command nested inside it, at any depth. */

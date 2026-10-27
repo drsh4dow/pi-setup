@@ -111,6 +111,88 @@ export function resolveCommand(name: string, path: string) {
   return undefined;
 }
 
+const PackageStatus = Schema.fromJsonString(
+  Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      available: Schema.Boolean,
+      packages: Schema.Array(Schema.Struct({ package: Schema.String, state: Schema.String })),
+    }),
+  ),
+);
+
+const decodePackageStatus = Schema.decodeUnknownOption(PackageStatus);
+
+// The state mise reports for each declared system package, keyed "manager:package" as the
+// config writes it. A manager this machine lacks is left out, since mise skips its packages.
+export function parsePackageStatus(json: string) {
+  const status = decodePackageStatus(json);
+
+  if (Option.isNone(status)) return undefined;
+
+  return new Map(
+    Object.entries(status.value).flatMap(([manager, { available, packages }]) =>
+      available
+        ? packages.map((entry) => [`${manager}:${entry.package}`, entry.state] as const)
+        : [],
+    ),
+  );
+}
+
+export type PackagesRead =
+  | { kind: "read"; states: Map<string, string> }
+  | { kind: "failed"; reason: string };
+
+export function readSystemPackages(mise: string): PackagesRead {
+  return inNeutralDirectory((neutral) => {
+    const run = spawnSync(mise, ["bootstrap", "packages", "status", "--json"], {
+      cwd: neutral,
+      env: { ...process.env, MISE_CEILING_PATHS: neutral },
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+
+    if (run.error || run.status !== 0)
+      return {
+        kind: "failed",
+        reason: `mise bootstrap packages status --json failed: ${run.error?.message ?? run.stderr.trim()}`,
+      };
+
+    const states = parsePackageStatus(run.stdout);
+
+    return states
+      ? { kind: "read", states }
+      : {
+          kind: "failed",
+          reason: "mise bootstrap packages status --json printed an unexpected shape",
+        };
+  });
+}
+
+// The "manager:package" keys of a tier file's [bootstrap.packages] table. [tools] keys such as
+// "github:owner/repo" have the same shape, so only lines inside that table count.
+export function parseDeclaredPackages(toml: string) {
+  let inPackages = false;
+
+  return toml.split("\n").flatMap((line) => {
+    const table = /^\s*\[([^\]]+)\]\s*$/.exec(line);
+
+    if (table) {
+      inPackages = table[1]?.trim() === "bootstrap.packages";
+
+      return [];
+    }
+
+    const key = inPackages ? /^\s*"([a-z-]+:[^"]+)"\s*=/.exec(line)?.[1] : undefined;
+
+    return key ? [key] : [];
+  });
+}
+
+export function readDeclaredPackages(file: string) {
+  return parseDeclaredPackages(readFileSync(file, "utf8"));
+}
+
 export interface MiseTool {
   tool: string;
   version: string;

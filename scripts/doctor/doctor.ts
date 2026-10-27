@@ -12,12 +12,15 @@ import { basename, delimiter, join, resolve, sep } from "node:path";
 import {
   type Link,
   type MiseTool,
+  type PackagesRead,
   type PiLoad,
   listMiseTools,
   probePi,
+  readDeclaredPackages,
   readLink,
   readNewShell,
   readStoredLogins,
+  readSystemPackages,
   realpathOrSelf,
   resolveCommand,
   runCommand,
@@ -30,7 +33,7 @@ export type TierName = (typeof TIER_NAMES)[number];
 // Each tier is a folder under mise/ that `mise run setup <tier>` links into mise's global conf.d.
 // `commands` are the programs it puts on PATH for the skills that run them.
 export const TIERS = {
-  core: { enables: "Pi with this config", commands: ["vp", "pi", "gh", "tmux", "rg"] },
+  core: { enables: "Pi with this config", commands: ["vp", "node", "pi", "gh", "tmux", "rg"] },
   browser: { enables: "the agent-browser skill", commands: ["agent-browser"] },
   formal: { enables: "the statechart skill and the TLA+ verification skills", commands: ["java"] },
   mail: { enables: "the mailbox skill", commands: ["himalaya"] },
@@ -203,7 +206,12 @@ function checkShell(machine: Machine, mise: string): Finding {
   };
 }
 
-function checkTier(machine: Machine, tier: TierName, tools: MiseTool[]): Finding[] {
+interface Installed {
+  tools: MiseTool[];
+  packages: PackagesRead;
+}
+
+function checkTier(machine: Machine, tier: TierName, installed: Installed): Finding[] {
   const link: Link = readLink(
     join(machine.configDir, "conf.d", `pi-setup-${tier}`),
     join(machine.repo, "mise", tier),
@@ -232,7 +240,7 @@ function checkTier(machine: Machine, tier: TierName, tools: MiseTool[]): Finding
         },
       ];
     case "linked":
-      return checkLinkedTier(machine, tier, tools);
+      return checkLinkedTier(machine, tier, installed);
     default: {
       const unexpected: never = link;
       throw new Error(`Unexpected link: ${String(unexpected)}`);
@@ -240,8 +248,8 @@ function checkTier(machine: Machine, tier: TierName, tools: MiseTool[]): Finding
   }
 }
 
-function checkLinkedTier(machine: Machine, tier: TierName, tools: MiseTool[]): Finding[] {
-  const own = tools.filter((tool) => tool.tier === tier);
+function checkLinkedTier(machine: Machine, tier: TierName, installed: Installed): Finding[] {
+  const own = installed.tools.filter((tool) => tool.tier === tier);
   const missing = own.filter((tool) => !tool.installed);
 
   if (own.length === 0)
@@ -265,6 +273,24 @@ function checkLinkedTier(machine: Machine, tier: TierName, tools: MiseTool[]): F
     ];
 
   const findings: Finding[] = [];
+  const { packages } = installed;
+
+  const missingPackages =
+    packages.kind === "read"
+      ? readDeclaredPackages(join(machine.repo, "mise", tier, "mise.toml")).filter((key) => {
+          const state = packages.states.get(key);
+
+          return state !== undefined && state !== "installed";
+        })
+      : [];
+
+  if (missingPackages.length > 0)
+    findings.push({
+      status: "fail",
+      check: tier,
+      detail: `system packages missing: ${missingPackages.join(", ")}. Installing them needs sudo.`,
+      fix: "mise bootstrap packages apply --yes --update",
+    });
 
   for (const command of machine.miseActive ? TIERS[tier].commands : []) {
     const path = resolveCommand(command, machine.path);
@@ -317,44 +343,35 @@ function tierExtras(machine: Machine, tier: TierName): Finding[] {
         .split("\n")
         .flatMap((line) => (/^\s*fail\b/.test(line) ? [line.trim()] : []));
 
+      const detail = `agent-browser doctor fails: ${failures.join("; ") || run.output}`;
+
+      if (process.platform !== "linux")
+        return [
+          { status: "fail", check: "browser", detail, fix: "mise exec -- agent-browser install" },
+        ];
+
+      // agent-browser installs Chrome's system libraries itself, but only through these managers.
+      if (["apt-get", "dnf", "yum"].some((manager) => resolveCommand(manager, machine.path)))
+        return [
+          {
+            status: "fail",
+            check: "browser",
+            detail,
+            fix: "mise exec -- agent-browser install --with-deps",
+          },
+        ];
+
       return [
         {
           status: "fail",
           check: "browser",
-          detail: `agent-browser doctor fails: ${failures.join("; ") || run.output}`,
-          fix:
-            process.platform === "linux"
-              ? "mise exec -- agent-browser install --with-deps"
-              : "mise exec -- agent-browser install",
-        },
-      ];
-    }
-
-    case "video": {
-      // Manim builds against cairo and pango the first time catchup-video renders.
-      if (process.platform !== "linux") return [];
-
-      const run = runCommand({
-        command: "pkg-config",
-        args: ["--exists", "cairo", "pangocairo"],
-        env: machine.shellEnv,
-        timeout: 10_000,
-      });
-
-      if (run.ok) return [];
-
-      return [
-        {
-          status: "warn",
-          check: "video",
-          detail:
-            "pkg-config finds no cairo and pango headers, which catchup-video builds against on its first render. The fix is for Debian and Ubuntu; other distributions name the packages differently.",
-          fix: "sudo apt-get install -y libcairo2-dev libpango1.0-dev pkg-config",
+          detail: `${detail}\nagent-browser installs Chrome's system libraries only with apt-get, dnf, or yum. Install the libraries it names with this machine's package manager, then run mise exec -- agent-browser install.`,
         },
       ];
     }
 
     case "core":
+    case "video":
     case "formal":
     case "mail":
       return [];
@@ -363,41 +380,6 @@ function tierExtras(machine: Machine, tier: TierName): Finding[] {
       throw new Error(`Unexpected tier: ${String(unexpected)}`);
     }
   }
-}
-
-function checkNode(machine: Machine): Finding {
-  const node = resolveCommand("node", machine.path);
-
-  if (!node)
-    return {
-      status: "fail",
-      check: "node",
-      detail: "a new terminal does not find node, which most skills run",
-      fix: "mise run setup",
-    };
-
-  // In this checkout vp runs the Node.js version package.json pins, the strictest one.
-  const run = runCommand({
-    command: node,
-    args: ["--version"],
-    env: machine.shellEnv,
-    cwd: machine.repo,
-    timeout: 300_000,
-  });
-
-  if (run.ok) return { status: "ok", check: "node", detail: `${run.output} (${node})` };
-
-  const detail = `node --version fails in this checkout: ${run.output}`;
-
-  // Minimal Debian and Ubuntu images lack libatomic, which the Node.js builds link against.
-  if (process.platform === "linux" && run.output.includes("libatomic"))
-    return { status: "fail", check: "node", detail, fix: "sudo apt-get install -y libatomic1" };
-
-  return {
-    status: "fail",
-    check: "node",
-    detail: `${detail}\nInstall the system library the error names.`,
-  };
 }
 
 function checkInstall({ repo }: Machine): Finding {
@@ -551,12 +533,16 @@ function runDoctor(): Finding[] {
 
   if (mised.kind === "failed")
     findings.push({ status: "fail", check: "mise", detail: mised.reason });
-  const tools = mised.kind === "read" ? mised.tools : [];
+  const packages = readSystemPackages(mise);
 
-  for (const tier of TIER_NAMES) findings.push(...checkTier(machine, tier, tools));
+  if (packages.kind === "failed")
+    findings.push({ status: "fail", check: "mise", detail: packages.reason });
+
+  const installed = { tools: mised.kind === "read" ? mised.tools : [], packages };
+
+  for (const tier of TIER_NAMES) findings.push(...checkTier(machine, tier, installed));
 
   findings.push(
-    checkNode(machine),
     checkInstall(machine),
     checkPi(machine),
     checkLogin(machine),

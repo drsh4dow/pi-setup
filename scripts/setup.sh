@@ -45,26 +45,38 @@ link() {
 
 for tier in "${tiers[@]}"; do link "$repo/mise/$tier" "$conf_d/pi-setup-$tier"; done
 
-# From an empty directory, so only global config decides what mise installs.
+# Runs mise from an empty directory, so only global config, where the tiers are linked, decides.
 neutral="$(mktemp -d)"
 trap 'rm -rf "$neutral"' EXIT
-(cd "$neutral" && MISE_CEILING_PATHS="$neutral" "$mise" install)
+global_mise() { (cd "$neutral" && MISE_CEILING_PATHS="$neutral" "$mise" "$@"); }
+
+# The tiers' [bootstrap.packages], such as the libatomic Node.js needs, through this machine's
+# package manager. Checking first keeps sudo out of a rerun with nothing to install.
+if ! global_mise bootstrap packages status --missing > /dev/null; then
+  if ! global_mise bootstrap packages apply --yes --update; then
+    echo "setup: mise could not install the system packages above. In a terminal where sudo can ask for a password, run this, then rerun setup:" >&2
+    echo "  $mise bootstrap packages apply --update" >&2
+    exit 1
+  fi
+fi
+
+global_mise install
 
 # mise exec reads the config again, so it sees the tiers linked above. vp creates the Node.js
 # shims that mise/core/mise.toml puts on PATH; a rerun keeps the existing ones.
-(cd "$neutral" && MISE_CEILING_PATHS="$neutral" "$mise" exec -- vp env setup)
+global_mise exec -- vp env setup
 
 # Node.js runs the install scripts, so a Node.js that cannot start would fail deep inside
 # vp install. In this checkout, vp downloads the Node.js version package.json pins.
 if ! said="$(cd "$repo" && "$mise" exec -- node --version 2>&1)"; then
   echo "setup: Node.js does not start: $said" >&2
-  echo "On minimal Debian and Ubuntu, sudo apt-get install -y libatomic1 fixes a missing libatomic.so.1. Then rerun setup." >&2
+  echo "Fix what the error names, then rerun setup." >&2
   exit 1
 fi
 (cd "$repo" && "$mise" exec -- vp install --frozen-lockfile)
 
 if [ -e "$conf_d/pi-setup-browser" ]; then
-  (cd "$neutral" && MISE_CEILING_PATHS="$neutral" "$mise" exec -- agent-browser install)
+  global_mise exec -- agent-browser install
 fi
 
 if $link_agent_skills; then link "$repo/agent/skills" "$HOME/.agents/skills"; fi

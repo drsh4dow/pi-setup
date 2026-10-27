@@ -10,3 +10,11 @@ ripgrep = "15.2.0"
 _.path = ["{{env.HOME}}/.local/share/vite-plus/bin"]
 # Without this, vp's first run appends its own PATH line to ~/.bashrc and ~/.profile.
 VP_SELF_SETUP_NO_MODIFY_PATH = "1"
+
+# Installed with this machine's package manager; mise skips the entries of managers it lacks.
+[bootstrap.packages]
+# The Linux builds of Node.js link against libatomic, which minimal Debian and Ubuntu images
+# lack. Arch ships it in gcc-libs, and macOS needs none.
+"apt:libatomic1" = "latest"
+"dnf:libatomic" = "latest"
+"zypper:libatomic1" = "latest"

@@ -57,16 +57,18 @@ jobs:
         with:
           path: ~/.cache/ci-header-debs
           key: ${{ steps.header-debs.outputs.cache-primary-key }}
-      # The suffix keeps this key off the 1 KB entry that check.yml saved before the workflows split.
+      # setup-uv keys its cache by runner, Python version, and lockfile hash. Without the suffix, this key
+      # equals that of a near-empty entry check.yml saved for the same lockfile, and on an exact hit
+      # setup-uv skips its end-of-job save, so the built wheels would never reach the cache.
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: agent/skills/catchup-video/python/uv.lock
           cache-suffix: catchup-video
-          cache-python: true
       - run: vp install --frozen-lockfile
-      # Built outside vp run, which passes a cached task only HOME, PATH, and a few other variables, so uv
-      # would miss setup-uv's UV_CACHE_DIR and UV_PYTHON_INSTALL_DIR and leave its cache empty.
+      # This step runs uv outside vp run, because vp gives a cached task only HOME, PATH, and a few other
+      # variables. Inside it, uv would not see the UV_CACHE_DIR that setup-uv exports, and setup-uv's
+      # end-of-job save of that directory would find nothing to cache.
       - name: Install the render environment
         run: node agent/skills/catchup-video/scripts/video.ts setup
       - run: vp run verify:catchup-video-scripts

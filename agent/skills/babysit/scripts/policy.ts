@@ -178,7 +178,6 @@ export async function readSnapshot(args: {
       ),
   };
 }
-/** A snapshot without its review pass counts, which never decide merge readiness. */
 export type ReadinessRow =
   | Extract<T.PrSnapshot, { readonly kind: "merged" | "closed" }>
   | Omit<Extract<T.PrSnapshot, { readonly kind: "open" }>, "reviewPasses">;
@@ -189,14 +188,14 @@ const conflictBlocker = (row: ReadinessRow): T.MergeBlocker | null =>
     row.facts.mergeStateStatus === "CONFLICTING")
     ? { kind: "merge-conflicts", pr: row.context, facts: row.facts }
     : null;
-function threadBlocker(row: T.PrSnapshot): T.MergeBlocker | null {
+function threadBlocker(row: ReadinessRow): T.MergeBlocker | null {
   if (row.kind !== "open") return null;
   const threads = nonEmpty(row.threads);
   return threads === null
     ? null
     : { kind: "review-threads", pr: row.context, threads };
 }
-const ciBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
+const ciBlocker = (row: ReadinessRow): T.MergeBlocker | null =>
   row.kind === "open" &&
   (row.ci.kind === "ci-failing" || row.ci.kind === "ci-github-rejected")
     ? { kind: "failing-checks", pr: row.context, ci: row.ci }
@@ -213,7 +212,7 @@ function gateReason(
     : null;
 }
 function gateBlocker(
-  row: T.PrSnapshot,
+  row: ReadinessRow,
   allowDraft: boolean
 ): T.MergeBlocker | null {
   const reason = gateReason(row, allowDraft);

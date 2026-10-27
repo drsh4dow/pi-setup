@@ -49,9 +49,9 @@ export interface Generation {
 }
 /**
  * A member owes its final read from the poll that first sees it merged or
- * closed until that read's feedback is queued for the agent, or its failure
- * is: a status-unavailable item for the final read. A reopen is neither, so
- * the debt outlives the lifecycle that made it.
+ * closed. The read is done once a feedback read succeeds, or once a
+ * status-unavailable item reports that it failed. A reopen does neither, so a
+ * reopened member still owes the read.
  */
 export type FinalRead = "owed" | "done";
 const FINAL_READS = ["owed", "done"] as const satisfies readonly FinalRead[];

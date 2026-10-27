@@ -2,7 +2,7 @@
 // ends with which task failed and what it printed. The task runner kills the tasks still
 // running once one fails, and each of those exits 137, as a real failure can, so this reads
 // the run's details and lists those kills apart from the failure.
-import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { spawn } from "node:child_process";
 import { constants } from "node:os";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
@@ -13,8 +13,6 @@ export interface TaskOutcome {
   readonly order: number;
   // The `<package>#<task>` label.
   readonly task: string;
-  // The command as the run printed it when the command started, such as `$ node x.ts`.
-  readonly command: string;
   readonly exitCode: number;
 }
 
@@ -32,15 +30,17 @@ type FailedVerify = Extract<VerifyResult, { kind: "failed" }>;
 
 const KILLED = 128 + constants.signals.SIGKILL;
 
-const DETAILS_LINE = /^\s*\[(\d+)\] (\S+?): (.*) (?:✓|✗ \(exit code: (\d+)\))$/u;
+const DETAILS_LINE = /^\s*\[(\d+)\] (\S+?): .* (?:✓|✗ \(exit code: (\d+)\))$/u;
 
 const LABELED_LINE = /^\[([^\]\s]+#[^\]\s]+)\] ?(.*)$/su;
 
-// `vp run: 0/17 cache hit (0%), 3 failed.` and `vp run: 2/2 successful.` both end a run, and
-// the number after the slash counts its commands.
-const SUMMARY_LINE = /^vp run: \d+\/(\d+)\b/u;
+// When a run ran at least one task, `vp run -v` ends it with its details, which open with a
+// line of ━.
+const DETAILS_RULE = /^━+$/u;
 
-export function parseLastDetails(details: string): TaskOutcome[] {
+const STATISTICS_LINE = /^Statistics: /u;
+
+export function parseDetails(details: string): TaskOutcome[] {
   const outcomes: TaskOutcome[] = [];
 
   for (const line of stripVTControlCharacters(details).split("\n")) {
@@ -48,12 +48,11 @@ export function parseLastDetails(details: string): TaskOutcome[] {
 
     if (match === null) continue;
 
-    const [, order, task, command, exitCode] = match;
+    const [, order, task, exitCode] = match;
 
     outcomes.push({
       order: Number(order),
       task,
-      command,
       exitCode: exitCode === undefined ? 0 : Number(exitCode),
     });
   }
@@ -94,35 +93,6 @@ export function taskLine(line: string): TaskLine {
   return { task: match[1], text: match[2] };
 }
 
-// What the inner run printed: each task's lines, and the command count of its closing summary.
-export interface RunOutput {
-  readonly linesByTask: ReadonlyMap<string, readonly string[]>;
-  readonly commandCount: number;
-}
-
-// Another `vp run` in this workspace that ends after this one replaces the details this script
-// reads. Details belong to this run when they list as many commands as its summary counted, and
-// each one is a command this run printed as it started, under the same task.
-export function detailsMatchRun(outcomes: readonly TaskOutcome[], run: RunOutput): boolean {
-  if (outcomes.length !== run.commandCount) return false;
-
-  const unmatched = new Map([...run.linesByTask].map(([task, lines]) => [task, [...lines]]));
-
-  return outcomes.every((outcome) => {
-    const lines = unmatched.get(outcome.task) ?? [];
-
-    const start = lines.findIndex(
-      (line) => line === outcome.command || line.startsWith(`${outcome.command} `),
-    );
-
-    if (start === -1) return false;
-
-    lines.splice(start, 1);
-
-    return true;
-  });
-}
-
 function withoutPackage(task: string) {
   return task.slice(task.indexOf("#") + 1);
 }
@@ -152,85 +122,44 @@ export function failureReport(
   return report;
 }
 
-export type DetailsRead =
-  | { readonly kind: "read"; readonly outcomes: NonEmpty<TaskOutcome> }
-  | { readonly kind: "unreadable"; readonly reason: string; readonly printed: readonly string[] };
-
-// `--last-details` exits with the exit code of the run it describes, and 1 when it has none, so
-// only the commands it lists show that it read them.
-export function detailsRead(
-  read: Pick<SpawnSyncReturns<string>, "error" | "signal" | "status" | "stdout" | "stderr">,
-): DetailsRead {
-  const printed = `${read.stdout ?? ""}${read.stderr ?? ""}`.split("\n").filter(Boolean);
-
-  if (read.error !== undefined) {
-    return { kind: "unreadable", reason: `could not start: ${read.error.message}`, printed };
-  }
-
-  if (read.signal !== null) {
-    return { kind: "unreadable", reason: `was killed by ${read.signal}`, printed };
-  }
-
-  const [first, ...rest] = parseLastDetails(read.stdout);
-
-  if (first === undefined) {
-    return { kind: "unreadable", reason: `exited ${read.status} and listed no command`, printed };
-  }
-
-  return { kind: "read", outcomes: [first, ...rest] };
-}
-
-// The lines that end a failed run with the given exit status.
-export function verifyReport(status: number, read: DetailsRead, run: RunOutput): string[] {
-  const unknown = `verify: failed (exit ${status}), but`;
-  const readAbove = "Read the task output above.";
-
-  if (read.kind === "unreadable") {
-    return [
-      `${unknown} \`vp run --last-details\` ${read.reason}, so it cannot name the failed task. ${readAbove}`,
-      ...read.printed,
-    ];
-  }
-
-  if (!detailsMatchRun(read.outcomes, run)) {
-    return [
-      `${unknown} the last run details list commands this run did not run, so another vp run in this workspace replaced them. ${readAbove}`,
-    ];
-  }
-
-  const result = classifyOutcomes(read.outcomes);
+export function verifyReport(
+  status: number,
+  outcomes: readonly TaskOutcome[],
+  linesByTask: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  const result = classifyOutcomes(outcomes);
 
   if (result.kind === "passed") {
-    return [`${unknown} its run details list no failed command. ${readAbove}`];
+    return [
+      `verify: failed (exit ${status}), but its run details list no failed command. Read the task output above.`,
+    ];
   }
 
-  return failureReport(result, run.linesByTask);
+  return failureReport(result, linesByTask);
 }
 
-// The inner run's summary points at `vp run --last-details`, which the outer `vp run verify`
-// overwrites with its own single task by the time anyone reads it.
-const LAST_DETAILS_HINT = " (Run `vp run --last-details` for full details)";
-
-// Writes each line to the sink with its task label stripped, and keeps each task's lines.
-// Resolves to the command count of the summary the run printed on this stream, or null.
+// The details end the run, so a task line after a rule of ━ means that rule opened no details.
 async function relay(
   input: Readable,
   sink: Writable,
   linesByTask: Map<string, string[]>,
-): Promise<number | null> {
-  let commandCount: number | null = null;
+): Promise<string[] | null> {
+  let details: string[] | null = null;
   const lines = createInterface({ input, crlfDelay: Infinity });
 
   for await (const line of lines) {
     const { task, text } = taskLine(line);
 
     if (task === null) {
-      const summary = SUMMARY_LINE.exec(text);
+      if (details === null && DETAILS_RULE.test(text)) details = [];
 
-      if (summary !== null) commandCount = Number(summary[1]);
-      sink.write(`${text.replace(LAST_DETAILS_HINT, "")}\n`);
+      if (details === null) sink.write(`${text}\n`);
+      else details.push(text);
       continue;
     }
+
+    for (const held of details ?? []) sink.write(`${held}\n`);
+    details = null;
 
     sink.write(`${text}\n`);
 
@@ -240,7 +169,7 @@ async function relay(
     else printed.push(text);
   }
 
-  return commandCount;
+  return details;
 }
 
 export type InnerRun =
@@ -249,12 +178,14 @@ export type InnerRun =
 
 // The task's command names the inner task. `vp run` appends the options given after the outer
 // task, such as --no-cache. They belong to the inner run, because the inner run owns the cache.
+// -v ends the inner run with its details. `vp run --last-details` would read the details of
+// whichever run in the workspace ended last.
 export function innerRunArgs(argv: readonly string[]): InnerRun {
   const [task, ...options] = argv;
 
   if (task === undefined || task.startsWith("-")) return { kind: "usage" };
 
-  return { kind: "run", args: ["run", "--log", "labeled", ...options, task] };
+  return { kind: "run", args: ["run", "--log", "labeled", "-v", ...options, task] };
 }
 
 function exitStatus(code: number | null, signal: NodeJS.Signals | null) {
@@ -283,22 +214,33 @@ async function main() {
 
   const linesByTask = new Map<string, string[]>();
 
-  const [status, countOut, countErr] = await Promise.all([
+  const [status, detailsOut, detailsErr] = await Promise.all([
     closed,
     relay(run.stdout, process.stdout, linesByTask),
     relay(run.stderr, process.stderr, linesByTask),
   ]);
 
+  const details = detailsOut ?? detailsErr;
+
+  if (details === null) {
+    if (status !== 0) {
+      console.log(
+        `\nverify: failed (exit ${status}), but the run printed no details, so verify cannot tell which task failed. Read the output above.`,
+      );
+    }
+
+    return status;
+  }
+
+  const statistics = details.find((line) => STATISTICS_LINE.test(line));
+
+  if (statistics !== undefined) console.log(statistics);
+
   if (status === 0) return status;
 
-  const commandCount = countOut ?? countErr;
-
-  // A run that printed no summary ran no task, so the details would describe an older run.
-  if (commandCount === null) return status;
-
-  const read = detailsRead(spawnSync("vp", ["run", "--last-details"], { encoding: "utf8" }));
-
-  console.log(["", ...verifyReport(status, read, { linesByTask, commandCount })].join("\n"));
+  console.log(
+    ["", ...verifyReport(status, parseDetails(details.join("\n")), linesByTask)].join("\n"),
+  );
 
   return status;
 }

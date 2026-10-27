@@ -1362,6 +1362,26 @@ describe("the final read", () => {
     });
   });
 
+  it("retries an owed final read every poll after its non-frontier member reopens", async () => {
+    const scene = world();
+    const stack = ["--queued-stack", "--stack-prs", "1,2"];
+    expect((await watch(scene, stack)).code).toBe(5);
+    scene.facts.set(2, { state: "CLOSED" });
+    scene.feedback.set(2, { kind: "failure", failure: outage });
+    scene.onSleep = () => {
+      scene.facts.set(2, { state: "OPEN" });
+      scene.feedback.set(2, feedback({ comments: [comment("last", "alice", "before the close")] }));
+    };
+    const last = await watch(scene, [
+      ...stack,
+      ...["--sweep-interval", "300", "--timeout", "240", "--max-query-errors", "3"],
+    ]);
+    expect(last.code).toBe(8);
+    expect(last.items.map((item) => [item.pr, item.kind, item.detail.body])).toEqual([
+      [2, "feedback", "before the close"],
+    ]);
+  });
+
   /** Rewrites each saved member, as an older watcher or a corrupt file would have left it. */
   function rewriteSavedMembers(write: (pr: Record<string, unknown>, lifecycle: Record<string, unknown>) => void): void {
     const path = join(state, "state.json");

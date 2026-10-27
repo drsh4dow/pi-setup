@@ -738,4 +738,14 @@ describe("context and stack discovery", () => {
     ]);
     expect(ordered.map((item) => Number(item.number))).toEqual([41, 42, 43]);
   });
+
+  it("orders every child of one base by number, whatever order GitHub lists them in", () => {
+    const ordered = orderStack(context, [
+      { number: parsePrNumber(45), headRefName: "sibling-b", baseRefName: "feature" },
+      { number: context.number, headRefName: "feature", baseRefName: "main" },
+      { number: parsePrNumber(44), headRefName: "sibling-a", baseRefName: "feature" },
+      { number: parsePrNumber(43), headRefName: "sibling-c", baseRefName: "feature" },
+    ]);
+    expect(ordered.map((item) => Number(item.number))).toEqual([42, 43, 44, 45]);
+  });
 });

@@ -20,14 +20,14 @@ Preconditions:
 
 - `vp install` ran in this checkout, and no run with either ID exists (`$CP list`).
 - Pick run IDs of letters, digits, and `-` with a suffix of your own, such as `ROOT=guards-root-0412` and `DELEGATE=guards-delegate-0412`. Shell variables do not survive between tool calls, so set `CP`, `ROOT`, and `DELEGATE` at the top of each call that uses them, and `DLG` to the path the wrapper step prints.
-- Each prompt names one exact call. Each `send` text starts with `Call`, so no kill word opens it or follows `;`, `&&`, `|`, or a newline.
+- Each prompt names one exact call. Each `send` text starts with `Call`, so no kill word opens it or follows `;`, `&&`, `|`, or a newline, and the driver's own host guard, which reads a kill word in those positions as a command, lets the `send` through.
 
 Root session:
 
 - **Launch.** Run `$CP launch "$ROOT"` and `$CP doctor "$ROOT" >"$($CP path "$ROOT" evidence)/doctor.txt"`. Doctor exits 0.
 - **host-refuse.** Run `$CP send "$ROOT" "Call the bash tool once with the command pkill -0 -f no-such-process-$ROOT and make no other tool call. Then reply with the word done."`, `$CP wait-turn "$ROOT" 120`, and `$CP snap "$ROOT" host-refuse`. The snap shows the call and `Kill only processes you started.` under it.
 - **host-allow.** Run `$CP send "$ROOT" "Call the bash tool once with the command pgrep -af no-such-process-$ROOT and make no other tool call. Then reply with the word done."`, `$CP wait-turn "$ROOT" 120`, and `$CP snap "$ROOT" host-allow`. The snap shows the call and pgrep's own output under it, such as `(no output)` and `Command exited with code 1`.
-- **Proof.** Run the session read below with `RUN=$ROOT`. It prints two `call` lines, each followed by its `result`: the `pkill` result starts `Kill only processes you started.`, and the `pgrep` result is pgrep's own output. Both results carry `isError=true` when pgrep finds nothing, because Pi marks every non-zero exit as an error, so read the text, not the flag. Then run `$CP stop "$ROOT"`.
+- **Proof.** Run the session read below with `RUN=$ROOT`. It prints two `call` lines, each followed by its `result`: the `pkill` result starts `Kill only processes you started.`, and the `pgrep` result is pgrep's own output. Both results carry `isError=true`: the refusal because it is one, and the pgrep result because pgrep exits 1 when it finds nothing and Pi marks every non-zero exit as an error. Read the text, not the flag. Then run `$CP stop "$ROOT"`.
 
 Delegate session:
 
@@ -66,8 +66,8 @@ find "$($CP path "$RUN" sessions)" -name '*.jsonl' -exec jq -r 'select(.type == 
 
 ## Gotchas
 
-- Match a refusal on its first sentence only. The rest of each reason may change as the guards learn more forms.
+- Match a refusal on its first sentence only. The rest of each reason may change as patterns are added to the guards.
 - When the driving agent is itself a delegate, its own `delegate-guard` reads every multi-word argument of its bash call as a possible command line. A `send` whose text holds `pi` and `--print` or `-p` is refused in the driver's session before it reaches the TUI. `pi-subagent` counts as a launch only in command position, so the `delegate-refuse` prompt gets through.
-- A refused call is the model's to retry. A run whose session read shows a second call, or a rephrased one, failed, so relaunch and drive it again.
-- `pgrep -af no-such-process-…` usually exits 1 with `(no output)`, and can instead list the shell that runs it, because that shell's command line holds the pattern. Either result counts as allowed. Only the reason text marks a refusal.
+- The model may retry a refused call. A run whose session read shows a second call, or a rephrased one, failed, so relaunch and drive it again.
+- `pgrep -af no-such-process-…` usually exits 1 with `(no output)`, and can instead list the shell that runs it, because that shell's command line holds the pattern. Either result counts as allowed.
 - PATH reaches the delegate Pi only from the `launch` command itself. Drive the other commands without the prefix, and read `pi-argv.txt` before trusting the session as a delegate. A missing file means the launch ran plain `pi`, and the session is a root session.

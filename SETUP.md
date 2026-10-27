@@ -33,7 +33,7 @@ Then ask the user these questions in one message:
 
    | Tier      | Enables                                         | Installs                                    | Disk    |
    | --------- | ----------------------------------------------- | ------------------------------------------- | ------- |
-   | `browser` | the `agent-browser` skill, for checking web UIs | agent-browser and Chrome                    | ~450 MB |
+   | `browser` | the `agent-browser` skill, for checking web UIs | agent-browser and Chrome                    | ~1 GB   |
    | `formal`  | `statechart` and the TLA+ verification skills   | Java and TLC                                | ~460 MB |
    | `mail`    | the `mailbox` skill                             | himalaya                                    | ~30 MB  |
    | `video`   | the `catchup-video` skill                       | uv, ffmpeg, and the cairo and pango headers | ~1.1 GB |
@@ -41,7 +41,9 @@ Then ask the user these questions in one message:
    On Debian and Ubuntu, the browser tier adds Google's apt repository and
    installs Google Chrome from it. Ubuntu 23.10 and later let only that Chrome
    use its sandbox, so the Chrome agent-browser downloads cannot start there.
-   Tell the user before they choose this tier.
+   Tell the user before they choose this tier. Chrome is 450 MB of the tier's
+   size. On a minimal system, the rest is graphics libraries that a desktop
+   usually has already.
 
 3. **Share the skills with other agents?** Only when `~/.agents/skills` does
    not exist: setup can link it to this checkout's skills, so agents that read

@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 // Print each problem in a PR or ticket body, one per line, as <body-file>:<line>: <problem>.
 // A line that starts with "warning:" is a judgment call and leaves the exit code alone.
-// Exit: 0 clean or warnings only, 1 problems, 64 bad argument or unreadable file.
+// Exit: 0 clean or warnings only, 1 problems, 2 the check could not run (the Markdown parser did
+// not load), 64 bad argument or unreadable file.
 
 // Without import statements the file runs as CommonJS or as an ES module, so a
-// copy of the skill under any package.json runs without a warning.
+// copy of the skill under any package.json runs without a warning. The Markdown parser comes
+// from this repository's node_modules through a dynamic import, which both module types allow.
 const { readFileSync } = process.getBuiltinModule("node:fs");
+
+// The parser's flat list of enter and exit events, each with its token's source position.
+type Events = (text: string) => ReturnType<(typeof import("micromark"))["postprocess"]>;
 
 type Kind = "pr" | "ticket";
 
@@ -86,11 +91,15 @@ function readText(path: string): string | Failure {
   }
 }
 
+// Blanks the frontmatter and keeps its line breaks, so every later line keeps its number.
+function withoutFrontmatter(text: string) {
+  return text.replace(/^---\n[\s\S]*?\n---\n/, (frontmatter) =>
+    "\n".repeat(frontmatter.split("\n").length - 1),
+  );
+}
+
 function parseBody(text: string): Body {
-  const lines = text
-    .replace(/^---\n[\s\S]*?\n---\n/, (frontmatter) =>
-      "\n".repeat(frontmatter.split("\n").length - 1),
-    )
+  const lines = withoutFrontmatter(text)
     .split("\n")
     .map((line, index) => ({ number: index + 1, text: line.replace(/\r$/, "") }));
   const preamble: Line[] = [];
@@ -200,7 +209,76 @@ function proseLines(lines: readonly Line[]) {
   return lines.filter((_, index) => !inFence[index]);
 }
 
-function contentFindings(kind: Kind, body: Body): Finding[] {
+type Marks = { longDashes: ReadonlySet<number>; comments: ReadonlySet<number> };
+
+const longDash = /[\u2013\u2014]/g;
+
+function newlines(text: string) {
+  return text.split("\n").length - 1;
+}
+
+// Tokens whose text never reaches the rendered page as prose: code, and the parts of a link,
+// a reference, or a definition that only point somewhere.
+const hidden = new Set([
+  "codeFenced",
+  "codeIndented",
+  "codeText",
+  "definition",
+  "resource",
+  "reference",
+  "gfmFootnoteDefinitionLabelString",
+]);
+
+// Tokens that hold raw HTML, where a comment opener starts a real comment.
+const rawHtml = new Set(["htmlFlowData", "htmlText"]);
+
+// Tokens that hold the text a reader sees.
+const prose = new Set([
+  "data",
+  "characterEscapeValue",
+  "autolinkProtocol",
+  "autolinkEmail",
+  "literalAutolinkEmail",
+  "literalAutolinkHttp",
+  "literalAutolinkWww",
+]);
+
+// The lines whose rendered page shows a long dash outside code, and the lines that hold a bare
+// HTML comment, read from the parser's tokens rather than the raw lines: CommonMark with GitHub's
+// extensions (tables, footnotes, autolinks) decides what is a code span, a code block, raw HTML,
+// or text, and each token carries its source position. A long dash inside raw HTML counts,
+// because the writer typed it outside code; one in a link destination or definition does not.
+function markdownMarks(events: Events, body: string): Marks {
+  const text = withoutFrontmatter(body).replaceAll("\r\n", "\n");
+  const longDashes = new Set<number>();
+  const comments = new Set<number>();
+  let hiddenDepth = 0;
+
+  const mark = (into: Set<number>, raw: string, line: number, pattern: RegExp) => {
+    for (const match of raw.matchAll(pattern)) {
+      into.add(line + newlines(raw.slice(0, match.index)));
+    }
+  };
+
+  for (const [phase, token] of events(text)) {
+    if (hidden.has(token.type)) {
+      hiddenDepth += phase === "enter" ? 1 : -1;
+    } else if (phase === "enter" && hiddenDepth === 0) {
+      const raw = text.slice(token.start.offset, token.end.offset);
+
+      if (rawHtml.has(token.type)) {
+        mark(comments, raw, token.start.line, /<!--/g);
+        mark(longDashes, raw, token.start.line, longDash);
+      } else if (prose.has(token.type)) {
+        mark(longDashes, raw, token.start.line, longDash);
+      }
+    }
+  }
+
+  return { longDashes, comments };
+}
+
+function contentFindings(kind: Kind, body: Body, marks: Marks): Finding[] {
   const findings: Finding[] = [];
 
   for (const line of body.preamble) {
@@ -216,12 +294,12 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
     }
   }
 
-  for (const line of proseLines(body.lines)) {
-    if (/[\u2013\u2014]/.test(line.text)) {
+  for (const line of body.lines) {
+    if (marks.longDashes.has(line.number)) {
       findings.push({ where: line.number, message: "long dash, use a period or a comma" });
     }
 
-    if (line.text.includes("<!--")) {
+    if (marks.comments.has(line.number)) {
       findings.push({
         where: line.number,
         message: "template comment left in, replace or delete it",
@@ -386,7 +464,25 @@ function order(finding: Finding) {
   return finding.where === "title" ? 0 : finding.where;
 }
 
-function main(): number {
+async function loadParser(): Promise<Events | Failure> {
+  try {
+    const { parse, postprocess, preprocess } = await import("micromark");
+    const { gfm } = await import("micromark-extension-gfm");
+
+    return (text) =>
+      postprocess(
+        parse({ extensions: [gfm()] })
+          .document()
+          .write(preprocess()(text, undefined, true)),
+      );
+  } catch (error) {
+    return new Failure(
+      `cannot load the Markdown parser micromark, run vp install in the pi-setup checkout: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+}
+
+async function main(): Promise<number> {
   const args = parseArguments(process.argv.slice(2));
 
   if (args instanceof Failure) {
@@ -415,11 +511,18 @@ function main(): number {
     shape = parsed;
   }
 
+  const events = await loadParser();
+
+  if (events instanceof Failure) {
+    console.error(`check-body: ${events.message}`);
+    return 2;
+  }
+
   const body = parseBody(text);
   const problems = [
     ...(args.title === undefined ? [] : titleFindings(args.kind, args.title)),
     ...headingFindings(body, shape),
-    ...contentFindings(args.kind, body),
+    ...contentFindings(args.kind, body, markdownMarks(events, text)),
   ];
   const warnings = args.kind === "pr" ? historyWarnings(body) : [];
 
@@ -430,4 +533,12 @@ function main(): number {
   return problems.length === 0 ? 0 : 1;
 }
 
-process.exitCode = main();
+main().then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (error: unknown) => {
+    console.error(`check-body: ${error instanceof Error ? error.message : error}`);
+    process.exitCode = 2;
+  },
+);

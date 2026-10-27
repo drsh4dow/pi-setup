@@ -267,3 +267,181 @@ A stale citation goes unreported without Java.
     '13: unexpected heading "## Out of scope", use these in order: ## Problem, ## Done when, ## Suggested approach, ## Context',
   ]);
 });
+
+function ticketWith(...paragraphs: string[]) {
+  return `## Problem\n\n${paragraphs.join("\n\n")}\n\n## Done when\n\n- [ ] **It works.** Check: run it.\n`;
+}
+
+// The body from the ticket that found the inline code blind spot: it names the babysit
+// own-reply marker in inline code.
+const markerLine =
+  "The watcher tags its own replies with `<!-- pi-event:reply -->` so it can skip them.";
+
+test("passes a body that quotes an HTML comment inside inline code", (t) => {
+  const ticketResult = check(t, ticketWith(markerLine), [
+    "ticket",
+    "--title",
+    "babysit: own replies wake the agent",
+  ]);
+
+  assert.deepEqual(ticketResult.lines, []);
+  assert.equal(ticketResult.status, 0);
+
+  const pr = goodPr.replace(
+    "A reviewer cannot tell whether a PR's proof ran.",
+    `${markerLine} A double \`\`run with \` inside <!-- -->\`\` is code too.`,
+  );
+
+  const prResult = check(t, pr, ["pr", "--title", "fix(babysit): skip own replies"]);
+
+  assert.deepEqual(prResult.lines, []);
+  assert.equal(prResult.status, 0);
+});
+
+test("passes a comment quoted in a code span that wraps a line, or escaped into text", (t) => {
+  const result = check(
+    t,
+    ticketWith(
+      "The marker is `<!-- pi-event:\nreply -->` across two lines.",
+      "An escaped \\<!-- marker --> renders as text, not a comment.",
+      "> A quote names `<!-- pi-event:reply -->` too.",
+    ),
+    ["ticket"],
+  );
+
+  assert.deepEqual(result.lines, []);
+  assert.equal(result.status, 0);
+});
+
+test("flags an HTML comment outside backticks on a line that also holds inline code", (t) => {
+  const body = ticketWith(
+    "Tag replies with `<!-- pi-event:reply -->`. <!-- Who hits it. -->",
+    "A backtick run closes only on a run of its own length: `<!-- left in -->``",
+    "An escaped \\`<!-- left in -->` backtick opens no span.",
+    `Two backslashes escape each other, so ${"\\".repeat(2)}\`safe\` <!-- left in --> \`tail\` holds two spans.`,
+  );
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    "3: template comment left in, replace or delete it",
+    "5: template comment left in, replace or delete it",
+    "7: template comment left in, replace or delete it",
+    "9: template comment left in, replace or delete it",
+  ]);
+});
+
+test("reads a backtick after an even run of backslashes as a span opener", (t) => {
+  const body = ticketWith(
+    `Two backslashes: ${"\\".repeat(2)}\`<!-- pi-event:reply -->\`.`,
+    `Four backslashes: ${"\\".repeat(4)}\`<!-- pi-event:reply -->\`.`,
+    `One backslash escapes the first backtick: \\\`safe\` <!-- quoted --> \`tail\`.`,
+  );
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.deepEqual(result.lines, []);
+  assert.equal(result.status, 0);
+});
+
+test("opens no code span on a backtick inside an HTML tag, a link destination, or an autolink", (t) => {
+  const body = ticketWith(
+    'The <span title="`"> <!-- bare template --> ` end.',
+    "The [link](https://example.com/`) <!-- bare template --> ` end.",
+    "The <https://example.com/`> <!-- bare template --> ` end.",
+    'The <span title="`"> \u2014 ` end.',
+    'The <span title="`"> `<!-- code -->` end.',
+  );
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    "3: template comment left in, replace or delete it",
+    "5: template comment left in, replace or delete it",
+    "7: template comment left in, replace or delete it",
+    "9: long dash, use a period or a comma",
+  ]);
+});
+
+test("flags a long dash in prose and in a raw comment, but not in quoted code", (t) => {
+  const body = ticketWith(
+    "It prints `error \u2014 no such file` and exits 1.",
+    "It prints `error` \u2014 and exits 1.",
+    "The <!-- ` \u2014 ` --> end.",
+    "    an indented code block \u2014 with <!-- a quoted comment -->",
+  );
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    "5: long dash, use a period or a comma",
+    "7: long dash, use a period or a comma",
+    "7: template comment left in, replace or delete it",
+  ]);
+});
+
+test("reads an image's alt text as Markdown, so only its bare comments and dashes count", (t) => {
+  const body = ticketWith(
+    "The screenshot is ![<!-- replace the alt -->](shot.png).",
+    "The screenshot is ![`<!-- code -->`](shot.png).",
+    "The error is ![`error \u2014 no such file`](shot.png).",
+    "The error is ![error \u2014 no such file](shot.png).",
+  );
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    "3: template comment left in, replace or delete it",
+    "9: long dash, use a period or a comma",
+  ]);
+});
+
+test("reports a comment inside an HTML block on the line that holds it", (t) => {
+  const body = ticketWith("<details>\n<summary>Logs</summary>\n<!-- paste the log -->\n</details>");
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, ["5: template comment left in, replace or delete it"]);
+});
+
+test("reads an indented line after a link definition as the paragraph GitHub renders", (t) => {
+  const body = ticketWith(
+    "[ref]: /url\n    <!-- bare --> end.",
+    "[ref2]: /url\n    Text \u2014 end.",
+    '[ref3]: /url "title"\n    <!-- bare --> end.',
+    "[ref4]: /url\n    `<!-- quoted -->` and `\u2014` end.",
+    "[ref5]: /url\n\n    <!-- indented code --> \u2014",
+  );
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    "4: template comment left in, replace or delete it",
+    "7: long dash, use a period or a comma",
+    "10: template comment left in, replace or delete it",
+  ]);
+});
+
+test("reads a GitHub footnote's indented continuation as footnote prose, not code", (t) => {
+  const body = ticketWith(
+    "A footnote[^a] and another[^b] and a third[^c].",
+    "[^a]: Text\n    <!-- bare --> end.",
+    "[^b]: Text\n    \n    <!-- bare --> end.",
+    "[^c]:\n    - Text\n      \n      <!-- bare --> end.",
+  );
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    "6: template comment left in, replace or delete it",
+    "10: template comment left in, replace or delete it",
+    "15: template comment left in, replace or delete it",
+  ]);
+});

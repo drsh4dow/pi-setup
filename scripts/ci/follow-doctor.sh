@@ -18,8 +18,8 @@ for round in 1 2 3; do
     exit 1
   fi
 
-  # A fix line belongs to the finding above it; only fixes under a FAIL run.
-  fixes="$(awk '/^[A-Za-z]/ { failing = ($1 == "FAIL") } failing && /^      fix: / { sub(/^      fix: /, ""); print }' <<<"$output")"
+  # A fix line belongs to the finding above it; only fixes under a FAIL run, each once.
+  fixes="$(awk '/^[A-Za-z]/ { failing = ($1 == "FAIL") } failing && /^      fix: / { sub(/^      fix: /, ""); if (!seen[$0]++) print }' <<<"$output")"
   if [ -z "$fixes" ]; then
     echo "follow-doctor: a check fails with no fix to run" >&2
     exit 1

@@ -226,9 +226,10 @@ function lineCount(file: string) {
   return existsSync(file) ? readFileSync(file, "utf8").split("\n").length - 1 : 0;
 }
 
-// A fake mise whose doctor fails until its fix has run `fixesNeeded` times. Only the fix under the
-// FAIL appends to the fixes file; the one under the warning must not run.
-function followDoctor(t: TestContext, fixesNeeded: number) {
+// A fake mise whose doctor fails until its fix has run `fixesNeeded` times. Only the fix under a
+// FAIL appends to the fixes file; the one under the warning must not run. With `failures` above 1,
+// several FAILs share the fix, as tiers that all need mise run setup do.
+function followDoctor(t: TestContext, fixesNeeded: number, failures = 1) {
   const home = scratch(t);
   const bin = join(home, "bin");
   mkdirSync(bin);
@@ -239,9 +240,11 @@ function followDoctor(t: TestContext, fixesNeeded: number) {
 if [ "$count" -ge ${fixesNeeded} ]; then echo "doctor: no check failed"; exit 0; fi
 echo "warn  keys: missing"
 echo "      fix: echo warned >> ${fixes}.warn"
-echo "FAIL  shell: not active"
-echo "      fix: echo fixed >> ${fixes}"
-echo "doctor: 1 failed, 1 warning."
+for _ in $(seq ${failures}); do
+  echo "FAIL  shell: not active"
+  echo "      fix: echo fixed >> ${fixes}"
+done
+echo "doctor: ${failures} failed, 1 warning."
 exit 1`,
   );
 
@@ -258,6 +261,12 @@ test("follow-doctor exits 0 when the doctor passes after two rounds of fixes", (
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fixesRun, 2);
   assert.equal(warningFixesRun, 0);
+});
+
+test("follow-doctor runs a fix that several FAILs share once per round", (t) => {
+  const { result, fixesRun } = followDoctor(t, 1, 2);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fixesRun, 1);
 });
 
 test("follow-doctor stops with 1 when a check still fails after two rounds of fixes", (t) => {

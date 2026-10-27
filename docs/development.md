@@ -76,6 +76,11 @@ Keep these versions aligned when upgrading:
 - `@oxlint/plugins` stays compatible with the Oxlint version that
   `vp toolchain` reports.
 - Vite+ and `@effect/tsgo` move together.
+- The `pi` pin in `mise/core/mise.toml` matches the locked
+  `@earendil-works/pi-coding-agent`, so a new setup runs the Pi the extensions
+  are tested against. `scripts/test/doctor.test.ts` fails when they differ, and
+  when `mise/formal/mise.toml` stops pinning the TLC and Java that
+  `agent/skills/statechart/scripts/tlc-tools.ts` looks up.
 
 `vp run build:cli` compiles `pi-subagent`, `emit-to-pi`, and `dumpfile` with
 Bun. The `build-bin-path` extension puts `.build/bin` on the search path of
@@ -83,19 +88,32 @@ every command Pi runs.
 
 ## Setup notes
 
+[SETUP.md](../SETUP.md) is the install recipe an agent follows. Its two
+entry points are the tasks in the root `mise.toml`:
+
+- `mise run setup [--link-agent-skills] [TIER...]` runs `scripts/setup.sh`. It
+  links each tier folder under `mise/` into mise's global `conf.d` as
+  `pi-setup-<tier>`, installs the tools, and runs `vp install`. Global config
+  keeps the tools on PATH in every project, not only in this checkout. The
+  core tier also puts the Node.js shims of vp on PATH.
+- `mise run doctor` runs `scripts/doctor/doctor.ts`. It reads the environment
+  of a new login shell, so it checks what a new terminal gets rather than its
+  own environment. It starts Pi in RPC mode to confirm that every skill of this
+  checkout loads and no extension fails. It changes nothing.
+
+A new tier needs its folder under `mise/` and an entry in `TIERS` in
+`scripts/doctor/doctor.ts`. The doctor test fails when the two differ.
+`.github/workflows/setup.yml` runs setup and the doctor on a fresh Linux and
+macOS runner when a `mise.toml` changes.
+
 `vp install` patches Vite+'s Oxlint for Effect diagnostics, builds the
 standalone CLI binaries under `.build/bin` for the current platform, and
 copies `agent/default.settings.json` to `agent/settings.json` when that file
 does not exist. It does not patch the Pi runtime.
 
-To share the skills with tools that read `~/.agents/skills`, link them:
-
-```bash
-mkdir -p ~/.agents
-ln -s ../.pi/agent/skills ~/.agents/skills
-```
-
-If `~/.agents/skills` already exists, merge the skills you want to keep into
+To share the skills with tools that read `~/.agents/skills`, run
+`mise run setup --link-agent-skills`. If `~/.agents/skills` already exists,
+setup leaves it alone. Merge the skills you want to keep into
 `agent/skills` and move the original directory aside first.
 
 [`agent/mcp.json`](../agent/mcp.json) is Pi's user-level MCP configuration. It

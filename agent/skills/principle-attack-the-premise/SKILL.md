@@ -13,7 +13,7 @@ When two or more fixes that share one premise have failed the same gate, suspect
 
 **Pattern:**
 - **Write the premise down.** The premise is the one sentence that every failed fix assumed.
-- **Test the premise before the next fix.** Find an observation that would come out differently if the premise were false, and make it. Look at how the failures are distributed, not only at how large they are. Make the check rerunnable per [Build the Lever](../principle-build-the-lever/SKILL.md).
+- **Test the premise before the next fix.** Find an observation that would come out differently if the premise were false, and make it. Look at how the failures are distributed, not only at how large they are. When the next fix swaps in a part that stands in for the real consumer, such as a parser standing in for GitHub's renderer, that stand-in is the new premise: test it against the consumer's own output, on inputs outside the family the earlier failures came from. Make the check rerunnable per [Build the Lever](../principle-build-the-lever/SKILL.md).
 - **Follow the evidence.** If it contradicts the premise, the cause is elsewhere. Look for what the failures have in common that the premise did not predict. If it confirms the premise, ask the next "why" per [Fix Root Causes](../principle-fix-root-causes/SKILL.md). The earlier fixes may have treated a consequence instead of the cause.
 - **Remove the condition instead of compensating for it**, per the [Laziness Protocol](../principle-laziness-protocol/SKILL.md). If the evidence shows that one part always lands on the losing side, change what puts it there. A mechanism that cleans up after it leaves the cause in place and adds work on every run.
 

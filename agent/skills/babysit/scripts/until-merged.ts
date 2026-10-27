@@ -169,17 +169,10 @@ function recoverLane(
   });
 }
 
-function owesFinalRead(pr: PrLedger): boolean {
-  return (
-    (pr.lifecycle.kind === "merged" || pr.lifecycle.kind === "closed") &&
-    pr.lifecycle.finalRead === "owed"
-  );
-}
+const owesFinalRead = (pr: PrLedger): boolean => pr.finalRead === "owed";
 
 function finishFinalRead(step: PrStep): void {
-  const lifecycle = step.pr.lifecycle;
-  if (lifecycle.kind === "merged" || lifecycle.kind === "closed")
-    step.pr = { ...step.pr, lifecycle: { ...lifecycle, finalRead: "done" } };
+  step.pr = { ...step.pr, finalRead: "done" };
 }
 
 /**
@@ -440,28 +433,31 @@ function gateReason(
 const isMerged = (facts: T.PullRequestFacts): boolean =>
   facts.state === "MERGED" || facts.mergedAt !== null;
 
-/**
- * A member seen merged or closed for the first time owes one last feedback
- * read, so that a comment posted since the previous poll, or before the first
- * one, is delivered. A member already ended keeps its final read's progress.
- */
-function lifecycleOf(facts: T.PullRequestFacts, previous: Lifecycle): Lifecycle {
-  const finalRead: FinalRead =
-    previous.kind === "merged" || previous.kind === "closed"
-      ? previous.finalRead
-      : "owed";
-  if (isMerged(facts))
-    return { kind: "merged", mergedAt: facts.mergedAt, finalRead };
-  if (facts.state === "CLOSED") return { kind: "closed", finalRead };
+function lifecycleOf(facts: T.PullRequestFacts): Lifecycle {
+  if (isMerged(facts)) return { kind: "merged", mergedAt: facts.mergedAt };
+  if (facts.state === "CLOSED") return { kind: "closed" };
   return { kind: "open" };
 }
+const hasEnded = (lifecycle: Lifecycle): boolean =>
+  lifecycle.kind === "merged" || lifecycle.kind === "closed";
 
+/**
+ * A member seen merged or closed after it was open or unread owes one last
+ * feedback read, so that a comment posted since the previous poll, or before
+ * the first one, is delivered. Any other change, a reopen included, leaves
+ * that read where it was.
+ */
 function observeLifecycle(
   step: PrStep,
   facts: T.PullRequestFacts,
   environment: Environment
 ): void {
-  step.pr = { ...step.pr, lifecycle: lifecycleOf(facts, step.pr.lifecycle) };
+  const lifecycle = lifecycleOf(facts);
+  const finalRead: FinalRead =
+    hasEnded(lifecycle) && !hasEnded(step.pr.lifecycle)
+      ? "owed"
+      : step.pr.finalRead;
+  step.pr = { ...step.pr, lifecycle, finalRead };
   if (step.pr.lifecycle.kind !== "open") return;
   const head = facts.headRefOid;
   const merge = mergeability(facts);
@@ -752,17 +748,19 @@ async function monitor(args: {
       // The final read, owed since the poll that first saw the member merged
       // or closed. A failed one stays owed in the saved ledger, so every later
       // poll and every later arm retries it, with backoff, until it lands or
-      // its lane gives up, whatever the lifecycle lane reads meanwhile.
-      if (owesFinalRead(member)) {
-        await readFeedback(number, context, true);
+      // its lane gives up, whatever the lifecycle lane reads meanwhile. A
+      // member reopened meanwhile reads its feedback every poll, and that read
+      // is the final read.
+      const finalRead = owesFinalRead(member);
+      if (hasEnded(member.lifecycle)) {
+        if (finalRead) await readFeedback(number, context, true);
         continue;
       }
-      const lifecycle = member.lifecycle.kind;
-      if (lifecycle === "merged" || lifecycle === "closed") continue;
       frontier ??= number;
       const isFrontier = frontier === number;
+      if (!isFrontier && !sweep && !finalRead) continue;
+      const snapshot = await readFeedback(number, context, finalRead);
       if (!isFrontier && !sweep) continue;
-      const snapshot = await readFeedback(number, context);
       if (facts === null) continue;
       const ci = await attempt(number, "ci", () => readCi(reader, facts));
       if (ci === null) continue;

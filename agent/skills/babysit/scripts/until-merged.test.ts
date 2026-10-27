@@ -1335,43 +1335,102 @@ describe("the final read", () => {
     });
   });
 
-  it("treats members ended in state written before final reads were saved as read", async () => {
+  it("keeps a reopened member's final read owed, so a closed sibling cannot finish the watch before it lands", async () => {
     const scene = world();
     const stack = ["--queued-stack", "--stack-prs", "1,2"];
-    scene.facts.set(1, mergedFacts);
-    scene.facts.set(2, { state: "CLOSED" });
-    scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "last word on 1")] }));
-    const last = await watch(scene, stack);
-    expect(last.code).toBe(8);
-    const path = join(state, "state.json");
-    const saved: { prs: { lifecycle: Record<string, unknown> }[] } = JSON.parse(
-      readFileSync(path, "utf8")
-    );
-    for (const pr of saved.prs) delete pr.lifecycle.finalRead;
-    writeFileSync(path, JSON.stringify(saved));
-    const reads = scene.feedbackReads.length;
-    const done = await watch(scene, [...stack, ...acks(last.items)]);
+    expect((await watch(scene, stack)).code).toBe(5);
+    scene.facts.set(1, { state: "CLOSED" });
+    scene.feedback.set(1, { kind: "failure", failure: outage });
+    let reopened = false;
+    scene.onSleep = () => {
+      if (reopened) return;
+      reopened = true;
+      scene.facts.set(1, { state: "OPEN" });
+      scene.facts.set(2, { state: "CLOSED" });
+    };
+    const told = await watch(scene, [...stack, "--max-query-errors", "3", "--timeout", "600"]);
+    expect(told.records.map((record) => record.kind)).toEqual(["RETRY", "RETRY", "ATTENTION"]);
+    expect(told.items.map((item) => [item.pr, item.kind, item.detail.lane])).toEqual([
+      [1, "status-unavailable", "feedback"],
+    ]);
+    expect(told.items[0]?.excerpt).toStartWith("the final feedback read for #1 failed");
+    const done = await watch(scene, [...stack, ...acks(told.items)]);
+    expect(done.code).toBe(0);
     expect(done.records.at(-1)).toMatchObject({
       kind: "FINISHED",
-      result: { kind: "closed", closed: [{ number: 2 }], merged: [{ context: { number: 1 } }] },
+      result: { kind: "closed", closed: [{ number: 2 }], merged: [], stillOpen: [{ number: 1 }] },
     });
-    expect(scene.feedbackReads.length).toBe(reads);
   });
 
-  it("refuses state whose final read is neither owed nor done", async () => {
-    const scene = world();
-    scene.facts.set(1, mergedFacts);
-    expect((await watch(scene)).code).toBe(0);
+  /** Rewrites each saved member, as an older watcher or a corrupt file would have left it. */
+  function rewriteSavedMembers(write: (pr: Record<string, unknown>, lifecycle: Record<string, unknown>) => void): void {
     const path = join(state, "state.json");
-    const saved: { prs: { lifecycle: Record<string, unknown> }[] } = JSON.parse(
-      readFileSync(path, "utf8")
-    );
-    for (const pr of saved.prs) pr.lifecycle.finalRead = "maybe";
+    const saved: { prs: Record<string, unknown>[] } = JSON.parse(readFileSync(path, "utf8"));
+    for (const pr of saved.prs) {
+      const lifecycle = pr.lifecycle;
+      if (typeof lifecycle !== "object" || lifecycle === null) throw new Error("saved member has no lifecycle");
+      write(pr, Object.fromEntries(Object.entries(lifecycle)));
+    }
     writeFileSync(path, JSON.stringify(saved));
-    const refused = await watch(scene);
-    expect(refused.code).toBe(73);
-    expect(refused.stderr).toContain("state.prs[0].lifecycle.finalRead");
+  }
+  /** The final read inside a merged or closed lifecycle, where it was saved before it got its own field. */
+  const inLifecycle = (finalRead: string) => (pr: Record<string, unknown>, lifecycle: Record<string, unknown>) => {
+    delete pr.finalRead;
+    pr.lifecycle = lifecycle.kind === "merged" || lifecycle.kind === "closed" ? { ...lifecycle, finalRead } : lifecycle;
+  };
+
+  it("keeps a final read owed in state that saved it inside the closed lifecycle", async () => {
+    const scene = world();
+    expect((await watch(scene)).code).toBe(5);
+    scene.facts.set(1, { state: "CLOSED" });
+    scene.feedback.set(1, { kind: "failure", failure: outage });
+    expect((await watch(scene, ["--max-query-errors", "3", "--timeout", "10"])).code).toBe(5);
+    rewriteSavedMembers(inLifecycle("owed"));
+    scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "last word before close")] }));
+    const told = await watch(scene);
+    expect(told.code).toBe(8);
+    expect(kinds(told.items)).toEqual([[1, "feedback", "comment by alice"]]);
   });
+
+  for (const [older, write] of [
+    ["as done inside its lifecycle", inLifecycle("done")],
+    ["nowhere, as state did before final reads were saved", (pr: Record<string, unknown>) => {
+      delete pr.finalRead;
+    }],
+  ] as const)
+    it(`treats an ended member as read when state saved its final read ${older}`, async () => {
+      const scene = world();
+      const stack = ["--queued-stack", "--stack-prs", "1,2"];
+      scene.facts.set(1, mergedFacts);
+      scene.facts.set(2, { state: "CLOSED" });
+      scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "last word on 1")] }));
+      const last = await watch(scene, stack);
+      expect(last.code).toBe(8);
+      rewriteSavedMembers(write);
+      const reads = scene.feedbackReads.length;
+      const done = await watch(scene, [...stack, ...acks(last.items)]);
+      expect(done.records.at(-1)).toMatchObject({
+        kind: "FINISHED",
+        result: { kind: "closed", closed: [{ number: 2 }], merged: [{ context: { number: 1 } }] },
+      });
+      expect(scene.feedbackReads.length).toBe(reads);
+    });
+
+  for (const [where, write] of [
+    ["state.prs[0].finalRead", (pr: Record<string, unknown>) => {
+      pr.finalRead = "maybe";
+    }],
+    ["state.prs[0].lifecycle.finalRead", inLifecycle("maybe")],
+  ] as const)
+    it(`refuses state whose final read at ${where} is neither owed nor done`, async () => {
+      const scene = world();
+      scene.facts.set(1, mergedFacts);
+      expect((await watch(scene)).code).toBe(0);
+      rewriteSavedMembers(write);
+      const refused = await watch(scene);
+      expect(refused.code).toBe(73);
+      expect(refused.stderr).toContain(where);
+    });
 });
 
 describe("own replies", () => {

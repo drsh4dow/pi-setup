@@ -57,6 +57,8 @@ const PROTOCOL_VERSION = 1;
 const PREVIEW_LIMIT = 20;
 const EXCERPT_LIMIT = 200;
 const REPLY_MARKER = /^<!-- pi-event:([0-9a-f]{64}) -->$/;
+/** Ends a babysitter's PR reply that acts on no item of this watch. */
+const OWN_REPLY_MARKER = /^<!-- pi-event:reply -->$/;
 
 interface Environment {
   readonly repository: T.Repository;
@@ -249,18 +251,27 @@ function revisions(snapshot: FeedbackSnapshot): readonly Revision[] {
   return all;
 }
 
-function trailingReplyMarkers(body: string): readonly AttentionId[] {
+function trailingReplyMarkers(body: string): {
+  readonly ownReply: boolean;
+  readonly acks: readonly AttentionId[];
+} {
   const lines = body
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== "");
-  const ids: AttentionId[] = [];
+  let ownReply = false;
+  const acks: AttentionId[] = [];
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const id = REPLY_MARKER.exec(lines[index] ?? "")?.[1];
+    const line = lines[index] ?? "";
+    if (OWN_REPLY_MARKER.test(line)) {
+      ownReply = true;
+      continue;
+    }
+    const id = REPLY_MARKER.exec(line)?.[1];
     if (id === undefined || !isAttentionId(id)) break;
-    ids.push(id);
+    acks.push(id);
   }
-  return ids;
+  return { ownReply, acks };
 }
 
 function observeFeedback(
@@ -273,8 +284,8 @@ function observeFeedback(
   for (const revision of revisions(snapshot)) {
     if (revision.authorLogin === snapshot.viewerLogin) {
       const markers = trailingReplyMarkers(revision.body);
-      if (markers.length > 0) {
-        for (const id of markers)
+      if (markers.ownReply || markers.acks.length > 0) {
+        for (const id of markers.acks)
           if (deliveredFeedback.has(id)) step.acknowledged.add(id);
         continue;
       }
@@ -408,6 +419,26 @@ function lifecycleOf(facts: T.PullRequestFacts): PrLedger["lifecycle"] {
   return { kind: "open" };
 }
 
+/**
+ * A member the watcher saw open owes one last feedback read when it merges or
+ * closes, so that a comment posted since the previous poll is delivered.
+ */
+function finalReadOwed(pr: PrLedger): boolean {
+  switch (pr.lifecycle.kind) {
+    case "open":
+      return true;
+    case "unknown":
+      return pr.feedbackBaselined;
+    case "merged":
+    case "closed":
+      return false;
+    default: {
+      const exhaustive: never = pr.lifecycle;
+      return exhaustive;
+    }
+  }
+}
+
 function observeLifecycle(
   step: PrStep,
   facts: T.PullRequestFacts,
@@ -488,7 +519,6 @@ function mergeReadyProof(
       context: facts.context,
       facts,
       threads: [],
-      reviewPasses: [],
       ci,
       reviewAutomationRunning: false,
     },
@@ -624,7 +654,8 @@ async function monitor(args: {
     };
     const poll: {
       worst: { readonly failure: T.QueryFailure; readonly count: number } | null;
-    } = { worst: null };
+      readonly gaveUp: Set<string>;
+    } = { worst: null, gaveUp: new Set() };
     const attempt = async <V>(
       pr: T.PrNumber,
       lane: MonitorLane,
@@ -645,22 +676,52 @@ async function monitor(args: {
         failures.set(key, count);
         if (poll.worst === null || count > poll.worst.count)
           poll.worst = { failure: error.failure, count };
-        if (!error.failure.retryable || count >= options.maxQueryErrors)
+        if (!error.failure.retryable || count >= options.maxQueryErrors) {
+          poll.gaveUp.add(key);
           ledger = updateMember(ledger, pr, (step) =>
             markLaneUnavailable(step, lane, error.failure, environment)
           );
+        }
         return null;
       }
+    };
+    const readFeedback = async (
+      number: T.PrNumber,
+      context: T.PrContext
+    ): Promise<FeedbackSnapshot | null> => {
+      const snapshot = await attempt(number, "feedback", () =>
+        feedback.feedback(context)
+      );
+      if (snapshot !== null) {
+        const delivered = deliveredFeedback(ledger, number);
+        ledger = updateMember(ledger, number, (step) =>
+          observeFeedback(step, snapshot, delivered, environment)
+        );
+      }
+      return snapshot;
     };
     const readThisPoll = new Set<T.PrNumber>();
     let frontier: T.PrNumber | null = null;
     let frontierView: FrontierView | null = null;
     for (const number of ledger.scope) {
-      if (memberLedger(ledger, number).lifecycle.kind === "merged") continue;
+      const saved = memberLedger(ledger, number);
+      if (saved.lifecycle.kind === "merged") continue;
       const context = { ...repository, number };
       const facts = await attempt(number, "lifecycle", () =>
         reader.pullRequest(context)
       );
+      // The final read: a member seen merged or closed for the first time gets
+      // one more feedback read before its lifecycle is saved. Until that read
+      // succeeds or its lane gives up, the member stays open in the ledger,
+      // so the next poll retries it with backoff.
+      if (
+        facts !== null &&
+        lifecycleOf(facts).kind !== "open" &&
+        finalReadOwed(saved)
+      ) {
+        const last = await readFeedback(number, context);
+        if (last === null && !poll.gaveUp.has(`${number}:feedback`)) continue;
+      }
       if (facts !== null) {
         readThisPoll.add(number);
         ledger = updateMember(ledger, number, (step) =>
@@ -672,15 +733,7 @@ async function monitor(args: {
       frontier ??= number;
       const isFrontier = frontier === number;
       if (!isFrontier && !sweep) continue;
-      const snapshot = await attempt(number, "feedback", () =>
-        feedback.feedback(context)
-      );
-      if (snapshot !== null) {
-        const delivered = deliveredFeedback(ledger, number);
-        ledger = updateMember(ledger, number, (step) =>
-          observeFeedback(step, snapshot, delivered, environment)
-        );
-      }
+      const snapshot = await readFeedback(number, context);
       if (facts === null) continue;
       const ci = await attempt(number, "ci", () => readCi(reader, facts));
       if (ci === null) continue;

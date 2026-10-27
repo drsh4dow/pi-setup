@@ -178,7 +178,11 @@ export async function readSnapshot(args: {
       ),
   };
 }
-const conflictBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
+/** A snapshot without its review pass counts, which never decide merge readiness. */
+export type ReadinessRow =
+  | Extract<T.PrSnapshot, { readonly kind: "merged" | "closed" }>
+  | Omit<Extract<T.PrSnapshot, { readonly kind: "open" }>, "reviewPasses">;
+const conflictBlocker = (row: ReadinessRow): T.MergeBlocker | null =>
   row.kind === "open" &&
   (row.facts.mergeable === "CONFLICTING" ||
     row.facts.mergeStateStatus === "DIRTY" ||
@@ -198,7 +202,7 @@ const ciBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
     ? { kind: "failing-checks", pr: row.context, ci: row.ci }
     : null;
 function gateReason(
-  row: T.PrSnapshot,
+  row: ReadinessRow,
   allowDraft: boolean
 ): T.MergeGateReason | null {
   if (row.kind === "merged") return null;
@@ -221,7 +225,7 @@ function gateBlocker(
     : { kind: "merge-gate", pr: row.context, reason };
 }
 export function readyContribution(
-  row: T.PrSnapshot,
+  row: ReadinessRow,
   allowDraft: boolean
 ): T.ReadyPr | T.MergedPr | null {
   if (row.kind === "merged")

@@ -6,14 +6,16 @@ so the repository is cloned there. Login and API keys stay with the user.
 
 ## Ask before you change anything
 
-Linux and macOS are supported. On Windows, stop and tell the user that native
-Windows is not supported and WSL is untested.
+Linux on x86_64 and macOS on Apple silicon are supported and tested in CI.
+Other Linux architectures and Intel Macs are untested. On Windows, stop and
+tell the user that native Windows is not supported and WSL is untested.
 
 Look at `~/.pi` first:
 
 - If it does not exist, continue.
 - If it is a clone of this repository (`git -C ~/.pi remote -v` names
-  `pi-setup`), reuse it. Run `git -C ~/.pi pull --ff-only` when the user agrees.
+  `pi-setup`), ask whether to reuse it, and whether to update it first with
+  `git -C ~/.pi pull --ff-only`. Skip step 2 of the install when they reuse it.
 - Otherwise it holds the user's own Pi configuration, often with their login in
   `agent/auth.json` and their history in `agent/sessions/`. Stop and ask. Offer
   to move it to `~/.pi.backup-<date>` and copy `agent/auth.json` and
@@ -25,15 +27,16 @@ Then ask the user these questions in one message:
 1. **Clone or fork?** Recommend a fork when they will change skills or
    settings, so their changes have a remote: `gh repo fork drsh4dow/pi-setup
    --clone=false`, then clone the fork.
-2. **Which optional tiers?** Core is always installed. Each tier is a folder
-   under [`mise/`](mise/) that pins the tools it lists.
+2. **Which optional tiers?** Core is always installed and takes about 2.2 GB.
+   Each tier is a folder under [`mise/`](mise/) that pins the tools it lists.
+   The sizes are disk use on Linux x86_64, with mise's download cache.
 
-   | Tier      | Enables                                         | Installs                   |
-   | --------- | ----------------------------------------------- | -------------------------- |
-   | `browser` | the `agent-browser` skill, for checking web UIs | agent-browser and Chrome   |
-   | `formal`  | `statechart` and the TLA+ verification skills   | Java and TLC, about 305 MB |
-   | `mail`    | the `mailbox` skill                             | himalaya                   |
-   | `video`   | the `catchup-video` skill                       | uv and ffmpeg              |
+   | Tier      | Enables                                         | Installs                                    | Disk    |
+   | --------- | ----------------------------------------------- | ------------------------------------------- | ------- |
+   | `browser` | the `agent-browser` skill, for checking web UIs | agent-browser and Chrome                    | ~450 MB |
+   | `formal`  | `statechart` and the TLA+ verification skills   | Java and TLC                                | ~460 MB |
+   | `mail`    | the `mailbox` skill                             | himalaya                                    | ~30 MB  |
+   | `video`   | the `catchup-video` skill                       | uv, ffmpeg, and the cairo and pango headers | ~1.1 GB |
 
 3. **Share the skills with other agents?** Only when `~/.agents/skills` does
    not exist: setup can link it to this checkout's skills, so agents that read
@@ -41,11 +44,19 @@ Then ask the user these questions in one message:
 
 ## Install
 
-1. Check mise with `mise --version`. Setup needs 2026.9.14 or newer. If mise
-   is missing, install it with `curl https://mise.run | sh`, which puts it at
-   `~/.local/bin/mise`, or with `brew install mise` on macOS. Then run
-   `export PATH="$HOME/.local/bin:$PATH"`, because your shell does not have it
-   on PATH yet. If mise is older, run `mise self-update`.
+1. Check mise with `mise --version`. Setup needs 2026.9.14 or newer.
+   - When mise is installed, use it, whichever way it was installed. mise
+     warns against a second installation, since an older one on PATH can stay
+     in use.
+   - When it is older, update it the way it was installed: with the package
+     manager that installed it, such as `sudo pacman -Syu mise` or
+     `brew upgrade mise`, or with `mise self-update` for an install from
+     mise.run. Package builds turn `self-update` off.
+   - When it is missing, install it with `curl https://mise.run | sh`, the
+     method mise recommends on Linux and macOS. It puts mise at
+     `~/.local/bin/mise`, which is not on PATH yet. Each of your commands may
+     start a new shell, so begin every later command that runs mise with
+     `export PATH="$HOME/.local/bin:$PATH";`.
 2. Clone the repository, or the user's fork:
 
    ```bash
@@ -53,14 +64,20 @@ Then ask the user these questions in one message:
    ```
 
    When the user agreed to move an existing `~/.pi` aside, clone to
-   `~/.pi.new` first and swap both in one command, since a running Pi,
-   possibly you, writes to `~/.pi/agent` again right after a move:
+   `~/.pi.new` first, then swap the two in one command. A running Pi writes to
+   `~/.pi/agent`, and that Pi may be you, so a separate move leaves a new
+   `~/.pi` behind. The command stops when the backup path is taken, and copies
+   the login and the sessions only when they exist:
 
    ```bash
    git clone https://github.com/drsh4dow/pi-setup.git ~/.pi.new
-   backup=~/.pi.backup-$(date +%F)
-   mv ~/.pi "$backup" && mv ~/.pi.new ~/.pi
-   cp -R "$backup/agent/auth.json" "$backup/agent/sessions" ~/.pi/agent/
+   backup=~/.pi.backup-$(date +%Y%m%d-%H%M%S)
+   if [ -e "$backup" ]; then echo "$backup exists" >&2; else
+     mv ~/.pi "$backup" && mv ~/.pi.new ~/.pi &&
+       for name in auth.json sessions; do
+         [ ! -e "$backup/agent/$name" ] || cp -R "$backup/agent/$name" ~/.pi/agent/
+       done
+   fi
    ```
 
 3. Run setup with the tiers the user chose, and `--link-agent-skills` if they
@@ -71,11 +88,19 @@ Then ask the user these questions in one message:
    ```
 
    Setup links each tier into mise's global `conf.d` as `pi-setup-<tier>`, so
-   its tools are on PATH in every project. It then installs the tools, runs
-   `vp install`, which builds the bundled CLIs and creates
-   `agent/settings.json`, and downloads Chrome for the browser tier. It refuses
-   to replace anything it did not create. A rerun skips what is in place, and
-   tiers from earlier runs stay.
+   its tools are on PATH in every project. It refuses to replace anything it
+   did not create. A rerun skips what is in place, and tiers from earlier runs
+   stay. In order, it:
+
+   - installs the system libraries the tiers declare in `[bootstrap.packages]`,
+     such as the libatomic Node.js needs, with this machine's package manager
+     and sudo. Without passwordless sudo it stops and prints the command that
+     installs them. Give that command to the user to run in their own
+     terminal, where sudo can ask for a password, then run setup again.
+   - installs the tools the tiers pin.
+   - runs `vp install`, which builds the bundled CLIs and creates
+     `agent/settings.json`.
+   - downloads Chrome for the browser tier.
 
    The root `mise.toml` holds only the `setup` and `doctor` tasks, and
    `mise run` trusts the config of the task it runs. The tier files become
@@ -83,8 +108,7 @@ Then ask the user these questions in one message:
    they want to see what installs. Setup can take several minutes, so give it
    a long timeout.
 
-   When setup fails, read its error, fix the cause, and run it again. On minimal
-   Debian and Ubuntu systems, Node.js needs `libatomic1`.
+   When setup fails, read its error, fix the cause, and run it again.
 
 ## Verify
 
@@ -105,27 +129,30 @@ Then ask the user these questions in one message:
    exits 0. When a check still fails after two fixes, stop and show the user
    the doctor's output.
 
-   - The doctor reads a new login shell, the way a new terminal starts. Your
-     own shell may still miss the tools after a fix. That is expected, and the
-     doctor's result is what counts.
+   - The doctor reads the shell a new terminal starts: a login shell on macOS,
+     and an interactive non-login shell on Linux. Your own shell may still miss
+     the tools after a fix. That is expected, and the doctor's result is what
+     counts.
    - The `shell` fix appends mise's activation line to the user's shell
      profile. Apply it and tell the user which file changed.
-   - A fix that needs `sudo`, such as a system package, is yours to run when
-     you can. Otherwise give the user the command.
+   - A fix that installs system packages, `mise bootstrap packages apply`,
+     uses this machine's package manager and sudo. Run it when sudo works
+     without a password. Otherwise give the user the command.
    - `warn` and `skip` lines do not block setup. Leave them for the hand-off.
 
 ## Hand off
 
 Tell the user:
 
-- Which tiers are installed, and every file setup and the fixes changed:
-  `~/.pi`, the `pi-setup-*` links in mise's `conf.d`, the shell profile line,
-  and the `~/.agents/skills` link when it was made.
+- Which tiers are installed, and every change setup and the fixes made:
+  `~/.pi`, the `pi-setup-*` links in mise's `conf.d`, the system packages
+  mise installed, the shell profile line, and the `~/.agents/skills` link when
+  it was made.
 - To open a new terminal, start `pi`, and run `/login`.
 - Each remaining `warn` line with its fix. The web-search skill needs
   `PERPLEXITY_API_KEY` and `EXA_API_KEY` in their shell profile. Ask them to
   set the keys themselves, and never ask them to paste a key into the chat.
 - To run `/skill:setup-sh4dow-skills` once in each repository they work in.
-- To add a tier later with `mise run setup <tier>`, and to update with
-  `git -C ~/.pi pull && mise run setup`, then `mise run doctor`.
+- To add a tier later with `cd ~/.pi && mise run setup <tier>`, and to
+  update with `cd ~/.pi && git pull && mise run setup && mise run doctor`.
 - That the [README](README.md#workflow) describes how to work with this setup.

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 // Checks this Pi setup the way a new terminal sees it, and prints the fix for each problem.
-// SETUP.md runs it through `mise run doctor`. It changes nothing on the machine.
+// SETUP.md runs it through `mise run doctor`. It changes nothing itself, but the Pi it starts
+// creates an empty agent/auth.json when there is none.
 // Exit 0 when no check fails (warnings and skipped tiers are fine), 1 when a check fails, and 2
 // when the doctor itself cannot run.
 

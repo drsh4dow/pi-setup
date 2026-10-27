@@ -1,5 +1,5 @@
 // The doctor's boundary: everything it reads from the machine, parsed into plain values.
-// doctor.ts judges these values and changes nothing.
+// doctor.ts judges these values.
 
 import { spawnSync } from "node:child_process";
 import {
@@ -18,7 +18,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 
 import { Option, Schema } from "effect";
 
-// The environment a new terminal starts with, read from a login shell.
+// The environment a new terminal starts with, read from the shell newShellArgs starts.
 export interface NewShell {
   shell: string;
   env: Map<string, string>;

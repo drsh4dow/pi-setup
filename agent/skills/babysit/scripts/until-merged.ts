@@ -17,7 +17,6 @@ import {
   type AttentionId,
   CONDITION_KINDS,
   type ConditionKind,
-  type FinalRead,
   LANES,
   type Ledger,
   type Lifecycle,
@@ -59,7 +58,7 @@ const PROTOCOL_VERSION = 1;
 const PREVIEW_LIMIT = 20;
 const EXCERPT_LIMIT = 200;
 const REPLY_MARKER = /^<!-- pi-event:([0-9a-f]{64}) -->$/;
-/** Ends a babysitter's PR reply that acts on no item of this watch. */
+/** Ends every PR reply a babysitter posts, so a watcher on the same login does not wake on it. */
 const OWN_REPLY_MARKER = /^<!-- pi-event:reply -->$/;
 
 interface Environment {
@@ -176,20 +175,19 @@ function finishFinalRead(step: PrStep): void {
 }
 
 /**
- * Reports a lane that gave up. An outage already reported stays silent, except
- * for a failed final read: it is the member's last read, so the agent hears of
- * it even when it acknowledged the outage that was already running, and the
- * item that says so settles the final read.
+ * Reports a lane that gave up, once per outage. A failed final read is the
+ * exception. It gets its own item even during an outage already reported, and
+ * that item settles the final read.
  */
 function markLaneUnavailable(
   step: PrStep,
   lane: MonitorLane,
   failure: T.QueryFailure,
-  environment: Environment,
-  finalRead: boolean
+  environment: Environment
 ): void {
+  const isFinalRead = lane === "feedback" && owesFinalRead(step.pr);
   const outage = step.pr.outages[lane];
-  if (outage.active && !finalRead) return;
+  if (outage.active && !isFinalRead) return;
   const generation = outage.generation + 1;
   step.pr = {
     ...step.pr,
@@ -203,12 +201,12 @@ function markLaneUnavailable(
       generation,
     ]),
     kind: "status-unavailable",
-    excerpt: finalRead
+    excerpt: isFinalRead
       ? `the final ${lane} read for #${step.pr.number} failed, so comments since the last read are unread: ${failure.detail}`
       : `${lane} reads for #${step.pr.number} keep failing: ${failure.detail}`,
-    detail: { lane, outageGeneration: generation, failure, finalRead },
+    detail: { lane, outageGeneration: generation, failure, finalRead: isFinalRead },
   });
-  if (finalRead) finishFinalRead(step);
+  if (isFinalRead) finishFinalRead(step);
 }
 
 interface Revision {
@@ -442,10 +440,8 @@ const hasEnded = (lifecycle: Lifecycle): boolean =>
   lifecycle.kind === "merged" || lifecycle.kind === "closed";
 
 /**
- * A member seen merged or closed after it was open or unread owes one last
- * feedback read, so that a comment posted since the previous poll, or before
- * the first one, is delivered. Any other change, a reopen included, leaves
- * that read where it was.
+ * A member first seen merged or closed, after it was open or unknown, owes its
+ * final read. A reopen leaves `finalRead` unchanged.
  */
 function observeLifecycle(
   step: PrStep,
@@ -453,11 +449,12 @@ function observeLifecycle(
   environment: Environment
 ): void {
   const lifecycle = lifecycleOf(facts);
-  const finalRead: FinalRead =
-    hasEnded(lifecycle) && !hasEnded(step.pr.lifecycle)
-      ? "owed"
-      : step.pr.finalRead;
-  step.pr = { ...step.pr, lifecycle, finalRead };
+  const endedThisPoll = hasEnded(lifecycle) && !hasEnded(step.pr.lifecycle);
+  step.pr = {
+    ...step.pr,
+    lifecycle,
+    finalRead: endedThisPoll ? "owed" : step.pr.finalRead,
+  };
   if (step.pr.lifecycle.kind !== "open") return;
   const head = facts.headRefOid;
   const merge = mergeability(facts);
@@ -580,10 +577,6 @@ function acknowledge(
 type ScopeStatus =
   | { readonly kind: "finished"; readonly result: FinishedResult }
   | { readonly kind: "open"; readonly frontier: T.PrContext };
-/**
- * A member that owes its final read is still open to the watch, and keeps a
- * closed sibling from finishing the watch before that read lands.
- */
 function scopeStatus(
   ledger: Ledger,
   readThisPoll: ReadonlySet<T.PrNumber>
@@ -680,8 +673,7 @@ async function monitor(args: {
     const attempt = async <V>(
       pr: T.PrNumber,
       lane: MonitorLane,
-      read: () => Promise<V>,
-      finalRead = false
+      read: () => Promise<V>
     ): Promise<V | null> => {
       const key = `${pr}:${lane}`;
       try {
@@ -700,27 +692,23 @@ async function monitor(args: {
           poll.worst = { failure: error.failure, count };
         if (!error.failure.retryable || count >= options.maxQueryErrors)
           ledger = updateMember(ledger, pr, (step) =>
-            markLaneUnavailable(step, lane, error.failure, environment, finalRead)
+            markLaneUnavailable(step, lane, error.failure, environment)
           );
         return null;
       }
     };
     const readFeedback = async (
       number: T.PrNumber,
-      context: T.PrContext,
-      finalRead = false
+      context: T.PrContext
     ): Promise<FeedbackSnapshot | null> => {
-      const snapshot = await attempt(
-        number,
-        "feedback",
-        () => feedback.feedback(context),
-        finalRead
+      const snapshot = await attempt(number, "feedback", () =>
+        feedback.feedback(context)
       );
       if (snapshot !== null) {
         const delivered = deliveredFeedback(ledger, number);
         ledger = updateMember(ledger, number, (step) => {
           observeFeedback(step, snapshot, delivered, environment);
-          if (finalRead) finishFinalRead(step);
+          finishFinalRead(step);
         });
       }
       return snapshot;
@@ -730,8 +718,8 @@ async function monitor(args: {
     let frontierView: FrontierView | null = null;
     for (const number of ledger.scope) {
       const context = { ...repository, number };
-      // A merged member stays merged, so the lifecycle lane has nothing left
-      // to tell about it.
+      // GitHub cannot reopen a merged PR, so the watcher skips its lifecycle
+      // read.
       const facts =
         memberLedger(ledger, number).lifecycle.kind === "merged"
           ? null
@@ -745,23 +733,19 @@ async function monitor(args: {
         );
       }
       const member = memberLedger(ledger, number);
-      // The final read, owed since the poll that first saw the member merged
-      // or closed. A failed one stays owed in the saved ledger, so every later
-      // poll and every later arm retries it, with backoff, until it lands or
-      // its lane gives up, whatever the lifecycle lane reads meanwhile. A
-      // member reopened meanwhile reads its feedback every poll, and that read
-      // is the final read.
-      const finalRead = owesFinalRead(member);
+      // A failed final read stays owed in the saved ledger, so every later poll
+      // and arm retries it, whatever the lifecycle read returns.
+      const owed = owesFinalRead(member);
       if (hasEnded(member.lifecycle)) {
-        if (finalRead) await readFeedback(number, context, true);
+        if (owed) await readFeedback(number, context);
         continue;
       }
       frontier ??= number;
       const isFrontier = frontier === number;
-      if (!isFrontier && !sweep && !finalRead) continue;
-      const snapshot = await readFeedback(number, context, finalRead);
-      if (!isFrontier && !sweep) continue;
-      if (facts === null) continue;
+      const watched = isFrontier || sweep;
+      if (!watched && !owed) continue;
+      const snapshot = await readFeedback(number, context);
+      if (!watched || facts === null) continue;
       const ci = await attempt(number, "ci", () => readCi(reader, facts));
       if (ci === null) continue;
       ledger = updateMember(ledger, number, (step) =>

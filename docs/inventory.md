@@ -149,8 +149,9 @@ The agent loads these on its own when the trigger matches.
   `killall`, `fuser -k`, `kill $(pgrep …)`, `kill $(lsof -t …)`, or
   `pids=$(pgrep x); kill $pids`, or that deletes a glob under `/tmp`,
   `/var/tmp`, or `$TMPDIR` with `rm` or `find … -delete`, or deletes `/tmp` or
-  `/var/tmp` itself. It reads commands inside substitutions, subshells, `case`
-  clauses, `bash -c`, and `eval`. It also reads the command line that `watch` or
+  `/var/tmp` itself, by name, through a variable whose default is one of them,
+  or with `find` started there and `-delete` or `-exec rm`. It reads commands
+  inside substitutions, subshells, `case` clauses, `bash -c`, and `eval`. It also reads the command line that `watch` or
   a tmux `new-session`, `new-window`, `split-window`, `respawn-pane`, or
   `respawn-window` starts, and a heredoc, here-string, or literal `echo` or
   `printf` fed to a shell. It runs in every session. Its reason points the agent
@@ -158,7 +159,9 @@ The agent loads these on its own when the trigger matches.
   command nested past 64 levels with a reason to split it, and a `printf` fed to
   a shell whose output it cannot reproduce (a width, precision, flag, `*`, a
   conversion other than `%s`, `%b`, and `%%`, or an escape that bash's and
-  coreutils' printf print differently) with a reason to use a quoted heredoc
+  coreutils' printf print differently), or an `echo` fed to a shell with an
+  escape that bash's and coreutils' echo print differently, or without `-e`
+  with an escape that `echo -e` reads, with a reason to use a quoted heredoc
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the

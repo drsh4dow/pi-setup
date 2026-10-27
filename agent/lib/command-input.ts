@@ -4,7 +4,7 @@
 // reads its script from stdin, and the text a literal `echo` or `printf` prints.
 
 import { basename, commandArgv, commandStart, isShell } from "./command-word.ts";
-import { printfOutput, type Printed } from "./printf.ts";
+import { echoOutput, printfOutput, type Printed } from "./printf.ts";
 
 /** The shell code a simple command runs beyond its own words. */
 export type CommandInput =
@@ -215,41 +215,32 @@ export function commandInput(argv: readonly string[]): CommandInput {
   return runner === undefined ? NONE : { kind: "runner", commands: runnerCommands(args, runner) };
 }
 
-const BACKSLASH_ESCAPES: ReadonlyMap<string, string> = new Map([
-  ["n", "\n"],
-  ["r", "\r"],
-  ["t", "\t"],
-  ["\\", "\\"],
-]);
+export type Printer = "echo" | "printf";
 
-// echo's text with `\n`, `\r`, `\t`, and `\\` read as `echo -e` reads them.
-function unescape(text: string): string {
-  return text.replaceAll(/\\(.)/g, (escape, char: string) => BACKSLASH_ESCAPES.get(char) ?? escape);
+/** What a literal `echo` or `printf` prints, and which of them prints it. */
+export interface Echoed extends Printed {
+  readonly printer: Printer;
 }
 
 /**
- * What a literal `echo` or `printf` prints, given its words: echo's `\n` read as a newline
- * even without `-e`, and printf read as printf.ts reads it. Undefined for any other command.
+ * What a literal `echo` or `printf` prints, given its words, read as printf.ts reads them.
+ * Undefined for any other command.
  */
-export function echoedText(argv: readonly string[]): Printed | undefined {
+export function echoedText(argv: readonly string[]): Echoed | undefined {
   const [word = "", ...args] = commandArgv(argv);
   const name = basename(word);
 
-  if (name === "echo") {
-    const firstText = args.findIndex((arg) => !/^-[neE]+$/.test(arg));
-
-    return {
-      text: unescape(firstText === -1 ? "" : args.slice(firstText).join(" ")),
-      readable: true,
-    };
-  }
+  if (name === "echo") return { ...echoOutput(args), printer: "echo" };
 
   if (name !== "printf") return undefined;
 
   const [format, ...rest] = args[0] === "--" ? args.slice(1) : args;
 
   // `printf -v name` assigns what it would print and prints nothing.
-  return format === undefined || format === "-v"
-    ? { text: "", readable: true }
-    : printfOutput(format, rest);
+  const printed =
+    format === undefined || format === "-v"
+      ? { text: "", readable: true }
+      : printfOutput(format, rest);
+
+  return { ...printed, printer: "printf" };
 }

@@ -9,9 +9,8 @@
 // as a command. Comments, redirections, and other heredoc bodies are dropped. It
 // follows at most MAX_NESTING levels of nesting.
 
-import { commandInput, echoedText } from "./command-input.ts";
+import { commandInput, echoedText, type Printer } from "./command-input.ts";
 import { flatWords } from "./flat-words.ts";
-import type { Printed } from "./printf.ts";
 import {
   WORD_END,
   ansiQuoted,
@@ -77,12 +76,12 @@ interface HeredocTerminator {
 }
 
 // What reading one command has found so far, shared by every scanner of it: how deep
-// its scripts nest, and whether a shell runs a printf's output that printf.ts cannot
-// reproduce.
+// its scripts nest, and the first echo or printf whose output a shell runs that
+// printf.ts cannot reproduce.
 interface Reading {
   depth: number;
   tooDeep: boolean;
-  unreadPrintf: boolean;
+  unreadBy: Printer | undefined;
 }
 
 interface Scanner extends Cursor {
@@ -100,7 +99,13 @@ type MutableCommand = Command & { readonly nested: Script[] };
 interface Stdin {
   readonly heredocs: HeredocTerminator[];
   // Here-strings, and the text a literal `echo` or `printf` before the `|` prints.
-  readonly literals: Printed[];
+  readonly literals: Literal[];
+}
+
+interface Literal {
+  readonly text: string;
+  /** The echo or printf that prints `text` with a feature printf.ts does not reproduce. */
+  readonly unreadBy: Printer | undefined;
 }
 
 interface Expanded {
@@ -118,7 +123,7 @@ function scanner(text: string, parent?: Scanner): Scanner {
     text,
     index: 0,
     heredocs: [],
-    reading: parent?.reading ?? { depth: 0, tooDeep: false, unreadPrintf: false },
+    reading: parent?.reading ?? { depth: 0, tooDeep: false, unreadBy: undefined },
   };
 }
 
@@ -301,7 +306,7 @@ function redirection(s: Scanner, stdin: Stdin): Script[] {
   skipBlanks(s);
   const target = readWord(s);
 
-  if (operator === "<<<") stdin.literals.push({ text: target.text, readable: true });
+  if (operator === "<<<") stdin.literals.push({ text: target.text, unreadBy: undefined });
 
   return [...target.nested];
 }
@@ -368,8 +373,8 @@ function toCommand(
       // heredocBodies fills these once the bodies' lines are read.
       for (const heredoc of stdin.heredocs) heredoc.runsIn = command.nested;
 
-      for (const { text, readable } of stdin.literals) {
-        s.reading.unreadPrintf ||= !readable;
+      for (const { text, unreadBy } of stdin.literals) {
+        s.reading.unreadBy ??= unreadBy;
         command.nested.push(parseScript(scanner(text, s), "end"));
       }
 
@@ -477,7 +482,11 @@ function parseScript(s: Scanner, closer: Closer): Script {
       s.index += at(s, 1) === "&" ? 2 : 1;
       const printed = echoedText(pipeline.at(-1)?.argv ?? []);
 
-      if (printed !== undefined) stdin.literals.push(printed);
+      if (printed !== undefined)
+        stdin.literals.push({
+          text: printed.text,
+          unreadBy: printed.readable ? undefined : printed.printer,
+        });
     } else if (listOperator !== undefined && !(char === "&" && at(s, 1) === ">")) {
       endPipeline();
       s.index += listOperator.length;
@@ -547,8 +556,8 @@ export type ParsedCommand =
   | {
       readonly kind: "pipelines";
       readonly pipelines: readonly Pipeline[];
-      /** Whether a shell runs as its script what a printf prints that printf.ts cannot reproduce. */
-      readonly unreadPrintf: boolean;
+      /** The echo or printf whose output a shell runs as its script that printf.ts cannot reproduce. */
+      readonly unreadBy: Printer | undefined;
     }
   | { readonly kind: "too-deep"; readonly limit: number };
 
@@ -556,15 +565,15 @@ function readScript(command: string) {
   const s = scanner(command);
   const all = everyPipeline(parseScript(s, "end"));
 
-  return { all, tooDeep: s.reading.tooDeep, unreadPrintf: s.reading.unreadPrintf };
+  return { all, tooDeep: s.reading.tooDeep, unreadBy: s.reading.unreadBy };
 }
 
 export function parseCommand(command: string): ParsedCommand {
-  const { all, tooDeep, unreadPrintf } = readScript(command);
+  const { all, tooDeep, unreadBy } = readScript(command);
 
   if (tooDeep) return { kind: "too-deep", limit: MAX_NESTING };
 
-  return { kind: "pipelines", pipelines: all, unreadPrintf };
+  return { kind: "pipelines", pipelines: all, unreadBy };
 }
 
 /**

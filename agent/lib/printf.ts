@@ -1,7 +1,8 @@
-// Reads what a literal `printf` prints, for command-input.ts. It reproduces exactly the
-// `%s`, `%b`, and `%%` conversions and the escapes on which bash's builtin printf and
-// coreutils' printf agree. Any other feature makes the reading inexact, so the host
-// guard refuses to run it as a script instead of trusting an approximation.
+// Reads what a literal `printf` or `echo` prints, for command-input.ts. It reproduces
+// exactly printf's `%s`, `%b`, and `%%` conversions, echo's options, and the escapes on
+// which bash's builtins and coreutils' printf and echo agree. Any other feature makes
+// the reading inexact, so the host guard refuses to run it as a script instead of
+// trusting an approximation.
 
 /** The text a literal `echo` or `printf` prints. */
 export interface Printed {
@@ -10,15 +11,15 @@ export interface Printed {
   readonly readable: boolean;
 }
 
-// Where an escape is read: in the format, or in an argument of `%b`, which reads
-// octal escapes and `\c` differently.
-type EscapeContext = "format" | "argument";
+// Where an escape is read: in printf's format, in an argument of `%b`, which reads
+// octal escapes and `\c` differently, or in the text of `echo -e`.
+type EscapeContext = "format" | "argument" | "echo";
 
 interface Escape {
   readonly text: string;
   readonly length: number;
   readonly readable: boolean;
-  /** `\c` in a `%b` argument: printf prints nothing more. */
+  /** `\c` in a `%b` argument or echo's text: nothing more is printed. */
   readonly ends: boolean;
 }
 
@@ -40,11 +41,19 @@ const UNREAD_ESCAPES: ReadonlySet<string> = new Set(["?", "E", "U", "u", "%"]);
 
 const HEX_DIGITS = /^[0-9A-Fa-f]{1,2}/;
 
-// `\NNN` in the format; `\0NNN` or `\NNN` in a `%b` argument.
+// `\NNN` in the format; `\0NNN` or `\NNN` in a `%b` argument; `\0NNN` in echo's text.
 const OCTAL_DIGITS: Readonly<Record<EscapeContext, RegExp>> = {
   format: /^[0-7]{1,3}/,
   argument: /^(?:0[0-7]{0,3}|[1-7][0-7]{0,2})/,
+  echo: /^0[0-7]{0,3}/,
 };
+
+// Escapes in echo's text that bash's builtin and coreutils print differently: coreutils
+// reads `\NNN` as octal and bash prints it as written, and only bash reads `\E`, `\u`, `\U`.
+const UNREAD_ECHO_ESCAPES = /^[1-7EUu]$/;
+
+// echo's options, before its first other word; the last of -e and -E wins.
+const ECHO_OPTIONS = /^-[neE]+$/;
 
 // A conversion the reader does not reproduce: flags, a width or precision, `*`, a
 // length modifier, and any letter, or a lone `%` at the end of the format.
@@ -92,8 +101,11 @@ function readEscape(text: string, index: number, context: EscapeContext): Escape
     };
   }
 
-  if (char === "c" && context === "argument")
+  if (char === "c" && context !== "format")
     return { text: "", length: 2, readable: true, ends: true };
+
+  // Any other escape in echo's text prints as written.
+  if (context === "echo") return literal(`\\${char}`, !UNREAD_ECHO_ESCAPES.test(char));
 
   // bash prints `\"` in the format as `"`, as coreutils does; for `\'` in the format and
   // both in `%b`, one of them keeps the backslash.
@@ -147,8 +159,8 @@ function readConversion(format: string, index: number, args: readonly string[]):
   };
 }
 
-// What `%b` prints for one argument: its escapes read, up to a `\c`.
-function argumentText(arg: string): Omit<Escape, "length"> {
+// What `%b` or `echo -e` prints for one argument: its escapes read, up to a `\c`.
+function argumentText(arg: string, context: EscapeContext = "argument"): Omit<Escape, "length"> {
   let text = "";
   let readable = true;
 
@@ -159,7 +171,7 @@ function argumentText(arg: string): Omit<Escape, "length"> {
       continue;
     }
 
-    const escape = readEscape(arg, index, "argument");
+    const escape = readEscape(arg, index, context);
     text += escape.text;
     readable &&= escape.readable;
     index += escape.length;
@@ -206,4 +218,31 @@ export function printfOutput(format: string, args: readonly string[]): Printed {
   } while (next < args.length);
 
   return { text, readable };
+}
+
+/** What `echo args…` prints, with its trailing newline. */
+export function echoOutput(args: readonly string[]): Printed {
+  const firstText = args.findIndex((arg) => !ECHO_OPTIONS.test(arg));
+  const options = (firstText === -1 ? args : args.slice(0, firstText)).join("");
+  const words = firstText === -1 ? [] : args.slice(firstText);
+  const newline = options.includes("n") ? "" : "\n";
+  const escapes = options.lastIndexOf("e") > options.lastIndexOf("E");
+  const body = words.join(" ");
+  const read = argumentText(body, "echo");
+
+  // coreutils' echo prints its help or version for a lone --help or --version.
+  const readable = !(words.length === 1 && (body === "--help" || body === "--version"));
+
+  if (escapes)
+    return {
+      text: read.ends ? read.text : read.text + newline,
+      readable: readable && read.readable,
+    };
+
+  // Without -e both print the text as written, but sh's echo on some hosts, such as
+  // dash's, and bash's with xpg_echo set read its escapes as -e does.
+  return {
+    text: body + newline,
+    readable: readable && read.readable && !read.ends && read.text === body,
+  };
 }

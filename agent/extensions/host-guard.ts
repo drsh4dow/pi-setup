@@ -43,6 +43,10 @@ const TMP_ROOT = /^(?:\/tmp|\/var\/tmp|\$TMPDIR|\$\{TMPDIR(?:[^A-Za-z0-9_}][^}]*
 // /tmp or /var/tmp itself, which every agent shares, with any trailing `/` or `.`.
 const SYSTEM_TMP_ITSELF = /^\/(?:var\/)?tmp[/.]*$/;
 
+// `${NAME:-default}`, `${NAME-default}`, `${NAME:=default}`, or `${NAME=default}` at the
+// start of a word, which expands to its default when NAME is unset, as TMPDIR is here.
+const DEFAULTED_EXPANSION = /^\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=]([^}]*)\}/;
+
 // GNU xargs options that take the next word as their argument when written last in a group.
 const XARGS_SHORT_OPTIONS_WITH_ARGUMENT = new Set(["a", "d", "E", "I", "L", "n", "P", "s"]);
 
@@ -62,7 +66,10 @@ const KILL_REASON =
   "Kill only processes you started. A kill by name, pattern, port, or file, such as pkill, killall, fuser -k, kill $(pgrep …), or kill $(lsof -t …), also reaches other agents' processes on this shared host. Stop a background terminal with bg_kill, or kill a PID you started.";
 
 const TMP_GLOB_REASON =
-  "Delete only the directory you created, by its exact path. A glob under /tmp, /var/tmp, or TMPDIR, or a delete of /tmp or /var/tmp itself, also reaches other agents' scratch directories on this shared host. Make a scratch directory with mktemp -d, and remove it with rm -rf and the path mktemp printed.";
+  "Delete only the directory you created, by its exact path. A glob under /tmp, /var/tmp, or TMPDIR, or a delete of /tmp or /var/tmp itself or of everything under them, such as find /tmp -delete or a variable whose default is /tmp, also reaches other agents' scratch directories on this shared host. Make a scratch directory with mktemp -d, and remove it with rm -rf and the path mktemp printed.";
+
+const UNREAD_ECHO_REASON =
+  "The host guard cannot read what this echo prints into a shell, because its text uses an escape that echo versions print differently, or, without -e, a backslash escape that some echo versions read anyway. Write the script as a quoted heredoc instead, such as bash <<'EOF' … EOF.";
 
 const UNREAD_PRINTF_REASON =
   "The host guard cannot read what this printf prints into a shell, because its format uses a width, a precision, a flag, *, a conversion other than %s, %b, and %%, or an escape that printf versions print differently. Write the script as a quoted heredoc instead, such as bash <<'EOF' … EOF.";
@@ -181,8 +188,21 @@ function killsByPattern(pipeline: Pipeline, variables: ReadonlySet<string>): boo
   });
 }
 
+// A word as written, and with a leading defaulted expansion replaced by its default.
+function readings(word: string): readonly string[] {
+  return [word, word.replace(DEFAULTED_EXPANSION, "$1")];
+}
+
+function isSystemTmp(word: string): boolean {
+  return readings(word).some((reading) => SYSTEM_TMP_ITSELF.test(reading));
+}
+
 // Whether an `rm` argument is a glob under a temp directory, or /tmp or /var/tmp itself.
 function deletesTmp(word: string): boolean {
+  return readings(word).some(deletesTmpAsWritten);
+}
+
+function deletesTmpAsWritten(word: string): boolean {
   const root = TMP_ROOT.exec(word)?.[0];
 
   if (root === undefined) return false;
@@ -208,8 +228,9 @@ function findPathsAndExpression(args: readonly string[]): readonly string[] {
   return [];
 }
 
-// Whether `find` searches a temp directory by a name glob and deletes what it finds.
-function findDeletesTmpGlob(args: readonly string[]): boolean {
+// Whether `find` deletes what it finds in /tmp or /var/tmp itself, or in a temp
+// directory by a name glob.
+function findDeletesTmp(args: readonly string[]): boolean {
   const words = findPathsAndExpression(args);
   // find's expression starts at its first test, `(`, or `!`, after its start paths.
   const expression = words.findIndex((word) => /^[-(!]/.test(word));
@@ -227,13 +248,13 @@ function findDeletesTmpGlob(args: readonly string[]): boolean {
       word === "-delete" || (FIND_EXEC_ACTIONS.has(word) && basename(after(index)) === "rm"),
   );
 
-  return searchesTmp && matchesGlob && deletes;
+  return deletes && ((searchesTmp && matchesGlob) || starts.some(isSystemTmp));
 }
 
 function deletesTmpGlob({ argv }: Command): boolean {
   const { name, args } = invocation(argv);
 
-  if (name === "find") return findDeletesTmpGlob(args);
+  if (name === "find") return findDeletesTmp(args);
 
   return name === "rm" && args.some(deletesTmp);
 }
@@ -250,7 +271,9 @@ export function hostGuard(command: string): string | undefined {
 
   if (all.flat().some(deletesTmpGlob)) return TMP_GLOB_REASON;
 
-  if (parsed.unreadPrintf) return UNREAD_PRINTF_REASON;
+  if (parsed.unreadBy === "printf") return UNREAD_PRINTF_REASON;
+
+  if (parsed.unreadBy === "echo") return UNREAD_ECHO_REASON;
 
   return undefined;
 }

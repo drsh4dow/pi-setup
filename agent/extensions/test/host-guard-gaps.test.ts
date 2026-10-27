@@ -1,33 +1,26 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
-import { echoedText } from "../../lib/command-input.ts";
 import { spawnGuard } from "../delegate-guard.ts";
 import {
-  type Refusal,
+  ECHO_FORMS,
+  PRINTF_FORMS,
   assertEach,
+  assertEchoRefused,
   assertKillRefused,
+  assertNestingRefused,
   assertPrintfRefused,
+  assertReadAsPrinted,
   assertRuns,
   assertTmpGlobRefused,
   delegateArgv,
   everySession,
+  nested,
   rootBash,
 } from "./guard-fixtures.ts";
 
 // One test per row of the outcome table in the ticket "host-guard: close the
 // known gaps and parser defects left by the first version", then its parser defects.
-
-function assertNestingRefused(refusal: Refusal | undefined, label: string): void {
-  assert.ok(refusal, `${label} is refused`);
-  assert.match(refusal.reason, /64 levels/, `${label}: the reason names the limit`);
-  assert.match(refusal.reason, /[Ss]plit it/, `${label}: the reason says to split the command`);
-}
-
-function nested(open: string, body: string, close: string, depth: number): string {
-  return `${open.repeat(depth)}${body}${close.repeat(depth)}`;
-}
 
 // A shell fed its script by a heredoc, `depth` heredocs deep, around `true`.
 function heredocs(depth: number): string {
@@ -400,61 +393,8 @@ test("a case statement inside a substitution ends at esac, not at a pattern's pa
   );
 });
 
-// What printf prints, run alone with no shell reading its output: bash's builtin, then
-// coreutils' printf, which the host guard's reading must both match. The environment
-// holds only PATH, so no BASH_ENV startup file prints before printf does.
-function realPrintf(args: readonly string[]): readonly string[] {
-  const options = { env: { PATH: process.env["PATH"] ?? "" } };
-  const bashArgs = ["--norc", "--noprofile", "-c", 'printf "$@"', "printf", ...args];
-
-  const [builtin, coreutils] = [
-    spawnSync("bash", bashArgs, options),
-    spawnSync("/usr/bin/printf", args, options),
-  ];
-
-  return [builtin.stdout.toString("latin1"), coreutils.stdout.toString("latin1")];
-}
-
 test("the host guard reads a printf of %s, %b, %%, and its escapes as real printf prints it", () => {
-  const forms: readonly (readonly string[])[] = [
-    ["%s", "pkill x"],
-    ["%s\\n", "true", "pkill x"],
-    ["%s %s\\n", "a", "b", "c"],
-    ["echo %s\\n", "pkill x"],
-    ["100%% done\\n%s\\n", "pkill x"],
-    ["%%s", "A"],
-    ["%b", "true\\npkill x"],
-    ["%b", "\\x70kill x"],
-    ["%b", "\\160kill x"],
-    ["%b", "\\0160kill x"],
-    ["%b", "\\01600"],
-    ["%b", "rm -rf /tmp/aa-\\x2a"],
-    ["\\160kill x"],
-    ["\\x70kill\\x20x"],
-    ["\\x700"],
-    ["\\0160kill"],
-    ['\\a\\b\\e\\f\\n\\r\\t\\v\\\\\\"'],
-    ["%b", "\\a\\b\\e\\f\\n\\r\\t\\v\\\\"],
-    ["%b", "\\x7g\\x2z"],
-    ["%b%s", "echo hi\\c", "; pkill x"],
-    ["%s%b%s", "a", "b\\cc", "d"],
-    ["\\x25s", "A"],
-    ["\\q\\z\\ \\$\\8"],
-    ["%b", "\\q\\9\\8\\0101"],
-    ["%s"],
-    ["%b %s", "a"],
-    ["x", " y"],
-    ["\\377\\x41"],
-  ];
-
-  for (const form of forms) {
-    const read = echoedText(["printf", ...form]);
-    const label = `printf ${form.map((word) => JSON.stringify(word)).join(" ")}`;
-
-    assert.ok(read?.readable, `${label}: the guard reads it`);
-
-    for (const printed of realPrintf(form)) assert.equal(read.text, printed, label);
-  }
+  assertReadAsPrinted("printf", PRINTF_FORMS);
 });
 
 test("a printf piped to a shell whose format the guard cannot read is refused, and alone runs", async () => {
@@ -560,4 +500,88 @@ test("delegate-guard reads a launch past the limit across line continuations and
   for (const harmless of ["if true; then echo pi; fi", "e\\\ncho pi-subagent"]) {
     assert.equal(guard(nested("echo $(", harmless, ")", 65)), undefined, `${harmless} runs`);
   }
+});
+
+test("a delete whose fallback is /tmp or /var/tmp itself is refused, and $TMPDIR itself runs", async () => {
+  await assertEach(
+    everySession([
+      "rm -rf ${TMPDIR:-/tmp}",
+      'rm -rf "${TMPDIR:-/tmp}"',
+      "rm -rf ${TMPDIR:=/tmp}",
+      "rm -rf ${TMPDIR-/var/tmp}/",
+      "rm -rf ${SCRATCH:-/tmp}/aa-*",
+    ]),
+    assertTmpGlobRefused,
+  );
+  await assertEach(
+    everySession([
+      "rm -rf $TMPDIR",
+      'rm -rf "$TMPDIR"',
+      "rm -rf ${TMPDIR}",
+      "rm -rf ${TMPDIR:-/tmp}/demo-xyz",
+      "rm -rf ${SCRATCH:-/home/u/scratch}",
+    ]),
+    assertRuns,
+  );
+});
+
+test("find of /tmp or /var/tmp itself with a delete is refused, and of a narrower start path runs", async () => {
+  await assertEach(
+    everySession([
+      "find /tmp -delete",
+      "find /var/tmp -delete",
+      "find ${TMPDIR:-/tmp} -delete",
+      "find /tmp/ -mindepth 1 -type f -delete",
+      "find /tmp -type d -exec rm -rf {} +",
+    ]),
+    assertTmpGlobRefused,
+  );
+  await assertEach(
+    everySession([
+      "find /tmp/demo-xyz -delete",
+      'find "$TMPDIR" -delete',
+      "find /tmp -type f",
+      "find /tmp -name 'aa-*' -print",
+    ]),
+    assertRuns,
+  );
+});
+
+test("the host guard reads an echo and its escapes as real echo prints it", () => {
+  assertReadAsPrinted("echo", ECHO_FORMS);
+});
+
+test("an echo escape that spells a kill is refused, and one the guard cannot read is refused when it feeds a shell", async () => {
+  await assertEach(
+    everySession([
+      "echo -e '\\x70kill x' | bash",
+      "echo -e '\\0160kill x' | sh",
+      "echo -ne 'true\\x0apkill x' | bash",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(["echo -e 'rm -rf /tmp/aa-\\x2a' | sh"]), assertTmpGlobRefused);
+  await assertEach(
+    everySession([
+      "echo -e '\\160kill x' | bash",
+      "echo -e '\\u0070kill x' | bash",
+      "echo -e 'true\\E' | bash",
+      "echo 'true\\npkill x' | bash",
+      "echo -E 'true\\x0apkill x' | bash",
+      "echo -eE 'true\\x0apkill x' | bash",
+      "echo --help | bash",
+    ]),
+    assertEchoRefused,
+  );
+  await assertEach(
+    everySession([
+      "echo 'pkill' > notes.txt",
+      "echo -e 'a\\tb'",
+      "echo -e '\\x70kill x'",
+      "echo -e '\\160kill x' | grep kill",
+      "echo 'echo pkill' | bash",
+      "echo -e 'true\\c; pkill x' | bash",
+    ]),
+    assertRuns,
+  );
 });

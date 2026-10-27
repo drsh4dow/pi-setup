@@ -4,7 +4,8 @@ What the code in this repository is held to, and the commands that check it. Rev
 
 ## Standards sources
 
-- [`AGENTS.md`](../../AGENTS.md): use `vp` for scripts, judge every decision by the AX it gives the harness, and read the `.repos/effect` reference before writing Effect code.
+- [`AGENTS.md`](../../AGENTS.md): keep each change general enough for any project, use `vp` for package management and scripts, run `vp run verify` before reporting a change, and judge every decision by the AX it gives the harness.
+- [`CODING_STANDARDS.md`](../../CODING_STANDARDS.md): read the `.repos/effect` reference before writing Effect code, and keep application imports on the installed `effect` and `@effect/*` packages.
 - [`vite.config.ts`](../../vite.config.ts): the lint rules, including the Effect presets and the repository's own `anti-slop` rules in [`oxlint/anti-slop/`](../../oxlint/anti-slop/), and the paths excluded from format and lint.
 - [`tsconfig.json`](../../tsconfig.json): strict TypeScript, with no unused locals or parameters.
 

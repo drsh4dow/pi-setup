@@ -7,17 +7,15 @@ import test, { type TestContext } from "node:test";
 
 import {
   classifyOutcomes,
-  detailsMatchRun,
-  detailsRead,
   failureReport,
   innerRunArgs,
-  parseLastDetails,
+  parseDetails,
   taskLine,
   verifyReport,
 } from "../verify.ts";
 
-// Shaped like `vp run --last-details` from Vite+ 1.4.0 after a broken link failed test:docs
-// and the task runner killed the two tasks still running.
+// Shaped like the details `vp run -v` ends with, from Vite+ 1.4.0, after a broken link failed
+// test:docs and the task runner killed the two tasks still running.
 const brokenLinkDetails = `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     Vite+ Task Runner • Execution Summary
@@ -85,11 +83,11 @@ function outcome(order: number, task: string, exitCode: number) {
 test("the inner run is the named task, with the options after it passed to the run", () => {
   assert.deepEqual(innerRunArgs(["verify:all-without-video", "--no-cache"]), {
     kind: "run",
-    args: ["run", "--log", "labeled", "--no-cache", "verify:all-without-video"],
+    args: ["run", "--log", "labeled", "-v", "--no-cache", "verify:all-without-video"],
   });
   assert.deepEqual(innerRunArgs(["verify:all"]), {
     kind: "run",
-    args: ["run", "--log", "labeled", "verify:all"],
+    args: ["run", "--log", "labeled", "-v", "verify:all"],
   });
 });
 
@@ -98,8 +96,8 @@ test("a missing task name is a usage error, not a run of the default task", () =
   assert.equal(innerRunArgs(["--no-cache"]).kind, "usage");
 });
 
-test("reads each command's task and exit code from the last run's details", () => {
-  assert.deepEqual(parseLastDetails(brokenLinkDetails), [
+test("reads each command's task and exit code from the run's details", () => {
+  assert.deepEqual(parseDetails(brokenLinkDetails), [
     { ...testDocs, exitCode: 0 },
     { ...babysit, exitCode: 0 },
     { ...verifyDocs, exitCode: 1 },
@@ -109,7 +107,7 @@ test("reads each command's task and exit code from the last run's details", () =
 });
 
 test("the tasks killed after the first failure are stopped, not failed", () => {
-  assert.deepEqual(classifyOutcomes(parseLastDetails(brokenLinkDetails)), {
+  assert.deepEqual(classifyOutcomes(parseDetails(brokenLinkDetails)), {
     kind: "failed",
     failed: [{ ...verifyDocs, exitCode: 1 }],
     stopped: [
@@ -184,7 +182,7 @@ test("a labeled line splits into its task and the text the task printed", () => 
 });
 
 test("the report names the failed task with its own output, then the stopped tasks", () => {
-  const result = classifyOutcomes(parseLastDetails(brokenLinkDetails));
+  const result = classifyOutcomes(parseDetails(brokenLinkDetails));
   assert.equal(result.kind, "failed");
 
   const output = new Map([
@@ -220,60 +218,10 @@ test("the report says when a failed task printed nothing and when nothing was st
   ]);
 });
 
-// The commands the broken-link details list, as the run printed them when each started.
-const brokenLinkRun = {
-  linesByTask: new Map([
-    [
-      "pi-dotfiles#test:docs",
-      [`${testDocs.command} ⊘ cache disabled`, "....", `${verifyDocs.command} ⊘ cache disabled`],
-    ],
-    ["pi-dotfiles#verify:babysit-scripts", [`${babysit.command} ⊘ cache disabled`, "1 pass"]],
-    ["pi-dotfiles#test:extensions", [`${testExtensions.command} ⊘ cache disabled`]],
-    ["pi-dotfiles#build:cli", [`${buildCli.command} ⊘ cache disabled`]],
-  ]),
-  commandCount: 5,
-};
-
-test("details whose every command this run started, as many as it counted, are this run's", () => {
-  assert.equal(detailsMatchRun(parseLastDetails(brokenLinkDetails), brokenLinkRun), true);
-});
-
-test("details with a command this run did not start, or a different count, are another run's", () => {
-  const outcomes = parseLastDetails(brokenLinkDetails);
-  const withoutBuild = new Map(brokenLinkRun.linesByTask);
-  withoutBuild.set("pi-dotfiles#build:cli", ["$ vp exec bun build --other ⊘ cache disabled"]);
-
-  assert.equal(detailsMatchRun(outcomes, { ...brokenLinkRun, linesByTask: withoutBuild }), false);
-  assert.equal(detailsMatchRun(outcomes, { ...brokenLinkRun, commandCount: 6 }), false);
-});
-
-test("a details read that fails is reported with its reason and stderr", () => {
-  const read = detailsRead({
-    error: undefined,
-    signal: null,
-    status: 2,
-    stdout: "",
-    stderr: "vp: cannot read execution details\n",
-  });
-
-  assert.deepEqual(verifyReport(1, read, brokenLinkRun), [
-    "verify: failed (exit 1), but `vp run --last-details` exited 2 and listed no command, so it cannot name the failed task. Read the task output above.",
-    "vp: cannot read execution details",
-  ]);
-});
-
 test("details of this run that list no failed command say so instead of naming one", () => {
   const passing = brokenLinkDetails.replaceAll(/✗ \(exit code: \d+\)/gu, "✓");
 
-  const read = detailsRead({
-    error: undefined,
-    signal: null,
-    status: 0,
-    stdout: passing,
-    stderr: "",
-  });
-
-  assert.deepEqual(verifyReport(1, read, brokenLinkRun), [
+  assert.deepEqual(verifyReport(1, parseDetails(passing), new Map()), [
     "verify: failed (exit 1), but its run details list no failed command. Read the task output above.",
   ]);
 });
@@ -297,7 +245,21 @@ function taskGraph(t: TestContext) {
       ),
       cache: false,
     },
-    decoy: { command: node("process.exit(9)"), cache: false },
+    // Run with RUN_KIND=other, the same graph fails the other way round: shared-slow exits 9
+    // and shared-bad passes.
+    "shared-slow": {
+      command: node(
+        'if (process.env.RUN_KIND === "other") setTimeout(() => process.exit(9), 200); else setTimeout(() => {}, 30000)',
+      ),
+      cache: false,
+    },
+    "shared-bad": {
+      command: node(
+        'if (process.env.RUN_KIND === "other") process.exit(0); setTimeout(() => { console.error("OWN_FAILURE"); process.exit(7); }, 500)',
+      ),
+      cache: false,
+    },
+    shared: { command: "echo done", dependsOn: ["shared-slow", "shared-bad"], cache: false },
     good: { command: "echo good-out", cache: false },
     failing: { command: "echo done", dependsOn: ["slow", "bad"], cache: false },
     passing: { command: "echo done", dependsOn: ["good"], cache: false },
@@ -313,15 +275,16 @@ function taskGraph(t: TestContext) {
   return root;
 }
 
-// A `vp` first on PATH that runs the given shell code before `vp run --last-details`, then the
-// real vp, so a test can make the details read fail or let another run replace the details.
-function beforeLastDetails(root: string, shell: string) {
+// A `vp` first on PATH that runs the given shell code after every `vp run` but
+// `vp run --last-details` ends, so another run can end after verify's inner run and before
+// verify reports.
+function afterEachRun(root: string, shell: string) {
   const vp = execFileSync("sh", ["-c", "command -v vp"], { encoding: "utf8" }).trim();
   const bin = join(root, "bin");
   mkdirSync(bin);
   writeFileSync(
     join(bin, "vp"),
-    `#!/bin/sh\nif [ "$1 $2" = "run --last-details" ]; then\n${shell}\nfi\nexec "${vp}" "$@"\n`,
+    `#!/bin/sh\nif [ "$1 $2" = "run --last-details" ]; then exec "${vp}" "$@"; fi\n"${vp}" "$@"\nstatus=$?\n${shell}\nexit $status\n`,
   );
   chmodSync(join(bin, "vp"), 0o755);
 
@@ -363,33 +326,39 @@ test("a passing run exits 0 and prints no report", (t) => {
   );
 });
 
-test("details another run replaced are not read as this run's failure", (t) => {
+test("a passing run prints as many lines as the task runner prints without verify", (t) => {
   const root = taskGraph(t);
 
-  const result = verify(
-    root,
-    "failing",
-    beforeLastDetails(root, '"$REAL_VP" run decoy >/dev/null 2>&1'),
-  );
+  const result = verify(root, "passing");
 
-  assert.equal(result.status, 1, result.stderr);
-  assert.deepEqual(result.report, [
-    "verify: failed (exit 1), but the last run details list commands this run did not run, so another vp run in this workspace replaced them. Read the task output above.",
-  ]);
+  const quiet = spawnSync("vp", ["run", "--log", "labeled", "passing"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.equal(
+    result.stdout.length,
+    quiet.stdout.trimEnd().split("\n").length,
+    result.stdout.join("\n"),
+  );
 });
 
-test("a details read that fails keeps the run's exit status and shows the read's error", (t) => {
+test("details a run of the same graph replaced never name a task this run did not fail", (t) => {
   const root = taskGraph(t);
 
   const result = verify(
     root,
-    "failing",
-    beforeLastDetails(root, 'echo "vp: cannot read execution details" >&2; exit 2'),
+    "shared",
+    afterEachRun(root, 'RUN_KIND=other "$REAL_VP" run --no-cache shared >/dev/null 2>&1'),
   );
 
   assert.equal(result.status, 1, result.stderr);
   assert.deepEqual(result.report, [
-    "verify: failed (exit 1), but `vp run --last-details` exited 2 and listed no command, so it cannot name the failed task. Read the task output above.",
-    "vp: cannot read execution details",
+    "verify: shared-bad failed (exit 7)",
+    `$ node -e 'if (process.env.RUN_KIND === "other") process.exit(0); setTimeout(() => { console.error("OWN_FAILURE"); process.exit(7); }, 500)' ⊘ cache disabled`,
+    "OWN_FAILURE",
+    "verify: stopped after the failure: shared-slow",
   ]);
 });

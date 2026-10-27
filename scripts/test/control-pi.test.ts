@@ -390,6 +390,7 @@ test("wait-turn returns at once on a turn that ended before the wait started", (
 
   assert.equal(result.status, 0, result.stderr);
   assert.ok(result.seconds < 1.5);
+  assert.equal(h.cp("wait-turn", h.run, "0").status, 0, "a budget of 0 still checks once");
 });
 
 test("wait-turn ignores the end of the turn a prompt was queued behind", (t) => {
@@ -585,6 +586,8 @@ test("wait-idle keeps waiting while a sent prompt has no user message in the ses
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /\/fast/);
+  // A budget of 0 still checks once, so it names the same cause.
+  assert.match(h.cp("wait-idle", h.run, "0").stderr, /\/fast/);
 });
 
 test("wait-idle on a fresh run with nothing sent returns", (t) => {

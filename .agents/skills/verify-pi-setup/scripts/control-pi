@@ -248,10 +248,12 @@ cmd_wait_turn() {
   [[ -s $SENDS ]] || die "no prompt sent to $RUN_ID since launch; run 'control-pi send' first"
   # The wait follows the send that is last now; a send made while it waits does not move it.
   send=$(last_send)
-  while ((SECONDS < deadline)); do
+  # Checks before it tests the deadline, so a budget spent before the loop still gets one check.
+  while :; do
     require_up "$what" || exit 1
     turn=$(send_turn "$send")
     [[ $turn == ended ]] && return 0
+    ((SECONDS < deadline)) || break
     sleep "$POLL"
   done
   case $turn in
@@ -280,7 +282,8 @@ cmd_wait_idle() {
   bind_run "${1:-}"
   local deadline=$((SECONDS + ${2:-60})) what="the run to go idle" quiet=0 reason snapshot previous=
   require_up "$what" || exit 1
-  while ((SECONDS < deadline)); do
+  # Checks before it tests the deadline, as wait-turn does.
+  while :; do
     require_up "$what" || exit 1
     reason=$(busy_reason)
     snapshot=$(stat -c '%s %.9Y' "$(newest_session)" 2>/dev/null || true)
@@ -293,6 +296,7 @@ cmd_wait_idle() {
       return 0
     fi
     previous=$snapshot
+    ((SECONDS < deadline)) || break
     sleep "$POLL"
   done
   die "timed out waiting for $what: $reason"

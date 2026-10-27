@@ -442,14 +442,12 @@ function bugbotThreadPasses(threads: readonly T.RawReviewThread[]): number {
 export function buildReviewThreads(
   threads: readonly T.RawReviewThread[]
 ): readonly T.ReviewThread[] {
-  const passes = bugbotThreadPasses(threads);
   return threads
     .filter((thread) => !thread.resolved)
     .map(({ id, firstComment }) => ({
       id,
       firstComment,
       isBugbot: isBugbot(firstComment),
-      bugbotReviewPasses: passes,
     }));
 }
 export const REVIEW_STATES = [
@@ -844,8 +842,11 @@ export function orderStack(
   const byNumber = new Map(open.map((pr) => [pr.number, pr]));
   const byHead = new Map(open.map((pr) => [pr.headRefName, pr]));
   const children = new Map<string, T.OpenPullRequest[]>();
-  for (const pr of open)
-    children.set(pr.baseRefName, [...(children.get(pr.baseRefName) ?? []), pr]);
+  for (const pr of open) {
+    const siblings = children.get(pr.baseRefName);
+    if (siblings === undefined) children.set(pr.baseRefName, [pr]);
+    else siblings.push(pr);
+  }
   for (const values of children.values())
     values.sort((a, b) => a.number - b.number);
   const start = byNumber.get(context.number);

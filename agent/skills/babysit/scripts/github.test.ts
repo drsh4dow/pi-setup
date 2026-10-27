@@ -279,7 +279,7 @@ describe("closed enum parsing", () => {
   });
 });
 
-it("annotates Bugbot threads with distinct review-pass counts", () => {
+it("counts each Bugbot author's distinct runs across resolved and open threads", () => {
   const response = {
     data: {
       repository: {
@@ -338,10 +338,14 @@ it("annotates Bugbot threads with distinct review-pass counts", () => {
       },
     },
   };
-  const threads = buildReviewThreads(parseReviewThreadPage(response).threads);
+  const raw = parseReviewThreadPage(response).threads;
+  const threads = buildReviewThreads(raw);
   expect(threads).toHaveLength(2);
   expect(threads.map((thread) => thread.isBugbot)).toEqual([true, true]);
-  expect(threads.map((thread) => thread.bugbotReviewPasses)).toEqual([3, 3]);
+  expect(countReviewPasses([], raw)).toMatchObject([
+    { author: "bugbot", passes: 2 },
+    { author: "cursor", passes: 1 },
+  ]);
 });
 
 describe("review passes per bot author", () => {
@@ -632,8 +636,8 @@ describe("review thread pagination", () => {
         { threads: [bugbot("two", "run-2")], endCursor: null },
       ],
     });
-    const threads = buildReviewThreads(await readReviewThreads(reader, context));
-    expect(threads.map((item) => item.bugbotReviewPasses)).toEqual([2, 2]);
+    const threads = await readReviewThreads(reader, context);
+    expect(countReviewPasses([], threads)).toMatchObject([{ author: "bugbot", passes: 2 }]);
   });
 
   it("drops resolved threads from later pages too", async () => {
@@ -733,5 +737,15 @@ describe("context and stack discovery", () => {
       },
     ]);
     expect(ordered.map((item) => Number(item.number))).toEqual([41, 42, 43]);
+  });
+
+  it("orders every child of one base by number, whatever order GitHub lists them in", () => {
+    const ordered = orderStack(context, [
+      { number: parsePrNumber(45), headRefName: "sibling-b", baseRefName: "feature" },
+      { number: context.number, headRefName: "feature", baseRefName: "main" },
+      { number: parsePrNumber(44), headRefName: "sibling-a", baseRefName: "feature" },
+      { number: parsePrNumber(43), headRefName: "sibling-c", baseRefName: "feature" },
+    ]);
+    expect(ordered.map((item) => Number(item.number))).toEqual([42, 43, 44, 45]);
   });
 });

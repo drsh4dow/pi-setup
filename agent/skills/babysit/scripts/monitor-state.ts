@@ -47,6 +47,14 @@ export interface Generation {
   readonly active: boolean;
   readonly generation: number;
 }
+/**
+ * A member owes its final read from the poll that first sees it merged or
+ * closed. The read is done once a feedback read succeeds, or once a
+ * status-unavailable item reports that it failed. A reopen does neither, so a
+ * reopened member still owes the read.
+ */
+export type FinalRead = "owed" | "done";
+const FINAL_READS = ["owed", "done"] as const satisfies readonly FinalRead[];
 export type Lifecycle =
   | { readonly kind: "unknown" }
   | { readonly kind: "open" }
@@ -55,6 +63,7 @@ export type Lifecycle =
 export interface PrLedger {
   readonly number: T.PrNumber;
   readonly lifecycle: Lifecycle;
+  readonly finalRead: FinalRead;
   readonly feedbackBaselined: boolean;
   readonly seenRevisions: readonly string[];
   readonly conditions: Readonly<Record<ConditionKind, Generation>>;
@@ -120,6 +129,7 @@ export function newPrLedger(number: T.PrNumber): PrLedger {
   return {
     number,
     lifecycle: { kind: "unknown" },
+    finalRead: "done",
     feedbackBaselined: false,
     seenRevisions: [],
     conditions: {
@@ -201,6 +211,12 @@ function lifecycle(value: unknown, path: string): Lifecycle {
       raw.mergedAt === null ? null : text(raw.mergedAt, `${path}.mergedAt`),
   };
 }
+function finalRead(raw: Record<string, unknown>, path: string): FinalRead {
+  // Ledgers from watchers that had no final read lack the field. Their ended
+  // members load as done, so the watcher does not read them again.
+  if (raw.finalRead === undefined) return "done";
+  return oneOf(raw.finalRead, FINAL_READS, `${path}.finalRead`);
+}
 function prLedger(value: unknown, path: string): PrLedger {
   const raw = object(value, path);
   const conditions = object(raw.conditions, `${path}.conditions`);
@@ -212,6 +228,7 @@ function prLedger(value: unknown, path: string): PrLedger {
   return {
     number: prNumber(raw.number, `${path}.number`),
     lifecycle: lifecycle(raw.lifecycle, `${path}.lifecycle`),
+    finalRead: finalRead(raw, path),
     feedbackBaselined: flag(raw.feedbackBaselined, `${path}.feedbackBaselined`),
     seenRevisions: array(raw.seenRevisions, `${path}.seenRevisions`).map(
       (item, index) => text(item, `${path}.seenRevisions[${index}]`)

@@ -4,6 +4,7 @@
 // reads its script from stdin, and the text a literal `echo` or `printf` prints.
 
 import { basename, commandArgv, commandStart, isShell } from "./command-word.ts";
+import { printfOutput, type Printed } from "./printf.ts";
 
 /** The shell code a simple command runs beyond its own words. */
 export type CommandInput =
@@ -221,54 +222,26 @@ const BACKSLASH_ESCAPES: ReadonlyMap<string, string> = new Map([
   ["\\", "\\"],
 ]);
 
-// A printf conversion such as `%s`, `%-8s`, `%.3b`, or `%%`: flags and width, precision, letter.
-const PRINTF_CONVERSION = /%[-+ #0]*\d*(?:\.(\d*))?([A-Za-z%])/g;
-
-// Text with `\n`, `\r`, `\t`, and `\\` read as `echo -e`, a printf format, and `%b` read them.
+// echo's text with `\n`, `\r`, `\t`, and `\\` read as `echo -e` reads them.
 function unescape(text: string): string {
   return text.replaceAll(/\\(.)/g, (escape, char: string) => BACKSLASH_ESCAPES.get(char) ?? escape);
 }
 
-// What `printf format args…` prints: the format is applied again while arguments remain.
-function printfOutput(format: string, args: readonly string[]): string {
-  let output = "";
-  let next = 0;
-
-  do {
-    const start = next;
-
-    output += unescape(format).replaceAll(
-      PRINTF_CONVERSION,
-      (_conversion, precision: string | undefined, letter: string) => {
-        if (letter === "%") return "%";
-
-        const arg = args[next] ?? "";
-        next += 1;
-        const text = letter === "b" ? unescape(arg) : arg;
-
-        return precision === undefined ? text : text.slice(0, Number(precision));
-      },
-    );
-
-    // A format with no conversion prints once, whatever the arguments.
-    if (next === start) break;
-  } while (next < args.length);
-
-  return output;
-}
-
 /**
- * The text a literal `echo` or `printf` prints, given its words, with width and padding
- * dropped, and echo's `\n` read as a newline even without `-e`. Undefined for any other command.
+ * What a literal `echo` or `printf` prints, given its words: echo's `\n` read as a newline
+ * even without `-e`, and printf read as printf.ts reads it. Undefined for any other command.
  */
-export function echoedText(argv: readonly string[]): string | undefined {
+export function echoedText(argv: readonly string[]): Printed | undefined {
   const [word = "", ...args] = commandArgv(argv);
   const name = basename(word);
 
   if (name === "echo") {
     const firstText = args.findIndex((arg) => !/^-[neE]+$/.test(arg));
 
-    return unescape(firstText === -1 ? "" : args.slice(firstText).join(" "));
+    return {
+      text: unescape(firstText === -1 ? "" : args.slice(firstText).join(" ")),
+      readable: true,
+    };
   }
 
   if (name !== "printf") return undefined;
@@ -276,5 +249,7 @@ export function echoedText(argv: readonly string[]): string | undefined {
   const [format, ...rest] = args[0] === "--" ? args.slice(1) : args;
 
   // `printf -v name` assigns what it would print and prints nothing.
-  return format === undefined || format === "-v" ? "" : printfOutput(format, rest);
+  return format === undefined || format === "-v"
+    ? { text: "", readable: true }
+    : printfOutput(format, rest);
 }

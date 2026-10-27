@@ -155,7 +155,10 @@ The agent loads these on its own when the trigger matches.
   `respawn-window` starts, and a heredoc, here-string, or literal `echo` or
   `printf` fed to a shell. It runs in every session. Its reason points the agent
   at `bg_kill`, a PID it started, or the exact path it created. It refuses a
-  command nested past 64 levels with a reason to split it
+  command nested past 64 levels with a reason to split it, and a `printf` fed to
+  a shell whose output it cannot reproduce (a width, precision, flag, `*`, a
+  conversion other than `%s`, `%b`, and `%%`, or an escape that bash's and
+  coreutils' printf print differently) with a reason to use a quoted heredoc
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the

@@ -1,0 +1,25 @@
+# The entry points SETUP.md runs. The tools live in mise/<tier>/mise.toml, which setup links into
+# mise's global conf.d, so they are on PATH in every project and not only in this checkout.
+# conf.d folder fragments need mise 2026.9.14. The tasks get the path of the mise that runs them,
+# which may not be on PATH yet right after a fresh install.
+min_version = "2026.9.14"
+
+[tasks.setup]
+description = "Install this Pi setup's tools and dependencies. Arguments: [--link-agent-skills] [browser] [formal] [mail] [video]"
+quiet = true
+env = { PI_SETUP_MISE = "{{ mise_bin }}" }
+run = "scripts/setup.sh"
+
+[tasks.doctor]
+description = "Check this Pi setup the way a new terminal sees it, and print the fix for each problem"
+quiet = true
+env = { PI_SETUP_MISE = "{{ mise_bin }}" }
+# The doctor is a Node.js script, so it exits 2, "could not run", when Node.js does not start.
+run = """
+if ! said="$(node --version 2>&1)"; then
+  echo "doctor: could not run, because Node.js does not start: $said" >&2
+  echo "Run mise run setup first. On minimal Debian and Ubuntu, sudo apt-get install -y libatomic1 fixes a missing libatomic.so.1." >&2
+  exit 2
+fi
+node scripts/doctor/doctor.ts
+"""

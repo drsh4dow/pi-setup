@@ -1,0 +1,12 @@
+[tools]
+"github:voidzero-dev/vite-plus" = "1.4.0"
+pi = "1.2.0"
+gh = "2.102.1"
+tmux = "3.7c"
+ripgrep = "15.2.0"
+
+[env]
+# vp keeps its Node.js shims here; most skills run node in whatever project Pi is in.
+_.path = ["{{env.HOME}}/.local/share/vite-plus/bin"]
+# Without this, vp's first run appends its own PATH line to ~/.bashrc and ~/.profile.
+VP_SELF_SETUP_NO_MODIFY_PATH = "1"

@@ -6,6 +6,10 @@ on:
     branches: [main]
   pull_request:
 
+# Every job here only reads the repository. Without this block, a job gets whatever the repository's default token grants.
+permissions:
+  contents: read
+
 # A newer commit on a PR cancels the older run; every commit on main keeps its own result.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,6 +22,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No step pushes, so the token stays out of .git/config, where every later step could read it.
+          persist-credentials: false
       - uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
         with:
           run-install: false

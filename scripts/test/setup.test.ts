@@ -149,13 +149,19 @@ test("setup installs missing system packages before the tools, and stops when it
 test("setup run again keeps earlier tiers and changes no link", (t) => {
   const { run, confD } = runSetup(t, ["browser"]);
   assert.equal(run().status, 0);
-  const before = lstatSync(join(confD, "pi-setup-browser")).ino;
 
-  const again = run([]);
-  assert.equal(again.status, 0, again.stderr);
-  assert.doesNotMatch(again.stdout, /linked/);
-  assert.equal(lstatSync(join(confD, "pi-setup-browser")).ino, before);
-  assert.match(again.stdout, /done/);
+  const inodes = () =>
+    ["core", "browser"].map((tier) => lstatSync(join(confD, `pi-setup-${tier}`)).ino);
+
+  const before = inodes();
+
+  for (const args of [[], ["browser"]]) {
+    const again = run(args);
+    assert.equal(again.status, 0, again.stderr);
+    assert.doesNotMatch(again.stdout, /linked/);
+    assert.deepEqual(inodes(), before);
+    assert.match(again.stdout, /done/);
+  }
 });
 
 test("setup installs the browser only once the browser tier is linked", (t) => {

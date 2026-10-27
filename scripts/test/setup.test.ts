@@ -202,3 +202,48 @@ test("setup links ~/.agents/skills only when asked, and never over an existing o
   assert.match(result.stderr, /\.agents\/skills already exists/);
   assert.ok(lstatSync(join(taken.home, ".agents", "skills")).isDirectory());
 });
+
+function lineCount(file: string) {
+  return existsSync(file) ? readFileSync(file, "utf8").split("\n").length - 1 : 0;
+}
+
+// A fake mise whose doctor fails until its fix has run `fixesNeeded` times. Only the fix under the
+// FAIL appends to the fixes file; the one under the warning must not run.
+function followDoctor(t: TestContext, fixesNeeded: number) {
+  const home = scratch(t);
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  const fixes = join(home, "fixes");
+  executable(
+    join(bin, "mise"),
+    `count=$(cat "${fixes}" 2>/dev/null | wc -l)
+if [ "$count" -ge ${fixesNeeded} ]; then echo "doctor: no check failed"; exit 0; fi
+echo "warn  keys: missing"
+echo "      fix: echo warned >> ${fixes}.warn"
+echo "FAIL  shell: not active"
+echo "      fix: echo fixed >> ${fixes}"
+echo "doctor: 1 failed, 1 warning."
+exit 1`,
+  );
+
+  const result = spawnSync("bash", [join(repo, "scripts", "ci", "follow-doctor.sh")], {
+    env: { HOME: home, PATH: `${bin}${delimiter}${process.env.PATH}` },
+    encoding: "utf8",
+  });
+
+  return { result, fixesRun: lineCount(fixes), warningFixesRun: lineCount(`${fixes}.warn`) };
+}
+
+test("follow-doctor exits 0 when the doctor passes after two rounds of fixes", (t) => {
+  const { result, fixesRun, warningFixesRun } = followDoctor(t, 2);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fixesRun, 2);
+  assert.equal(warningFixesRun, 0);
+});
+
+test("follow-doctor stops with 1 when a check still fails after two rounds of fixes", (t) => {
+  const { result, fixesRun } = followDoctor(t, 3);
+  assert.equal(result.status, 1);
+  assert.equal(fixesRun, 2);
+  assert.match(result.stderr, /still fails after two rounds/);
+});

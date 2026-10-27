@@ -151,6 +151,12 @@ export function assertEchoRefused(refusal: Refusal | undefined, label: string): 
   assert.match(refusal.reason, /quoted heredoc/, `${label}: the reason names a quoted heredoc`);
 }
 
+export function assertAnsiCRefused(refusal: Refusal | undefined, label: string): void {
+  assert.ok(refusal, `${label} is refused`);
+  assert.match(refusal.reason, /ANSI-C quoted/, `${label}: the reason names the quoting`);
+  assert.match(refusal.reason, /quoted heredoc/, `${label}: the reason names a quoted heredoc`);
+}
+
 export function assertNestingRefused(refusal: Refusal | undefined, label: string): void {
   assert.ok(refusal, `${label} is refused`);
   assert.match(refusal.reason, /64 levels/, `${label}: the reason names the limit`);

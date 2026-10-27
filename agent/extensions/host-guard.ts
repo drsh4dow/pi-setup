@@ -74,6 +74,19 @@ const UNREAD_ECHO_REASON =
 const UNREAD_PRINTF_REASON =
   "The host guard cannot read what this printf prints into a shell, because its format uses a width, a precision, a flag, *, a conversion other than %s, %b, and %%, or an escape that printf versions print differently. Write the script as a quoted heredoc instead, such as bash <<'EOF' … EOF.";
 
+const UNREAD_ANSI_C_REASON =
+  "The host guard cannot read this ANSI-C quoted $'…' word, because it uses \\u, \\U, \\c, or a number escape for NUL or a byte above 0x7F. The guard refuses such a word unread as a command name, a script a shell runs, or an argument of kill, rm, find, xargs, or fuser. Write the script as a quoted heredoc instead, such as bash <<'EOF' … EOF, or write the word without that escape.";
+
+// Commands whose arguments the host guard reads to find a kill or a delete.
+const GUARDED_NAMES: ReadonlySet<string> = new Set([
+  ...KILL_BY_NAME,
+  "find",
+  "fuser",
+  "kill",
+  "rm",
+  "xargs",
+]);
+
 function nestingReason(limit: number): string {
   return `This command nests deeper than the host guard reads (${limit} levels), so the guard refuses it unread. Split it into smaller commands, or write the script to a file and run that.`;
 }
@@ -270,6 +283,12 @@ export function hostGuard(command: string): string | undefined {
   if (all.some((pipeline) => killsByPattern(pipeline, variables))) return KILL_REASON;
 
   if (all.flat().some(deletesTmpGlob)) return TMP_GLOB_REASON;
+
+  const guardsUnread = parsed.unreadArguments.some(({ argv }) =>
+    GUARDED_NAMES.has(invocation(argv).name),
+  );
+
+  if (parsed.unreadBy === "ansi-c" || guardsUnread) return UNREAD_ANSI_C_REASON;
 
   if (parsed.unreadBy === "printf") return UNREAD_PRINTF_REASON;
 

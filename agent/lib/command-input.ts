@@ -215,6 +215,20 @@ export function commandInput(argv: readonly string[]): CommandInput {
   return runner === undefined ? NONE : { kind: "runner", commands: runnerCommands(args, runner) };
 }
 
+/**
+ * Whether any of a simple command's words at `indexes` is part of what it runs: its
+ * name, a wrapper's, or the operand or command line that a shell or runner runs.
+ */
+export function runsWordsAt(argv: readonly string[], indexes: readonly number[]): boolean {
+  const { kind } = commandInput(argv);
+
+  if (kind === "operand" || kind === "runner") return indexes.length > 0;
+
+  const commandWord = argv.length - commandArgv(argv).length;
+
+  return indexes.some((index) => index <= commandWord);
+}
+
 export type Printer = "echo" | "printf";
 
 /** What a literal `echo` or `printf` prints, and which of them prints it. */

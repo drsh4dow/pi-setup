@@ -9,8 +9,16 @@
 // as a command. Comments, redirections, and other heredoc bodies are dropped. It
 // follows at most MAX_NESTING levels of nesting.
 
-import { commandInput, echoedText, type Printer } from "./command-input.ts";
+import { commandInput, echoedText, runsWordsAt } from "./command-input.ts";
 import { flatWords } from "./flat-words.ts";
+import {
+  everyPipeline,
+  type Command,
+  type ParsedCommand,
+  type Pipeline,
+  type Script,
+  type Unread,
+} from "./shell-script.ts";
 import {
   WORD_END,
   ansiQuoted,
@@ -29,23 +37,14 @@ import {
 
 export { basename, commandArgv, isShell } from "./command-word.ts";
 
-/** One simple command, or a group, with the scripts that run as part of it. */
-export interface Command {
-  /**
-   * The words, with quotes and escapes removed and redirections dropped. A
-   * substitution stays in its word as its source text. Empty for a group, and
-   * for a `bash -c`, `eval`, or `env -S` whose operand was read into `nested`.
-   */
-  readonly argv: readonly string[];
-  /** Its substitutions, group and `case` bodies, operands, runner commands, and literal stdin. */
-  readonly nested: readonly Script[];
-}
-
-/** Commands joined by `|`, each feeding the next. */
-export type Pipeline = readonly Command[];
-
-/** Pipelines joined by `;`, `&`, `&&`, `||`, or newlines. */
-export type Script = readonly Pipeline[];
+export {
+  withNested,
+  type Command,
+  type ParsedCommand,
+  type Pipeline,
+  type Script,
+  type Unread,
+} from "./shell-script.ts";
 
 /** The deepest nesting of scripts inside scripts that the reader follows. */
 export const MAX_NESTING = 64;
@@ -76,12 +75,13 @@ interface HeredocTerminator {
 }
 
 // What reading one command has found so far, shared by every scanner of it: how deep
-// its scripts nest, and the first echo or printf whose output a shell runs that
-// printf.ts cannot reproduce.
+// its scripts nest, the first script a shell runs that it cannot reproduce, and the
+// commands with an ANSI-C quoted argument that shell-cursor.ts does not decode.
 interface Reading {
   depth: number;
   tooDeep: boolean;
-  unreadBy: Printer | undefined;
+  unreadBy: Unread | undefined;
+  readonly unreadArguments: Command[];
 }
 
 interface Scanner extends Cursor {
@@ -104,8 +104,8 @@ interface Stdin {
 
 interface Literal {
   readonly text: string;
-  /** The echo or printf that prints `text` with a feature printf.ts does not reproduce. */
-  readonly unreadBy: Printer | undefined;
+  /** What printed or quoted `text` in a way the reader cannot reproduce. */
+  readonly unreadBy: Unread | undefined;
 }
 
 interface Expanded {
@@ -115,6 +115,8 @@ interface Expanded {
 
 interface Word extends Expanded {
   readonly raw: string;
+  /** False when an ANSI-C quoted part uses an escape the reader does not decode. */
+  readonly readable: boolean;
 }
 
 // A scanner over `text`, sharing `parent`'s reading when it has one.
@@ -123,7 +125,12 @@ function scanner(text: string, parent?: Scanner): Scanner {
     text,
     index: 0,
     heredocs: [],
-    reading: parent?.reading ?? { depth: 0, tooDeep: false, unreadBy: undefined },
+    reading: parent?.reading ?? {
+      depth: 0,
+      tooDeep: false,
+      unreadBy: undefined,
+      unreadArguments: [],
+    },
   };
 }
 
@@ -221,6 +228,7 @@ function arrayElements(s: Scanner): Script[] {
 function readWord(s: Scanner): Word {
   const start = s.index;
   let text = "";
+  let readable = true;
   const nested: Script[] = [];
 
   while (s.index < s.text.length) {
@@ -239,7 +247,9 @@ function readWord(s: Scanner): Word {
       text += upTo(s, "'");
     } else if (char === "$" && next === "'") {
       s.index += 1;
-      text += ansiQuoted(s);
+      const quoted = ansiQuoted(s);
+      text += quoted.text;
+      readable &&= quoted.readable;
     } else if (char === '"') {
       s.index += 1;
       const quoted = expandingText(s, '"');
@@ -267,7 +277,7 @@ function readWord(s: Scanner): Word {
     }
   }
 
-  return { text, raw: s.text.slice(start, s.index), nested };
+  return { text, raw: s.text.slice(start, s.index), nested, readable };
 }
 
 // A redirection at the scanner. It returns the scripts its target runs, and adds a
@@ -306,7 +316,8 @@ function redirection(s: Scanner, stdin: Stdin): Script[] {
   skipBlanks(s);
   const target = readWord(s);
 
-  if (operator === "<<<") stdin.literals.push({ text: target.text, unreadBy: undefined });
+  if (operator === "<<<")
+    stdin.literals.push({ text: target.text, unreadBy: target.readable ? undefined : "ansi-c" });
 
   return [...target.nested];
 }
@@ -352,10 +363,15 @@ function heredocBodies(s: Scanner): Script[] {
 function toCommand(
   s: Scanner,
   argv: readonly string[],
+  unreadWords: readonly number[],
   nested: readonly Script[],
   stdin: Stdin,
 ): MutableCommand {
   const input = commandInput(argv);
+
+  // A word with an ANSI-C escape the reader does not decode leaves what runs unread.
+  if (runsWordsAt(argv, unreadWords)) s.reading.unreadBy ??= "ansi-c";
+  else if (unreadWords.length > 0) s.reading.unreadArguments.push({ argv, nested: [] });
 
   switch (input.kind) {
     case "none":
@@ -442,13 +458,19 @@ function parseScript(s: Scanner, closer: Closer): Script {
   const script: Pipeline[] = [];
   let pipeline: MutableCommand[] = [];
   let argv: string[] = [];
+  // The indexes in argv of words with an ANSI-C escape the reader does not decode.
+  let unreadWords: number[] = [];
+  let endedUnread = false;
   let nested: Script[] = [];
   let stdin: Stdin = { heredocs: [], literals: [] };
 
   const endCommand = (): void => {
-    if (argv.length > 0 || nested.length > 0) pipeline.push(toCommand(s, argv, nested, stdin));
+    if (argv.length > 0 || nested.length > 0)
+      pipeline.push(toCommand(s, argv, unreadWords, nested, stdin));
 
+    endedUnread = unreadWords.length > 0;
     argv = [];
+    unreadWords = [];
     nested = [];
     stdin = { heredocs: [], literals: [] };
   };
@@ -482,10 +504,12 @@ function parseScript(s: Scanner, closer: Closer): Script {
       s.index += at(s, 1) === "&" ? 2 : 1;
       const printed = echoedText(pipeline.at(-1)?.argv ?? []);
 
+      const printerUnread = printed?.readable === false ? printed.printer : undefined;
+
       if (printed !== undefined)
         stdin.literals.push({
           text: printed.text,
-          unreadBy: printed.readable ? undefined : printed.printer,
+          unreadBy: endedUnread ? "ansi-c" : printerUnread,
         });
     } else if (listOperator !== undefined && !(char === "&" && at(s, 1) === ">")) {
       endPipeline();
@@ -532,6 +556,8 @@ function parseScript(s: Scanner, closer: Closer): Script {
       } else if (/^\d+$/.test(word.raw) && (at(s) === "<" || at(s) === ">")) {
         // A file descriptor number, such as the 2 in `2>&1`.
       } else {
+        if (!word.readable) unreadWords.push(argv.length);
+
         argv.push(word.text);
         nested.push(...word.nested);
       }
@@ -544,36 +570,19 @@ function parseScript(s: Scanner, closer: Closer): Script {
   return script;
 }
 
-function everyPipeline(script: Script): Pipeline[] {
-  return script.flatMap((pipeline) => [
-    pipeline,
-    ...pipeline.flatMap(({ nested }) => nested.flatMap(everyPipeline)),
-  ]);
-}
-
-/** A command string read into every pipeline it runs, or found nested past MAX_NESTING. */
-export type ParsedCommand =
-  | {
-      readonly kind: "pipelines";
-      readonly pipelines: readonly Pipeline[];
-      /** The echo or printf whose output a shell runs as its script that printf.ts cannot reproduce. */
-      readonly unreadBy: Printer | undefined;
-    }
-  | { readonly kind: "too-deep"; readonly limit: number };
-
 function readScript(command: string) {
   const s = scanner(command);
   const all = everyPipeline(parseScript(s, "end"));
 
-  return { all, tooDeep: s.reading.tooDeep, unreadBy: s.reading.unreadBy };
+  return { all, ...s.reading };
 }
 
 export function parseCommand(command: string): ParsedCommand {
-  const { all, tooDeep, unreadBy } = readScript(command);
+  const { all, tooDeep, unreadBy, unreadArguments } = readScript(command);
 
   if (tooDeep) return { kind: "too-deep", limit: MAX_NESTING };
 
-  return { kind: "pipelines", pipelines: all, unreadBy };
+  return { kind: "pipelines", pipelines: all, unreadBy, unreadArguments };
 }
 
 /**
@@ -587,9 +596,4 @@ export function pipelines(command: string): readonly Pipeline[] {
   if (!tooDeep) return all;
 
   return [...all, ...flatWords(command).map((argv) => [{ argv, nested: [] }])];
-}
-
-/** The command and every command nested inside it, at any depth. */
-export function withNested(command: Command): readonly Command[] {
-  return [command, ...command.nested.flatMap(everyPipeline).flat()];
 }

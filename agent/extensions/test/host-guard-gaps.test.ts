@@ -263,6 +263,8 @@ test("delegate-guard still refuses a launch nested past the limit, which it read
       "'pi-subagent' --model m",
       "'pi' --print hi",
       "p\\i --print hi",
+      "p\\\ni --print hi",
+      "p\\\r\ni --print hi",
       '"pi"-subagent --model m',
     ]) {
       const command = nested("echo $(", launch, ")", depth);

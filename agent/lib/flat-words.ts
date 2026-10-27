@@ -9,7 +9,9 @@ const FLAT_SEPARATOR = /[\n;&|()`{}<>]|\$\(/;
 
 const FLAT_QUOTING = /\\(.)|\$?['"]/g;
 
-const LINE_CONTINUATION = /\\\n/g;
+// The backslash-newline and backslash-CRLF continuations that lineContinuation in
+// shell-cursor.ts joins.
+const LINE_CONTINUATION = /\\\r?\n/g;
 
 /**
  * The text read without nesting: its line continuations joined, each part between

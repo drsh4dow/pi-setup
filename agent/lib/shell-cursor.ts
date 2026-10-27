@@ -93,21 +93,72 @@ export function extglob(s: Cursor): void {
   }
 }
 
-// `$'…'` ANSI-C quoting: a backslash escapes the next character, so `\'` does not close it.
-export function ansiQuoted(s: Cursor): string {
+// The one-character escapes of `$'…'`, and the character bash decodes each to.
+const ANSI_C_ESCAPES: ReadonlyMap<string, string> = new Map([
+  ["a", "\x07"],
+  ["b", "\b"],
+  ["e", "\x1b"],
+  ["E", "\x1b"],
+  ["f", "\f"],
+  ["n", "\n"],
+  ["r", "\r"],
+  ["t", "\t"],
+  ["v", "\v"],
+  ["\\", "\\"],
+  ["'", "'"],
+  ['"', '"'],
+  ["?", "?"],
+]);
+
+// An octal escape of one to three digits, or a hex escape of one or two.
+const ANSI_C_NUMBER = /^(?:[0-7]{1,3}|x[0-9A-Fa-f]{1,2})/;
+
+// Escapes whose output depends on the locale or that are not read here: `\u`, `\U`, `\c`.
+const ANSI_C_UNREAD = /^[uUc]/;
+
+/** A `$'…'` word's text as bash decodes it, or `readable: false` when the guard cannot. */
+export interface AnsiQuoted {
+  readonly text: string;
+  readonly readable: boolean;
+}
+
+// `$'…'` ANSI-C quoting, from its `'`. Bash decodes the escapes in ANSI_C_ESCAPES and
+// ANSI_C_NUMBER and keeps any other backslash as written. A number that decodes to
+// NUL, which ends the word, or above 0x7F, a byte rather than a character, is unread.
+export function ansiQuoted(s: Cursor): AnsiQuoted {
   let text = "";
+  let readable = true;
   s.index += 1;
 
   while (s.index < s.text.length && at(s) !== "'") {
-    if (at(s) === "\\") s.index += 1;
+    const rest = s.text.slice(s.index + 1, s.index + 5);
+    const escaped = ANSI_C_ESCAPES.get(at(s, 1));
+    const number = ANSI_C_NUMBER.exec(rest)?.[0];
 
-    text += at(s);
-    s.index += 1;
+    if (at(s) !== "\\") {
+      text += at(s);
+      s.index += 1;
+    } else if (escaped !== undefined) {
+      text += escaped;
+      s.index += 2;
+    } else if (number !== undefined) {
+      const code = number.startsWith("x")
+        ? Number.parseInt(number.slice(1), 16)
+        : Number.parseInt(number, 8);
+
+      readable &&= code > 0 && code < 0x80;
+      text += String.fromCharCode(code);
+      s.index += 1 + number.length;
+    } else {
+      readable &&= !ANSI_C_UNREAD.test(rest);
+      text += "\\";
+      s.index += 1;
+    }
   }
 
   s.index = Math.min(s.index + 1, s.text.length);
 
-  return text;
+  return { text, readable };
 }
 
 // Whether the cursor is at `word` as a whole word.

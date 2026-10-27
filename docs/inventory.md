@@ -161,7 +161,11 @@ The agent loads these on its own when the trigger matches.
   conversion other than `%s`, `%b`, and `%%`, or an escape that bash's and
   coreutils' printf print differently), or an `echo` fed to a shell with an
   escape that bash's and coreutils' echo print differently, or without `-e`
-  with an escape that `echo -e` reads, with a reason to use a quoted heredoc
+  with an escape that `echo -e` reads, with a reason to use a quoted heredoc.
+  It decodes an ANSI-C quoted `$'…'` word as bash does, and refuses one with
+  `\u`, `\U`, `\c`, or a number escape for NUL or a byte above 0x7F when it
+  names a command, is a script a shell runs, or is an argument of `kill`,
+  `rm`, `find`, `xargs`, `fuser`, `pkill`, or `killall`, with the same reason
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the

@@ -32,7 +32,7 @@ Roles. The babysitter is an owner and the rest are delegates. The verifier and l
 
 Create `~/.local/state/pi-agent/<project>/implement-chunk/<chunk-id>/`. You are its primary writer. The **chunk id** is a short slug of the parent ticket's title, such as `length-conversion`, never its key, because it names each integration branch and the tracker moves any ticket a PR's branch names.
 
-- `orders.md` holds the **standing orders**: numbered lines, one constraint each (base branch, target environment, live-check access, CI fallback, stack shape, verification bar, forbidden paths, escalation policy). When you catch yourself restating an instruction, append the line before you act. Tag each line with its source: `user` with its `decisions.md` entry for a user decision quoted verbatim, `verified at <ref>` for a repository fact, or `hypothesis` for your own inference, which a subagent checks before relying on it.
+- `orders.md` holds the **standing orders**: numbered lines, one constraint each (base branch, target environment, live-check access, CI fallback, stack shape, verification bar, forbidden paths, escalation policy). When you catch yourself restating an instruction, append the line before you act. When a user message lifts or changes a constraint, rewrite its line before the next launch. Give each order with a time limit the event that ends it, such as "until 06:00 or the user's next message". Tag each line with its source: `user` with its `decisions.md` entry for a user decision quoted verbatim, `verified at <ref>` for a repository fact, or `hypothesis` for your own inference, which a subagent checks before relying on it.
 - `plan.md` holds the plan from step 2.
 - `units.tsv` has one row per unit. A chain takes one row per ticket instead, with id `<chain>/<ticket>` and the chain's branch, intermediate PR, and brief on each. `units.tsv` columns: `id ticket intake_state final_pr state branch intermediate_pr head_sha brief`. `units.tsv` states: `planned running pr-open merged done abandoned reconciled`. `done` ends a unit with no PR, and `reconciled` ends a late subagent's work settled per Liveness and failure. Write it only with `chunk unit add <id> <column>=<value>...` and `chunk unit set <id> <column>=<value>...`, where `chunk` stands for `~/.pi/agent/prompts/implement-chunk/scripts/chunk.ts --state <state folder>`.
 - `ledger.tsv` is the verification ledger, written only with `chunk ledger`, per Verification.
@@ -54,8 +54,9 @@ Every `chunk` command exits 0 when clean and 1 on a violation. `chunk` and the l
    - the **deploy signal**: what shows that a merge reached the environment, such as a workflow run on the base branch, a version endpoint, or a release;
    - **credentials** for live checks and for each external service whose contract suite the repository's verification skill lists: where they live, how to read their expiry, and whether a worktree sees them. Refresh a credential before spawning a unit whose TIMEBOX outlasts it.
 4. For each repository, read its agent and rule files (`AGENTS.md`, `CLAUDE.md`, and any rule folder they name), its glossary and the ADRs in the area the tickets touch (per `docs/agents/domain.md` when present), its CI workflows, its verification skill (`.agents/skills/verify-*/`, with its feature map and the contract suites it lists), each project-local skill that model-checks or proves code in that area, and its merge settings from `gh api repos/<owner>/<repo>` (allowed merge methods, `delete_branch_on_merge`, `archived`). Write each constraint that shapes a brief as an order, including the verification skill and model checks each ticket's drive goes through.
-5. Ask in one message, each with your proposed default: every unpinned fact from 1.3, every ticket rewrite from 1.2 shown inline, every new domain concept the tickets introduce whose name the glossary does not settle, every ADR a ticket would contradict, every product call no experiment settles, and which publication classes are pre-approved (receipt bodies, templated ticket comments, factual refreshes of PR text, follow-up tickets). In the same message:
+5. Ask in one message, each ask in the form Escalation gives: every unpinned fact from 1.3, every ticket rewrite from 1.2 shown inline, every new domain concept the tickets introduce whose name the glossary does not settle, every ADR a ticket would contradict, every product call no experiment settles, and which publication classes are pre-approved (receipt bodies, templated ticket comments, factual refreshes of PR text, follow-up tickets). In the same message:
    - When the repository has no verification skill, ask whether to create one first, as a unit ahead of the first implementer that follows `~/.pi/agent/skills/create-verification-skill/SKILL.md`. Without one, each implementer drives the app by hand its own way.
+   - For each ticket whose bar is an open class, such as "refuse every bypass", propose a bounded bar for the user to approve: an enumerated table of cases plus no regression against the base branch.
    - For each lifecycle, protocol, or state machine a ticket adds or changes, have an explorer draw its chart into `notes/` with the **statechart** skill's chart-to-spec direction, and ask the user to agree to its Mermaid source, its rules, and its PNG.
 
    Record the publication answer verbatim as an order. Nothing spawns, branches, or opens before the answers, except explorers that write only to the state folder.
@@ -82,7 +83,15 @@ The tickets form a **task graph** of blocking edges. Its **frontier** is the tic
 
 ### 4. Verify and merge each intermediate PR
 
-1. Wait on CI yourself: arm `gh pr checks <pr> --watch` as a background terminal, and spawn the verifier, merger, or fixer only once checks settle. Record a verdict for the intermediate PR at its head SHA, per Verification. CI green is an input to a verdict, not a verdict.
+1. Wait on CI yourself. Right after a push, `gh pr checks` exits 1 with "no checks reported" until the first check registers, and the babysit watcher reads that window as a PR with no checks, which counts as clean, so arm this wait as a background terminal:
+
+   ```bash
+   for i in $(seq 30); do gh pr checks <pr> 2>&1 | grep -q '^no checks reported' || break; sleep 10; done
+   gh pr checks <pr> --watch --interval 30
+   ```
+
+   Spawn the verifier, merger, or fixer only once checks settle. Record a verdict for the intermediate PR at its head SHA, per Verification. CI green is an input to a verdict, not a verdict.
+
 2. On a passing verdict, with every review comment on the PR answered per the **babysit** skill's rules, have a merger merge the intermediate PR into its integration branch with `--match-head-commit <verdict SHA>` and an allowed method: squash, or a merge commit for a chain so its per-ticket commits survive. The tracker may move a ticket that a merged or closed PR's branch names, so after each intermediate merge or close, re-read the tickets that PR's unit names and the parent ticket, and restore the state `units.tsv` recorded.
 3. Compute the frontier yourself from the tickets merged into each integration branch. The tracker's blocked-by state changes only when a blocker closes, after the human merges.
 
@@ -110,7 +119,7 @@ Start once every ticket of a final PR has merged into its integration branch. Ev
 
 ### 8. Close
 
-Drain the final inbox, reconcile every spawned subagent to a terminal state in `units.tsv`, confirm every final PR has a verdict at its merged head and a live row, and have a merger clean up all implementer worktrees and merged intermediate branches. Propose each order line that is not specific to this chunk as an edit to this prompt or to the project's agent files. From `~/.pi/agent/skills/`, propose `maintain-verification-skill` for each drift between the verification skill and the app that a unit reported, `maintain-formal-verification-skill` for each stale formal check, and `create-formal-verification-skill` for each order-dependent area no project model covers. Leave the state folder intact.
+Drain the final inbox, reconcile every spawned subagent to a terminal state in `units.tsv`, confirm every final PR has a verdict at its merged head and a live row, and have a merger clean up all implementer worktrees and merged intermediate branches. Propose each order line that is not specific to this chunk as an edit to this prompt or to the project's agent files. From `~/.pi/agent/skills/`, propose `maintain-verification-skill` for each drift between the verification skill and the app that a unit reported, `maintain-formal-verification-skill` for each stale formal check, and `create-formal-verification-skill` for each order-dependent area no project model covers. Put each proposal in the final reply as an ask with your default, or file it as a ticket, so none lives only in the report. Leave the state folder intact.
 
 ## Sizing the final PRs
 
@@ -134,8 +143,11 @@ A **witness** runs the artifact the deploy builds, on the deploy's runtime, with
 
 `ledger.tsv` has one row per **verdict**, keyed by PR plus head SHA. `ledger.tsv` columns: `pr head_sha outcome evidence recorded_at`. Record each verdict with `chunk ledger record <pr> <sha> <outcome> <evidence>`, with an outcome from `brief.md`'s Ledger outcomes. The last row on a key stands. A new head SHA voids the row, unless its tree equals a verified SHA's tree, as after a squash merge of a PR that had merged the integration tip; then carry the row with `chunk ledger carry <pr> <new-sha> <from-sha> -C <checkout>`. An outcome whose Merge-ready is `if cited` counts only when its evidence names its `decisions.md` entry or its run logs under `evidence/`. Record each verdict you overrule in `decisions.md`, and when a ruling recurs, fix the verifier brief before the next verifier spawns.
 
+Each bug a drive finds that the base branch has too, outside the bar the user approved, becomes a follow-up ticket, not a failed round. Say so in every verifier brief, and record a lane that fails only that way as `fails-identically-at-base`.
+
 ## Liveness and failure
 
+- On each queue event, `git fetch` and check that each integration branch contains the base branch's tip (`git merge-base --is-ancestor origin/<base> origin/<integration branch>`). When one lacks it, brief a merger to sync that branch.
 - Never resume a subagent to check on it. Probe read-only: the ledger, `units.tsv`, `gh`, pushed branches, the subagent's terminal in `bg_status`.
 - Retry per the **subagents** skill. After two retries, abandon the unit and replan around it.
 - A late subagent reconciles against the current frontier and ledger before anything it made is accepted. Salvage its unique findings through a fresh unit, never a blind merge.
@@ -145,10 +157,10 @@ A **witness** runs the artifact the deploy builds, on the deploy's runtime, with
 
 Reaches the user, batched: the intake questions, merge-ready final PRs, a `live-failed` verdict, irreversible actions (including deploys, rollbacks, reverts, and closing someone else's PR), product calls no experiment settles, a premise finding that would change a contract note, an ADR, or product behavior, and a dead end that survived a replan.
 
-Stays with you: frontier moves, rebase mechanics, retries, CI flake triage, review-thread triage, replans for a premise finding inside the contract notes, and "should I keep going". Mid-run discoveries fix only what blocks the frontier. Everything else becomes a follow-up ticket in the report, including each bug a drive found that the base branch has too.
+Stays with you: frontier moves, rebase mechanics, retries, CI flake triage, review-thread triage, replans for a premise finding inside the contract notes, and "should I keep going". Mid-run discoveries fix only what blocks the frontier. Everything else becomes a follow-up ticket in the report.
 
-End every message to the user with each open ask restated in full until it is answered. Show a draft inline or open it, never as a bare path. Send status only on a state change.
+Number every ask and letter its options, at intake and in every later message, so a reply such as "1a, 2b" settles each one. Give each option its gain, its cost, and your default. End every message to the user with each open ask restated in full until it is answered. Show a draft inline or open it, never as a bare path. Send status only on a state change.
 
 ## Reply
 
-At merge-ready and at close, paste the output of `chunk report`. A final PR is merge-ready only where the report says `yes` or `merged`, whatever the transcript says, and merging is the user's call, while its `until-merged` watcher stays armed until it merges or closes. Then add what was abandoned and why, the questions awaiting the user (the only asks), and the state folder path.
+At merge-ready and at close, paste the output of `chunk report`. A final PR is merge-ready only where the report says `yes` or `merged`, whatever the transcript says, and merging is the user's call, while its `until-merged` watcher stays armed until it merges or closes. Then add what was abandoned and why, the questions awaiting the user, as asks per Escalation (the only asks), and the state folder path.

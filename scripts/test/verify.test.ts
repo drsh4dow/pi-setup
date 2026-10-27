@@ -46,38 +46,30 @@ Task Details:
 const testDocs = {
   order: 14,
   task: "pi-dotfiles#test:docs",
-  command: "$ node --test --test-reporter=dot scripts/test/*.test.ts",
 };
 
 const babysit = {
   order: 15,
   task: "pi-dotfiles#verify:babysit-scripts",
-  command: "~/agent/skills/babysit/scripts$ vp exec bun test --only-failures",
 };
 
 const verifyDocs = {
   order: 16,
   task: "pi-dotfiles#test:docs",
-  command: "$ node scripts/verify-docs.ts",
 };
 
 const testExtensions = {
   order: 17,
   task: "pi-dotfiles#test:extensions",
-  command:
-    "$ node --test --test-reporter=dot $(find agent/extensions -path '*/test/*.test.ts' ! -name 'e2e.test.ts' -print | sort)",
 };
 
 const buildCli = {
   order: 18,
   task: "pi-dotfiles#build:cli",
-  command:
-    "$ vp exec bun build --compile --outfile .build/bin/pi-subagent agent/extensions/subagents/bin/pi-subagent.ts > /dev/null",
 };
 
-// An outcome for the classification cases, whose command does not matter.
 function outcome(order: number, task: string, exitCode: number) {
-  return { order, task: `pi-dotfiles#${task}`, command: "$ true", exitCode };
+  return { order, task: `pi-dotfiles#${task}`, exitCode };
 }
 
 test("the inner run is the named task, with the options after it passed to the run", () => {
@@ -245,8 +237,6 @@ function taskGraph(t: TestContext) {
       ),
       cache: false,
     },
-    // Run with RUN_KIND=other, the same graph fails the other way round: shared-slow exits 9
-    // and shared-bad passes.
     "shared-slow": {
       command: node(
         'if (process.env.RUN_KIND === "other") setTimeout(() => process.exit(9), 200); else setTimeout(() => {}, 30000)',
@@ -275,20 +265,21 @@ function taskGraph(t: TestContext) {
   return root;
 }
 
-// A `vp` first on PATH that runs the given shell code after every `vp run` but
-// `vp run --last-details` ends, so another run can end after verify's inner run and before
-// verify reports.
-function afterEachRun(root: string, shell: string) {
+// Puts a `vp` first on PATH whose script runs with $VP set to the real vp.
+function vpShim(root: string, script: string) {
   const vp = execFileSync("sh", ["-c", "command -v vp"], { encoding: "utf8" }).trim();
   const bin = join(root, "bin");
   mkdirSync(bin);
-  writeFileSync(
-    join(bin, "vp"),
-    `#!/bin/sh\nif [ "$1 $2" = "run --last-details" ]; then exec "${vp}" "$@"; fi\n"${vp}" "$@"\nstatus=$?\n${shell}\nexit $status\n`,
-  );
+  writeFileSync(join(bin, "vp"), `#!/bin/sh\nVP="${vp}"\n${script}\n`);
   chmodSync(join(bin, "vp"), 0o755);
 
   return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, REAL_VP: vp };
+}
+
+// Runs the given shell code after each `vp run` ends, so another run can end after verify's
+// inner run and before verify reports.
+function afterEachRun(root: string, shell: string) {
+  return vpShim(root, `"$VP" "$@"\nstatus=$?\n${shell}\nexit $status`);
 }
 
 function verify(root: string, task: string, env: NodeJS.ProcessEnv = process.env) {
@@ -345,7 +336,7 @@ test("a passing run prints as many lines as the task runner prints without verif
   );
 });
 
-test("details a run of the same graph replaced never name a task this run did not fail", (t) => {
+test("another run of the same graph ending first does not change which task verify names", (t) => {
   const root = taskGraph(t);
 
   const result = verify(
@@ -360,5 +351,42 @@ test("details a run of the same graph replaced never name a task this run did no
     `$ node -e 'if (process.env.RUN_KIND === "other") process.exit(0); setTimeout(() => { console.error("OWN_FAILURE"); process.exit(7); }, 500)' ⊘ cache disabled`,
     "OWN_FAILURE",
     "verify: stopped after the failure: shared-slow",
+  ]);
+});
+
+test("a failed run that prints no details says verify cannot tell which task failed", (t) => {
+  const root = taskGraph(t);
+
+  const result = verify(
+    root,
+    "failing",
+    vpShim(
+      root,
+      `{ "$VP" "$@" 2>&1; echo $? >"${root}/status"; } | grep -v '━'\nexit $(cat "${root}/status")`,
+    ),
+  );
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(result.report, [
+    "verify: failed (exit 1), but the run printed no details, so verify cannot tell which task failed. Read the output above.",
+  ]);
+});
+
+test("a rule of ━ that task output follows is relayed, not read as the run's details", (t) => {
+  const root = taskGraph(t);
+
+  const result = verify(
+    root,
+    "failing",
+    vpShim(root, `echo ━━━━━━━━\necho EARLY_NOTE\nexec "$VP" "$@"`),
+  );
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.ok(result.stdout.includes("EARLY_NOTE"), result.stdout.join("\n"));
+  assert.deepEqual(result.report, [
+    "verify: bad failed (exit 7)",
+    `$ node -e 'setTimeout(() => { console.error("EXPECTED_FAILURE"); process.exit(7); }, 500)' ⊘ cache disabled`,
+    "EXPECTED_FAILURE",
+    "verify: stopped after the failure: slow",
   ]);
 });

@@ -13,8 +13,6 @@ export interface TaskOutcome {
   readonly order: number;
   // The `<package>#<task>` label.
   readonly task: string;
-  // The command as the run printed it when the command started, such as `$ node x.ts`.
-  readonly command: string;
   readonly exitCode: number;
 }
 
@@ -32,14 +30,14 @@ type FailedVerify = Extract<VerifyResult, { kind: "failed" }>;
 
 const KILLED = 128 + constants.signals.SIGKILL;
 
-const DETAILS_LINE = /^\s*\[(\d+)\] (\S+?): (.*) (?:✓|✗ \(exit code: (\d+)\))$/u;
+const DETAILS_LINE = /^\s*\[(\d+)\] (\S+?): .* (?:✓|✗ \(exit code: (\d+)\))$/u;
 
 const LABELED_LINE = /^\[([^\]\s]+#[^\]\s]+)\] ?(.*)$/su;
 
-// `vp run -v` ends a run that ran a task with its details, which open with a rule of ━.
+// When a run ran at least one task, `vp run -v` ends it with its details, which open with a
+// line of ━.
 const DETAILS_RULE = /^━+$/u;
 
-// The details line that counts the run's tasks and its cache hits.
 const STATISTICS_LINE = /^Statistics: /u;
 
 export function parseDetails(details: string): TaskOutcome[] {
@@ -50,12 +48,11 @@ export function parseDetails(details: string): TaskOutcome[] {
 
     if (match === null) continue;
 
-    const [, order, task, command, exitCode] = match;
+    const [, order, task, exitCode] = match;
 
     outcomes.push({
       order: Number(order),
       task,
-      command,
       exitCode: exitCode === undefined ? 0 : Number(exitCode),
     });
   }
@@ -125,7 +122,6 @@ export function failureReport(
   return report;
 }
 
-// The lines that end a failed run, from the details its own output ended with.
 export function verifyReport(
   status: number,
   outcomes: readonly TaskOutcome[],
@@ -142,8 +138,7 @@ export function verifyReport(
   return failureReport(result, linesByTask);
 }
 
-// Writes each line to the sink with its task label stripped, and keeps each task's lines.
-// Holds back the details the run ended this stream with, and resolves to them, or to null.
+// The details end the run, so a task line after a rule of ━ means that rule opened no details.
 async function relay(
   input: Readable,
   sink: Writable,
@@ -163,6 +158,9 @@ async function relay(
       continue;
     }
 
+    for (const held of details ?? []) sink.write(`${held}\n`);
+    details = null;
+
     sink.write(`${text}\n`);
 
     const printed = linesByTask.get(task);
@@ -181,7 +179,7 @@ export type InnerRun =
 // The task's command names the inner task. `vp run` appends the options given after the outer
 // task, such as --no-cache. They belong to the inner run, because the inner run owns the cache.
 // -v ends the inner run with its details. `vp run --last-details` would read the details of
-// whichever run in the workspace ended last, and a run of the same graph lists the same commands.
+// whichever run in the workspace ended last.
 export function innerRunArgs(argv: readonly string[]): InnerRun {
   const [task, ...options] = argv;
 
@@ -224,10 +222,16 @@ async function main() {
 
   const details = detailsOut ?? detailsErr;
 
-  // A run that ran no task prints no details.
-  if (details === null) return status;
+  if (details === null) {
+    if (status !== 0) {
+      console.log(
+        `\nverify: failed (exit ${status}), but the run printed no details, so verify cannot tell which task failed. Read the output above.`,
+      );
+    }
 
-  // In place of the details, one line, as the run would end without -v.
+    return status;
+  }
+
   const statistics = details.find((line) => STATISTICS_LINE.test(line));
 
   if (statistics !== undefined) console.log(statistics);

@@ -23,11 +23,12 @@ When a task fails, the task runner kills the tasks still running, and each
 exits 137. Verify then ends with `verify: <task> failed (exit <n>)` and that
 task's output, and lists the killed tasks as stopped. A 137 with no failure
 before it still counts as a failure. Verify reads each task's exit code from
-the details its own inner run prints with `vp run -v`, and prints only their
-`Statistics:` line. It never reads `vp run --last-details`, which shows
+the details its own inner run prints with `vp run -v`, and prints only the
+details' `Statistics:` line. It never reads `vp run --last-details`, which shows
 whichever run in the workspace ended last, including a run in another worktree
 whose `node_modules` is a symlink to this one's. When verify cannot tell which
-task failed, it says so and points at the task output above.
+task failed, because the details list no failed command or the run printed no
+details, it says so and points at the output above.
 
 `verify:babysit-scripts` type-checks and tests the `babysit` skill's
 `watch-pr` against its own `tsconfig.json` and locked dependencies. Live Pi

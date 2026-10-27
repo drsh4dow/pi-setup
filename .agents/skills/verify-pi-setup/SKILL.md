@@ -46,7 +46,7 @@ A `FAIL` on stderr usually means an extension failed to load. Read `$($CP path R
 | `$CP capture RUN_ID`                                 | Print the visible pane.                                                                                                                                                                  |
 | `$CP snap RUN_ID NAME`                               | Save the visible pane to `EVIDENCE/NAME.txt` and print the path.                                                                                                                         |
 | `$CP path RUN_ID scratch\|agent\|evidence\|sessions` | Print a run directory, such as the scratch `agent/` that holds `settings.json`, or `sessions`, which holds the run's session `.jsonl` files.                                             |
-| `$CP list`                                           | List runs that still have scratch state.                                                                                                                                                 |
+| `$CP list`                                           | List runs that still have scratch state, and the tmux sessions of run ids `stop` refuses, with the commands that end them.                                                               |
 
 After a prompt, wait on its turn end with `wait-turn`. The previous turn's footer, such as `TPS`, stays on screen while the next turn runs, so a `wait` on footer text returns at once. Use `wait-idle` when the turn starts a background job or a subagent and the drive must wait through the turn that the job's result starts. Use `wait` for a string an action puts on screen, such as a notice. Never wait on a fixed sleep.
 

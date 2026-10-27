@@ -52,7 +52,7 @@ control-pi wait-idle RUN_ID [SECS]  wait until no turn, prompt, or background jo
 control-pi snap RUN_ID NAME         save the pane to EVIDENCE/NAME.txt
 control-pi path RUN_ID scratch|evidence|agent|sessions
 control-pi stop RUN_ID              tear down the instance and keep the evidence
-control-pi list                     list runs that still have scratch state
+control-pi list                     list runs that still have scratch state, and leftovers stop refuses
 EOF
 }
 
@@ -72,6 +72,7 @@ valid_run_id() {
 
 bind_run() {
   RUN_ID=${1:-}
+  [[ -n $RUN_ID ]] || die "missing RUN_ID"
   valid_run_id "$RUN_ID" ||
     die "invalid run id '$RUN_ID': use only letters, digits, '_' and '-'; tmux reads '.' and ':' in a target as separators"
   SCRATCH=$SCRATCH_BASE/$RUN_ID
@@ -146,7 +147,11 @@ pi_pid() {
 
 # One grep over every environ, so wait-idle can poll it.
 pids_tagged_with_run() {
-  { grep -lxFzs -- "VERIFY_PI_SETUP_RUN=$RUN_ID" /proc/[0-9]*/environ || true; } | cut -d/ -f3
+  pids_tagged_with "$RUN_ID"
+}
+
+pids_tagged_with() {
+  { grep -lxFzs -- "VERIFY_PI_SETUP_RUN=$1" /proc/[0-9]*/environ || true; } | cut -d/ -f3
 }
 
 oauth_providers() {
@@ -380,15 +385,30 @@ cmd_stop() {
   echo "stopped $RUN_ID; evidence kept in $EVIDENCE"
 }
 
+# Prints to stderr the commands that end the processes and the tmux session of a run id that
+# bind_run refuses. tmux reads an exact session target that ends in ':' whole, dots included.
+leftover_advice() {
+  local id=$1 session=vps-$1 pids steps=()
+  mapfile -t pids < <(pids_tagged_with "$id")
+  ((${#pids[@]} > 0)) && steps+=("kill ${pids[*]}")
+  tm has-session -t "=$session:" 2>/dev/null &&
+    steps+=("tmux -L $SOCKET kill-session -t $(printf '%q' "=$session:")")
+  ((${#steps[@]} > 0)) || return 0
+  local joined
+  joined=$(printf '; %s' "${steps[@]}")
+  echo "control-pi: $id still holds its Pi or its tmux session; end them first with: ${joined#; }" >&2
+}
+
 cmd_list() {
-  local dir name
-  [[ -d $SCRATCH_BASE ]] || return 0
+  local dir name session
+  local -A listed=()
   for dir in "$SCRATCH_BASE"/*/; do
     [[ -d $dir ]] || continue
     name=$(basename "$dir")
-    # A scratch directory left by an older control-pi can carry an id bind_run refuses.
     if ! valid_run_id "$name"; then
+      listed[$name]=1
       echo "$name invalid $SCRATCH_BASE/$name: stop refuses this id; remove the directory by hand"
+      leftover_advice "$name"
       continue
     fi
     bind_run "$name"
@@ -398,6 +418,12 @@ cmd_list() {
       echo "$RUN_ID dead   $(cat "$SCRATCH/checkout" 2>/dev/null)"
     fi
   done
+  while read -r session; do
+    name=${session#vps-}
+    [[ $session == vps-* ]] && ! valid_run_id "$name" && [[ -z ${listed[$name]:-} ]] || continue
+    echo "$name invalid tmux session $session: stop refuses this id"
+    leftover_advice "$name"
+  done < <(tm list-sessions -F '#{session_name}' 2>/dev/null || true)
 }
 
 subcommand=${1:-}

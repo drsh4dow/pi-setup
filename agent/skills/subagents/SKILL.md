@@ -71,6 +71,10 @@ generated files and caches their verification writes, or run them in sequence.
 The same holds beyond files: give each its own scratch directories,
 containers, and toolchain installs, keep setup commands such as installs and
 checkout syncs inside its own tree, and limit its cleanup to what it created.
+Worktrees of one repository share its stash, refs, and worktree metadata, so a
+child saves work in progress as a commit on its own branch, never with
+`git stash`, and a child that must not write the main checkout works in a
+separate clone instead of a worktree.
 Before accepting a comparison, such as a before and after, check that no
 sibling wrote the state it measured.
 

@@ -9,6 +9,7 @@
 // as a command. Comments, redirections, and other heredoc bodies are dropped. It
 // follows at most MAX_NESTING levels of nesting.
 
+import { braceWords } from "./brace-expansion.ts";
 import { commandInput, echoedText } from "./command-input.ts";
 import { flatWords } from "./flat-words.ts";
 import {
@@ -542,8 +543,11 @@ function parseScript(s: Scanner, closer: Closer): Script {
       } else if (/^\d+$/.test(word.raw) && (at(s) === "<" || at(s) === ">")) {
         // A file descriptor number, such as the 2 in `2>&1`.
       } else {
-        addWord(forms, argv, word);
-        argv.push(word.text);
+        for (const expanded of braceWords(argv, word, s, { readWord, expansions })) {
+          addWord(forms, argv, expanded);
+          argv.push(expanded.text);
+        }
+
         nested.push(...word.nested);
       }
     }

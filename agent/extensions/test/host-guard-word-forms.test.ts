@@ -5,6 +5,7 @@ import {
   assertEach,
   assertKillRefused,
   assertRuns,
+  assertTmpGlobRefused,
   assertUnreadWordRefused,
   everySession,
   rootBash,
@@ -12,9 +13,10 @@ import {
 
 // The host guard reads as literal only the word forms it reproduces exactly: plain,
 // single-quoted, double-quoted, and backslash-escaped text, and the ANSI-C escapes it
-// decodes. A parameter, command, or arithmetic expansion stays runtime-unknown, so a
-// shell fed by one still runs. Any other expansion leaves the word unread, and an
-// unread word is refused where a shell or a guarded command reads it.
+// decodes. It expands braces into the words bash makes of them. A parameter, command, or
+// arithmetic expansion stays runtime-unknown, so a shell fed by one still runs. Any other
+// expansion leaves the word unread, and an unread word is refused where a shell or a
+// guarded command reads it.
 
 test("a locale-quoted script fed to a shell is refused", async () => {
   await assertEach(
@@ -47,20 +49,60 @@ test("a locale-quoted word is refused unread where a shell or a guarded command 
   );
 });
 
-test("a brace expansion is refused where a shell or a guarded command reads it", async () => {
+test("a brace expansion that makes a kill by name is refused", async () => {
   await assertEach(
     everySession([
       "echo {pkill,x} | bash",
+      "echo pk{ill,} x | bash",
       "printf '%s ' {pkill,x} | bash",
       "{pkill,x}",
+      "{p,}kill x",
       "bash -c {pkill,x}",
       "pk{ill,} x",
-      "rm -rf {dist,build}",
-      "bash <<< {true,x}",
-      "kill {1..3}",
+      "/usr/bin/{pkill,true} x",
       "bash <<< {pkill,x}",
+      "killall{,} x",
+      "kill {1,$(pgrep x)}",
+      "echo {p..q}kill x | bash",
+    ]),
+    assertKillRefused,
+  );
+});
+
+test("a brace expansion that makes a glob delete under /tmp is refused", async () => {
+  await assertEach(
+    everySession(["rm -rf /tmp/{a,b}-*", "rm -rf /{tmp,x}/aa-*", "rm -rf {/tmp/x,a}*"]),
+    assertTmpGlobRefused,
+  );
+});
+
+test("a brace expansion the guard cannot expand exactly is refused where a guarded command reads it", async () => {
+  await assertEach(
+    everySession([
+      "kill {1..5000}",
+      "kill {A..z}",
+      "rm -rf {a,b}${ pwd; }",
+      "echo {1..99999999999999999} | bash",
     ]),
     assertUnreadWordRefused(/brace expansion/),
+  );
+});
+
+test("a brace expansion is judged on the words bash makes of it", async () => {
+  await assertEach(
+    rootBash([
+      "rm -rf dist/{a,b}",
+      "rm -f a.{js,map}",
+      "find src/{a,b} -name x",
+      "mkdir -p out/{a,b}",
+      "kill %{1,2}",
+      "kill {1..3}",
+      "rm -rf {dist,build}",
+      "rm -rf build/{01..12}",
+      'rm -rf "$(pwd)"/{a,b}',
+      "bash <<< {true,x}",
+    ]),
+    assertRuns,
   );
 });
 

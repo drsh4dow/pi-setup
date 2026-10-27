@@ -1,8 +1,9 @@
 // Sorts the words of one simple command by the expansions bash applies to them that the
 // shell command reader in shell-command.ts does not reproduce, so the reader can mark
 // what runs unread. readWord gives each word its first unread quoting form, such as a
-// locale-quoted `$"…"`, and its unquoted characters, from which this module finds a brace
-// expansion or a pathname pattern that bash would expand.
+// locale-quoted `$"…"`, and its unquoted characters, from which this module finds a
+// pathname pattern that bash would expand. The reader expands braces itself (see
+// brace-expansion.ts); a brace expansion it cannot reproduce reaches here unread.
 
 import { runsWordsAt } from "./command-input.ts";
 import { basename, commandArgv, isShell } from "./command-word.ts";
@@ -37,9 +38,17 @@ export function argvForms(): ArgvForms {
   return { unread: [], patterns: [] };
 }
 
-// Whether bash expands a brace expansion in a word, given its unquoted characters: a
-// `{` not after `$` whose matching `}` encloses a comma or a sequence expression.
-function expandsBraces(unquoted: string): boolean {
+/** Whether `word`, the next word of a command whose words so far are `argv`, assigns. */
+export function assignsAt(argv: readonly string[], word: ReadWord): boolean {
+  return argv.every((done) => ASSIGNMENT_WORD.test(done)) && ASSIGNMENT_WORD.test(word.unquoted);
+}
+
+/**
+ * Whether bash may expand a brace expansion in a word, given its unquoted characters: a
+ * `{` not after `$` whose matching `}` encloses a comma or a sequence expression. The
+ * reader asks only of a word whose expansion it cannot reproduce.
+ */
+export function mayExpandBraces(unquoted: string): boolean {
   for (let open = unquoted.indexOf("{"); open !== -1; open = unquoted.indexOf("{", open + 1)) {
     if (unquoted.charAt(open - 1) === "$") continue;
 
@@ -66,13 +75,10 @@ function expandsBraces(unquoted: string): boolean {
 export function addWord(forms: ArgvForms, argv: readonly string[], word: ReadWord): void {
   const index = argv.length;
 
-  // Bash expands no braces or patterns in an assignment before the command word.
-  const assigns =
-    argv.every((done) => ASSIGNMENT_WORD.test(done)) && ASSIGNMENT_WORD.test(word.unquoted);
+  // Bash expands no patterns in an assignment before the command word.
+  const assigns = assignsAt(argv, word);
 
-  const form = word.unread ?? (!assigns && expandsBraces(word.unquoted) ? "brace" : undefined);
-
-  if (form !== undefined) forms.unread.push({ index, form });
+  if (word.unread !== undefined) forms.unread.push({ index, form: word.unread });
 
   const baseName = word.unquoted.slice(word.unquoted.lastIndexOf("/") + 1);
 

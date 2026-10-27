@@ -166,8 +166,11 @@ The agent loads these on its own when the trigger matches.
   `\u`, `\U`, `\c`, or a number escape for NUL or a byte above 0x7F when it
   names a command, is a script a shell runs, or is an argument of `kill`,
   `rm`, `find`, `xargs`, `fuser`, `pkill`, or `killall`, with the same reason.
-  It refuses a locale-quoted `$"…"` word, a brace expansion such as `{a,b}` or
-  `{1..3}`, or `$[…]` arithmetic in those same places, and an unquoted `*`,
+  It expands a brace expansion such as `{a,b}` or `{01..10..3}` into the words
+  bash makes of it, and judges each word; one it cannot expand exactly (more
+  than 1024 words, a range with a non-letter, or a substitution inside a
+  script) stays unread. It refuses a locale-quoted `$"…"` word, an unread
+  brace expansion, or `$[…]` arithmetic in those same places, and an unquoted `*`,
   `?`, or `[…]` in the base name of a command word, with a reason that names
   the form. A shell fed by a variable or a substitution still runs
 - `process-status`: `/ps` views of background terminals and the `session_usage`

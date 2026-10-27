@@ -5,6 +5,8 @@
 # or a change to docs/development.md in the main working tree. It commits
 # normally in the worktree that has main checked out when that worktree's README.md is clean,
 # and otherwise writes the commit with plumbing, so it lands on main whatever the agent did.
+# It prints "baseline taken" once it has read the branches and worktrees it compares against, so
+# a caller can wait for that line before it makes a change the script should see.
 #
 #   user-commit.sh <record> <fallback-seconds>
 set -euo pipefail
@@ -20,6 +22,7 @@ doc_changed() { ! git diff --quiet HEAD -- docs/development.md; }
 
 start_branches=$(branches)
 start_worktrees=$(worktrees)
+echo "baseline taken"
 trigger=fallback
 
 for _ in $(seq "$fallback"); do

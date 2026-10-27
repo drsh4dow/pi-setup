@@ -321,6 +321,9 @@ function checkLinkedTier(machine: Machine, tier: TierName, installed: Installed)
     findings.push({ status: "ok", check: tier, detail: versions.join(", ") });
   }
 
+  // A tier whose install is incomplete would fail its extra checks for the same cause.
+  if (findings.some((finding) => finding.status === "fail")) return findings;
+
   return [...findings, ...tierExtras(machine, tier)];
 }
 
@@ -346,30 +349,15 @@ function tierExtras(machine: Machine, tier: TierName): Finding[] {
         .split("\n")
         .flatMap((line) => (/^\s*fail\b/.test(line) ? [line.trim()] : []));
 
-      const detail = `agent-browser doctor fails: ${failures.join("; ") || run.output}`;
-
-      if (process.platform !== "linux")
-        return [
-          { status: "fail", check: "browser", detail, fix: "mise exec -- agent-browser install" },
-        ];
-
-      // agent-browser installs Chrome's system libraries itself, but only through these managers.
-      if (["apt-get", "dnf", "yum"].some((manager) => resolveCommand(manager, machine.path)))
-        return [
-          {
-            status: "fail",
-            check: "browser",
-            detail,
-            fix: "mise exec -- agent-browser install --with-deps",
-          },
-        ];
-
       return [
-        {
-          status: "fail",
-          check: "browser",
-          detail: `${detail}\nagent-browser installs Chrome's system libraries only with apt-get, dnf, or yum. Install the libraries it names with this machine's package manager, then run mise exec -- agent-browser install.`,
-        },
+        browserFailure(`agent-browser doctor fails: ${failures.join("; ") || run.output}`, {
+          platform: process.platform,
+          chrome: machine.shellEnv["AGENT_BROWSER_EXECUTABLE_PATH"],
+          // agent-browser installs Chrome's system libraries itself, but only through these managers.
+          withDeps: ["apt-get", "dnf", "yum"].some((manager) =>
+            resolveCommand(manager, machine.path),
+          ),
+        }),
       ];
     }
 
@@ -383,6 +371,40 @@ function tierExtras(machine: Machine, tier: TierName): Finding[] {
       throw new Error(`Unexpected tier: ${String(unexpected)}`);
     }
   }
+}
+
+interface BrowserSetup {
+  platform: NodeJS.Platform;
+  // The browser a new terminal's agent-browser runs instead of its own download, if any.
+  chrome: string | undefined;
+  withDeps: boolean;
+}
+
+// The fix for a browser that agent-browser could not launch.
+export function browserFailure(detail: string, setup: BrowserSetup): Finding {
+  if (setup.chrome)
+    return {
+      status: "fail",
+      check: "browser",
+      detail: `${detail}\nagent-browser runs ${setup.chrome}, the Google Chrome that mise/browser/mise.toml installs from Google's apt repository.`,
+    };
+
+  if (setup.platform !== "linux")
+    return { status: "fail", check: "browser", detail, fix: "mise exec -- agent-browser install" };
+
+  if (setup.withDeps)
+    return {
+      status: "fail",
+      check: "browser",
+      detail,
+      fix: "mise exec -- agent-browser install --with-deps",
+    };
+
+  return {
+    status: "fail",
+    check: "browser",
+    detail: `${detail}\nagent-browser installs Chrome's system libraries only with apt-get, dnf, or yum. Install the libraries it names with this machine's package manager, then run mise exec -- agent-browser install.`,
+  };
 }
 
 function checkInstall({ repo }: Machine): Finding {

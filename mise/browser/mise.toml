@@ -1,2 +1,21 @@
 [tools]
 agent-browser = "0.39.4"
+
+# Ubuntu 23.10 and later let only browsers under root-owned paths such as /opt/google/chrome create
+# the user namespaces Chrome's sandbox needs, so the Chrome for Testing that agent-browser downloads
+# into ~/.agent-browser cannot start there. Debian and Ubuntu therefore get Google Chrome from
+# Google's repository, and agent-browser uses it wherever it is installed.
+[env]
+_.file = "{% if '/opt/google/chrome/chrome' is file %}{{ config_root }}/google-chrome.env{% endif %}"
+
+[bootstrap.apt.sources.google-chrome]
+uris = "https://dl.google.com/linux/chrome/deb/"
+suites = "stable"
+components = "main"
+architectures = "amd64"
+key = "https://dl.google.com/linux/linux_signing_key.pub"
+fingerprint = "EB4C 1BFD 4F04 2F6D DDCC EC91 7721 F63B D38B 4796"
+
+# Installed with this machine's package manager; mise skips the entries of managers it lacks.
+[bootstrap.packages]
+"apt:google-chrome-stable" = "latest"

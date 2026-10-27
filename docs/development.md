@@ -109,6 +109,8 @@ software the whole machine shares, such as native libraries, in
 `[bootstrap.packages]`, with one entry per package manager. mise installs
 those with the machine's own package manager and skips the entries of managers
 it lacks, as [its docs](https://mise.jdx.dev/bootstrap/packages/) describe.
+A package from a vendor's repository also declares that repository, as the
+browser tier does for Google Chrome in `[bootstrap.apt.sources]`.
 
 A new tier needs its folder under `mise/` and an entry in `TIERS` in
 `scripts/doctor/doctor.ts`. The doctor test fails when the two differ.

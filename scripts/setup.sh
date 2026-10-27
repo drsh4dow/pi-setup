@@ -75,7 +75,10 @@ if ! said="$(cd "$repo" && "$mise" exec -- node --version 2>&1)"; then
 fi
 (cd "$repo" && "$mise" exec -- vp install --frozen-lockfile)
 
-if [ -e "$conf_d/pi-setup-browser" ]; then
+# Where mise/browser/mise.toml points agent-browser at Google Chrome, the Chrome for Testing that
+# agent-browser install downloads would go unused.
+if [ -e "$conf_d/pi-setup-browser" ] &&
+  [ -z "$(global_mise exec -- printenv AGENT_BROWSER_EXECUTABLE_PATH)" ]; then
   global_mise exec -- agent-browser install
 fi
 

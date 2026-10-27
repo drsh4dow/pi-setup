@@ -267,3 +267,96 @@ A stale citation goes unreported without Java.
     '13: unexpected heading "## Out of scope", use these in order: ## Problem, ## Done when, ## Suggested approach, ## Context',
   ]);
 });
+
+// The body from the ticket that found the inline code blind spot: it names the babysit
+// own-reply marker in inline code.
+const markerLine =
+  "The watcher tags its own replies with `<!-- pi-event:reply -->` so it can skip them.";
+
+test("passes a body that quotes an HTML comment inside inline code", (t) => {
+  const ticket = `## Problem\n\n${markerLine}\n\n## Done when\n\n- [ ] **It works.** Check: run it.\n`;
+
+  const ticketResult = check(t, ticket, [
+    "ticket",
+    "--title",
+    "babysit: own replies wake the agent",
+  ]);
+
+  assert.deepEqual(ticketResult.lines, []);
+  assert.equal(ticketResult.status, 0);
+
+  const pr = goodPr.replace(
+    "A reviewer cannot tell whether a PR's proof ran.",
+    `${markerLine} A double \`\`run with \` inside <!-- -->\`\` is code too.`,
+  );
+
+  const prResult = check(t, pr, ["pr", "--title", "fix(babysit): skip own replies"]);
+
+  assert.deepEqual(prResult.lines, []);
+  assert.equal(prResult.status, 0);
+});
+
+test("flags an HTML comment outside backticks on a line that also holds inline code", (t) => {
+  const body = [
+    "## Problem",
+    "",
+    "Tag replies with `<!-- pi-event:reply -->`. <!-- Who hits it. -->",
+    "A backtick run closes only on a run of its own length: `<!-- left in -->``",
+    "An escaped \\`<!-- left in -->` backtick opens no span.",
+    `Two backslashes escape each other, so ${"\\".repeat(2)}\`safe\` <!-- left in --> \`tail\` holds two spans.`,
+    "",
+    "## Done when",
+    "",
+    "- [ ] **It works.** Check: run it.",
+    "",
+  ].join("\n");
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, [
+    "3: template comment left in, replace or delete it",
+    "4: template comment left in, replace or delete it",
+    "5: template comment left in, replace or delete it",
+    "6: template comment left in, replace or delete it",
+  ]);
+});
+
+test("reads a backtick after an even run of backslashes as a span opener", (t) => {
+  const body = [
+    "## Problem",
+    "",
+    `Two backslashes: ${"\\".repeat(2)}\`<!-- pi-event:reply -->\`.`,
+    `Four backslashes: ${"\\".repeat(4)}\`<!-- pi-event:reply -->\`.`,
+    `One backslash escapes the first backtick: \\\`safe\` <!-- quoted --> \`tail\`.`,
+    "",
+    "## Done when",
+    "",
+    "- [ ] **It works.** Check: run it.",
+    "",
+  ].join("\n");
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.deepEqual(result.lines, []);
+  assert.equal(result.status, 0);
+});
+
+test("flags a long dash in prose but not in a quoted error message", (t) => {
+  const body = [
+    "## Problem",
+    "",
+    "It prints `error \u2014 no such file` and exits 1.",
+    "It prints `error` \u2014 and exits 1.",
+    "",
+    "## Done when",
+    "",
+    "- [ ] **It works.** Check: run it.",
+    "",
+  ].join("\n");
+
+  const result = check(t, body, ["ticket"]);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(result.lines, ["4: long dash, use a period or a comma"]);
+});

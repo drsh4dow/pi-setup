@@ -200,6 +200,67 @@ function proseLines(lines: readonly Line[]) {
   return lines.filter((_, index) => !inFence[index]);
 }
 
+const asciiPunctuation = /[!-/:-@[-`{-~]/;
+
+// Replaces each inline code span on a line with a space, scanned left to right as CommonMark
+// scans them: a backslash before ASCII punctuation escapes that one character, so a backtick
+// after an odd run of backslashes is literal and one after an even run opens a run. A run of
+// backticks opens a span that the next run of exactly its length closes, with no escapes
+// inside; a run with no such closer stays literal. A quoted marker such as
+// `<!-- pi-event:reply -->` is then not read as a template comment left in.
+function withoutCodeSpans(text: string) {
+  let kept = "";
+  let at = 0;
+
+  while (at < text.length) {
+    const char = text[at] ?? "";
+
+    if (char === "\\" && asciiPunctuation.test(text[at + 1] ?? "")) {
+      kept += text.slice(at, at + 2);
+      at += 2;
+      continue;
+    }
+
+    if (char !== "`") {
+      kept += char;
+      at += 1;
+      continue;
+    }
+
+    const opener = backtickRunEnd(text, at);
+    const closer = closingRun(text, opener, opener - at);
+
+    if (closer === undefined) {
+      kept += text.slice(at, opener);
+      at = opener;
+    } else {
+      kept += " ";
+      at = closer;
+    }
+  }
+
+  return kept;
+}
+
+function backtickRunEnd(text: string, start: number) {
+  let end = start;
+  while (text[end] === "`") end += 1;
+  return end;
+}
+
+// Returns the index just past the next backtick run of exactly `length` at or after `from`.
+function closingRun(text: string, from: number, length: number) {
+  let at = text.indexOf("`", from);
+
+  while (at !== -1) {
+    const end = backtickRunEnd(text, at);
+    if (end - at === length) return end;
+    at = text.indexOf("`", end);
+  }
+
+  return undefined;
+}
+
 function contentFindings(kind: Kind, body: Body): Finding[] {
   const findings: Finding[] = [];
 
@@ -217,11 +278,13 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
   }
 
   for (const line of proseLines(body.lines)) {
-    if (/[\u2013\u2014]/.test(line.text)) {
+    const text = withoutCodeSpans(line.text);
+
+    if (/[\u2013\u2014]/.test(text)) {
       findings.push({ where: line.number, message: "long dash, use a period or a comma" });
     }
 
-    if (line.text.includes("<!--")) {
+    if (text.includes("<!--")) {
       findings.push({
         where: line.number,
         message: "template comment left in, replace or delete it",

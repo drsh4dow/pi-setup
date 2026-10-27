@@ -78,7 +78,7 @@ Keep these versions aligned when upgrading:
 - Vite+ and `@effect/tsgo` move together.
 - The `pi` pin in `mise/core/mise.toml` matches the locked
   `@earendil-works/pi-coding-agent`, so a new setup runs the Pi the extensions
-  are tested against. `scripts/test/doctor.test.ts` fails when they differ, and
+  are tested against. `scripts/test/setup.test.ts` fails when they differ, and
   when `mise/formal/mise.toml` stops pinning the TLC and Java that
   `agent/skills/statechart/scripts/tlc-tools.ts` looks up.
 
@@ -93,13 +93,22 @@ entry points are the tasks in the root `mise.toml`:
 
 - `mise run setup [--link-agent-skills] [TIER...]` runs `scripts/setup.sh`. It
   links each tier folder under `mise/` into mise's global `conf.d` as
-  `pi-setup-<tier>`, installs the tools, and runs `vp install`. Global config
-  keeps the tools on PATH in every project, not only in this checkout. The
-  core tier also puts the Node.js shims of vp on PATH.
+  `pi-setup-<tier>`, installs the tiers' system packages and tools, and runs
+  `vp install`. Global config keeps the tools on PATH in every project, not
+  only in this checkout. The core tier also puts the Node.js shims of vp on
+  PATH.
 - `mise run doctor` runs `scripts/doctor/doctor.ts`. It reads the environment
-  of a new login shell, so it checks what a new terminal gets rather than its
-  own environment. It starts Pi in RPC mode to confirm that every skill of this
-  checkout loads and no extension fails. It changes nothing.
+  of the shell a new terminal starts, a login shell on macOS and an
+  interactive one on Linux, rather than its own environment. It starts Pi in
+  RPC mode to confirm that every skill of this checkout loads and no extension
+  fails. It changes nothing itself, but the Pi it starts creates an empty
+  `agent/auth.json` when there is none.
+
+A tier pins the tools mise switches per project in `[tools]`, and declares the
+software the whole machine shares, such as native libraries, in
+`[bootstrap.packages]`, with one entry per package manager. mise installs
+those with the machine's own package manager and skips the entries of managers
+it lacks, as [its docs](https://mise.jdx.dev/bootstrap/packages/) describe.
 
 A new tier needs its folder under `mise/` and an entry in `TIERS` in
 `scripts/doctor/doctor.ts`. The doctor test fails when the two differ.

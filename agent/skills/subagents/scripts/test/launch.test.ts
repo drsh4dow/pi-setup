@@ -397,7 +397,7 @@ function skillLaunch(path: string, heading: RegExp): string {
   return block;
 }
 
-test("code-review's persona launch goes through the launcher and carries the orders", (t) => {
+test("code-review's panel launches every seat through the launcher with the orders, and fails when a seat fails", (t) => {
   const h = host(t);
   const reviews = join(h.dir, "reviews");
   mkdirSync(reviews);
@@ -408,18 +408,25 @@ test("code-review's persona launch goes through the launcher and carries the ord
     .replaceAll("$HOME/.pi/agent/skills/subagents/scripts/launch.ts", `${process.execPath} ${LAUNCH}`)
     .replaceAll("<this skill's directory>", skillDir)
     .replaceAll("<review folder>", reviews)
-    .replaceAll("<persona>", "standards")
     .replaceAll("<model>", "openai/gpt-6.1-sol")
-    .replaceAll("<level>", "high")
     .replaceAll("<orders file, or none>", h.orders)
-    .replace(/\n$/, " --dry-run\n");
+    .replaceAll("--thinking high", "--thinking high --dry-run");
+  // bg_start runs its command with /bin/sh, so the block must run there.
+  const panel = () => spawnSync("sh", ["-c", filled], { cwd: h.dir, env: h.env, encoding: "utf8" });
 
-  const run = spawnSync("bash", ["-c", filled], { cwd: h.dir, env: h.env, encoding: "utf8" });
-  assert.equal(run.status, 0, `${filled}\n${run.stderr}`);
+  const refused = panel();
+  assert.equal(refused.status, 1, "a seat without a brief fails the panel");
+  assert.match(readFileSync(join(reviews, "panel.exits"), "utf8"), /^spec-fidelity exit 2$/m);
+  assert.match(readFileSync(join(reviews, "spec-fidelity.log"), "utf8"), /launch: refused/);
 
-  const report = readFileSync(join(reviews, "standards.md"), "utf8");
-  assert.ok(report.includes("2. No production access. (user)"), report);
-  assert.match(report, /personas\/standards\.md/);
+  writeFileSync(join(reviews, "spec-fidelity.brief.md"), "Review the diff `git diff main...HEAD` against the spec.\n");
+  const run = panel();
+  assert.equal(run.status, 0, `${filled}\n${run.stdout}\n${run.stderr}`);
+  for (const persona of ["standards", "spec-fidelity"]) {
+    const report = readFileSync(join(reviews, `${persona}.md`), "utf8");
+    assert.ok(report.includes("2. No production access. (user)"), report);
+    assert.match(report, new RegExp(`personas/${persona}\\.md`));
+  }
 });
 
 test("the subagents skill's launcher block runs as written", (t) => {

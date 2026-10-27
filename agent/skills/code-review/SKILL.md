@@ -49,27 +49,37 @@ A detail seat takes the **subagents** skill's `code-review detail personas` role
 
 Write one assignment per persona, per the **subagents** skill. Each is a delegate whose write scope is nothing in the repository. Its assignment holds the diff command, the commits, the fixed point, the spec or inferred intent, the standards record or the files you found, the guardrail commands, and the done condition: every hunk in scope read through the persona's lens. Give a persona the artifact and the contract, never the journey: leave out your reasoning about the change and what you expect it to find. The contract includes the user's recorded decisions and the binding orders, marked as settled, so a persona grades against them instead of re-proposing a declined call. A reviewer handed your conclusions returns validation of them.
 
-The review's folder is `reviews/<branch>-<short-sha>/` in the state folder, as an absolute path. Write each assignment to `<persona>.brief.md` in the review's folder, then start the personas all at once with `bg_start`, through the **subagents** skill's launcher. Each launch appends its persona file and the shared finding format, passes the standing-orders file of the playbook running the review (or `none` when it keeps none), and writes its report to `<persona>.md` in the review's folder:
+The review's folder is `reviews/<branch>-<short-sha>/` in the state folder, as an absolute path. Write each assignment to `<persona>.brief.md` in the review's folder, then start the whole panel in one `bg_start`, so its end wakes you once. The command runs the **subagents** skill's launcher for every persona in parallel, waits for all of them, and prints `<persona> exit <code>` for each seat. Each launch appends its persona file and the shared finding format, passes the standing-orders file of the playbook running the review (or `none` when it keeps none), writes its report to `<persona>.md` in the review's folder, and writes its launcher lines, including the session id, to `<persona>.log`:
 
 ```bash
-$HOME/.pi/agent/skills/subagents/scripts/launch.ts \
-  --kind delegate \
-  --role persona \
-  --brief "<review folder>/<persona>.brief.md" \
-  --orders "<orders file, or none>" \
-  --append "<this skill's directory>/personas/<persona>.md" \
-  --append "<this skill's directory>/references/finding-format.md" \
-  --model <model> \
-  --thinking high \
-  --name "subagent: code-review <persona>" \
-  > "<review folder>/<persona>.md"
+review="<review folder>"; skill="<this skill's directory>"
+: > "$review/panel.exits"
+seat() { # <persona> <model>
+  $HOME/.pi/agent/skills/subagents/scripts/launch.ts \
+    --kind delegate \
+    --role persona \
+    --brief "$review/$1.brief.md" \
+    --orders "<orders file, or none>" \
+    --append "$skill/personas/$1.md" \
+    --append "$skill/references/finding-format.md" \
+    --model "$2" \
+    --thinking high \
+    --name "subagent: code-review $1" \
+    > "$review/$1.md" 2> "$review/$1.log"
+  echo "$1 exit $?" | tee -a "$review/panel.exits"
+}
+seat spec-fidelity <model> &
+seat standards <model> &
+# one seat line per persona on the panel
+wait
+! grep -qv ' exit 0$' "$review/panel.exits"
 ```
 
-An exit 2 means the launcher refused the assignment and started no persona: fix the cause it printed and launch that persona again.
+The terminal exits 1 when any seat exited non-zero. A seat's exit 2 means the launcher refused its assignment and started no persona: fix the cause its `<persona>.log` names, and launch that persona again: the same command with only its seat line.
 
 ## 6. Verify and judge
 
-Read each persona's report from its file once its terminal completes. A report that is empty or has no `## Findings` section is a failed seat: rerun that persona once on `anthropic/claude-opus-5-5` at `high`, and when the rerun fails too, list the seat as failed in the report's Panel line. Verify before you judge. For every `critical` and `warning`, read the cited code yourself. When the finding carries a command or a counterexample, read it, then run it; run anything from a branch you don't trust in a throwaway worktree or container. When it claims a caller can pass a value, trace the caller. A claim that does not reproduce is Dismissed with what you saw. When a finding's suggested fix is out of bounds, such as a CI change the run may not make, keep its risk open and look for a local witness you may run, such as building the deploy artifact, before you downgrade it. Whether the finding is valid, whether its fix is permitted, and whether a witness proves it are three separate judgments.
+Read each persona's report from its file once the panel's terminal completes. A report that is empty or has no `## Findings` section is a failed seat: rerun that persona once on `anthropic/claude-opus-5-5` at `high`, and when the rerun fails too, list the seat as failed in the report's Panel line. Verify before you judge. For every `critical` and `warning`, read the cited code yourself. When the finding carries a command or a counterexample, read it, then run it; run anything from a branch you don't trust in a throwaway worktree or container. When it claims a caller can pass a value, trace the caller. A claim that does not reproduce is Dismissed with what you saw. When a finding's suggested fix is out of bounds, such as a CI change the run may not make, keep its risk open and look for a local witness you may run, such as building the deploy artifact, before you downgrade it. Whether the finding is valid, whether its fix is permitted, and whether a witness proves it are three separate judgments.
 
 Then sort each persona's findings into four buckets, using the [lead judgment framework](references/lead-judgment.md):
 

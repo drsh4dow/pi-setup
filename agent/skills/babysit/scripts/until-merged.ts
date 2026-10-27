@@ -19,6 +19,7 @@ import {
   type ConditionKind,
   LANES,
   type Ledger,
+  type Lifecycle,
   MonitorStateError,
   type MonitorLane,
   type PrLedger,
@@ -57,6 +58,8 @@ const PROTOCOL_VERSION = 1;
 const PREVIEW_LIMIT = 20;
 const EXCERPT_LIMIT = 200;
 const REPLY_MARKER = /^<!-- pi-event:([0-9a-f]{64}) -->$/;
+/** Ends every PR reply a babysitter posts, so a watcher on the same login does not wake on it. */
+const OWN_REPLY_MARKER = /^<!-- pi-event:reply -->$/;
 
 interface Environment {
   readonly repository: T.Repository;
@@ -165,14 +168,26 @@ function recoverLane(
   });
 }
 
+const owesFinalRead = (pr: PrLedger): boolean => pr.finalRead === "owed";
+
+function finishFinalRead(step: PrStep): void {
+  step.pr = { ...step.pr, finalRead: "done" };
+}
+
+/**
+ * Reports a lane that gave up, once per outage. A failed final read is the
+ * exception. It gets its own item even during an outage already reported, and
+ * that item settles the final read.
+ */
 function markLaneUnavailable(
   step: PrStep,
   lane: MonitorLane,
   failure: T.QueryFailure,
   environment: Environment
 ): void {
+  const isFinalRead = lane === "feedback" && owesFinalRead(step.pr);
   const outage = step.pr.outages[lane];
-  if (outage.active) return;
+  if (outage.active && !isFinalRead) return;
   const generation = outage.generation + 1;
   step.pr = {
     ...step.pr,
@@ -186,9 +201,12 @@ function markLaneUnavailable(
       generation,
     ]),
     kind: "status-unavailable",
-    excerpt: `${lane} reads for #${step.pr.number} keep failing: ${failure.detail}`,
-    detail: { lane, outageGeneration: generation, failure },
+    excerpt: isFinalRead
+      ? `the final ${lane} read for #${step.pr.number} failed, so comments since the last read are unread: ${failure.detail}`
+      : `${lane} reads for #${step.pr.number} keep failing: ${failure.detail}`,
+    detail: { lane, outageGeneration: generation, failure, finalRead: isFinalRead },
   });
+  if (isFinalRead) finishFinalRead(step);
 }
 
 interface Revision {
@@ -249,18 +267,27 @@ function revisions(snapshot: FeedbackSnapshot): readonly Revision[] {
   return all;
 }
 
-function trailingReplyMarkers(body: string): readonly AttentionId[] {
+function trailingReplyMarkers(body: string): {
+  readonly ownReply: boolean;
+  readonly acks: readonly AttentionId[];
+} {
   const lines = body
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== "");
-  const ids: AttentionId[] = [];
+  let ownReply = false;
+  const acks: AttentionId[] = [];
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const id = REPLY_MARKER.exec(lines[index] ?? "")?.[1];
+    const line = lines[index] ?? "";
+    if (OWN_REPLY_MARKER.test(line)) {
+      ownReply = true;
+      continue;
+    }
+    const id = REPLY_MARKER.exec(line)?.[1];
     if (id === undefined || !isAttentionId(id)) break;
-    ids.push(id);
+    acks.push(id);
   }
-  return ids;
+  return { ownReply, acks };
 }
 
 function observeFeedback(
@@ -273,8 +300,8 @@ function observeFeedback(
   for (const revision of revisions(snapshot)) {
     if (revision.authorLogin === snapshot.viewerLogin) {
       const markers = trailingReplyMarkers(revision.body);
-      if (markers.length > 0) {
-        for (const id of markers)
+      if (markers.ownReply || markers.acks.length > 0) {
+        for (const id of markers.acks)
           if (deliveredFeedback.has(id)) step.acknowledged.add(id);
         continue;
       }
@@ -401,19 +428,33 @@ function gateReason(
   return null;
 }
 
-function lifecycleOf(facts: T.PullRequestFacts): PrLedger["lifecycle"] {
-  if (facts.state === "MERGED" || facts.mergedAt !== null)
-    return { kind: "merged", mergedAt: facts.mergedAt };
+const isMerged = (facts: T.PullRequestFacts): boolean =>
+  facts.state === "MERGED" || facts.mergedAt !== null;
+
+function lifecycleOf(facts: T.PullRequestFacts): Lifecycle {
+  if (isMerged(facts)) return { kind: "merged", mergedAt: facts.mergedAt };
   if (facts.state === "CLOSED") return { kind: "closed" };
   return { kind: "open" };
 }
+const hasEnded = (lifecycle: Lifecycle): boolean =>
+  lifecycle.kind === "merged" || lifecycle.kind === "closed";
 
+/**
+ * A member first seen merged or closed, after it was open or unknown, owes its
+ * final read. A reopen leaves `finalRead` unchanged.
+ */
 function observeLifecycle(
   step: PrStep,
   facts: T.PullRequestFacts,
   environment: Environment
 ): void {
-  step.pr = { ...step.pr, lifecycle: lifecycleOf(facts) };
+  const lifecycle = lifecycleOf(facts);
+  const endedThisPoll = hasEnded(lifecycle) && !hasEnded(step.pr.lifecycle);
+  step.pr = {
+    ...step.pr,
+    lifecycle,
+    finalRead: endedThisPoll ? "owed" : step.pr.finalRead,
+  };
   if (step.pr.lifecycle.kind !== "open") return;
   const head = facts.headRefOid;
   const merge = mergeability(facts);
@@ -488,7 +529,6 @@ function mergeReadyProof(
       context: facts.context,
       facts,
       threads: [],
-      reviewPasses: [],
       ci,
       reviewAutomationRunning: false,
     },
@@ -544,17 +584,22 @@ function scopeStatus(
   const merged: T.MergedPr[] = [];
   const closed: T.PrContext[] = [];
   const stillOpen: T.PrContext[] = [];
+  let finalReadOwed = false;
   for (const number of ledger.scope) {
     const context = { ...ledger.repository, number };
-    const lifecycle = memberLedger(ledger, number).lifecycle;
-    if (lifecycle.kind === "merged")
+    const pr = memberLedger(ledger, number);
+    const lifecycle = pr.lifecycle;
+    if (owesFinalRead(pr)) {
+      finalReadOwed = true;
+      stillOpen.push(context);
+    } else if (lifecycle.kind === "merged")
       merged.push({ kind: "merged-pr", context, mergedAt: lifecycle.mergedAt });
     else if (lifecycle.kind === "closed" && readThisPoll.has(number))
       closed.push(context);
     else stillOpen.push(context);
   }
   const closedMembers = nonEmpty(closed);
-  if (closedMembers !== null)
+  if (closedMembers !== null && !finalReadOwed)
     return {
       kind: "finished",
       result: { kind: "closed", closed: closedMembers, merged, stillOpen },
@@ -652,36 +697,55 @@ async function monitor(args: {
         return null;
       }
     };
+    const readFeedback = async (
+      number: T.PrNumber,
+      context: T.PrContext
+    ): Promise<FeedbackSnapshot | null> => {
+      const snapshot = await attempt(number, "feedback", () =>
+        feedback.feedback(context)
+      );
+      if (snapshot !== null) {
+        const delivered = deliveredFeedback(ledger, number);
+        ledger = updateMember(ledger, number, (step) => {
+          observeFeedback(step, snapshot, delivered, environment);
+          finishFinalRead(step);
+        });
+      }
+      return snapshot;
+    };
     const readThisPoll = new Set<T.PrNumber>();
     let frontier: T.PrNumber | null = null;
     let frontierView: FrontierView | null = null;
     for (const number of ledger.scope) {
-      if (memberLedger(ledger, number).lifecycle.kind === "merged") continue;
       const context = { ...repository, number };
-      const facts = await attempt(number, "lifecycle", () =>
-        reader.pullRequest(context)
-      );
+      // GitHub cannot reopen a merged PR, so the watcher skips its lifecycle
+      // read.
+      const facts =
+        memberLedger(ledger, number).lifecycle.kind === "merged"
+          ? null
+          : await attempt(number, "lifecycle", () =>
+              reader.pullRequest(context)
+            );
       if (facts !== null) {
         readThisPoll.add(number);
         ledger = updateMember(ledger, number, (step) =>
           observeLifecycle(step, facts, environment)
         );
       }
-      const lifecycle = memberLedger(ledger, number).lifecycle.kind;
-      if (lifecycle === "merged" || lifecycle === "closed") continue;
+      const member = memberLedger(ledger, number);
+      // A failed final read stays owed in the saved ledger, so every later poll
+      // and arm retries it, whatever the lifecycle read returns.
+      const owed = owesFinalRead(member);
+      if (hasEnded(member.lifecycle)) {
+        if (owed) await readFeedback(number, context);
+        continue;
+      }
       frontier ??= number;
       const isFrontier = frontier === number;
-      if (!isFrontier && !sweep) continue;
-      const snapshot = await attempt(number, "feedback", () =>
-        feedback.feedback(context)
-      );
-      if (snapshot !== null) {
-        const delivered = deliveredFeedback(ledger, number);
-        ledger = updateMember(ledger, number, (step) =>
-          observeFeedback(step, snapshot, delivered, environment)
-        );
-      }
-      if (facts === null) continue;
+      const watched = isFrontier || sweep;
+      if (!watched && !owed) continue;
+      const snapshot = await readFeedback(number, context);
+      if (!watched || facts === null) continue;
       const ci = await attempt(number, "ci", () => readCi(reader, facts));
       if (ci === null) continue;
       ledger = updateMember(ledger, number, (step) =>
@@ -812,7 +876,7 @@ async function reviseQueuedScope(args: {
     if (keptMembers.has(number)) continue;
     if (memberLedger(saved, number).lifecycle.kind === "merged") continue;
     const facts = await args.reader.pullRequest({ ...saved.repository, number });
-    if (lifecycleOf(facts).kind !== "merged")
+    if (!isMerged(facts))
       throw mismatch(`#${number} is dropped but not merged`);
   }
   const known = new Set(saved.prs.map((pr) => pr.number));

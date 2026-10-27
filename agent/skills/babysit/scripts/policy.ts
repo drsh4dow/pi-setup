@@ -178,27 +178,30 @@ export async function readSnapshot(args: {
       ),
   };
 }
-const conflictBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
+export type ReadinessRow =
+  | Extract<T.PrSnapshot, { readonly kind: "merged" | "closed" }>
+  | Omit<Extract<T.PrSnapshot, { readonly kind: "open" }>, "reviewPasses">;
+const conflictBlocker = (row: ReadinessRow): T.MergeBlocker | null =>
   row.kind === "open" &&
   (row.facts.mergeable === "CONFLICTING" ||
     row.facts.mergeStateStatus === "DIRTY" ||
     row.facts.mergeStateStatus === "CONFLICTING")
     ? { kind: "merge-conflicts", pr: row.context, facts: row.facts }
     : null;
-function threadBlocker(row: T.PrSnapshot): T.MergeBlocker | null {
+function threadBlocker(row: ReadinessRow): T.MergeBlocker | null {
   if (row.kind !== "open") return null;
   const threads = nonEmpty(row.threads);
   return threads === null
     ? null
     : { kind: "review-threads", pr: row.context, threads };
 }
-const ciBlocker = (row: T.PrSnapshot): T.MergeBlocker | null =>
+const ciBlocker = (row: ReadinessRow): T.MergeBlocker | null =>
   row.kind === "open" &&
   (row.ci.kind === "ci-failing" || row.ci.kind === "ci-github-rejected")
     ? { kind: "failing-checks", pr: row.context, ci: row.ci }
     : null;
 function gateReason(
-  row: T.PrSnapshot,
+  row: ReadinessRow,
   allowDraft: boolean
 ): T.MergeGateReason | null {
   if (row.kind === "merged") return null;
@@ -209,7 +212,7 @@ function gateReason(
     : null;
 }
 function gateBlocker(
-  row: T.PrSnapshot,
+  row: ReadinessRow,
   allowDraft: boolean
 ): T.MergeBlocker | null {
   const reason = gateReason(row, allowDraft);
@@ -221,7 +224,7 @@ function gateBlocker(
     : { kind: "merge-gate", pr: row.context, reason };
 }
 export function readyContribution(
-  row: T.PrSnapshot,
+  row: ReadinessRow,
   allowDraft: boolean
 ): T.ReadyPr | T.MergedPr | null {
   if (row.kind === "merged")

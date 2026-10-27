@@ -182,7 +182,9 @@ function readHostLoad(): HostLoad {
   const memPath = process.env.PI_LAUNCH_MEMINFO ?? "/proc/meminfo";
 
   try {
-    const load = Number(readFileSync(loadPath, "utf8").split(/\s+/)[0]);
+    // An empty or blank file has no first token, and Number(undefined) is NaN, so the launcher
+    // refuses it instead of reading load 0.
+    const load = Number(/^(\S+)/.exec(readFileSync(loadPath, "utf8"))?.[1]);
     const kib = Number(/^MemAvailable:\s+(\d+)\s+kB/m.exec(readFileSync(memPath, "utf8"))?.[1]);
 
     if (Number.isFinite(load) && Number.isFinite(kib))

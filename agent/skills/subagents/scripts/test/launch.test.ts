@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -76,6 +85,11 @@ function host(t: TestContext): Host {
       return path;
     },
   };
+}
+
+function replaceAtomically(path: string, text: string): void {
+  writeFileSync(`${path}.next`, text);
+  renameSync(`${path}.next`, path);
 }
 
 interface Run {
@@ -338,11 +352,25 @@ test("a spawn holds while the host is saturated and starts once it is not", asyn
   assert.match(stderr, /holding, host saturated: load 41\.00 \(max 16\), MemAvailable 32\.0 GiB \(min 2 GiB\)/);
   assert.equal(existsSync(h.marker), false, "held, so no Pi process yet");
 
-  writeFileSync(loadavg, "3.00 30.00 20.00 9/900 1\n");
+  replaceAtomically(loadavg, "3.00 30.00 20.00 9/900 1\n");
 
   assert.equal(await exited, 0, stderr);
   assert.match(stderr, /admitted: load 3\.00 \(max 16\)/);
   assert.equal(existsSync(h.marker), true, "the spawn started once the host freed up");
+});
+
+test("an empty load file refuses the spawn instead of admitting it", (t) => {
+  const h = host(t);
+  const brief = h.brief("brief.md", IMPLEMENTER_BRIEF);
+  const loadavg = h.env.PI_LAUNCH_LOADAVG ?? "";
+
+  for (const text of ["", " \n"]) {
+    writeFileSync(loadavg, text);
+    const run = launch(h, baseArgs(h, brief));
+
+    assert.doesNotMatch(run.stderr, /admitted/);
+    assertRefused(h, run, /could not parse the load in \S*loadavg/);
+  }
 });
 
 test("a spawn holds while MemAvailable is below the floor", (t) => {

@@ -51,7 +51,7 @@ Done when every ticket in the batch has a `raw/` file that holds its comments, r
 
 ## 2. Ground
 
-For each ticket, launch one delegate subagent per [subagents](../subagents/SKILL.md), at most four at a time, from the project directory so the tracker tools reach them. Redirect each one's stdout to `grounding/<id>.md`. Pin it to one commit of each repository it reads, the tip of the branch production deploys from unless the ticket's work lives on an open PR, and have it name that commit. It changes nothing in a shared checkout. A reproduction that writes files, such as a build or a test run, runs in its own worktree or scratch directory, and a claim it could not reproduce says it rests on reading the code.
+For each ticket, launch one delegate subagent per [subagents](../subagents/SKILL.md), at most four at a time, from the project directory so the tracker tools reach them. Redirect each one's stdout to `grounding/<id>.md`. Pin it to one commit of each repository it reads, the tip of the branch production deploys from unless the ticket's work lives on an open PR, and have it name that commit. It writes nothing to the tracker and changes nothing in a shared checkout. A reproduction that writes files, such as a build or a test run, runs in its own worktree or scratch directory, and a claim it could not reproduce says it rests on reading the code.
 
 Give it the ticket's `raw/` file, the glossary and ADRs for its area, and this task:
 
@@ -105,13 +105,13 @@ Show the user, for each ticket: the diff from its `raw/` body to its draft, the 
 
 Apply the plan one write at a time, and mark each `applied`, with the id the tracker returned, before the next:
 
-- Fetch the ticket just before writing it. When it changed since its `raw/` file, stop, show the change, and ask again.
-- Publish or edit each body by the publish steps in writing-good-tickets. Use the record's **Nest under a parent** and **Block** for relations, **Close** for closures, and **Comment** for each ticket's comment, which says what triage changed and the decisions behind it.
+- Fetch each ticket just before its first write. When it changed since its `raw/` file, stop, show the change, and ask again. Its later writes need no fresh check, because the plan's own writes change it.
+- Publish or edit each body by the publish steps in writing-good-tickets. Use the record's **Nest under a parent** and **Block** for relations, **Close** for closures, in its duplicate form for a duplicate, and **Comment** for each ticket's comment, which says what triage changed and the decisions behind it.
 - When the tracker already has a ready-for-agent label, apply it to each ready ticket. Create no labels.
 - Leave the fields triage did not decide, such as assignee, priority, and estimate, as they are.
 - After a failed or lost response, **Search** or **Fetch** for the write before retrying it, so a retry never creates a second ticket or comment.
 
-Fetch every ticket the plan touched and compare it with the plan: body, title, parent, blockers, duplicate target, state, and label. A body includes any `Part of` or `Blocked by` line the record's relation fallback adds. Mark each match `verified`. Fix each difference at its cause once, and report the differences that remain.
+Fetch every ticket the plan touched and compare it with the plan: body, title, parent, blockers, duplicate target, state, label, and each planned comment. A body includes any `Part of` or `Blocked by` line the record's relation fallback adds. Mark each match `verified`. Fix each difference at its cause once, and report the differences that remain.
 
 ## 7. Report
 

@@ -47,11 +47,21 @@ export interface Generation {
   readonly active: boolean;
   readonly generation: number;
 }
+/**
+ * A member owes its final read from the poll that first sees it merged or
+ * closed until that read's feedback is queued for the agent, or its failure
+ * is: a status-unavailable item for the final read.
+ */
+export type FinalRead = "owed" | "done";
 export type Lifecycle =
   | { readonly kind: "unknown" }
   | { readonly kind: "open" }
-  | { readonly kind: "merged"; readonly mergedAt: string | null }
-  | { readonly kind: "closed" };
+  | {
+      readonly kind: "merged";
+      readonly mergedAt: string | null;
+      readonly finalRead: FinalRead;
+    }
+  | { readonly kind: "closed"; readonly finalRead: FinalRead };
 export interface PrLedger {
   readonly number: T.PrNumber;
   readonly lifecycle: Lifecycle;
@@ -194,11 +204,20 @@ function lifecycle(value: unknown, path: string): Lifecycle {
     ["unknown", "open", "merged", "closed"] as const,
     `${path}.kind`
   );
-  if (kind !== "merged") return { kind };
+  if (kind === "unknown" || kind === "open") return { kind };
+  // Ledgers written before the final read was saved have no `finalRead`
+  // field. They saved a member merged or closed only once its final read had
+  // landed or failed, so load it as done.
+  const finalRead =
+    raw.finalRead === undefined
+      ? "done"
+      : oneOf(raw.finalRead, ["owed", "done"] as const, `${path}.finalRead`);
+  if (kind === "closed") return { kind, finalRead };
   return {
     kind,
     mergedAt:
       raw.mergedAt === null ? null : text(raw.mergedAt, `${path}.mergedAt`),
+    finalRead,
   };
 }
 function prLedger(value: unknown, path: string): PrLedger {

@@ -1279,6 +1279,99 @@ describe("the final read", () => {
     expect(last.code).toBe(8);
     expect(kinds(last.items)).toEqual([[1, "feedback", "comment by alice"]]);
   });
+
+  it("keeps a final read owed through a retry poll whose lifecycle read fails", async () => {
+    const scene = world();
+    const stack = ["--queued-stack", "--stack-prs", "1,2"];
+    expect((await watch(scene, stack)).code).toBe(5);
+    scene.facts.set(1, mergedFacts);
+    scene.facts.set(2, { state: "CLOSED" });
+    scene.feedback.set(1, { kind: "failure", failure: outage });
+    let lifecycleReads = 0;
+    scene.onSleep = () => {
+      scene.beforePullRequest = async () => {
+        lifecycleReads += 1;
+        if (lifecycleReads === 1) throw new WatcherQueryError(outage);
+      };
+    };
+    const told = await watch(scene, [...stack, "--max-query-errors", "3", "--timeout", "600"]);
+    expect(told.code).toBe(8);
+    expect(told.items.map((item) => [item.pr, item.kind, item.detail.lane])).toEqual([
+      [1, "status-unavailable", "feedback"],
+    ]);
+  });
+
+  it("resumes an owed final read in the next arm after the watcher exits", async () => {
+    const scene = world();
+    const stack = ["--queued-stack", "--stack-prs", "1,2"];
+    expect((await watch(scene, stack)).code).toBe(5);
+    scene.facts.set(1, mergedFacts);
+    scene.facts.set(2, { state: "CLOSED" });
+    scene.feedback.set(1, { kind: "failure", failure: outage });
+    const timedOut = await watch(scene, [...stack, "--max-query-errors", "3", "--timeout", "10"]);
+    expect(timedOut.code).toBe(5);
+    expect(timedOut.records.at(-1)).toMatchObject({ frontier: { number: 1 } });
+
+    let lifecycleReads = 0;
+    scene.beforePullRequest = async () => {
+      lifecycleReads += 1;
+      if (lifecycleReads === 1) throw new WatcherQueryError(outage);
+    };
+    const told = await watch(scene, [...stack, "--max-query-errors", "3", "--timeout", "600"]);
+    expect(told.code).toBe(8);
+    expect(told.items.map((item) => [item.pr, item.kind, item.detail.lane])).toEqual([
+      [1, "status-unavailable", "feedback"],
+    ]);
+    const done = await watch(scene, [...stack, ...acks(told.items)]);
+    expect(done.code).toBe(0);
+    expect(done.records.at(-1)).toMatchObject({
+      kind: "FINISHED",
+      result: {
+        kind: "closed",
+        closed: [{ number: 2 }],
+        merged: [{ context: { number: 1 } }],
+        stillOpen: [],
+      },
+    });
+  });
+
+  it("treats members ended in state written before final reads were saved as read", async () => {
+    const scene = world();
+    const stack = ["--queued-stack", "--stack-prs", "1,2"];
+    scene.facts.set(1, mergedFacts);
+    scene.facts.set(2, { state: "CLOSED" });
+    scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "last word on 1")] }));
+    const last = await watch(scene, stack);
+    expect(last.code).toBe(8);
+    const path = join(state, "state.json");
+    const saved: { prs: { lifecycle: Record<string, unknown> }[] } = JSON.parse(
+      readFileSync(path, "utf8")
+    );
+    for (const pr of saved.prs) delete pr.lifecycle.finalRead;
+    writeFileSync(path, JSON.stringify(saved));
+    const reads = scene.feedbackReads.length;
+    const done = await watch(scene, [...stack, ...acks(last.items)]);
+    expect(done.records.at(-1)).toMatchObject({
+      kind: "FINISHED",
+      result: { kind: "closed", closed: [{ number: 2 }], merged: [{ context: { number: 1 } }] },
+    });
+    expect(scene.feedbackReads.length).toBe(reads);
+  });
+
+  it("refuses state whose final read is neither owed nor done", async () => {
+    const scene = world();
+    scene.facts.set(1, mergedFacts);
+    expect((await watch(scene)).code).toBe(0);
+    const path = join(state, "state.json");
+    const saved: { prs: { lifecycle: Record<string, unknown> }[] } = JSON.parse(
+      readFileSync(path, "utf8")
+    );
+    for (const pr of saved.prs) pr.lifecycle.finalRead = "maybe";
+    writeFileSync(path, JSON.stringify(saved));
+    const refused = await watch(scene);
+    expect(refused.code).toBe(73);
+    expect(refused.stderr).toContain("state.prs[0].lifecycle.finalRead");
+  });
 });
 
 describe("own replies", () => {

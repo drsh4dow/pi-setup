@@ -212,15 +212,10 @@ function lifecycle(value: unknown, path: string): Lifecycle {
   };
 }
 function finalRead(raw: Record<string, unknown>, path: string): FinalRead {
-  if (raw.finalRead !== undefined)
-    return oneOf(raw.finalRead, FINAL_READS, `${path}.finalRead`);
-  // Ledgers written before the final read got its own field saved it inside a
-  // merged or closed lifecycle. Ledgers older still saved a member merged or
-  // closed only once its final read had landed or failed, so load it as done.
-  const saved = object(raw.lifecycle, `${path}.lifecycle`).finalRead;
-  if (saved !== undefined)
-    return oneOf(saved, FINAL_READS, `${path}.lifecycle.finalRead`);
-  return "done";
+  // Ledgers from watchers that had no final read lack the field. Their ended
+  // members load as done, so the watcher does not read them again.
+  if (raw.finalRead === undefined) return "done";
+  return oneOf(raw.finalRead, FINAL_READS, `${path}.finalRead`);
 }
 function prLedger(value: unknown, path: string): PrLedger {
   const raw = object(value, path);

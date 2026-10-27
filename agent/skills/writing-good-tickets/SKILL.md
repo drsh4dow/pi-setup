@@ -160,4 +160,4 @@ Write the body to a file and run both gates.
 
    A delegate launches no subagent, so it writes the body file and names this read in its report for its parent to run.
 
-Publish the same file through the tracker, such as with `gh issue create --body-file` or `gh issue edit --body-file` on GitHub.
+Publish the same file through the tracker, then read the ticket back and compare what the tracker stored with the title and the body file. On GitHub, publish with `gh issue create --body-file` or `gh issue edit --body-file`, read back with `gh issue view <n> --json title,body`, and diff the body with `gh issue view <n> --json body --jq .body | diff <body-file> -`. Fix each difference at its cause, such as a shell expansion or a template the tracker applied, republish, and read it back once more. Report any difference that remains.

@@ -42,8 +42,14 @@ export function parseShellEnv(output: string, marker: string) {
   return env;
 }
 
-// Starts a login shell from a bare environment, the way a terminal emulator does, so the result
-// shows what the user's shell profile sets up and not what the doctor inherited.
+// The shell a new terminal starts: macOS terminals start login shells, and Linux terminal
+// emulators start non-login ones.
+export function newShellArgs(platform: NodeJS.Platform) {
+  return platform === "darwin" ? ["-l", "-i"] : ["-i"];
+}
+
+// Starts that shell from a bare environment, so the result shows what the user's startup files
+// set up and not what the doctor inherited.
 export function readNewShell(home: string): ShellRead {
   const shell = process.env.SHELL || userInfo().shell || "/bin/sh";
   const marker = "__pi_setup_doctor_env__";
@@ -66,7 +72,7 @@ export function readNewShell(home: string): ShellRead {
   ])
     if (process.env[name]) bare[name] = process.env[name];
 
-  const run = spawnSync(shell, ["-l", "-i", "-c", `echo ${marker}; env`], {
+  const run = spawnSync(shell, [...newShellArgs(process.platform), "-c", `echo ${marker}; env`], {
     cwd: home,
     env: bare,
     encoding: "utf8",

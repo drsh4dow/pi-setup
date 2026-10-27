@@ -72,27 +72,43 @@ function fromSetup(machine: Machine, path: string) {
   return path.startsWith(machine.dataDir + sep) || path.startsWith(machine.vitePlusBin + sep);
 }
 
+// The leading newline keeps the line whole when the file's last line has no newline.
+function appendLine(line: string, file: string) {
+  return `printf '\\n%s\\n' '${line}' >> ${file}`;
+}
+
+// The startup file the shell from newShellArgs reads. Linux terminals start interactive bash,
+// which reads ~/.bashrc. macOS terminals start login bash, which reads only the first of these
+// that exists.
+function bashStartupFile(home: string, platform: NodeJS.Platform) {
+  if (platform !== "darwin") return "~/.bashrc";
+
+  const login = [".bash_profile", ".bash_login", ".profile"].find((name) =>
+    existsSync(join(home, name)),
+  );
+
+  return `~/${login ?? ".bash_profile"}`;
+}
+
 export function activationFix({
   shell,
   mise,
   platform,
+  home,
 }: {
   shell: string;
   mise: string;
   platform: NodeJS.Platform;
+  home: string;
 }) {
   switch (basename(shell)) {
-    case "bash": {
-      // macOS terminals start login shells, which read ~/.bash_profile instead of ~/.bashrc.
-      const file = platform === "darwin" ? "~/.bash_profile" : "~/.bashrc";
-
-      return `echo 'eval "$(${mise} activate bash)"' >> ${file}`;
-    }
+    case "bash":
+      return appendLine(`eval "$(${mise} activate bash)"`, bashStartupFile(home, platform));
 
     case "zsh":
-      return `echo 'eval "$(${mise} activate zsh)"' >> ~/.zshrc`;
+      return appendLine(`eval "$(${mise} activate zsh)"`, "~/.zshrc");
     case "fish":
-      return `echo '${mise} activate fish | source' >> ~/.config/fish/config.fish`;
+      return appendLine(`${mise} activate fish | source`, "~/.config/fish/config.fish");
     default:
       return undefined;
   }
@@ -163,7 +179,13 @@ function checkShell(machine: Machine, mise: string): Finding {
   if (machine.miseActive)
     return { status: "ok", check: "shell", detail: `a new ${name} has mise's tools on PATH` };
 
-  const fix = activationFix({ shell: machine.shell, mise, platform: process.platform });
+  const fix = activationFix({
+    shell: machine.shell,
+    mise,
+    platform: process.platform,
+    home: machine.home,
+  });
+
   const detail = `a new ${name} does not activate mise, so it finds none of the tools mise installed.`;
 
   if (!fix)

@@ -14,7 +14,7 @@ import { delimiter, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
 import { TIER_NAMES, activationFix, judgePiLoad } from "../doctor/doctor.ts";
-import { parsePiOutput, parseShellEnv, resolveCommand } from "../doctor/probe.ts";
+import { newShellArgs, parsePiOutput, parseShellEnv, resolveCommand } from "../doctor/probe.ts";
 
 const repo = realpathSync(new URL("../..", import.meta.url).pathname);
 
@@ -98,22 +98,40 @@ test("Pi passes only when it loads every skill of this checkout without errors",
   assert.equal(silent.status, "fail");
 });
 
-test("the bash activation fix makes a new login shell activate mise", (t) => {
-  const home = scratch(t);
-  const mise = join(home, "mise");
-  executable(mise, 'echo "export PI_SETUP_ACTIVATED=$2"');
-  // Debian's default ~/.profile sources ~/.bashrc; a bare HOME needs the same link.
-  writeFileSync(join(home, ".profile"), '. "$HOME/.bashrc"\n');
+// Each case is a home whose startup files end without a newline, as GitHub's macOS runner's
+// ~/.bash_profile does. The fix must reach the shell a new terminal starts on that platform.
+const startupCases: { platform: NodeJS.Platform; name: string; files: Record<string, string> }[] = [
+  {
+    platform: "linux",
+    name: "a ~/.bash_profile that does not read ~/.bashrc",
+    files: { ".bash_profile": 'export NVM_DIR="$HOME/.nvm"', ".bashrc": "export EDITOR=vi" },
+  },
+  {
+    platform: "darwin",
+    name: "a ~/.bash_profile",
+    files: { ".bash_profile": "export EDITOR=vi", ".bashrc": "export EDITOR=nano" },
+  },
+  { platform: "darwin", name: "only a ~/.profile", files: { ".profile": "export EDITOR=vi" } },
+];
 
-  const fix = activationFix({ shell: "/bin/bash", mise, platform: "linux" });
-  const env = { HOME: home, PATH: process.env.PATH };
-  assert.ok(fix);
-  assert.equal(spawnSync("bash", ["-c", fix], { env }).status, 0);
+for (const { platform, name, files } of startupCases)
+  test(`the bash activation fix on ${platform} reaches a new terminal's shell, with ${name}`, (t) => {
+    const home = scratch(t);
+    const mise = join(home, "mise");
+    executable(mise, 'echo "export PI_SETUP_ACTIVATED=$2"');
 
-  const shell = spawnSync("bash", ["-l", "-i", "-c", "echo $PI_SETUP_ACTIVATED"], {
-    env,
-    encoding: "utf8",
+    for (const [file, content] of Object.entries(files)) writeFileSync(join(home, file), content);
+
+    const fix = activationFix({ shell: "/bin/bash", mise, platform, home });
+    const env = { HOME: home, PATH: process.env.PATH };
+    assert.ok(fix);
+    assert.equal(spawnSync("bash", ["-c", fix], { env }).status, 0);
+
+    const shell = spawnSync(
+      "bash",
+      [...newShellArgs(platform), "-c", 'echo "$PI_SETUP_ACTIVATED $EDITOR"'],
+      { env, encoding: "utf8" },
+    );
+
+    assert.equal(shell.stdout.trim(), "bash vi");
   });
-
-  assert.equal(shell.stdout.trim(), "bash");
-});

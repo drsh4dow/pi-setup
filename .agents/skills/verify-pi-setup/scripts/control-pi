@@ -385,8 +385,8 @@ cmd_stop() {
   echo "stopped $RUN_ID; evidence kept in $EVIDENCE"
 }
 
-# Prints to stderr the commands that end the processes and the tmux session of a run id that
-# bind_run refuses. tmux reads an exact session target that ends in ':' whole, dots included.
+# Prints, under the list line it extends, the commands that end the processes and the tmux
+# session of a run id that bind_run refuses. tmux reads an exact session target that ends in ':' whole, dots included.
 leftover_advice() {
   local id=$1 session=vps-$1 pids steps=()
   mapfile -t pids < <(pids_tagged_with "$id")
@@ -396,7 +396,7 @@ leftover_advice() {
   ((${#steps[@]} > 0)) || return 0
   local joined
   joined=$(printf '; %s' "${steps[@]}")
-  echo "control-pi: $id still holds its Pi or its tmux session; end them first with: ${joined#; }" >&2
+  echo "  it still holds its Pi or its tmux session; end them with: ${joined#; }"
 }
 
 cmd_list() {

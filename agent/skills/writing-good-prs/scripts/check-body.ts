@@ -200,6 +200,16 @@ function proseLines(lines: readonly Line[]) {
   return lines.filter((_, index) => !inFence[index]);
 }
 
+// Replaces each inline code span on a line with a space, matched as CommonMark matches them:
+// a run of backticks opens a span that the next run of the same length closes, a run with no
+// such closer stays literal, and a backslash-escaped backtick opens nothing. A quoted marker
+// such as `<!-- pi-event:reply -->` is then not read as a template comment left in.
+const codeSpan = /(?<![\\`])(`+)(?!`)(.*?)(?<!`)\1(?!`)/g;
+
+function withoutCodeSpans(text: string) {
+  return text.replace(codeSpan, " ");
+}
+
 function contentFindings(kind: Kind, body: Body): Finding[] {
   const findings: Finding[] = [];
 
@@ -217,11 +227,13 @@ function contentFindings(kind: Kind, body: Body): Finding[] {
   }
 
   for (const line of proseLines(body.lines)) {
-    if (/[\u2013\u2014]/.test(line.text)) {
+    const text = withoutCodeSpans(line.text);
+
+    if (/[\u2013\u2014]/.test(text)) {
       findings.push({ where: line.number, message: "long dash, use a period or a comma" });
     }
 
-    if (line.text.includes("<!--")) {
+    if (text.includes("<!--")) {
       findings.push({
         where: line.number,
         message: "template comment left in, replace or delete it",

@@ -1,0 +1,44 @@
+name: setup
+
+# Follows SETUP.md on fresh Linux and macOS runners: install mise, put the checkout at ~/.pi, run
+# setup with every tier, then apply the doctor's fixes until it passes. It runs only when a
+# mise.toml changes: the root tasks or a tier's pins.
+on:
+  push:
+    branches: [main]
+    paths: ["**/mise.toml"]
+  pull_request:
+    paths: ["**/mise.toml"]
+
+# Every job here only reads the repository. Without this block, a job gets whatever the repository's default token grants.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  setup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    # A fresh container setup with every tier takes about two minutes.
+    timeout-minutes: 20
+    env:
+      # mise downloads most tools from GitHub releases; the token lifts the anonymous rate limit.
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No step pushes, so the token stays out of .git/config, where every later step could read it.
+          persist-credentials: false
+      # The same installer SETUP.md names, so a mise release that breaks setup fails here too.
+      - run: curl -fsSL https://mise.run | sh
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Pi reads ~/.pi/agent, and the doctor checks that Pi loads this checkout's skills.
+      - run: ln -s "$GITHUB_WORKSPACE" "$HOME/.pi"
+      - run: cd ~/.pi && mise run setup browser formal mail video --link-agent-skills
+      - run: cd ~/.pi && scripts/ci/follow-doctor.sh

@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
+import { stripVTControlCharacters } from "node:util";
 
 import {
   classifyOutcomes,
@@ -388,5 +389,32 @@ test("a rule of ━ that task output follows is relayed, not read as the run's d
     `$ node -e 'setTimeout(() => { console.error("EXPECTED_FAILURE"); process.exit(7); }, 500)' ⊘ cache disabled`,
     "EXPECTED_FAILURE",
     "verify: stopped after the failure: slow",
+  ]);
+});
+
+test("a startup failure after a rule of ━ keeps what the task runner printed", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "verify-startup-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, "package.json"), '{ "name": "graph", "type": "module" }\n');
+  writeFileSync(join(root, "vite.config.ts"), "export default { run: ;\n");
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+
+  const env = vpShim(root, `echo ━━━━━━━━ >&2\necho EARLY_DIAGNOSTIC >&2\nexec "$VP" "$@"`);
+  const result = verify(root, "failing", env);
+
+  const direct = spawnSync(env.REAL_VP ?? "vp", ["run", "--log", "labeled", "-v", "failing"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.notEqual(direct.status, 0, direct.stderr);
+  assert.match(direct.stderr, /PARSE_ERROR/u);
+  assert.equal(
+    result.stderr,
+    `━━━━━━━━\nEARLY_DIAGNOSTIC\n${stripVTControlCharacters(direct.stderr)}`,
+  );
+  assert.deepEqual(result.report, [
+    "verify: failed (exit 1), but the run printed no details, so verify cannot tell which task failed. Read the output above.",
   ]);
 });

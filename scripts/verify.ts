@@ -138,7 +138,13 @@ export function verifyReport(
   return failureReport(result, linesByTask);
 }
 
-// The details end the run, so a task line after a rule of ━ means that rule opened no details.
+// Text verify can read from: the details list each command, or at least their statistics.
+function isDetails(held: readonly string[]) {
+  return held.some((line) => STATISTICS_LINE.test(line) || DETAILS_LINE.test(line.trimEnd()));
+}
+
+// The details end the run, so a task line after a rule of ━ means that rule opened no details,
+// and so does held text that ends the run with nothing verify can read, such as a startup error.
 async function relay(
   input: Readable,
   sink: Writable,
@@ -169,7 +175,11 @@ async function relay(
     else printed.push(text);
   }
 
-  return details;
+  if (details === null || isDetails(details)) return details;
+
+  for (const held of details) sink.write(`${held}\n`);
+
+  return null;
 }
 
 export type InnerRun =

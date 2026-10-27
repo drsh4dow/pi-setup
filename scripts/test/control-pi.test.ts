@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
 const controlPi = new URL(
@@ -21,10 +21,22 @@ const controlPi = new URL(
 
 // A stand-in for tmux, which CI does not install. The run's pane exists while $TMUX_STUB/pane
 // does, and that file holds "alive" or "dead". capture-pane prints $TMUX_STUB/screen, and the
-// pane's PID is $TMUX_STUB/pane_pid when a test started a Pi process under it.
+// pane's PID is $TMUX_STUB/pane_pid when a test started a Pi process under it. The socket's
+// other session names are the lines of $TMUX_STUB/sessions, which has-session finds only by the
+// exact target "=NAME:".
 const stubTmux = `#!/usr/bin/env bash
 while [[ \${1:-} == -L ]]; do shift 2; done
 command=\${1:-}
+case $command in
+list-sessions) exec cat "$TMUX_STUB/sessions" 2>/dev/null ;;
+has-session)
+  target=\${3:-}
+  if [[ $target == =*: ]]; then
+    grep -qxF -- "\${target:1:-1}" "$TMUX_STUB/sessions" 2>/dev/null
+    exit
+  fi
+  ;;
+esac
 [[ -f $TMUX_STUB/pane ]] || exit 1
 case $command in
 list-panes)
@@ -82,6 +94,9 @@ function harness(t: TestContext, run = `control-pi-test-${process.pid}-${++runs}
     },
     screen(text: string) {
       writeFileSync(join(stub, "screen"), text);
+    },
+    tmuxSessions(...names: string[]) {
+      writeFileSync(join(stub, "sessions"), names.map((name) => `${name}\n`).join(""));
     },
     // Starts a process named pi, tagged with the run, under a pane shell that is not tagged,
     // as tmux runs `env VERIFY_PI_SETUP_RUN=... pi` in the pane.
@@ -168,6 +183,76 @@ const jobResult = {
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("a run id with a dot is refused at bind time, naming the allowed characters", (t) => {
+  const h = harness(t);
+
+  for (const command of ["launch", "stop"]) {
+    const result = h.cp(command, "r.1");
+
+    assert.equal(result.status, 1, `${command}: ${result.stderr}`);
+    assert.equal(
+      result.stderr,
+      "control-pi: invalid run id 'r.1': use only letters, digits, '_' and '-'; tmux reads '.' and ':' in a target as separators\n",
+    );
+  }
+});
+
+test("list shows a valid run and flags a leftover run id it cannot bind, with what to do", (t) => {
+  const h = harness(t);
+  h.launch("dead");
+  const leftover = join(dirname(h.scratch), "r.1");
+  mkdirSync(leftover);
+
+  const result = h.cp("list");
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout,
+    `${h.run} dead   \n` +
+      `r.1 invalid ${leftover}: stop refuses this id; remove the directory by hand\n`,
+  );
+});
+
+test("a subcommand given an empty run id says the run id is missing", (t) => {
+  const h = harness(t);
+
+  for (const command of ["stop", "doctor"]) {
+    const result = h.cp(command, "");
+
+    assert.equal(result.status, 1, command);
+    assert.equal(result.stderr, "control-pi: missing RUN_ID\n", command);
+  }
+});
+
+test("list gives the commands that end a dotted leftover's tagged processes and tmux session", async (t) => {
+  const h = harness(t);
+  const withDirectory = `${h.run}.1`;
+  const sessionOnly = `${h.run}.2`;
+  const directory = join(dirname(h.scratch), withDirectory);
+  mkdirSync(directory, { recursive: true });
+  h.tmuxSessions(`vps-${withDirectory}`, `vps-${sessionOnly}`, "vps-valid-run", "unrelated");
+
+  const pi = spawn("sleep", ["30"], {
+    env: { ...process.env, VERIFY_PI_SETUP_RUN: withDirectory },
+    stdio: "ignore",
+  });
+
+  t.after(() => pi.kill());
+  await sleep(200);
+
+  const result = h.cp("list");
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.equal(
+    result.stdout,
+    `${withDirectory} invalid ${directory}: stop refuses this id; remove the directory by hand\n` +
+      `  it still holds its Pi or its tmux session; end them with: kill ${pi.pid}; tmux -L verify-pi-setup kill-session -t =vps-${withDirectory}:\n` +
+      `${sessionOnly} invalid tmux session vps-${sessionOnly}: stop refuses this id\n` +
+      `  it still holds its Pi or its tmux session; end them with: tmux -L verify-pi-setup kill-session -t =vps-${sessionOnly}:\n`,
+  );
+});
 
 test("every wait on a run that was never launched says the run does not exist, not that Pi exited", (t) => {
   const h = harness(t);
@@ -445,12 +530,12 @@ test("wait-idle does not count Pi itself as a background job", (t) => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("wait-idle ignores a process of another run whose id matches this one only as a regex", async (t) => {
-  const h = harness(t, `control-pi.test-${process.pid}`);
+test("wait-idle ignores a process of another run whose id starts with this one", async (t) => {
+  const h = harness(t);
   h.launch();
 
   const other = spawn("sleep", ["30"], {
-    env: { ...process.env, VERIFY_PI_SETUP_RUN: h.run.replace(".", "x") },
+    env: { ...process.env, VERIFY_PI_SETUP_RUN: `${h.run}-other` },
     stdio: "ignore",
   });
 

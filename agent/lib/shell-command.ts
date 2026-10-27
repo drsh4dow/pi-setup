@@ -9,7 +9,7 @@
 // as a command. Comments, redirections, and other heredoc bodies are dropped. It
 // follows at most MAX_NESTING levels of nesting.
 
-import { commandInput, echoedText, runsWordsAt } from "./command-input.ts";
+import { commandInput, echoedText } from "./command-input.ts";
 import { flatWords } from "./flat-words.ts";
 import {
   everyPipeline,
@@ -17,7 +17,7 @@ import {
   type ParsedCommand,
   type Pipeline,
   type Script,
-  type Unread,
+  type WordForm,
 } from "./shell-script.ts";
 import {
   WORD_END,
@@ -32,8 +32,16 @@ import {
   skipBlanks,
   skipCaseSeparators,
   upTo,
-  type Cursor,
 } from "./shell-cursor.ts";
+import {
+  scanner,
+  type Expanded,
+  type HeredocTerminator,
+  type Scanner,
+  type Stdin,
+  type Word,
+} from "./shell-reading.ts";
+import { addWord, argvForms, unreadRun, type ArgvForms } from "./word-forms.ts";
 
 export { basename, commandArgv, isShell } from "./command-word.ts";
 
@@ -44,6 +52,8 @@ export {
   type Pipeline,
   type Script,
   type Unread,
+  type UnreadArgument,
+  type WordForm,
 } from "./shell-script.ts";
 
 /** The deepest nesting of scripts inside scripts that the reader follows. */
@@ -53,6 +63,9 @@ const ARRAY_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=$/;
 
 // `?(…)`, `*(…)`, `+(…)`, `@(…)`, and `!(…)` are extended globs, not groups.
 const EXTGLOB_PREFIX = /[?*+@!]$/;
+
+// `$` followed by one of these names a special or positional parameter, such as `$*` or `$1`.
+const SPECIAL_PARAMETER = /^[*?@#!$\-0-9A-Za-z_]$/;
 
 const REDIRECTION = /^(?:&>>|&>|<>|<&|>>|>&|>\||<|>)/;
 
@@ -64,75 +77,11 @@ const CLAUSE_END: ReadonlySet<string> = new Set([";;", ";&", ";;&"]);
 // Inside double quotes a backslash escapes only these; before anything else it is literal.
 const DOUBLE_QUOTE_ESCAPES: ReadonlySet<string> = new Set(["$", "`", '"', "\\", "\n"]);
 
-interface HeredocTerminator {
-  readonly word: string;
-  readonly stripsTabs: boolean;
-  // An unquoted delimiter means the body expands substitutions.
-  readonly expands: boolean;
-  // Set by toCommand to the nested scripts of the shell that reads this heredoc as its
-  // script; heredocBodies parses the body into it once the body's lines are read.
-  runsIn: Script[] | undefined;
-}
-
-// What reading one command has found so far, shared by every scanner of it: how deep
-// its scripts nest, the first script a shell runs that it cannot reproduce, and the
-// commands with an ANSI-C quoted argument that shell-cursor.ts does not decode.
-interface Reading {
-  depth: number;
-  tooDeep: boolean;
-  unreadBy: Unread | undefined;
-  readonly unreadArguments: Command[];
-}
-
-interface Scanner extends Cursor {
-  heredocs: HeredocTerminator[];
-  readonly reading: Reading;
-}
-
 // What a script ends at: the end of the text, `)` of a substitution or subshell, `}` of
 // a brace group, or the `;;` or `esac` that ends a `case` clause.
 type Closer = "end" | ")" | "}" | "clause";
 
 type MutableCommand = Command & { readonly nested: Script[] };
-
-// What a command gets on stdin that a shell reading stdin runs as its script.
-interface Stdin {
-  readonly heredocs: HeredocTerminator[];
-  // Here-strings, and the text a literal `echo` or `printf` before the `|` prints.
-  readonly literals: Literal[];
-}
-
-interface Literal {
-  readonly text: string;
-  /** What printed or quoted `text` in a way the reader cannot reproduce. */
-  readonly unreadBy: Unread | undefined;
-}
-
-interface Expanded {
-  readonly text: string;
-  readonly nested: readonly Script[];
-}
-
-interface Word extends Expanded {
-  readonly raw: string;
-  /** False when an ANSI-C quoted part uses an escape the reader does not decode. */
-  readonly readable: boolean;
-}
-
-// A scanner over `text`, sharing `parent`'s reading when it has one.
-function scanner(text: string, parent?: Scanner): Scanner {
-  return {
-    text,
-    index: 0,
-    heredocs: [],
-    reading: parent?.reading ?? {
-      depth: 0,
-      tooDeep: false,
-      unreadBy: undefined,
-      unreadArguments: [],
-    },
-  };
-}
 
 // `$(( … ))`: only the substitutions inside it run commands.
 function arithmetic(s: Scanner): Script[] {
@@ -189,6 +138,7 @@ function expansions(s: Scanner): Script[] | undefined {
 // Reads double-quoted text up to `close`, or a heredoc body to its end when `close` is undefined.
 function expandingText(s: Scanner, close: '"' | undefined): Expanded {
   let text = "";
+  let unread: WordForm | undefined;
   const nested: Script[] = [];
 
   while (s.index < s.text.length && at(s) !== close) {
@@ -202,12 +152,14 @@ function expandingText(s: Scanner, close: '"' | undefined): Expanded {
       if (at(s, 1) !== "\n") text += at(s, 1);
       s.index += 2;
     } else {
+      if (at(s) === "$" && at(s, 1) === "[") unread ??= "dollar-bracket";
+
       text += at(s);
       s.index += 1;
     }
   }
 
-  return { text, nested };
+  return { text, nested, unread };
 }
 
 // The words of an array assignment `name=( … )`, which are values, not commands.
@@ -228,7 +180,10 @@ function arrayElements(s: Scanner): Script[] {
 function readWord(s: Scanner): Word {
   const start = s.index;
   let text = "";
-  let readable = true;
+  let unquoted = "";
+  let unread: WordForm | undefined;
+  // How many `${` of a parameter expansion the scanner is inside.
+  let parameterDepth = 0;
   const nested: Script[] = [];
 
   while (s.index < s.text.length) {
@@ -241,43 +196,70 @@ function readWord(s: Scanner): Word {
       s.index += continuation;
     } else if (char === "\\") {
       text += next;
+      unquoted += "_";
       s.index += 2;
     } else if (char === "'") {
       s.index += 1;
       text += upTo(s, "'");
+      unquoted += "_";
     } else if (char === "$" && next === "'") {
       s.index += 1;
       const quoted = ansiQuoted(s);
       text += quoted.text;
-      readable &&= quoted.readable;
+      unquoted += "_";
+
+      if (!quoted.readable) unread ??= "ansi-c";
+    } else if (char === "$" && next === '"') {
+      // Locale quoting: bash may translate the double-quoted text that follows.
+      s.index += 1;
+      unread ??= "locale";
     } else if (char === '"') {
       s.index += 1;
       const quoted = expandingText(s, '"');
       text += quoted.text;
+      unquoted += "_";
+      unread ??= quoted.unread;
       nested.push(...quoted.nested);
       s.index = Math.min(s.index + 1, s.text.length);
     } else if (char === "(" && ARRAY_ASSIGNMENT.test(text)) {
       nested.push(...arrayElements(s));
       text += s.text.slice(before, s.index);
+      unquoted += "_";
     } else if (char === "(" && EXTGLOB_PREFIX.test(text)) {
       extglob(s);
       text += s.text.slice(before, s.index);
-    } else if (WORD_END.test(char)) {
+      unquoted += s.text.slice(before, s.index);
+    } else if (WORD_END.test(char) && parameterDepth === 0) {
+      // Inside `${…}`, blanks, operators, and newlines belong to the word, as in bash.
       break;
     } else {
       const found = expansions(s);
 
-      if (found === undefined) {
-        text += char;
-        s.index += 1;
-      } else {
+      if (found !== undefined) {
         nested.push(...found);
         text += s.text.slice(before, s.index);
+        unquoted += "_";
+      } else if (char === "$" && (next === "{" || SPECIAL_PARAMETER.test(next))) {
+        if (next === "{") parameterDepth += 1;
+
+        text += char + next;
+        unquoted += "__";
+        s.index += 2;
+      } else {
+        if (char === "$" && next === "[") unread ??= "dollar-bracket";
+
+        const closesParameter = char === "}" && parameterDepth > 0;
+
+        if (closesParameter) parameterDepth -= 1;
+
+        text += char;
+        unquoted += parameterDepth > 0 || closesParameter ? "_" : char;
+        s.index += 1;
       }
     }
   }
 
-  return { text, raw: s.text.slice(start, s.index), nested, readable };
+  return { text, raw: s.text.slice(start, s.index), nested, unread, unquoted };
 }
 
 // A redirection at the scanner. It returns the scripts its target runs, and adds a
@@ -316,8 +298,8 @@ function redirection(s: Scanner, stdin: Stdin): Script[] {
   skipBlanks(s);
   const target = readWord(s);
 
-  if (operator === "<<<")
-    stdin.literals.push({ text: target.text, unreadBy: target.readable ? undefined : "ansi-c" });
+  // Bash expands no braces or patterns in a here-string.
+  if (operator === "<<<") stdin.literals.push({ text: target.text, unreadBy: target.unread });
 
   return [...target.nested];
 }
@@ -363,15 +345,18 @@ function heredocBodies(s: Scanner): Script[] {
 function toCommand(
   s: Scanner,
   argv: readonly string[],
-  unreadWords: readonly number[],
+  forms: ArgvForms,
   nested: readonly Script[],
   stdin: Stdin,
 ): MutableCommand {
   const input = commandInput(argv);
+  const runs = unreadRun(argv, forms);
+  const [unreadArgument] = forms.unread;
 
-  // A word with an ANSI-C escape the reader does not decode leaves what runs unread.
-  if (runsWordsAt(argv, unreadWords)) s.reading.unreadBy ??= "ansi-c";
-  else if (unreadWords.length > 0) s.reading.unreadArguments.push({ argv, nested: [] });
+  // A word the reader does not read leaves what runs unread when the command runs it.
+  if (runs !== undefined) s.reading.unreadBy ??= runs;
+  else if (unreadArgument !== undefined)
+    s.reading.unreadArguments.push({ argv, form: unreadArgument.form });
 
   switch (input.kind) {
     case "none":
@@ -458,19 +443,20 @@ function parseScript(s: Scanner, closer: Closer): Script {
   const script: Pipeline[] = [];
   let pipeline: MutableCommand[] = [];
   let argv: string[] = [];
-  // The indexes in argv of words with an ANSI-C escape the reader does not decode.
-  let unreadWords: number[] = [];
-  let endedUnread = false;
+  let forms = argvForms();
+  // The first unread form among the words of the command that ended last.
+  let endedUnread: WordForm | undefined;
   let nested: Script[] = [];
   let stdin: Stdin = { heredocs: [], literals: [] };
 
   const endCommand = (): void => {
     if (argv.length > 0 || nested.length > 0)
-      pipeline.push(toCommand(s, argv, unreadWords, nested, stdin));
+      pipeline.push(toCommand(s, argv, forms, nested, stdin));
 
-    endedUnread = unreadWords.length > 0;
+    // A pattern an echo prints is read again in the script a shell reads it into.
+    endedUnread = forms.unread[0]?.form;
     argv = [];
-    unreadWords = [];
+    forms = argvForms();
     nested = [];
     stdin = { heredocs: [], literals: [] };
   };
@@ -509,7 +495,7 @@ function parseScript(s: Scanner, closer: Closer): Script {
       if (printed !== undefined)
         stdin.literals.push({
           text: printed.text,
-          unreadBy: endedUnread ? "ansi-c" : printerUnread,
+          unreadBy: endedUnread ?? printerUnread,
         });
     } else if (listOperator !== undefined && !(char === "&" && at(s, 1) === ">")) {
       endPipeline();
@@ -556,8 +542,7 @@ function parseScript(s: Scanner, closer: Closer): Script {
       } else if (/^\d+$/.test(word.raw) && (at(s) === "<" || at(s) === ">")) {
         // A file descriptor number, such as the 2 in `2>&1`.
       } else {
-        if (!word.readable) unreadWords.push(argv.length);
-
+        addWord(forms, argv, word);
         argv.push(word.text);
         nested.push(...word.nested);
       }

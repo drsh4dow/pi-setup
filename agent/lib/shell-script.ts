@@ -22,11 +22,24 @@ export type Pipeline = readonly Command[];
 export type Script = readonly Pipeline[];
 
 /**
- * What printed or quoted a shell's script in a way the reader cannot reproduce: an
- * echo or printf feature printf.ts does not read, or an ANSI-C quoted `$'…'` escape
- * that shell-cursor.ts does not decode.
+ * A word form the reader cannot reproduce: an ANSI-C quoted `$'…'` escape that
+ * shell-cursor.ts does not decode, a locale-quoted `$"…"` string, a brace expansion
+ * such as `{a,b}` or `{1..3}`, `$[…]` arithmetic, or, in a command name or a script a
+ * shell runs, an unquoted pathname pattern such as `*`, `?`, or `[…]`.
  */
-export type Unread = Printer | "ansi-c";
+export type WordForm = "ansi-c" | "locale" | "brace" | "dollar-bracket" | "pattern";
+
+/**
+ * What printed or quoted a shell's script in a way the reader cannot reproduce: an
+ * echo or printf feature printf.ts does not read, or a word form the reader does not read.
+ */
+export type Unread = Printer | WordForm;
+
+/** A command with an argument the reader could not read, and the form of that argument. */
+export interface UnreadArgument {
+  readonly argv: readonly string[];
+  readonly form: WordForm;
+}
 
 /** A command string read into every pipeline it runs, or found nested past MAX_NESTING in shell-command.ts. */
 export type ParsedCommand =
@@ -35,8 +48,8 @@ export type ParsedCommand =
       readonly pipelines: readonly Pipeline[];
       /** What printed or quoted a script a shell runs in a way the reader cannot reproduce. */
       readonly unreadBy: Unread | undefined;
-      /** Commands with an argument the reader could not decode, for the guard to judge. */
-      readonly unreadArguments: readonly Command[];
+      /** Commands with an argument the reader could not read, for the guard to judge. */
+      readonly unreadArguments: readonly UnreadArgument[];
     }
   | { readonly kind: "too-deep"; readonly limit: number };
 

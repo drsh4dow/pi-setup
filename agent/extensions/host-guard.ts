@@ -9,6 +9,7 @@ import {
   type Command,
   type Pipeline,
 } from "../lib/shell-command.ts";
+import type { WordForm } from "../lib/shell-script.ts";
 
 const KILL_BY_NAME: ReadonlySet<string> = new Set(["pkill", "killall"]);
 
@@ -62,6 +63,9 @@ const XARGS_LONG_OPTIONS_WITH_ARGUMENT: ReadonlySet<string> = new Set([
   "--process-slot-var",
 ]);
 
+const GUARDED_WHERE =
+  "as a command name, a script a shell runs, or an argument of kill, rm, find, xargs, or fuser";
+
 const KILL_REASON =
   "Kill only processes you started. A kill by name, pattern, port, or file, such as pkill, killall, fuser -k, kill $(pgrep …), or kill $(lsof -t …), also reaches other agents' processes on this shared host. Stop a background terminal with bg_kill, or kill a PID you started.";
 
@@ -74,8 +78,46 @@ const UNREAD_ECHO_REASON =
 const UNREAD_PRINTF_REASON =
   "The host guard cannot read what this printf prints into a shell, because its format uses a width, a precision, a flag, *, a conversion other than %s, %b, and %%, or an escape that printf versions print differently. Write the script as a quoted heredoc instead, such as bash <<'EOF' … EOF.";
 
-const UNREAD_ANSI_C_REASON =
-  "The host guard cannot read this ANSI-C quoted $'…' word, because it uses \\u, \\U, \\c, or a number escape for NUL or a byte above 0x7F. The guard refuses such a word unread as a command name, a script a shell runs, or an argument of kill, rm, find, xargs, or fuser. Write the script as a quoted heredoc instead, such as bash <<'EOF' … EOF, or write the word without that escape.";
+// What the reason for refusing each unread word form says: the form, why the guard
+// cannot read it, where the guard refuses it, and how to write it instead.
+const UNREAD_WORDS: Readonly<Record<WordForm, readonly [string, string, string, string]>> = {
+  "ansi-c": [
+    "ANSI-C quoted $'…' word",
+    "it uses \\u, \\U, \\c, or a number escape for NUL or a byte above 0x7F",
+    GUARDED_WHERE,
+    "write the word without that escape",
+  ],
+  locale: [
+    'locale-quoted $"…" word',
+    "bash may translate its text through the locale's message catalog",
+    GUARDED_WHERE,
+    "quote it with plain double quotes",
+  ],
+  brace: [
+    "brace expansion, such as {a,b} or {1..3},",
+    "bash expands it into several words",
+    GUARDED_WHERE,
+    "write each word out",
+  ],
+  "dollar-bracket": [
+    "$[…] arithmetic",
+    "the guard does not read this deprecated form",
+    GUARDED_WHERE,
+    "write it as $((…))",
+  ],
+  pattern: [
+    "unquoted *, ?, or […] pattern",
+    "bash replaces it with the file names it matches",
+    "as a command name or in a script a shell runs",
+    "quote it, or write the exact path",
+  ],
+};
+
+function unreadWordReason(form: WordForm): string {
+  const [word, because, where, instead] = UNREAD_WORDS[form];
+
+  return `The host guard cannot read this ${word}, because ${because}. The guard refuses such a word unread ${where}. Write the script as a quoted heredoc instead, such as bash <<'EOF' … EOF, or ${instead}.`;
+}
 
 // Commands whose arguments the host guard reads to find a kill or a delete.
 const GUARDED_NAMES: ReadonlySet<string> = new Set([
@@ -284,15 +326,20 @@ export function hostGuard(command: string): string | undefined {
 
   if (all.flat().some(deletesTmpGlob)) return TMP_GLOB_REASON;
 
-  const guardsUnread = parsed.unreadArguments.some(({ argv }) =>
+  const { unreadBy } = parsed;
+
+  const guarded = parsed.unreadArguments.find(({ argv }) =>
     GUARDED_NAMES.has(invocation(argv).name),
   );
 
-  if (parsed.unreadBy === "ansi-c" || guardsUnread) return UNREAD_ANSI_C_REASON;
+  const printerUnread = unreadBy === "echo" || unreadBy === "printf";
+  const unreadWord = printerUnread ? guarded?.form : (unreadBy ?? guarded?.form);
 
-  if (parsed.unreadBy === "printf") return UNREAD_PRINTF_REASON;
+  if (unreadWord !== undefined) return unreadWordReason(unreadWord);
 
-  if (parsed.unreadBy === "echo") return UNREAD_ECHO_REASON;
+  if (unreadBy === "printf") return UNREAD_PRINTF_REASON;
+
+  if (unreadBy === "echo") return UNREAD_ECHO_REASON;
 
   return undefined;
 }

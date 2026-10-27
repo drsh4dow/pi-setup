@@ -165,7 +165,11 @@ The agent loads these on its own when the trigger matches.
   It decodes an ANSI-C quoted `$'…'` word as bash does, and refuses one with
   `\u`, `\U`, `\c`, or a number escape for NUL or a byte above 0x7F when it
   names a command, is a script a shell runs, or is an argument of `kill`,
-  `rm`, `find`, `xargs`, `fuser`, `pkill`, or `killall`, with the same reason
+  `rm`, `find`, `xargs`, `fuser`, `pkill`, or `killall`, with the same reason.
+  It refuses a locale-quoted `$"…"` word, a brace expansion such as `{a,b}` or
+  `{1..3}`, or `$[…]` arithmetic in those same places, and an unquoted `*`,
+  `?`, or `[…]` in the base name of a command word, with a reason that names
+  the form. A shell fed by a variable or a substitution still runs
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the

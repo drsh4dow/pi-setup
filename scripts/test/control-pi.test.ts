@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
 const controlPi = new URL(
@@ -181,6 +181,22 @@ test("a run id with a dot is refused at bind time, naming the allowed characters
       "control-pi: invalid run id 'r.1': use only letters, digits, '_' and '-'; tmux reads '.' and ':' in a target as separators\n",
     );
   }
+});
+
+test("list shows a valid run and flags a leftover run id it cannot bind, with what to do", (t) => {
+  const h = harness(t);
+  h.launch("dead");
+  const leftover = join(dirname(h.scratch), "r.1");
+  mkdirSync(leftover);
+
+  const result = h.cp("list");
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    result.stdout,
+    `${h.run} dead   \n` +
+      `r.1 invalid ${leftover}: stop refuses this id; remove the directory by hand\n`,
+  );
 });
 
 test("every wait on a run that was never launched says the run does not exist, not that Pi exited", (t) => {

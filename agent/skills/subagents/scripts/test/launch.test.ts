@@ -87,8 +87,7 @@ function host(t: TestContext): Host {
   };
 }
 
-// Replaces a file a polling launcher reads, so no poll sees it truncated and empty.
-function replaceFile(path: string, text: string): void {
+function replaceAtomically(path: string, text: string): void {
   writeFileSync(`${path}.next`, text);
   renameSync(`${path}.next`, path);
 }
@@ -353,7 +352,7 @@ test("a spawn holds while the host is saturated and starts once it is not", asyn
   assert.match(stderr, /holding, host saturated: load 41\.00 \(max 16\), MemAvailable 32\.0 GiB \(min 2 GiB\)/);
   assert.equal(existsSync(h.marker), false, "held, so no Pi process yet");
 
-  replaceFile(loadavg, "3.00 30.00 20.00 9/900 1\n");
+  replaceAtomically(loadavg, "3.00 30.00 20.00 9/900 1\n");
 
   assert.equal(await exited, 0, stderr);
   assert.match(stderr, /admitted: load 3\.00 \(max 16\)/);

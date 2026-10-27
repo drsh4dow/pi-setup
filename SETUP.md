@@ -38,6 +38,11 @@ Then ask the user these questions in one message:
    | `mail`    | the `mailbox` skill                             | himalaya                                    | ~30 MB  |
    | `video`   | the `catchup-video` skill                       | uv, ffmpeg, and the cairo and pango headers | ~1.1 GB |
 
+   On Debian and Ubuntu, the browser tier adds Google's apt repository and
+   installs Google Chrome from it. Ubuntu 23.10 and later let only that Chrome
+   use its sandbox, so the Chrome agent-browser downloads cannot start there.
+   Tell the user before they choose this tier.
+
 3. **Share the skills with other agents?** Only when `~/.agents/skills` does
    not exist: setup can link it to this checkout's skills, so agents that read
    that folder (Claude Code, Codex, opencode) see them too.
@@ -93,14 +98,16 @@ Then ask the user these questions in one message:
    stay. In order, it:
 
    - installs the system libraries the tiers declare in `[bootstrap.packages]`,
-     such as the libatomic Node.js needs, with this machine's package manager
-     and sudo. Without passwordless sudo it stops and prints the command that
-     installs them. Give that command to the user to run in their own
-     terminal, where sudo can ask for a password, then run setup again.
+     such as the libatomic Node.js needs and Google Chrome on Debian and
+     Ubuntu, with this machine's package manager and sudo. Without
+     passwordless sudo it stops and prints the command that installs them.
+     Give that command to the user to run in their own terminal, where sudo
+     can ask for a password, then run setup again.
    - installs the tools the tiers pin.
    - runs `vp install`, which builds the bundled CLIs and creates
      `agent/settings.json`.
-   - downloads Chrome for the browser tier.
+   - downloads Chrome for Testing for the browser tier, except where Google
+     Chrome is installed.
 
    The root `mise.toml` holds only the `setup` and `doctor` tasks, and
    `mise run` trusts the config of the task it runs. The tier files become
@@ -146,8 +153,8 @@ Tell the user:
 
 - Which tiers are installed, and every change setup and the fixes made:
   `~/.pi`, the `pi-setup-*` links in mise's `conf.d`, the system packages
-  mise installed, the shell profile line, and the `~/.agents/skills` link when
-  it was made.
+  and apt repositories mise installed, the shell profile line, and the
+  `~/.agents/skills` link when it was made.
 - To open a new terminal, start `pi`, and run `/login`.
 - Each remaining `warn` line with its fix. The web-search skill needs
   `PERPLEXITY_API_KEY` and `EXA_API_KEY` in their shell profile. Ask them to

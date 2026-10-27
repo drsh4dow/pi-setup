@@ -13,7 +13,13 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
-import { TIER_NAMES, activationFix, judgePiLoad, report } from "../doctor/doctor.ts";
+import {
+  TIER_NAMES,
+  activationFix,
+  browserFailure,
+  judgePiLoad,
+  report,
+} from "../doctor/doctor.ts";
 import {
   newShellArgs,
   parseDeclaredPackages,
@@ -88,6 +94,31 @@ test("the report fails only on a FAIL, and puts each fix on its own line under i
   assert.equal(failing.exitCode, 1);
   // scripts/ci/follow-doctor.sh and SETUP.md read this layout.
   assert.match(failing.text, /^FAIL {2}shell: not active\n {6}fix: echo fixed$/m);
+});
+
+test("a browser that does not launch gets the fix for the Chrome that agent-browser runs", () => {
+  const detail = "agent-browser doctor fails: fail  Browser launch failed";
+
+  const googleChrome = browserFailure(detail, {
+    platform: "linux",
+    chrome: "/opt/google/chrome/chrome",
+    withDeps: true,
+  });
+
+  // --with-deps would download a Chrome for Testing that agent-browser does not run.
+  assert.equal(googleChrome.status, "fail");
+  assert.equal(googleChrome.fix, undefined);
+  assert.match(googleChrome.detail, /runs \/opt\/google\/chrome\/chrome/);
+
+  const macos = browserFailure(detail, { platform: "darwin", chrome: undefined, withDeps: false });
+  assert.equal(macos.fix, "mise exec -- agent-browser install");
+
+  const fedora = browserFailure(detail, { platform: "linux", chrome: undefined, withDeps: true });
+  assert.equal(fedora.fix, "mise exec -- agent-browser install --with-deps");
+
+  const arch = browserFailure(detail, { platform: "linux", chrome: undefined, withDeps: false });
+  assert.equal(arch.fix, undefined);
+  assert.match(arch.detail, /only with apt-get, dnf, or yum/);
 });
 
 function listing(paths: string[]) {

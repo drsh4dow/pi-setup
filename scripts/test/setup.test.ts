@@ -67,7 +67,8 @@ function runSetup(t: TestContext, args: string[], prepare?: (home: string) => vo
   const calls = join(home, "mise-calls");
   // A fake mise that records each call. Marker files in HOME make it fail the way a machine can:
   // node-broken as Node.js without libatomic, packages-missing as an uninstalled system package,
-  // and no-sudo as a package install that cannot get root.
+  // no-sudo as a package install that cannot get root, and google-chrome as a machine where the
+  // browser tier points agent-browser at Google Chrome.
   executable(
     join(bin, "mise"),
     `echo "$*" >> "${calls}"
@@ -79,6 +80,9 @@ case "$*" in
     fi ;;
   "bootstrap packages status --missing") [ ! -e "$HOME/packages-missing" ] || exit 1 ;;
   "bootstrap packages apply --yes --update") [ ! -e "$HOME/no-sudo" ] || exit 1 ;;
+  "exec -- printenv AGENT_BROWSER_EXECUTABLE_PATH")
+    [ -e "$HOME/google-chrome" ] || exit 1
+    echo /opt/google/chrome/chrome ;;
 esac`,
   );
   prepare?.(home);
@@ -168,6 +172,15 @@ test("setup installs the browser only once the browser tier is linked", (t) => {
   const { run, miseCalls } = runSetup(t, ["browser"]);
   assert.equal(run().status, 0);
   assert.ok(miseCalls().includes("exec -- agent-browser install"));
+});
+
+test("setup downloads no Chrome for Testing where agent-browser runs Google Chrome", (t) => {
+  const { run, miseCalls } = runSetup(t, ["browser"], (home) =>
+    writeFileSync(join(home, "google-chrome"), ""),
+  );
+
+  assert.equal(run().status, 0);
+  assert.ok(!miseCalls().includes("exec -- agent-browser install"));
 });
 
 test("setup leaves a conf.d entry it did not create alone, and says so", (t) => {

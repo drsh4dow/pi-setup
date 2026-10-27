@@ -1,101 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-
-import hostGuardExtension from "../host-guard.ts";
-import { extensionTestAdapter, unsafeFixture } from "./adapter.ts";
 import {
-  type Refusal,
-  decodeDecision,
-  delegateArgv,
-  ownerArgv,
+  assertEach,
+  assertKillRefused,
+  assertRuns,
+  assertTmpGlobRefused,
+  everySession,
+  guardDecision,
   rootArgv,
+  rootBash,
 } from "./guard-fixtures.ts";
-
-const sessions = [rootArgv, ownerArgv, delegateArgv];
-
-const commandTools = ["bash", "bg_start"] as const;
-
-interface AgentCall {
-  readonly argv: readonly string[];
-  readonly toolName: (typeof commandTools)[number];
-  readonly command: string;
-}
-
-function withLaunchArgv<T>(argv: readonly string[], run: () => T): T {
-  const launchArgv = process.argv;
-  process.argv = [...argv];
-
-  try {
-    return run();
-  } finally {
-    process.argv = launchArgv;
-  }
-}
-
-async function guardDecision(argv: readonly string[], event: ToolCallEvent) {
-  const result = await withLaunchArgv(argv, () => {
-    const adapter = extensionTestAdapter();
-    hostGuardExtension(adapter.api);
-
-    return adapter.emit("tool_call", event, unsafeFixture<ExtensionContext>({}));
-  });
-
-  return decodeDecision(result);
-}
-
-function agentCall({ argv, toolName, command }: AgentCall): Promise<Refusal | undefined> {
-  return guardDecision(argv, {
-    type: "tool_call",
-    toolCallId: "call-1",
-    toolName,
-    input: { command },
-  });
-}
-
-function assertKillRefused(refusal: Refusal | undefined, label: string): void {
-  assert.ok(refusal, `${label} is refused`);
-  assert.match(refusal.reason, /\bbg_kill\b/, `${label}: the reason names bg_kill`);
-  assert.match(refusal.reason, /a PID you started/, `${label}: the reason names a PID you started`);
-}
-
-function assertTmpGlobRefused(refusal: Refusal | undefined, label: string): void {
-  assert.ok(refusal, `${label} is refused`);
-  assert.match(refusal.reason, /exact path/, `${label}: the reason names deleting by exact path`);
-  // Each bash call is a new shell, so the fix must not depend on a variable set in an earlier call.
-  assert.match(
-    refusal.reason,
-    /the path mktemp printed/,
-    `${label}: the reason names mktemp's path`,
-  );
-  assert.doesNotMatch(refusal.reason, /\$\w/, `${label}: the reason names no shell variable`);
-}
-
-function assertRuns(refusal: Refusal | undefined, label: string): void {
-  assert.equal(refusal, undefined, `${label} runs`);
-}
-
-async function assertEach(
-  calls: readonly AgentCall[],
-  assertion: (refusal: Refusal | undefined, label: string) => void,
-): Promise<void> {
-  const decisions = await Promise.all(calls.map(agentCall));
-
-  calls.forEach((call, index) => {
-    assertion(decisions[index], `${call.toolName} ${call.command} (argv ${call.argv.join(" ")})`);
-  });
-}
-
-function rootBash(commands: readonly string[]): AgentCall[] {
-  return commands.map((command) => ({ argv: rootArgv, toolName: "bash", command }));
-}
-
-function everySession(commands: readonly string[]): AgentCall[] {
-  return sessions.flatMap((argv) =>
-    commandTools.flatMap((toolName) => commands.map((command) => ({ argv, toolName, command }))),
-  );
-}
 
 const KILL_BY_PATTERN = [
   'pkill -f "vitest run"',

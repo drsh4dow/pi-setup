@@ -68,6 +68,6 @@ find "$($CP path "$RUN" sessions)" -name '*.jsonl' -exec jq -r 'select(.type == 
 
 - Match a refusal on its first sentence only. The rest of each reason may change as patterns are added to the guards.
 - When the driving agent is itself a delegate, its own `delegate-guard` reads every multi-word argument of its bash call as a possible command line. A `send` whose text holds `pi` and `--print` or `-p` is refused in the driver's session before it reaches the TUI. `pi-subagent` counts as a launch only in command position, so the `delegate-refuse` prompt gets through.
-- The model may retry a refused call. A run whose session read shows a second call, or a rephrased one, failed, so relaunch and drive it again.
+- The model may retry a refused call. A run whose session read shows a second call for either prompt, such as a retry or a rephrased command, failed, so relaunch and drive it again.
 - `pgrep -af no-such-process-…` usually exits 1 with `(no output)`, and can instead list the shell that runs it, because that shell's command line holds the pattern. Either result counts as allowed.
 - PATH reaches the delegate Pi only from the `launch` command itself. Drive the other commands without the prefix, and read `pi-argv.txt` before trusting the session as a delegate. A missing file means the launch ran plain `pi`, and the session is a root session.

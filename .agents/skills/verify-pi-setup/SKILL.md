@@ -11,6 +11,8 @@ The product is Pi as this checkout configures it. A user touches the Pi TUI: sla
 CP=.agents/skills/verify-pi-setup/scripts/control-pi
 ```
 
+Shell variables do not survive between tool calls: Pi starts each bash call in a new shell, so a `$CP` step in a later call runs as `send RUN …` and fails with `command not found`. Set `CP` at the top of every call that uses it, ending the assignment with `;` or a newline, as in `CP=.agents/skills/verify-pi-setup/scripts/control-pi; $CP doctor RUN_ID`. On one line without the `;`, the shell expands `$CP` before it assigns it. Every `$CP` in this skill and its feature files sits under this rule.
+
 The helper drives the checkout it lives in, so a git worktree verifies its own branch. Read [`features/README.md`](features/README.md) before driving, then follow the matching feature file.
 
 ## Launch

@@ -4,7 +4,7 @@ This directory is the maintained source for verifying what a user of this Pi con
 
 ## Baseline preconditions
 
-- Run commands from the checkout root with `CP=.agents/skills/verify-pi-setup/scripts/control-pi`.
+- Run commands from the checkout root with `CP=.agents/skills/verify-pi-setup/scripts/control-pi`. Shell variables do not survive between tool calls, so start every call that runs a `$CP` step with `CP=.agents/skills/verify-pi-setup/scripts/control-pi;`. Every feature file's `$CP` steps assume it.
 - Launch with `$CP launch <RUN_ID>` and pass `$CP doctor <RUN_ID>` before the first drive.
 - The instance starts from `agent/default.settings.json`, so Fast mode is on and the model is `anthropic/claude-opus-5-5` with `high` thinking.
 - The instance's working directory is the empty scratch `workspace`, so the header shows `workspace` as the project.

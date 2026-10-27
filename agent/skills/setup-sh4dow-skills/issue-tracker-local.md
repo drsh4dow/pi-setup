@@ -25,7 +25,8 @@ Blocked by: <NN, NN, or "None">
 - **Publish**: create the file, and its folder when needed. A ticket's body check runs on the body below the header.
 - **Fetch**: read the file at the path or number the user passes.
 - **Search**: `rg -il "<words>" <state folder>/issues/`.
+- **Edit**: rewrite the title line or the body below the header.
 - **Comment**: append under `## Comments`.
 - **Nest under a parent**: tickets nest under their feature folder.
 - **Block**: write the `Blocked by:` line.
-- **Close**: set `Status: done`.
+- **Close**: set `Status: done`. For a duplicate, also add a `Duplicate of: NN` line below `Status:`.

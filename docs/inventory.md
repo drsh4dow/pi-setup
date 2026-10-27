@@ -20,6 +20,7 @@ skill's frontmatter.
 | `research`             | agent | Answer a question from primary sources in a background agent    |
 | `to-spec`              | both  | Turn the conversation into a spec ticket                        |
 | `to-tickets`           | both  | Split the spec into tickets under it, with blocking edges       |
+| `triage`               | you   | Make tickets others wrote agent-ready, as a spec over tickets   |
 | `grilling`             | agent | Question a plan hard when you say "grill me"                    |
 | `writing-good-tickets` | agent | Write one ticket an agent can take to one PR                    |
 

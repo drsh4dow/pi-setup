@@ -11,7 +11,7 @@ Write the per-repository **config record** the engineering skills read instead o
 
 | File | Records | Read by |
 | --- | --- | --- |
-| `docs/agents/issue-tracker.md` | Where issues live and how to create, read, search, comment on, nest, block, and close them | **to-spec**, **to-tickets**, **code-review**, **writing-good-tickets**, **reflect** |
+| `docs/agents/issue-tracker.md` | Where issues live and how to create, read, search, edit, comment on, nest, block, and close them | **to-spec**, **to-tickets**, **triage**, **code-review**, **writing-good-tickets**, **reflect** |
 | `docs/agents/domain.md` | The glossary and ADR layout, and how to use them | **domain-modeling**, **grill-with-docs**, **improve-codebase-architecture**, **to-spec**, **to-tickets** |
 | `docs/agents/standards.md` | Where the coding standards live, and the guardrail commands that check the code | **code-review**, **reflect** |
 | `GLOSSARY.md` | The project's core domain terms | every skill that names a domain concept |

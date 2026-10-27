@@ -148,13 +148,14 @@ The agent loads these on its own when the trigger matches.
   script, that kills by name, pattern, port, or file, such as `pkill`,
   `killall`, `fuser -k`, `kill $(pgrep …)`, `kill $(lsof -t …)`, or
   `pids=$(pgrep x); kill $pids`, or that deletes a glob under `/tmp`,
-  `/var/tmp`, or `$TMPDIR` (with `rm` or `find … -delete`) or `/tmp` itself. It
-  reads commands inside substitutions, subshells, `case` clauses, `bash -c`,
-  `eval`, the command `tmux new-session` (and `new-window`, `split-window`,
-  `respawn-pane`, `respawn-window`) or `watch` starts, and a heredoc,
-  here-string, or literal `echo` fed to a shell, and runs in every session. Its
-  reason points the agent at `bg_kill`, a PID it started, or the exact path it
-  created. A command nested past 64 levels is refused with a reason to split it
+  `/var/tmp`, or `$TMPDIR` with `rm` or `find … -delete`, or deletes `/tmp` or
+  `/var/tmp` itself. It reads commands inside substitutions, subshells, `case`
+  clauses, `bash -c`, and `eval`. It also reads the command line that `watch` or
+  a tmux `new-session`, `new-window`, `split-window`, `respawn-pane`, or
+  `respawn-window` starts, and a heredoc, here-string, or literal `echo` or
+  `printf` fed to a shell. It runs in every session. Its reason points the agent
+  at `bg_kill`, a PID it started, or the exact path it created. It refuses a
+  command nested past 64 levels with a reason to split it
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the

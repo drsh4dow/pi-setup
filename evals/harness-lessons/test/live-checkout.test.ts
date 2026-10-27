@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { setTimeout as sleep } from "node:timers/promises";
 import { Schema } from "effect";
 import { concurrentMain, liveReaderRebase, liveRunVerify } from "../grade-live-checkout.ts";
 import {
@@ -347,6 +346,8 @@ const USER_COMMIT = join(import.meta.dirname, "..", "setup", "user-commit.sh");
 
 interface UserCommitRun {
   readonly root: string;
+  /** Resolves once the script prints that it has read the branches and worktrees it compares against. */
+  readonly baseline: Promise<void>;
   /** Resolves to the record once the script exits, with how long it ran. */
   readonly done: Promise<{ readonly record: Record<string, string>; readonly ms: number }>;
 }
@@ -363,22 +364,44 @@ function startUserCommit(fallbackSeconds: number): UserCommitRun {
   mkdirSync(join(record, ".."), { recursive: true });
 
   const started = Date.now();
+  const child = spawn("bash", [USER_COMMIT, record, String(fallbackSeconds)], { cwd: root });
+  const baseline = Promise.withResolvers<void>();
+  let stdout = "";
+  let stderr = "";
 
-  const done = new Promise<{ record: Record<string, string>; ms: number }>((resolve, reject) => {
-    execFile("bash", [USER_COMMIT, record, String(fallbackSeconds)], { cwd: root }, (error) => {
-      if (error) reject(error);
-      else
-        resolve({ record: decodeRecord(readFileSync(record, "utf8")), ms: Date.now() - started });
-    });
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    stdout += chunk;
+
+    if (stdout.includes("baseline taken\n")) baseline.resolve();
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    stderr += chunk;
   });
 
-  return { root, done };
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  // A no-op once the baseline line has arrived.
+  exited.then(
+    () => baseline.reject(new Error(`user-commit.sh exited before its baseline: ${stderr}`)),
+    baseline.reject,
+  );
+
+  const done = exited.then((code) => {
+    if (code !== 0) throw new Error(`user-commit.sh exited with ${code}: ${stderr}`);
+
+    return { record: decodeRecord(readFileSync(record, "utf8")), ms: Date.now() - started };
+  });
+
+  return { root, baseline: baseline.promise, done };
 }
 
 test("the user's commit fires as soon as the agent creates a branch, and lands on main", async () => {
-  const { root, done } = startUserCommit(60);
+  const { root, baseline, done } = startUserCommit(60);
 
-  await sleep(1500);
+  await baseline;
   git(root, "branch", "doc-note");
 
   const { record, ms } = await done;
@@ -390,9 +413,9 @@ test("the user's commit fires as soon as the agent creates a branch, and lands o
 });
 
 test("the user's commit fires on a new worktree", async () => {
-  const { root, done } = startUserCommit(60);
+  const { root, baseline, done } = startUserCommit(60);
 
-  await sleep(1500);
+  await baseline;
   git(root, "worktree", "add", "-q", "--detach", temporary(`${root}-wt`));
 
   const { record } = await done;
@@ -401,9 +424,9 @@ test("the user's commit fires on a new worktree", async () => {
 });
 
 test("the user's commit fires on an edit to docs/development.md, and keeps the edit uncommitted", async () => {
-  const { root, done } = startUserCommit(60);
+  const { root, baseline, done } = startUserCommit(60);
 
-  await sleep(1500);
+  await baseline;
   appendFileSync(join(root, "docs", "development.md"), "Results are gitignored.\n");
 
   const { record } = await done;

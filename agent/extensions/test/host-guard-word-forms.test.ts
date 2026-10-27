@@ -10,6 +10,7 @@ import {
   everySession,
   rootBash,
 } from "./guard-fixtures.ts";
+import { braceExpansion } from "../../lib/brace-expansion.ts";
 
 // The host guard reads as literal only the word forms it reproduces exactly: plain,
 // single-quoted, double-quoted, and backslash-escaped text, and the ANSI-C escapes it
@@ -67,6 +68,37 @@ test("a brace expansion that makes a kill by name is refused", async () => {
     ]),
     assertKillRefused,
   );
+});
+
+// In a $'…' word a backslash escapes the apostrophe, so the brace's comma comes after it.
+test("a brace expansion around an ANSI-C quoted word that makes a kill is refused", async () => {
+  await assertEach(
+    everySession([
+      String.raw`echo {$'pkill \'x\'',} | bash`,
+      String.raw`printf '%s' {$'pkill \'x\'',} | sh`,
+      String.raw`printf '%b' {$'pkill \'x\'',} | sh`,
+    ]),
+    assertKillRefused,
+  );
+});
+
+const noSubstitution = (): undefined => undefined;
+
+// Expected words are what bash 5.3 prints for `printf '[%s]' WORD`, before quote removal.
+test("brace expansion splits a word with a $'…' quote where bash splits it", () => {
+  const cases: readonly [string, readonly string[]][] = [
+    [String.raw`x{$'a\',b',c}y`, [String.raw`x$'a\',b'y`, "xcy"]],
+    [String.raw`x{a,$'\'}'}`, ["xa", String.raw`x$'\'}'`]],
+    ["x{$'${ a',b}", ["x$'${ a'", "xb"]],
+    // `$$` is one parameter, so the quote after it is a plain one.
+    [String.raw`x{$$'a\',b',c'}y`, [String.raw`x$$'a\'y`, "xb',c'y"]],
+    [String.raw`x{$$$'a\',b',c}y`, [String.raw`x$$$'a\',b'y`, "xcy"]],
+    [String.raw`x{\$'a\',b',c'}y`, [String.raw`x\$'a\'y`, "xb',c'y"]],
+    [String.raw`x{"$'a\',b"',c'}y`, [String.raw`x{"$'a\',b"',c'}y`]],
+  ];
+
+  for (const [word, words] of cases)
+    assert.deepEqual(braceExpansion(word, noSubstitution), words, word);
 });
 
 test("a brace expansion that makes a glob delete under /tmp is refused", async () => {

@@ -116,7 +116,10 @@ export function braceExpansion(
   const gobble = (text: string, start: number, satisfy: "{" | "}" | ","): Gobbled => {
     const notFound: Gobbled = { found: false, index: text.length, type: "none" };
     let level = 0;
-    let quoted = "";
+    // Bash's parser turns a `$'…'` word into a single-quoted one before brace expansion,
+    // and finds its end as a backslash escaping the next character, `\'` included.
+    let quoted: "" | "'" | "$'" | '"' | "`" = "";
+    let secondDollar = -1;
     let passNext = false;
     let type: BraceType = "none";
     let commas = satisfy === "}" ? 0 : 1;
@@ -139,7 +142,7 @@ export function braceExpansion(
       }
 
       // Bash reads `${` like `\{`, and its `}` closes a level.
-      if (char === "$" && next === "{" && quoted !== "'") {
+      if (char === "$" && next === "{" && quoted !== "'" && quoted !== "$'") {
         if (FUNSUB.test(text.charAt(index + 2))) {
           giveUp();
 
@@ -157,7 +160,7 @@ export function braceExpansion(
       const substitution = char === "$" && next === "(" && (quoted === "" || quoted === '"');
 
       if (quoted !== "" && !substitution) {
-        if (char === quoted) quoted = "";
+        if (char === (quoted === "$'" ? "'" : quoted)) quoted = "";
 
         index += 1;
         continue;
@@ -174,6 +177,16 @@ export function braceExpansion(
 
         index = end;
         continue;
+      }
+
+      // The parser reads `$$` as one parameter, so its second `$` starts no quote.
+      if (char === "$" && index !== secondDollar) {
+        if (next === "$") secondDollar = index + 1;
+        else if (next === "'") {
+          quoted = "$'";
+          index += 2;
+          continue;
+        }
       }
 
       if (char === '"' || char === "'" || char === "`") {

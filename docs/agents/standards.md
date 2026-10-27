@@ -10,6 +10,12 @@ What the code in this repository is held to, and the commands that check it. Rev
 
 A documented standard overrides any generic baseline a reviewer brings.
 
+## Judgement calls
+
+Standards no check enforces. Reviewers apply them.
+
+- **Tests wait on events, not time.** A test waits for a printed readiness line or an event, never a fixed sleep or a budget under 5 seconds, because parallel subagents load the host and timing tests flaked under that load (#133, #138, #154, #155, #168). A fake file that the code polls is replaced atomically: write a temporary file, then rename it over the old one.
+
 ## Guardrails
 
 `vp run verify` runs every check below except the last two. Its task list lives in `vite.config.ts`. CI runs it in two workflows on pushes to `main` and on pull requests: `check.yml` runs `vp run verify:without-video`, and `catchup-video.yml` runs `vp run verify:catchup-video-scripts` only when the `catchup-video` skill, `vite.config.ts`, or the dependencies change.

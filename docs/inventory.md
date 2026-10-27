@@ -145,11 +145,16 @@ The agent loads these on its own when the trigger matches.
   `.worktrees/<branch>` or `.worktrees/<repo>/<branch>` of the session's
   directory opens as a Herdr workspace, grouped under its repository
 - `host-guard`: refuses a `bash` or `bg_start` call, direct or from a codemode
-  script, that kills by name or pattern, such as `pkill`, `killall`, or
-  `kill $(pgrep …)`, or that runs `rm` on a glob under `/tmp`. It reads commands
-  inside substitutions, subshells, `bash -c`, and `eval`, and runs in every
-  session. Its reason points the agent at `bg_kill`, a PID it started, or the
-  exact path it created
+  script, that kills by name, pattern, port, or file, such as `pkill`,
+  `killall`, `fuser -k`, `kill $(pgrep …)`, `kill $(lsof -t …)`, or
+  `pids=$(pgrep x); kill $pids`, or that deletes a glob under `/tmp`,
+  `/var/tmp`, or `$TMPDIR` (with `rm` or `find … -delete`) or `/tmp` itself. It
+  reads commands inside substitutions, subshells, `case` clauses, `bash -c`,
+  `eval`, the command `tmux new-session` (and `new-window`, `split-window`,
+  `respawn-pane`, `respawn-window`) or `watch` starts, and a heredoc,
+  here-string, or literal `echo` fed to a shell, and runs in every session. Its
+  reason points the agent at `bg_kill`, a PID it started, or the exact path it
+  created. A command nested past 64 levels is refused with a reason to split it
 - `process-status`: `/ps` views of background terminals and the `session_usage`
   tool
 - `prompt-context`: restores Pi's `<tools>` and `<rules>` sections with the

@@ -803,6 +803,48 @@ describe("outages", () => {
       result: { kind: "all-merged", merged: [{ context: { number: 1 } }] },
     });
   });
+
+  it("reports a failed final read even when the agent acknowledged an earlier feedback outage", async () => {
+    const scene = world();
+    scene.feedback.set(1, { kind: "failure", failure: outage });
+    const down = await watch(scene, ["--max-query-errors", "1"]);
+    expect(down.code).toBe(8);
+    scene.facts.set(1, mergedFacts);
+    const told = await watch(scene, [
+      "--max-query-errors",
+      "2",
+      "--timeout",
+      "600",
+      ...acks(down.items),
+    ]);
+    expect(told.records[0]).toMatchObject({ kind: "RETRY" });
+    expect(told.code).toBe(8);
+    expect(told.items.map((item) => [item.kind, item.detail.lane])).toEqual([
+      ["status-unavailable", "feedback"],
+    ]);
+    expect((await watch(scene, acks(told.items))).code).toBe(0);
+  });
+
+  it("reports a final read that fails for good at once, then finishes", async () => {
+    const scene = world();
+    expect((await watch(scene)).code).toBe(5);
+    scene.facts.set(1, mergedFacts);
+    scene.feedback.set(1, {
+      kind: "failure",
+      failure: {
+        kind: "invalid-context-url",
+        retryable: false,
+        detail: "not a pull request URL",
+        rawValue: "https://github.com/owner/repo/issues/1",
+      },
+    });
+    const told = await watch(scene);
+    expect(told.code).toBe(8);
+    expect(told.items.map((item) => [item.kind, item.detail.lane])).toEqual([
+      ["status-unavailable", "feedback"],
+    ]);
+    expect((await watch(scene, acks(told.items))).code).toBe(0);
+  });
 });
 
 describe("stacks", () => {
@@ -1134,12 +1176,108 @@ describe("the final read", () => {
     expect(last.items.map((item) => item.detail.body)).toEqual(["just before the merge"]);
   });
 
-  it("finishes at once on a PR that merged before the first arm", async () => {
+  it("reads a PR that merged before the first arm", async () => {
     const scene = world();
     scene.facts.set(1, mergedFacts);
-    const result = await watch(scene);
-    expect(result.code).toBe(0);
-    expect(scene.feedbackReads).toEqual([]);
+    scene.feedback.set(
+      1,
+      feedback({ comments: [comment("c1", "alice", "before the first poll and the merge")] })
+    );
+    const last = await watch(scene);
+    expect(last.code).toBe(8);
+    expect(last.items.map((item) => item.detail.body)).toEqual([
+      "before the first poll and the merge",
+    ]);
+    expect((await watch(scene, acks(last.items))).code).toBe(0);
+  });
+
+  it("reads a queued member first seen closed, and every other member that ended", async () => {
+    const scene = world();
+    const stack = ["--queued-stack", "--stack-prs", "1,2,3"];
+    scene.facts.set(1, mergedFacts);
+    scene.facts.set(2, { state: "CLOSED" });
+    scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "last word on 1")] }));
+    scene.feedback.set(2, feedback({ comments: [comment("c2", "bob", "why close 2?")] }));
+    const last = await watch(scene, stack);
+    expect(last.code).toBe(8);
+    expect(kinds(last.items)).toEqual([
+      [1, "feedback", "comment by alice"],
+      [2, "feedback", "comment by bob"],
+    ]);
+    const done = await watch(scene, [...stack, ...acks(last.items)]);
+    expect(done.records.at(-1)).toMatchObject({
+      kind: "FINISHED",
+      result: {
+        kind: "closed",
+        closed: [{ number: 2 }],
+        merged: [{ context: { number: 1 } }],
+        stillOpen: [{ number: 3 }],
+      },
+    });
+  });
+
+  it("reads a member appended to the queue after it merged", async () => {
+    const scene = world();
+    expect((await watch(scene, ["--queued-stack", "--stack-prs", "1,2"])).code).toBe(5);
+    scene.facts.set(3, mergedFacts);
+    scene.feedback.set(3, feedback({ comments: [comment("c3", "alice", "last word on 3")] }));
+    const last = await watch(scene, ["--queued-stack", "--stack-prs", "1,2,3"]);
+    expect(last.code).toBe(8);
+    expect(kinds(last.items)).toEqual([[3, "feedback", "comment by alice"]]);
+  });
+
+  it("does not read a closed PR again after its final batch", async () => {
+    const scene = world();
+    expect((await watch(scene)).code).toBe(5);
+    scene.facts.set(1, { state: "CLOSED" });
+    scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "before close")] }));
+    const final = await watch(scene);
+    expect(final.code).toBe(8);
+    scene.feedback.set(1, feedback({ comments: [comment("c2", "alice", "after final read")] }));
+    const reads = scene.feedbackReads.length;
+    expect((await watch(scene, acks(final.items))).code).toBe(0);
+    expect(scene.feedbackReads.length).toBe(reads);
+  });
+
+  it("keeps a stack open while another member's final read is retrying", async () => {
+    const scene = world();
+    const stack = ["--queued-stack", "--stack-prs", "1,2"];
+    expect((await watch(scene, stack)).code).toBe(5);
+    scene.facts.set(1, mergedFacts);
+    scene.facts.set(2, { state: "CLOSED" });
+    scene.feedback.set(1, { kind: "failure", failure: outage });
+    const told = await watch(scene, [...stack, "--max-query-errors", "3", "--timeout", "600"]);
+    expect(told.records[0]).toMatchObject({ kind: "RETRY" });
+    expect(told.code).toBe(8);
+    expect(told.items.map((item) => [item.pr, item.kind, item.detail.lane])).toEqual([
+      [1, "status-unavailable", "feedback"],
+    ]);
+    const done = await watch(scene, [...stack, ...acks(told.items)]);
+    expect(done.records.at(-1)).toMatchObject({
+      kind: "FINISHED",
+      result: {
+        kind: "closed",
+        closed: [{ number: 2 }],
+        merged: [{ context: { number: 1 } }],
+        stillOpen: [],
+      },
+    });
+  });
+
+  it("delivers a retried member's comment after another member closed", async () => {
+    const scene = world();
+    const stack = ["--queued-stack", "--stack-prs", "1,2"];
+    expect((await watch(scene, stack)).code).toBe(5);
+    scene.facts.set(1, mergedFacts);
+    scene.facts.set(2, { state: "CLOSED" });
+    scene.feedback.set(1, { kind: "failure", failure: outage });
+    scene.onSleep = () => {
+      scene.feedback.set(1, feedback({ comments: [comment("c1", "alice", "last word on 1")] }));
+    };
+    const last = await watch(scene, stack);
+    expect(last.records[0]).toMatchObject({ kind: "RETRY" });
+    expect(last.code).toBe(8);
+    expect(kinds(last.items)).toEqual([[1, "feedback", "comment by alice"]]);
   });
 });
 
@@ -1159,6 +1297,20 @@ describe("own replies", () => {
 
     const quiet = await watch(scene, acks(first.items));
     expect(quiet.code).toBe(5);
+  });
+
+  it("acknowledges only the item a reply lists when it also ends in the own-reply marker", async () => {
+    const scene = world();
+    const first = comment("c1", "alice", "first");
+    const second = comment("c2", "bob", "second");
+    scene.feedback.set(1, feedback({ comments: [first, second] }));
+    const both = await watch(scene);
+    const firstId = both.items.find((item) => item.detail.body === "first")?.id ?? "";
+    const reply = comment("r1", "operator", `Fixed\n${marker(firstId)}\n${ownReply}`);
+    scene.feedback.set(1, feedback({ comments: [first, second, reply] }));
+    const rest = await watch(scene);
+    expect(rest.code).toBe(8);
+    expect(rest.items.map((item) => item.detail.body)).toEqual(["second"]);
   });
 
   it("treats the marker from another author as that author's comment", async () => {

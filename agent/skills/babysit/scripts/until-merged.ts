@@ -167,14 +167,20 @@ function recoverLane(
   });
 }
 
+/**
+ * Reports a lane that gave up. An outage already reported stays silent, except
+ * for a failed final read: it is the member's last read, so the agent hears of
+ * it even when it acknowledged the outage that was already running.
+ */
 function markLaneUnavailable(
   step: PrStep,
   lane: MonitorLane,
   failure: T.QueryFailure,
-  environment: Environment
+  environment: Environment,
+  finalRead: boolean
 ): void {
   const outage = step.pr.outages[lane];
-  if (outage.active) return;
+  if (outage.active && !finalRead) return;
   const generation = outage.generation + 1;
   step.pr = {
     ...step.pr,
@@ -188,8 +194,10 @@ function markLaneUnavailable(
       generation,
     ]),
     kind: "status-unavailable",
-    excerpt: `${lane} reads for #${step.pr.number} keep failing: ${failure.detail}`,
-    detail: { lane, outageGeneration: generation, failure },
+    excerpt: finalRead
+      ? `the final ${lane} read for #${step.pr.number} failed, so comments since the last read are unread: ${failure.detail}`
+      : `${lane} reads for #${step.pr.number} keep failing: ${failure.detail}`,
+    detail: { lane, outageGeneration: generation, failure, finalRead },
   });
 }
 
@@ -420,15 +428,15 @@ function lifecycleOf(facts: T.PullRequestFacts): PrLedger["lifecycle"] {
 }
 
 /**
- * A member the watcher saw open owes one last feedback read when it merges or
- * closes, so that a comment posted since the previous poll is delivered.
+ * A member not yet saved as merged or closed owes one last feedback read in the
+ * poll that first sees it merged or closed, so that a comment posted since the
+ * previous poll, or before the first one, is delivered.
  */
 function finalReadOwed(pr: PrLedger): boolean {
   switch (pr.lifecycle.kind) {
     case "open":
-      return true;
     case "unknown":
-      return pr.feedbackBaselined;
+      return true;
     case "merged":
     case "closed":
       return false;
@@ -567,9 +575,14 @@ function acknowledge(
 type ScopeStatus =
   | { readonly kind: "finished"; readonly result: FinishedResult }
   | { readonly kind: "open"; readonly frontier: T.PrContext };
+/**
+ * A member whose final read is still retrying stays open in the ledger, and
+ * keeps a closed sibling from finishing the watch before that read lands.
+ */
 function scopeStatus(
   ledger: Ledger,
-  readThisPoll: ReadonlySet<T.PrNumber>
+  readThisPoll: ReadonlySet<T.PrNumber>,
+  finalReadsRetrying: ReadonlySet<T.PrNumber>
 ): ScopeStatus {
   const merged: T.MergedPr[] = [];
   const closed: T.PrContext[] = [];
@@ -584,7 +597,7 @@ function scopeStatus(
     else stillOpen.push(context);
   }
   const closedMembers = nonEmpty(closed);
-  if (closedMembers !== null)
+  if (closedMembers !== null && finalReadsRetrying.size === 0)
     return {
       kind: "finished",
       result: { kind: "closed", closed: closedMembers, merged, stillOpen },
@@ -659,7 +672,8 @@ async function monitor(args: {
     const attempt = async <V>(
       pr: T.PrNumber,
       lane: MonitorLane,
-      read: () => Promise<V>
+      read: () => Promise<V>,
+      finalRead = false
     ): Promise<V | null> => {
       const key = `${pr}:${lane}`;
       try {
@@ -679,7 +693,7 @@ async function monitor(args: {
         if (!error.failure.retryable || count >= options.maxQueryErrors) {
           poll.gaveUp.add(key);
           ledger = updateMember(ledger, pr, (step) =>
-            markLaneUnavailable(step, lane, error.failure, environment)
+            markLaneUnavailable(step, lane, error.failure, environment, finalRead)
           );
         }
         return null;
@@ -687,10 +701,14 @@ async function monitor(args: {
     };
     const readFeedback = async (
       number: T.PrNumber,
-      context: T.PrContext
+      context: T.PrContext,
+      finalRead = false
     ): Promise<FeedbackSnapshot | null> => {
-      const snapshot = await attempt(number, "feedback", () =>
-        feedback.feedback(context)
+      const snapshot = await attempt(
+        number,
+        "feedback",
+        () => feedback.feedback(context),
+        finalRead
       );
       if (snapshot !== null) {
         const delivered = deliveredFeedback(ledger, number);
@@ -701,6 +719,7 @@ async function monitor(args: {
       return snapshot;
     };
     const readThisPoll = new Set<T.PrNumber>();
+    const finalReadsRetrying = new Set<T.PrNumber>();
     let frontier: T.PrNumber | null = null;
     let frontierView: FrontierView | null = null;
     for (const number of ledger.scope) {
@@ -719,8 +738,11 @@ async function monitor(args: {
         lifecycleOf(facts).kind !== "open" &&
         finalReadOwed(saved)
       ) {
-        const last = await readFeedback(number, context);
-        if (last === null && !poll.gaveUp.has(`${number}:feedback`)) continue;
+        const last = await readFeedback(number, context, true);
+        if (last === null && !poll.gaveUp.has(`${number}:feedback`)) {
+          finalReadsRetrying.add(number);
+          continue;
+        }
       }
       if (facts !== null) {
         readThisPoll.add(number);
@@ -753,7 +775,7 @@ async function monitor(args: {
     }
     saveLedger(stateDirectory, ledger);
     const attention = ledger.items.filter((item) => !item.acknowledged);
-    const status = scopeStatus(ledger, readThisPoll);
+    const status = scopeStatus(ledger, readThisPoll, finalReadsRetrying);
     // A held item never wakes the agent alone. It goes out with a batch that
     // another item wakes, or with the last batch when the watch finishes.
     const wake =

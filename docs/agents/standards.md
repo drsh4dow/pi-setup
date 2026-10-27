@@ -4,18 +4,12 @@ What the code in this repository is held to, and the commands that check it. Rev
 
 ## Standards sources
 
-- [`AGENTS.md`](../../AGENTS.md): the bar that each change holds for every project, and the steps before reporting, ending in `vp run verify`.
-- [`CODING_STANDARDS.md`](../../CODING_STANDARDS.md): the AX yardstick for decisions, `vp` as the package manager, isolating tests that stub `gh`, and the `.repos/effect` reference for Effect code.
+- [`AGENTS.md`](../../AGENTS.md): the two bars for every change, generality across the user's projects and the AX it gives the harness.
+- [`CODING_STANDARDS.md`](../../CODING_STANDARDS.md): the single source for the written coding rules, with sections for dependencies and scripts, tests, and Effect code. Reviewers apply the rules no check enforces.
 - [`vite.config.ts`](../../vite.config.ts): the lint rules, including the Effect presets and the repository's own `anti-slop` rules in [`oxlint/anti-slop/`](../../oxlint/anti-slop/), and the paths excluded from format and lint.
 - [`tsconfig.json`](../../tsconfig.json): strict TypeScript, with no unused locals or parameters.
 
 A documented standard overrides any generic baseline a reviewer brings.
-
-## Judgement calls
-
-Standards no check enforces. Reviewers apply them.
-
-- **Tests wait on events, not time.** A test waits for a printed readiness line or an event, never a fixed sleep or a budget under 5 seconds, because parallel subagents load the host and timing tests flaked under that load (#133, #138, #154, #155, #168). A fake file that the code polls is replaced atomically: write a temporary file, then rename it over the old one.
 
 ## Guardrails
 

@@ -155,6 +155,8 @@ export function judgePiLoad({
   };
 }
 
+// SETUP.md and scripts/ci/follow-doctor.sh read this layout: the status word at column 0, and a
+// finding's fix on the next line as six spaces and "fix: ".
 export function report(findings: Finding[]) {
   const lines = findings.map((finding) => {
     const label = finding.status === "fail" ? "FAIL" : finding.status;

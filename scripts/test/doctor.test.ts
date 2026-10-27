@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
-import { TIER_NAMES, activationFix, judgePiLoad } from "../doctor/doctor.ts";
+import { TIER_NAMES, activationFix, judgePiLoad, report } from "../doctor/doctor.ts";
 import {
   newShellArgs,
   parseDeclaredPackages,
@@ -57,13 +57,37 @@ test("a command resolves to the first executable file on PATH", (t) => {
   const root = scratch(t);
   const [first, second, third] = ["first", "second", "third"].map((name) => join(root, name));
 
-  for (const directory of [first, second, third]) mkdirSync(directory);
+  const fourth = join(root, "fourth");
+
+  for (const directory of [first, second, third, fourth]) mkdirSync(directory);
   writeFileSync(join(first, "tool"), "not executable");
   mkdirSync(join(second, "tool"));
   executable(join(third, "tool"), "true");
+  executable(join(fourth, "tool"), "true");
 
-  assert.equal(resolveCommand("tool", [first, second, third].join(delimiter)), join(third, "tool"));
+  const path = [first, second, third, fourth].join(delimiter);
+  assert.equal(resolveCommand("tool", path), join(third, "tool"));
   assert.equal(resolveCommand("tool", first), undefined);
+});
+
+test("the report fails only on a FAIL, and puts each fix on its own line under its finding", () => {
+  const passing = report([
+    { status: "ok", check: "core", detail: "gh 2.102.1" },
+    { status: "warn", check: "keys", detail: "no EXA_API_KEY" },
+    { status: "skip", check: "mail", detail: "not set up", fix: "mise run setup mail" },
+  ]);
+
+  assert.equal(passing.exitCode, 0);
+  assert.match(passing.text, /^doctor: no check failed, 1 warning$/m);
+
+  const failing = report([
+    { status: "fail", check: "shell", detail: "not active", fix: "echo fixed" },
+    { status: "warn", check: "keys", detail: "no EXA_API_KEY" },
+  ]);
+
+  assert.equal(failing.exitCode, 1);
+  // scripts/ci/follow-doctor.sh and SETUP.md read this layout.
+  assert.match(failing.text, /^FAIL {2}shell: not active\n {6}fix: echo fixed$/m);
 });
 
 function listing(paths: string[]) {
@@ -89,6 +113,15 @@ test("Pi passes only when it loads every skill of this checkout without errors",
   const failed = judgePiLoad({ load: parsePiOutput(broken), skillsDir, expectedSkills: 2 });
   assert.equal(failed.status, "fail");
   assert.match(failed.detail, /Cannot find package 'effect'/);
+
+  const partial = judgePiLoad({
+    load: parsePiOutput(listing(ours.slice(0, 1))),
+    skillsDir,
+    expectedSkills: 2,
+  });
+
+  assert.equal(partial.status, "fail");
+  assert.match(partial.detail, /loads 1 of the 2 skills/);
 
   const elsewhere = ["/home/other/.pi/agent/skills/how/SKILL.md"];
 

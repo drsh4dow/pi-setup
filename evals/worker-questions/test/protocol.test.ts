@@ -98,15 +98,40 @@ test("ask-parent gives up after its timeout, exits 3, and tells the worker to de
   assert.equal(readOutcome(dir, asked.id)?.timedOut, true);
 });
 
+/** Resolves once `dir` holds at least `count` questions; rejects after `timeoutMs`. */
+async function waitForQuestions(dir: string, count: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  const poll = async (): Promise<void> => {
+    if (questions(dir).length >= count) return;
+
+    if (Date.now() >= deadline) {
+      throw new Error(`fewer than ${count} questions in ${dir} after ${timeoutMs} ms`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    return poll();
+  };
+
+  return poll();
+}
+
 test("questions are answered one at a time, oldest first", async () => {
   const dir = askDir();
   const order: string[] = [];
   let busy = 0;
   const first = askParent(dir, "first", 20_000);
 
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  // A loaded host can take longer to start ask-parent than any fixed sleep. Asking "second"
+  // only once "first" is on disk makes "first" the older question, and serving only once both
+  // are on disk leaves the order to the code under test.
+  await waitForQuestions(dir, 1, 10_000);
 
   const second = askParent(dir, "second", 20_000);
+
+  await waitForQuestions(dir, 2, 10_000);
+
   const both = Promise.all([first, second]);
 
   await serveQuestions({

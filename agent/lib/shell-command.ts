@@ -10,12 +10,15 @@
 // follows at most MAX_NESTING levels of nesting.
 
 import { commandInput, echoedText } from "./command-input.ts";
+import { flatWords } from "./flat-words.ts";
+import type { Printed } from "./printf.ts";
 import {
   WORD_END,
   ansiQuoted,
   at,
   atWord,
   backtickBody,
+  LEADING_RESERVED_WORDS,
   extglob,
   isBlank,
   lineContinuation,
@@ -50,22 +53,6 @@ export const MAX_NESTING = 64;
 
 const ARRAY_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=$/;
 
-// Reserved words that may start a command; the command after them still runs.
-const LEADING_RESERVED_WORDS: ReadonlySet<string> = new Set([
-  "!",
-  "coproc",
-  "do",
-  "done",
-  "elif",
-  "else",
-  "esac",
-  "fi",
-  "if",
-  "then",
-  "until",
-  "while",
-]);
-
 // `?(…)`, `*(…)`, `+(…)`, `@(…)`, and `!(…)` are extended globs, not groups.
 const EXTGLOB_PREFIX = /[?*+@!]$/;
 
@@ -89,15 +76,18 @@ interface HeredocTerminator {
   runsIn: Script[] | undefined;
 }
 
-// How deep the scripts being read are nested, shared by every scanner of one command.
-interface Nesting {
+// What reading one command has found so far, shared by every scanner of it: how deep
+// its scripts nest, and whether a shell runs a printf's output that printf.ts cannot
+// reproduce.
+interface Reading {
   depth: number;
   tooDeep: boolean;
+  unreadPrintf: boolean;
 }
 
 interface Scanner extends Cursor {
   heredocs: HeredocTerminator[];
-  readonly nesting: Nesting;
+  readonly reading: Reading;
 }
 
 // What a script ends at: the end of the text, `)` of a substitution or subshell, `}` of
@@ -110,7 +100,7 @@ type MutableCommand = Command & { readonly nested: Script[] };
 interface Stdin {
   readonly heredocs: HeredocTerminator[];
   // Here-strings, and the text a literal `echo` or `printf` before the `|` prints.
-  readonly literals: string[];
+  readonly literals: Printed[];
 }
 
 interface Expanded {
@@ -122,9 +112,14 @@ interface Word extends Expanded {
   readonly raw: string;
 }
 
-// A scanner over `text`, sharing `parent`'s nesting depth when it has one.
+// A scanner over `text`, sharing `parent`'s reading when it has one.
 function scanner(text: string, parent?: Scanner): Scanner {
-  return { text, index: 0, heredocs: [], nesting: parent?.nesting ?? { depth: 0, tooDeep: false } };
+  return {
+    text,
+    index: 0,
+    heredocs: [],
+    reading: parent?.reading ?? { depth: 0, tooDeep: false, unreadPrintf: false },
+  };
 }
 
 // `$(( … ))`: only the substitutions inside it run commands.
@@ -306,7 +301,7 @@ function redirection(s: Scanner, stdin: Stdin): Script[] {
   skipBlanks(s);
   const target = readWord(s);
 
-  if (operator === "<<<") stdin.literals.push(target.text);
+  if (operator === "<<<") stdin.literals.push({ text: target.text, readable: true });
 
   return [...target.nested];
 }
@@ -373,7 +368,10 @@ function toCommand(
       // heredocBodies fills these once the bodies' lines are read.
       for (const heredoc of stdin.heredocs) heredoc.runsIn = command.nested;
 
-      for (const text of stdin.literals) command.nested.push(parseScript(scanner(text, s), "end"));
+      for (const { text, readable } of stdin.literals) {
+        s.reading.unreadPrintf ||= !readable;
+        command.nested.push(parseScript(scanner(text, s), "end"));
+      }
 
       return command;
     }
@@ -427,14 +425,14 @@ function caseStatement(s: Scanner): Script[] {
 
 function parseScript(s: Scanner, closer: Closer): Script {
   // Past the limit, mark the command too deep and skip the rest of it.
-  if (s.nesting.depth > MAX_NESTING) {
-    s.nesting.tooDeep = true;
+  if (s.reading.depth > MAX_NESTING) {
+    s.reading.tooDeep = true;
     s.index = s.text.length;
 
     return [];
   }
 
-  s.nesting.depth += 1;
+  s.reading.depth += 1;
 
   const script: Pipeline[] = [];
   let pipeline: MutableCommand[] = [];
@@ -532,7 +530,7 @@ function parseScript(s: Scanner, closer: Closer): Script {
   }
 
   endPipeline();
-  s.nesting.depth -= 1;
+  s.reading.depth -= 1;
 
   return script;
 }
@@ -546,39 +544,27 @@ function everyPipeline(script: Script): Pipeline[] {
 
 /** A command string read into every pipeline it runs, or found nested past MAX_NESTING. */
 export type ParsedCommand =
-  | { readonly kind: "pipelines"; readonly pipelines: readonly Pipeline[] }
+  | {
+      readonly kind: "pipelines";
+      readonly pipelines: readonly Pipeline[];
+      /** Whether a shell runs as its script what a printf prints that printf.ts cannot reproduce. */
+      readonly unreadPrintf: boolean;
+    }
   | { readonly kind: "too-deep"; readonly limit: number };
 
 function readScript(command: string) {
   const s = scanner(command);
   const all = everyPipeline(parseScript(s, "end"));
 
-  return { all, tooDeep: s.nesting.tooDeep };
+  return { all, tooDeep: s.reading.tooDeep, unreadPrintf: s.reading.unreadPrintf };
 }
 
 export function parseCommand(command: string): ParsedCommand {
-  const { all, tooDeep } = readScript(command);
+  const { all, tooDeep, unreadPrintf } = readScript(command);
 
-  return tooDeep ? { kind: "too-deep", limit: MAX_NESTING } : { kind: "pipelines", pipelines: all };
-}
+  if (tooDeep) return { kind: "too-deep", limit: MAX_NESTING };
 
-// flatWords splits at separators, openers, and closers, and removes quotes and backslashes.
-const FLAT_SEPARATOR = /[\n;&|()`{}<>]|\$\(/;
-
-const FLAT_QUOTING = /\\(.)|\$?['"]/g;
-
-// The text read without nesting: each part between separators split at blanks, and read
-// again split at its quotes, so `bash -c 'pi-subagent …'` also puts pi-subagent first.
-function flatWords(text: string): string[][] {
-  const parts = text.split(FLAT_SEPARATOR);
-  const quotedParts = parts.flatMap((part) => (/['"]/.test(part) ? part.split(/['"]/) : []));
-
-  return [...parts, ...quotedParts].flatMap((part) => {
-    const words = part.split(/\s+/).map((word) => word.replaceAll(FLAT_QUOTING, "$1"));
-    const kept = words.filter((word) => word !== "");
-
-    return kept.length === 0 ? [] : [kept];
-  });
+  return { kind: "pipelines", pipelines: all, unreadPrintf };
 }
 
 /**

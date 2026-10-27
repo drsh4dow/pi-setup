@@ -104,6 +104,16 @@ export function assertTmpGlobRefused(refusal: Refusal | undefined, label: string
   assert.doesNotMatch(refusal.reason, /\$\w/, `${label}: the reason names no shell variable`);
 }
 
+export function assertPrintfRefused(refusal: Refusal | undefined, label: string): void {
+  assert.ok(refusal, `${label} is refused`);
+  assert.match(
+    refusal.reason,
+    /cannot read what this printf prints/,
+    `${label}: the reason names printf`,
+  );
+  assert.match(refusal.reason, /quoted heredoc/, `${label}: the reason names a quoted heredoc`);
+}
+
 export function assertRuns(refusal: Refusal | undefined, label: string): void {
   assert.equal(refusal, undefined, `${label} runs`);
 }

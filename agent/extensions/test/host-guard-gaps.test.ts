@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 
+import { echoedText } from "../../lib/command-input.ts";
 import { spawnGuard } from "../delegate-guard.ts";
 import {
   type Refusal,
   assertEach,
   assertKillRefused,
+  assertPrintfRefused,
   assertRuns,
   assertTmpGlobRefused,
   delegateArgv,
@@ -321,7 +324,6 @@ test("a literal printf piped to a shell is read as the text printf prints", asyn
       "printf '%s\\n' true 'pkill x' | bash",
       "printf '%b' 'true\\npkill x' | sh",
       "printf -- '%s %s' pkill x | bash",
-      "printf '%-8s %s\\n' pkill x | bash",
       "printf '100%% done\\n%s\\n' 'pkill x' | bash",
     ]),
     assertKillRefused,
@@ -396,4 +398,166 @@ test("a case statement inside a substitution ends at esac, not at a pattern's pa
     ]),
     assertKillRefused,
   );
+});
+
+// What printf prints, run alone with no shell reading its output: bash's builtin, then
+// coreutils' printf, which the host guard's reading must both match. The environment
+// holds only PATH, so no BASH_ENV startup file prints before printf does.
+function realPrintf(args: readonly string[]): readonly string[] {
+  const options = { env: { PATH: process.env["PATH"] ?? "" } };
+  const bashArgs = ["--norc", "--noprofile", "-c", 'printf "$@"', "printf", ...args];
+
+  const [builtin, coreutils] = [
+    spawnSync("bash", bashArgs, options),
+    spawnSync("/usr/bin/printf", args, options),
+  ];
+
+  return [builtin.stdout.toString("latin1"), coreutils.stdout.toString("latin1")];
+}
+
+test("the host guard reads a printf of %s, %b, %%, and its escapes as real printf prints it", () => {
+  const forms: readonly (readonly string[])[] = [
+    ["%s", "pkill x"],
+    ["%s\\n", "true", "pkill x"],
+    ["%s %s\\n", "a", "b", "c"],
+    ["echo %s\\n", "pkill x"],
+    ["100%% done\\n%s\\n", "pkill x"],
+    ["%%s", "A"],
+    ["%b", "true\\npkill x"],
+    ["%b", "\\x70kill x"],
+    ["%b", "\\160kill x"],
+    ["%b", "\\0160kill x"],
+    ["%b", "\\01600"],
+    ["%b", "rm -rf /tmp/aa-\\x2a"],
+    ["\\160kill x"],
+    ["\\x70kill\\x20x"],
+    ["\\x700"],
+    ["\\0160kill"],
+    ['\\a\\b\\e\\f\\n\\r\\t\\v\\\\\\"'],
+    ["%b", "\\a\\b\\e\\f\\n\\r\\t\\v\\\\"],
+    ["%b", "\\x7g\\x2z"],
+    ["%b%s", "echo hi\\c", "; pkill x"],
+    ["%s%b%s", "a", "b\\cc", "d"],
+    ["\\x25s", "A"],
+    ["\\q\\z\\ \\$\\8"],
+    ["%b", "\\q\\9\\8\\0101"],
+    ["%s"],
+    ["%b %s", "a"],
+    ["x", " y"],
+    ["\\377\\x41"],
+  ];
+
+  for (const form of forms) {
+    const read = echoedText(["printf", ...form]);
+    const label = `printf ${form.map((word) => JSON.stringify(word)).join(" ")}`;
+
+    assert.ok(read?.readable, `${label}: the guard reads it`);
+
+    for (const printed of realPrintf(form)) assert.equal(read.text, printed, label);
+  }
+});
+
+test("a printf piped to a shell whose format the guard cannot read is refused, and alone runs", async () => {
+  await assertEach(
+    everySession([
+      "printf '%-6s%s\\n' pkill x | bash",
+      "printf '%s%1s%s' pkill '' x | bash",
+      "printf '%-8s %s\\n' pkill x | bash",
+    ]),
+    (refusal, label) => assert.ok(refusal, `${label} is refused`),
+  );
+  await assertEach(
+    everySession([
+      "printf '%5s\\n' true | bash",
+      "printf '%.3s\\n' trueish | bash",
+      "printf '%-s\\n' true | bash",
+      "printf '%0s\\n' true | bash",
+      "printf '%*s\\n' 3 true | bash",
+      "printf '%c\\n' true | bash",
+      "printf '%d\\n' 3 | bash",
+      "printf '%q\\n' true | bash",
+      "printf '%ls\\n' true | sh",
+      "printf 'true%' | bash",
+      "printf 'echo hi\\c; echo x' | bash",
+      "printf 'echo \\'\\''hi' | bash",
+      "printf '\\u0070kill x' | bash",
+      "printf 'true\\?\\E' | bash",
+      "printf '\\%s' true | bash",
+      "printf '\\x' | bash",
+      "printf 'pk\\0ill x' | bash",
+      "printf '%b' 'echo \\\"; true' | bash",
+    ]),
+    assertPrintfRefused,
+  );
+  await assertEach(
+    everySession([
+      "printf '%5d\\n' 3",
+      "printf '%-8s|%s\\n' name value",
+      "printf '%5s\\n' x | grep x",
+      "printf '%c' x > out.txt",
+      "printf -v cmd '%5s' 'pkill x' | bash",
+    ]),
+    assertRuns,
+  );
+});
+
+test("a printf escape or %b argument that spells a kill or a temp glob delete is refused", async () => {
+  await assertEach(
+    everySession([
+      "printf '%b' '\\x70kill x' | bash",
+      "printf '\\160kill x' | bash",
+      "printf '%b' '\\0160kill x' | sh",
+      "printf 'true\\x0apkill x' | bash",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(["printf '%b' 'rm -rf /tmp/aa-\\x2a' | sh"]), assertTmpGlobRefused);
+  await assertEach(everySession(["printf '%b%s' 'echo hi\\c' '; pkill x' | bash"]), assertRuns);
+});
+
+test("find's -- and the options before it do not hide a temp start path", async () => {
+  await assertEach(
+    everySession([
+      "find -- /tmp -name 'aa-*' -delete",
+      "find -H -- /tmp -name 'aa-*' -delete",
+      "find -L -- /var/tmp -name 'aa-*' -delete",
+      "find -O2 -- \"$TMPDIR\" -name 'aa-*' -delete",
+      "find -P -- ${TMPDIR:-/tmp} -name 'aa-*' -exec rm -rf {} +",
+      "find -D tree /tmp -name 'aa-*' -delete",
+    ]),
+    assertTmpGlobRefused,
+  );
+  await assertEach(
+    everySession([
+      "find /tmp/mydir-123 -delete",
+      "find -- /tmp/exact-dir -delete",
+      "find -- . -name '*.o' -delete",
+    ]),
+    assertRuns,
+  );
+});
+
+test("delegate-guard reads a launch past the limit across line continuations and reserved words", () => {
+  const guard = spawnGuard(delegateArgv);
+  assert.ok(guard);
+
+  for (const launch of [
+    "p\\\ni --print hi",
+    "pi-sub\\\nagent --model m",
+    "pi --pr\\\nint hi",
+    "if true; then pi-subagent --model m; fi",
+    "if false; then true; elif pi-subagent --model m; then true; fi",
+    "if false; then true; else pi-subagent --model m; fi",
+    "while true; do pi --print hi; done",
+    "until pi-subagent --model m; do true; done",
+    "! pi-subagent --model m",
+    "{ pi-subagent --model m; }",
+    "true; ( pi --print hi )",
+  ]) {
+    assert.ok(guard(nested("echo $(", launch, ")", 65)), `${JSON.stringify(launch)} is refused`);
+  }
+
+  for (const harmless of ["if true; then echo pi; fi", "e\\\ncho pi-subagent"]) {
+    assert.equal(guard(nested("echo $(", harmless, ")", 65)), undefined, `${harmless} runs`);
+  }
 });

@@ -1,6 +1,7 @@
 // Character-level reads over shell text, for the shell command reader in
-// shell-command.ts: quoting, line continuations, blanks, comments, and the
-// separators between the parts of a `case` statement.
+// shell-command.ts: quoting, line continuations, blanks, comments, the
+// separators between the parts of a `case` statement, and the reserved words
+// that may start a command.
 
 /** Shell text and the reader's position in it. */
 export interface Cursor {
@@ -9,6 +10,22 @@ export interface Cursor {
 }
 
 export const WORD_END = /[ \t\r\n;&|()<>]/;
+
+/** Reserved words that may start a command; the command after them still runs. */
+export const LEADING_RESERVED_WORDS: ReadonlySet<string> = new Set([
+  "!",
+  "coproc",
+  "do",
+  "done",
+  "elif",
+  "else",
+  "esac",
+  "fi",
+  "if",
+  "then",
+  "until",
+  "while",
+]);
 
 export function at(s: Cursor, offset = 0): string {
   return s.text[s.index + offset] ?? "";

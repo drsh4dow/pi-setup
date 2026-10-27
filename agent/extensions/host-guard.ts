@@ -64,6 +64,9 @@ const KILL_REASON =
 const TMP_GLOB_REASON =
   "Delete only the directory you created, by its exact path. A glob under /tmp, /var/tmp, or TMPDIR, or a delete of /tmp or /var/tmp itself, also reaches other agents' scratch directories on this shared host. Make a scratch directory with mktemp -d, and remove it with rm -rf and the path mktemp printed.";
 
+const UNREAD_PRINTF_REASON =
+  "The host guard cannot read what this printf prints into a shell, because its format uses a width, a precision, a flag, *, a conversion other than %s, %b, and %%, or an escape that printf versions print differently. Write the script as a quoted heredoc instead, such as bash <<'EOF' … EOF.";
+
 function nestingReason(limit: number): string {
   return `This command nests deeper than the host guard reads (${limit} levels), so the guard refuses it unread. Split it into smaller commands, or write the script to a file and run that.`;
 }
@@ -187,13 +190,31 @@ function deletesTmp(word: string): boolean {
   return GLOB.test(word.slice(root.length)) || SYSTEM_TMP_ITSELF.test(word);
 }
 
+// The words after find's options -H, -L, -P, -O<level>, and -D, and after a `--` that
+// ends them. The argument of -D stays, read as a start path, which can only add one.
+function findPathsAndExpression(args: readonly string[]): readonly string[] {
+  let index = 0;
+
+  while (index < args.length) {
+    const word = args[index] ?? "";
+
+    if (word === "--") return args.slice(index + 1);
+
+    if (!/^-(?:[HLP]+|O\d*|D.*)$/.test(word)) return args.slice(index);
+
+    index += 1;
+  }
+
+  return [];
+}
+
 // Whether `find` searches a temp directory by a name glob and deletes what it finds.
 function findDeletesTmpGlob(args: readonly string[]): boolean {
-  // find's expression starts at its first test, `(`, or `!`; -H, -L, -P, and -O are
-  // options before the paths.
-  const expression = args.findIndex((word) => /^[-(!]/.test(word) && !/^-[HLPO]/.test(word));
-  const starts = expression === -1 ? args : args.slice(0, expression);
-  const tests = expression === -1 ? [] : args.slice(expression);
+  const words = findPathsAndExpression(args);
+  // find's expression starts at its first test, `(`, or `!`, after its start paths.
+  const expression = words.findIndex((word) => /^[-(!]/.test(word));
+  const starts = expression === -1 ? words : words.slice(0, expression);
+  const tests = expression === -1 ? [] : words.slice(expression);
   const after = (index: number): string => tests[index + 1] ?? "";
   const searchesTmp = starts.some((word) => TMP_ROOT.test(word));
 
@@ -228,6 +249,8 @@ export function hostGuard(command: string): string | undefined {
   if (all.some((pipeline) => killsByPattern(pipeline, variables))) return KILL_REASON;
 
   if (all.flat().some(deletesTmpGlob)) return TMP_GLOB_REASON;
+
+  if (parsed.unreadPrintf) return UNREAD_PRINTF_REASON;
 
   return undefined;
 }

@@ -98,15 +98,36 @@ test("ask-parent gives up after its timeout, exits 3, and tells the worker to de
   assert.equal(readOutcome(dir, asked.id)?.timedOut, true);
 });
 
+async function waitForQuestions(dir: string, count: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  const poll = async (): Promise<void> => {
+    if (questions(dir).length >= count) return;
+
+    if (Date.now() >= deadline) {
+      throw new Error(`fewer than ${count} questions in ${dir} after ${timeoutMs} ms`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    return poll();
+  };
+
+  return poll();
+}
+
 test("questions are answered one at a time, oldest first", async () => {
   const dir = askDir();
   const order: string[] = [];
   let busy = 0;
   const first = askParent(dir, "first", 20_000);
 
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await waitForQuestions(dir, 1, 10_000);
 
   const second = askParent(dir, "second", 20_000);
+
+  await waitForQuestions(dir, 2, 10_000);
+
   const both = Promise.all([first, second]);
 
   await serveQuestions({

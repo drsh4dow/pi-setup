@@ -18,7 +18,7 @@ env = { PI_SETUP_MISE = "{{ mise_bin }}" }
 run = """
 if ! said="$(node --version 2>&1)"; then
   echo "doctor: could not run, because Node.js does not start: $said" >&2
-  echo "Run mise run setup first. On minimal Debian and Ubuntu, sudo apt-get install -y libatomic1 fixes a missing libatomic.so.1." >&2
+  echo "Run mise run setup, which installs the system libraries Node.js needs." >&2
   exit 2
 fi
 node scripts/doctor/doctor.ts

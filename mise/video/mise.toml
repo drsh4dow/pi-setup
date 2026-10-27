@@ -1,3 +1,19 @@
 [tools]
 uv = "0.13.6"
 ffmpeg = "9.0.2"
+
+# Manim builds against cairo and pango the first time catchup-video renders. Installed with this
+# machine's package manager; mise skips the entries of managers it lacks.
+[bootstrap.packages]
+"apt:libcairo2-dev" = "latest"
+"apt:libpango1.0-dev" = "latest"
+"apt:pkg-config" = "latest"
+"dnf:cairo-devel" = "latest"
+"dnf:pango-devel" = "latest"
+"dnf:pkgconf-pkg-config" = "latest"
+"pacman:cairo" = "latest"
+"pacman:pango" = "latest"
+"pacman:pkgconf" = "latest"
+"zypper:cairo-devel" = "latest"
+"zypper:pango-devel" = "latest"
+"zypper:pkgconf-pkg-config" = "latest"

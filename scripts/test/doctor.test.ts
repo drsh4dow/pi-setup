@@ -14,7 +14,14 @@ import { delimiter, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
 import { TIER_NAMES, activationFix, judgePiLoad } from "../doctor/doctor.ts";
-import { newShellArgs, parsePiOutput, parseShellEnv, resolveCommand } from "../doctor/probe.ts";
+import {
+  newShellArgs,
+  parseDeclaredPackages,
+  parsePackageStatus,
+  parsePiOutput,
+  parseShellEnv,
+  resolveCommand,
+} from "../doctor/probe.ts";
 
 const repo = realpathSync(new URL("../..", import.meta.url).pathname);
 
@@ -96,6 +103,50 @@ test("Pi passes only when it loads every skill of this checkout without errors",
 
   const silent = judgePiLoad({ load: parsePiOutput(""), skillsDir, expectedSkills: 2 });
   assert.equal(silent.status, "fail");
+});
+
+test("a tier's system packages are the keys of its [bootstrap.packages] table alone", () => {
+  const toml = [
+    "[tools]",
+    '"github:tlaplus/tlaplus[asset_pattern=tla2tools.jar]" = "1.7.4"',
+    "",
+    "[bootstrap.packages]",
+    '"apt:libatomic1" = "latest"',
+    '"dnf:libatomic" = { os = "linux" }',
+    "",
+    "[env]",
+    '"apt:not-a-package" = "1"',
+  ].join("\n");
+
+  assert.deepEqual(parseDeclaredPackages(toml), ["apt:libatomic1", "dnf:libatomic"]);
+});
+
+test("package status keeps the packages of managers this machine has", () => {
+  const states = parsePackageStatus(
+    JSON.stringify({
+      apt: {
+        available: true,
+        packages: [
+          { package: "libatomic1", state: "missing" },
+          { package: "pkg-config", state: "installed" },
+        ],
+      },
+      pacman: {
+        available: false,
+        reason: "pacman not found",
+        packages: [{ package: "gcc-libs", state: "skipped" }],
+      },
+    }),
+  );
+
+  assert.deepEqual(
+    [...(states ?? [])],
+    [
+      ["apt:libatomic1", "missing"],
+      ["apt:pkg-config", "installed"],
+    ],
+  );
+  assert.equal(parsePackageStatus("mise nothing configured"), undefined);
 });
 
 // Each case is a home whose startup files end without a newline, as GitHub's macOS runner's

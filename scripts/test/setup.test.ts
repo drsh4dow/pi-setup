@@ -65,15 +65,21 @@ function runSetup(t: TestContext, args: string[], prepare?: (home: string) => vo
   const bin = join(home, "bin");
   mkdirSync(bin);
   const calls = join(home, "mise-calls");
-  // A fake mise that records each call. A node-broken file makes Node.js fail the way a missing
-  // libatomic does.
+  // A fake mise that records each call. Marker files in HOME make it fail the way a machine can:
+  // node-broken as Node.js without libatomic, packages-missing as an uninstalled system package,
+  // and no-sudo as a package install that cannot get root.
   executable(
     join(bin, "mise"),
     `echo "$*" >> "${calls}"
-if [ "$*" = "exec -- node --version" ] && [ -e "$HOME/node-broken" ]; then
-  echo "node: error while loading shared libraries: libatomic.so.1" >&2
-  exit 127
-fi`,
+case "$*" in
+  "exec -- node --version")
+    if [ -e "$HOME/node-broken" ]; then
+      echo "node: error while loading shared libraries: libatomic.so.1" >&2
+      exit 127
+    fi ;;
+  "bootstrap packages status --missing") [ ! -e "$HOME/packages-missing" ] || exit 1 ;;
+  "bootstrap packages apply --yes --update") [ ! -e "$HOME/no-sudo" ] || exit 1 ;;
+esac`,
   );
   prepare?.(home);
 
@@ -100,6 +106,7 @@ test("setup links core and the named tiers into mise's conf.d, then installs", (
   assert.equal(readlinkSync(join(confD, "pi-setup-formal")), join(repo, "mise", "formal"));
   assert.equal(existsSync(join(confD, "pi-setup-video")), false);
   assert.deepEqual(miseCalls(), [
+    "bootstrap packages status --missing",
     "install",
     "exec -- vp env setup",
     "exec -- node --version",
@@ -107,16 +114,36 @@ test("setup links core and the named tiers into mise's conf.d, then installs", (
   ]);
 });
 
-test("setup stops before vp install when Node.js cannot start, and names the fix", (t) => {
+test("setup stops before vp install when Node.js cannot start, and shows why", (t) => {
   const { run, miseCalls } = runSetup(t, [], (home) =>
     writeFileSync(join(home, "node-broken"), ""),
   );
 
   const result = run();
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /libatomic\.so\.1/);
-  assert.match(result.stderr, /apt-get install -y libatomic1/);
+  assert.match(result.stderr, /Node\.js does not start: .*libatomic\.so\.1/);
   assert.ok(!miseCalls().some((call) => call.includes("vp install")));
+});
+
+test("setup installs missing system packages before the tools, and stops when it cannot", (t) => {
+  const missing = runSetup(t, [], (home) => writeFileSync(join(home, "packages-missing"), ""));
+  assert.equal(missing.run().status, 0);
+  assert.deepEqual(missing.miseCalls().slice(0, 3), [
+    "bootstrap packages status --missing",
+    "bootstrap packages apply --yes --update",
+    "install",
+  ]);
+
+  const blocked = runSetup(t, [], (home) => {
+    writeFileSync(join(home, "packages-missing"), "");
+    writeFileSync(join(home, "no-sudo"), "");
+  });
+
+  const result = blocked.run();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /could not install the system packages/);
+  assert.match(result.stderr, /mise bootstrap packages apply --update/);
+  assert.ok(!blocked.miseCalls().includes("install"));
 });
 
 test("setup run again keeps earlier tiers and changes no link", (t) => {

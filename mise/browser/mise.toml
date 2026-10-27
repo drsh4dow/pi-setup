@@ -17,5 +17,6 @@ key = "https://dl.google.com/linux/linux_signing_key.pub"
 fingerprint = "EB4C 1BFD 4F04 2F6D DDCC EC91 7721 F63B D38B 4796"
 
 # Installed with this machine's package manager; mise skips the entries of managers it lacks.
+# Google publishes Chrome for amd64 only, so other machines keep Chrome for Testing.
 [bootstrap.packages]
-"apt:google-chrome-stable" = "latest"
+"apt:google-chrome-stable" = { version = "latest", os = "linux/x64" }

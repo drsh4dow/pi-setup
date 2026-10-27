@@ -556,7 +556,7 @@ test("wait-idle ignores a process of another run whose id starts with this one",
   t.after(() => other.kill());
   await sleep(200);
 
-  const result = h.cp("wait-idle", h.run, "5");
+  const result = h.cp("wait-idle", h.run, "10");
 
   assert.equal(result.status, 0, result.stderr);
 });

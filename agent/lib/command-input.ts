@@ -1,7 +1,7 @@
 // Reads which shell code a simple command runs beyond its own words, for the shell
 // command reader in shell-command.ts: the operand of `bash -c`, `eval`, or `env -S`,
-// the command a runner such as `tmux new-session` or `watch` starts, and whether a
-// shell reads its script from stdin.
+// the command a runner such as `tmux new-session` or `watch` starts, whether a shell
+// reads its script from stdin, and the text a literal `echo` or `printf` prints.
 
 import { basename, commandArgv, commandStart, isShell } from "./command-word.ts";
 
@@ -29,17 +29,17 @@ interface RunnerOptions {
   readonly words: "argv" | "joined";
 }
 
-function tmuxCommand(short: string): RunnerOptions {
+function tmuxOptions(short: string): RunnerOptions {
   return { short, long: new Set<string>(), exec: new Set<string>(), words: "argv" };
 }
 
-const TMUX_NEW_SESSION = tmuxCommand("cefFnstxy");
+const TMUX_NEW_SESSION = tmuxOptions("cefFnstxy");
 
-const TMUX_NEW_WINDOW = tmuxCommand("ceFnt");
+const TMUX_NEW_WINDOW = tmuxOptions("ceFnt");
 
-const TMUX_SPLIT_WINDOW = tmuxCommand("BceFlmpRsStT");
+const TMUX_SPLIT_WINDOW = tmuxOptions("BceFlmpRsStT");
 
-const TMUX_RESPAWN = tmuxCommand("cet");
+const TMUX_RESPAWN = tmuxOptions("cet");
 
 const WATCH: RunnerOptions = {
   short: "nq",
@@ -48,12 +48,11 @@ const WATCH: RunnerOptions = {
   words: "joined",
 };
 
-/**
- * Programs that run their trailing words as a command, keyed by the program and,
- * for tmux, its command or that command's alias. The words are read only for these,
- * so the quoted text of any other program stays text.
- */
-export const COMMAND_STRING_RUNNERS: ReadonlyMap<string, RunnerOptions> = new Map([
+// Programs that run their trailing words as a command, keyed by the program and, for
+// tmux, its command or that command's alias. Of the programs that are not shells,
+// commandInput reads the words only of these, `eval`, and `env -S`, so the quoted
+// text of any other program stays text.
+const COMMAND_STRING_RUNNERS: ReadonlyMap<string, RunnerOptions> = new Map([
   ["tmux new-session", TMUX_NEW_SESSION],
   ["tmux new", TMUX_NEW_SESSION],
   ["tmux new-window", TMUX_NEW_WINDOW],
@@ -67,8 +66,8 @@ export const COMMAND_STRING_RUNNERS: ReadonlyMap<string, RunnerOptions> = new Ma
   ["watch", WATCH],
 ]);
 
-// tmux's own options before its command, of which these take an argument.
-const TMUX_GLOBAL: RunnerOptions = tmuxCommand("cfLST");
+// tmux's own options before its command, of which these take an argument. Only `short` is read.
+const TMUX_GLOBAL_OPTIONS: RunnerOptions = tmuxOptions("cfLST");
 
 const SHELL_SHORT_OPTIONS = /^[-+][A-Za-z]+$/;
 
@@ -141,7 +140,7 @@ function runnerCommands(args: readonly string[], options: RunnerOptions): string
 function tmuxCommands(args: readonly string[]): string[] {
   const commands: string[][] = [[]];
 
-  for (const word of operands(args, TMUX_GLOBAL).words) {
+  for (const word of operands(args, TMUX_GLOBAL_OPTIONS).words) {
     if (word === ";") commands.push([]);
     else commands.at(-1)?.push(word);
   }
@@ -166,7 +165,8 @@ function shellInput(args: readonly string[]): CommandInput {
       continue;
     }
 
-    if (!optionsEnded && word === "--") {
+    // A lone `-` ends the options as `--` does.
+    if (!optionsEnded && (word === "--" || word === "-")) {
       optionsEnded = true;
       continue;
     }
@@ -214,18 +214,67 @@ export function commandInput(argv: readonly string[]): CommandInput {
   return runner === undefined ? NONE : { kind: "runner", commands: runnerCommands(args, runner) };
 }
 
+const BACKSLASH_ESCAPES: ReadonlyMap<string, string> = new Map([
+  ["n", "\n"],
+  ["r", "\r"],
+  ["t", "\t"],
+  ["\\", "\\"],
+]);
+
+// A printf conversion such as `%s`, `%-8s`, `%.3b`, or `%%`: flags and width, precision, letter.
+const PRINTF_CONVERSION = /%[-+ #0]*\d*(?:\.(\d*))?([A-Za-z%])/g;
+
+// Text with `\n`, `\r`, `\t`, and `\\` read as `echo -e`, a printf format, and `%b` read them.
+function unescape(text: string): string {
+  return text.replaceAll(/\\(.)/g, (escape, char: string) => BACKSLASH_ESCAPES.get(char) ?? escape);
+}
+
+// What `printf format args…` prints: the format is applied again while arguments remain.
+function printfOutput(format: string, args: readonly string[]): string {
+  let output = "";
+  let next = 0;
+
+  do {
+    const start = next;
+
+    output += unescape(format).replaceAll(
+      PRINTF_CONVERSION,
+      (_conversion, precision: string | undefined, letter: string) => {
+        if (letter === "%") return "%";
+
+        const arg = args[next] ?? "";
+        next += 1;
+        const text = letter === "b" ? unescape(arg) : arg;
+
+        return precision === undefined ? text : text.slice(0, Number(precision));
+      },
+    );
+
+    // A format with no conversion prints once, whatever the arguments.
+    if (next === start) break;
+  } while (next < args.length);
+
+  return output;
+}
+
 /**
- * The text that `echo` or `printf` prints, read from its words, with `\n` as a
- * newline. Undefined for any other command.
+ * The text a literal `echo` or `printf` prints, given its words, with width and padding
+ * dropped, and echo's `\n` read as a newline even without `-e`. Undefined for any other command.
  */
-export function printedText(argv: readonly string[]): string | undefined {
+export function echoedText(argv: readonly string[]): string | undefined {
   const [word = "", ...args] = commandArgv(argv);
   const name = basename(word);
 
-  if (name !== "echo" && name !== "printf") return undefined;
+  if (name === "echo") {
+    const firstText = args.findIndex((arg) => !/^-[neE]+$/.test(arg));
 
-  const firstText = name === "echo" ? args.findIndex((arg) => !/^-[neE]+$/.test(arg)) : 0;
-  const words = firstText === -1 ? [] : args.slice(firstText);
+    return unescape(firstText === -1 ? "" : args.slice(firstText).join(" "));
+  }
 
-  return words.join(" ").replaceAll("\\n", "\n");
+  if (name !== "printf") return undefined;
+
+  const [format, ...rest] = args[0] === "--" ? args.slice(1) : args;
+
+  // `printf -v name` assigns what it would print and prints nothing.
+  return format === undefined || format === "-v" ? "" : printfOutput(format, rest);
 }

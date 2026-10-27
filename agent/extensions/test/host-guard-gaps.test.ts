@@ -26,6 +26,14 @@ function nested(open: string, body: string, close: string, depth: number): strin
   return `${open.repeat(depth)}${body}${close.repeat(depth)}`;
 }
 
+// A shell fed its script by a heredoc, `depth` heredocs deep, around `true`.
+function heredocs(depth: number): string {
+  const opens = Array.from({ length: depth }, (_, level) => `bash <<'E${level}'\n`).join("");
+  const closes = Array.from({ length: depth }, (_, level) => `E${depth - 1 - level}\n`).join("");
+
+  return `${opens}true\n${closes}`;
+}
+
 test("a kill or delete handed to tmux or watch as the command they run is refused", async () => {
   await assertEach(
     everySession([
@@ -138,7 +146,7 @@ test("a shell fed by anything but a literal runs, since its input is unknown", a
   );
 });
 
-test("find under a shared temp directory with a name glob and a delete is refused", async () => {
+test("find under a temp directory with a name glob and a delete is refused", async () => {
   await assertEach(
     everySession([
       "find /tmp -name 'aa-*' -delete",
@@ -253,7 +261,14 @@ test("delegate-guard still refuses a launch nested past the limit, which it read
   assert.ok(guard);
 
   for (const depth of [65, 200, 1000]) {
-    for (const launch of ["pi --print hi", "true; pi-subagent --model m"]) {
+    for (const launch of [
+      "pi --print hi",
+      "true; pi-subagent --model m",
+      "'pi-subagent' --model m",
+      "'pi' --print hi",
+      "p\\i --print hi",
+      '"pi"-subagent --model m',
+    ]) {
       const command = nested("echo $(", launch, ")", depth);
       assert.ok(guard(command), `${launch} at depth ${depth} is refused`);
     }
@@ -269,6 +284,82 @@ test("a control-pi send whose prompt names a kill mid-sentence runs", async () =
     ]),
     assertRuns,
   );
+});
+
+test("a program outside the runner list keeps an argument that starts with a kill as text", async () => {
+  await assertEach(
+    everySession([
+      'git commit -m "pkill x"',
+      '.agents/skills/verify-pi-setup/scripts/control-pi send r1 "pkill x"',
+      "gh pr comment 1 --body 'rm -rf /tmp/aa-*'",
+    ]),
+    assertRuns,
+  );
+});
+
+test("a shell nested past 64 levels through heredocs is refused, and at 64 levels runs", async () => {
+  await assertEach(rootBash([heredocs(65)]), assertNestingRefused);
+  await assertEach(rootBash([heredocs(64)]), assertRuns);
+});
+
+test("an unquoted heredoc fed to a shell runs its substitutions before the shell reads it", async () => {
+  await assertEach(
+    everySession([
+      "bash <<EOF\necho '$(pkill x)'\nEOF",
+      "bash <<EOF\n# $(pkill x)\nEOF",
+      "sh -s <<EOF\necho '`killall java`'\nEOF",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(["bash <<'EOF'\necho '$(pkill x)'\nEOF"]), assertRuns);
+});
+
+test("a literal printf piped to a shell is read as the text printf prints", async () => {
+  await assertEach(
+    everySession([
+      "printf '%s' 'pkill x' | bash",
+      "printf '%s\\n' true 'pkill x' | bash",
+      "printf '%b' 'true\\npkill x' | sh",
+      "printf -- '%s %s' pkill x | bash",
+      "printf '%-8s %s\\n' pkill x | bash",
+      "printf '100%% done\\n%s\\n' 'pkill x' | bash",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(["printf '%s' 'rm -rf /tmp/aa-*' | sh"]), assertTmpGlobRefused);
+  await assertEach(
+    everySession([
+      "printf 'echo %s\\n' 'pkill x' | bash",
+      "printf '%s\\n' 'echo pkill' | bash",
+      "printf -v cmd '%s' 'pkill x' | bash",
+    ]),
+    assertRuns,
+  );
+});
+
+test("a shell given - as its script reads stdin", async () => {
+  await assertEach(
+    everySession([
+      "echo pkill x | bash -",
+      "bash - <<'EOF'\npkill x\nEOF",
+      "sh -s - <<< 'killall java'",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(["bash - script.sh <<'EOF'\npkill x\nEOF"]), assertRuns);
+});
+
+test("fuser with k in a group of short options is refused", async () => {
+  await assertEach(
+    everySession([
+      "fuser -4k 3000/tcp",
+      "fuser -6k 3000/tcp",
+      "fuser -Ik /mnt/x",
+      "fuser -Mkm /mnt",
+    ]),
+    assertKillRefused,
+  );
+  await assertEach(everySession(["fuser -4 3000/tcp", "fuser -Iv /mnt/x"]), assertRuns);
 });
 
 test("a case pattern that spells a kill command is a pattern, not a command", async () => {

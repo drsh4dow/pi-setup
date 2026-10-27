@@ -1,5 +1,6 @@
 // Character-level reads over shell text, for the shell command reader in
-// shell-command.ts: quoting, line continuations, blanks, and comments.
+// shell-command.ts: quoting, line continuations, blanks, comments, and the
+// separators between the parts of a `case` statement.
 
 /** Shell text and the reader's position in it. */
 export interface Cursor {
@@ -8,22 +9,6 @@ export interface Cursor {
 }
 
 export const WORD_END = /[ \t\r\n;&|()<>]/;
-
-// Where flatWords splits text into parts: separators, openers, and closers.
-const FLAT_SEPARATOR = /[\n;&|()`{}<>]|\$\(/;
-
-/**
- * The text read without nesting: split at every separator, opener, and closer, each
- * part split at blanks, with quotes kept. Each part's first word stays first, so a
- * guard reading text it could not parse still sees each command word.
- */
-export function flatWords(text: string): string[][] {
-  return text.split(FLAT_SEPARATOR).flatMap((part) => {
-    const words = part.split(/\s+/).filter((word) => word !== "");
-
-    return words.length === 0 ? [] : [words];
-  });
-}
 
 export function at(s: Cursor, offset = 0): string {
   return s.text[s.index + offset] ?? "";
@@ -67,7 +52,7 @@ export function backtickBody(s: Cursor): string {
   return body;
 }
 
-// The text up to the next `close`, with the scanner moved past it.
+// The text up to the next `close`, with the cursor moved past it.
 export function upTo(s: Cursor, close: string): string {
   const found = s.text.indexOf(close, s.index);
   const end = found === -1 ? s.text.length : found;
@@ -108,7 +93,7 @@ export function ansiQuoted(s: Cursor): string {
   return text;
 }
 
-// Whether the scanner is at `word` as a whole word.
+// Whether the cursor is at `word` as a whole word.
 export function atWord(s: Cursor, word: string): boolean {
   const after = s.index + word.length;
 

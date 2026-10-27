@@ -525,6 +525,52 @@ describe("main", () => {
     );
   });
 
+  it("shows one Bugbot count in a status row", async () => {
+    const bugbotThread = (id: string, runId: string) => ({
+      id,
+      firstComment: {
+        authorLogin: "cursor",
+        body: `### Bugbot finding\nRUN_ID: ${runId}`,
+        path: "a.ts",
+        line: 1,
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+      resolved: false,
+    });
+    const reviews = ["A", "B", "C"].map((commitOid, index) =>
+      botReview({
+        id: `bugbot-${commitOid}`,
+        author: "cursor",
+        commitOid,
+        body: "Bugbot reviewed your changes",
+        submittedAt: `2026-01-01T0${index}:00:00Z`,
+      })
+    );
+    const reader = () =>
+      fakeReader({
+        threadPages: [
+          {
+            threads: [bugbotThread("t1", "run-1"), bugbotThread("t2", "run-2")],
+            endCursor: null,
+          },
+        ],
+        reviewPages: [{ reviews, endCursor: null }],
+      });
+    const argv = ["--owner", "owner", "--repo", "repo", "--pr", "1", "--status-only"];
+    const json = testRuntime(reader());
+    expect(await main(argv, json.runtime)).toBe(0);
+    const [row] = JSON.parse(json.stdout[0] ?? "").rows;
+    expect(row.reviewPasses).toMatchObject([{ author: "cursor", passes: 3 }]);
+    expect(row.threads).toHaveLength(2);
+    for (const thread of row.threads)
+      expect(Object.keys(thread).filter((key) => /pass/i.test(key))).toEqual([]);
+
+    const pretty = testRuntime(reader());
+    expect(await main([...argv, "--pretty"], pretty.runtime)).toBe(0);
+    expect(pretty.stdout.join("").match(/pass/g)).toEqual(["pass"]);
+    expect(pretty.stdout.join("")).toContain("| 📝 2 open; cursor 3 passes |");
+  });
+
   it("shows help without touching the reader", async () => {
     const reader = fakeReader();
     const harness = testRuntime(reader);

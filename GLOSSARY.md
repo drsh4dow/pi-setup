@@ -7,7 +7,7 @@ The global configuration of the Pi coding-agent harness: the system prompt, exte
 ### Harness building blocks
 
 **Skill**:
-A packaged procedure or principle that Pi offers the agent, loaded when its description matches the task.
+A packaged procedure or principle that Pi offers the agent by its description, or that the agent reaches by path when it is a library skill.
 _Avoid_: prompt, playbook
 
 **Principle skill**:
@@ -20,6 +20,24 @@ A TypeScript module Pi loads to add tools, commands, or behavior to the harness 
 **Eval**:
 A scenario that runs Pi under this setup and grades what the agent did.
 _Avoid_: test, check
+
+### Modes and prompts
+
+**Mode**:
+The system prompt a top-level session runs on: general mode by default, or sh4dow mode for a session started with `/sh4dow`.
+_Avoid_: mode (alone) for Fast mode or a skill's mode
+
+**Core**:
+The rules that every mode and every role prompt share, kept in one source.
+
+**Role prompt**:
+The system prompt a subagent runs on: the core, the text every subagent shares, its kind's text, and its role's text.
+
+**Router**:
+The table in general mode's prompt that names, for each kind of task, the skill that owns it.
+
+**Library skill**:
+A skill hidden from the model's skill table and reached by path from the router, another skill, a role prompt, or a mode.
 
 ### Subagents
 
@@ -35,7 +53,7 @@ The kind of subagent that carries a whole unit of work, such as a PR, and launch
 _Avoid_: owner for the session that owns a background terminal; say owning session
 
 **Role**:
-The named job a subagent is launched for, which fixes its model and thinking level. A role with several models is a panel.
+The named job a subagent is launched for, which fixes its model, thinking level, and role prompt. A role with several models is a panel.
 _Avoid_: kind, which is delegate or owner
 
 **Background terminal**:

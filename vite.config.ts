@@ -25,6 +25,7 @@ const ignoredFiles = [
 const verifyChecks = [
   "verify:strict-diagnostics",
   "verify:skills",
+  "verify:prompts",
   "verify:terminal-delivery-citations",
   "verify:babysit-scripts",
   "verify:implement-chunk-scripts",
@@ -55,6 +56,10 @@ export default defineConfig({
       // File modes live in the git index, which the cache does not fingerprint, so a
       // replayed pass could hide a script that lost its executable bit.
       "verify:skills": { command: "node scripts/verify-skills.ts", cache: false },
+      // The system prompts are built from the parts in agent/system/. The check builds them in
+      // memory and fails on any prompt that differs from the file on disk.
+      "generate:prompts": { command: "node scripts/generate-prompts.ts", cache: false },
+      "verify:prompts": { command: "node scripts/generate-prompts.ts --check", cache: false },
       "verify:terminal-delivery-citations": {
         command: ".agents/skills/verify-terminal-delivery/scripts/check --citations",
         cache: false,

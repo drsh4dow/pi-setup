@@ -71,3 +71,33 @@ test("the coordinator part states its own rules without overriding another promp
     /overrid|supersede|takes precedence|instead of (the|your) (system prompt|usual)|general[- ]mode|collaboration cases|<collaboration>|skill table says/i,
   );
 });
+
+/** The text of a `## ` section of the generated sh4dow prompt, up to the next `## ` heading. */
+function section(heading: string): string {
+  const prompt = read("agent/system/generated/sh4dow.md");
+  const text = prompt.split(new RegExp(`^## ${heading}$`, "m"))[1]?.split(/^## /m)[0];
+  assert.ok(text, `the sh4dow prompt has no ## ${heading}`);
+
+  return text;
+}
+
+test("close audits the decision trail and has a cross-family reviewer write the Attention flags", () => {
+  const close = section("Steps").split(/^### 8\. Close$/m)[1] ?? "";
+
+  assert.match(close, /\*\*show-me-your-work\*\*/);
+  assert.match(close, /decisions\.tsv/);
+  assert.match(close, /\$PI_SESSION_FILE/);
+  assert.match(close, /`cross-family reviewer` delegate/);
+  assert.match(close, /`<state folder>\/attention\.md`/);
+});
+
+test("close starts the cross-family review after the trail audit, on the audited trail", () => {
+  const close = section("Steps").split(/^### 8\. Close$/m)[1] ?? "";
+  const check = close.split(/^2\. /m)[1]?.split(/^3\. /m)[0] ?? "";
+  const audit = check.match(/^ {3}1\. (.*)$/m)?.[1] ?? "";
+  const review = check.match(/^ {3}2\. (.*)$/m)?.[1] ?? "";
+
+  assert.match(audit, /^Audit `decisions\.tsv`/);
+  assert.match(review, /^(After|Once)\b.*?\baudit\b.*?, launch /, "the review waits on the audit");
+  assert.match(review, /the audited `decisions\.tsv`/);
+});

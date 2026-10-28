@@ -1,0 +1,8 @@
+id	ticket	intake_state	final_pr	state	branch	intermediate_pr	head_sha	brief
+final-E/PE-6394	PE-6394	-	viveaesthetics/client-onboarding-automation#920	pr-open	chunk/card-flow/console	-	bfd47bd4f9	-
+final-E/PE-6395	PE-6395	-	viveaesthetics/client-onboarding-automation#920	pr-open	chunk/card-flow/console	-	bfd47bd4f9	-
+F-A6	-	-	-	running	fix/card-flow-phiguard-word-names	-	5335c44702	briefs/F-A6.md
+F-E6	PE-6395	-	-	pr-open	fix/card-flow-check-fail-no-retry	921	238d407468	briefs/F-E6.md
+hasura-C	PE-6991	Backlog	C	running				briefs/hasura-C.md
+walk-C	PE-6991	Backlog	C	planned				briefs/walk-C.md
+watch-DAB-5	PE-6989	Backlog	-	running	-			briefs/watch-DAB-5.md

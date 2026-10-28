@@ -1,3 +1,4 @@
+import type { StructuralProblem } from "./checks.ts";
 import type { MergeRule, Outcomes } from "./outcomes.ts";
 import {
   type PrRef,
@@ -372,11 +373,22 @@ export interface ReportInput {
   readonly decisions: StateFile;
   /** attention.md, the cross-family review's Attention section that close writes. */
   readonly attention: StateFile;
+  /** The structural checks' problems; any one keeps the chunk from merge-ready. */
+  readonly structural: readonly StructuralProblem[];
 }
 
 export interface ReportOutput {
   readonly text: string;
   readonly exit: number;
+}
+
+/** A row whose final PR a structural problem names is not merge-ready, whatever its verdict. */
+function heldBack(row: ReportRow, ref: PrRef, input: ReportInput): ReportRow {
+  const held = input.structural.some(({ finalPr }) => finalPr !== null && samePr(finalPr, ref));
+
+  if (!held || (row.readiness.kind !== "ready" && row.readiness.kind !== "merged")) return row;
+
+  return { ...row, readiness: { kind: "not-ready", reason: "a structural check holds it back" } };
 }
 
 export function renderReport(input: ReportInput): ReportOutput {
@@ -421,7 +433,7 @@ export function renderReport(input: ReportInput): ReportOutput {
       const lookup = input.lookup(ticket.finalPr.ref);
 
       if (lookup.kind === "found" && lookup.view.url === view.url) {
-        rows.push(rowFor(ticket.name, view, ledger, outcomes));
+        rows.push(heldBack(rowFor(ticket.name, view, ledger, outcomes), ticket.finalPr.ref, input));
       }
     }
   }
@@ -436,6 +448,14 @@ export function renderReport(input: ReportInput): ReportOutput {
     );
 
   const ready = all.filter((row) => ["ready", "merged"].includes(row.readiness.kind)).length;
+  const { structural } = input;
+
+  const summary =
+    `merge-ready or merged: ${ready} of ${all.length} tickets; ` +
+    `ledger violations: ${violations.length}` +
+    (structural.length === 0
+      ? ""
+      : `; structural problems: ${structural.length}, so the chunk is not merge-ready`);
 
   const lines = [
     ...renderSample(ledger, input.decisions, input.attention, input.lookup),
@@ -467,12 +487,17 @@ export function renderReport(input: ReportInput): ReportOutput {
     ),
     "",
     ...violations,
-    `merge-ready or merged: ${ready} of ${all.length} tickets; ledger violations: ${violations.length}`,
+    ...(structural.length === 0
+      ? []
+      : ["## Structural checks", "", ...structural.map(({ message }) => message), ""]),
+    summary,
   ];
 
   const text = lines.join("\n");
 
   if (all.some((row) => row.readiness.kind === "unknown")) return { text, exit: 2 };
 
-  return { text, exit: ready === all.length && violations.length === 0 ? 0 : 1 };
+  const clean = ready === all.length && violations.length === 0 && structural.length === 0;
+
+  return { text, exit: clean ? 0 : 1 };
 }

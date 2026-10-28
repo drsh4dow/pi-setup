@@ -210,3 +210,15 @@ export function parseSpawns(file: string, text: string): Spawn[] {
 export function verdictAt(ledger: readonly Verdict[], pr: PrRef, sha: string): Verdict | undefined {
   return ledger.findLast((row) => row.sha === sha && samePr(row.pr, pr));
 }
+
+/**
+ * The verdict `ledger carry` copies to a new SHA: the last row at `sha` on the same PR, else the
+ * last row at `sha` on any PR.
+ */
+export function carrySource(
+  ledger: readonly Verdict[],
+  pr: PrRef,
+  sha: string,
+): Verdict | undefined {
+  return verdictAt(ledger, pr, sha) ?? ledger.findLast((row) => row.sha === sha);
+}

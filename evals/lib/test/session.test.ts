@@ -184,7 +184,70 @@ test("a nested call whose full arguments codemode left out keeps its cut ones, a
   assert.equal(argument(operations[2], "command"), `echo ${"c".repeat(43)}...`);
 });
 
-test("a session head ends at the first user message and reads nothing after it", () => {
+const echo = (index: number) => `echo ${index}`;
+
+test("a nested call past the 256 that Pi's record keeps is still an operation, from its cut arguments", () => {
+  const count = 300;
+
+  const jsonl = lines(
+    assistant("e1", [{ type: "toolCall", id: "t1", name: "codemode", arguments: { code: "..." } }]),
+    {
+      type: "message",
+      id: "r1",
+      message: {
+        role: "toolResult",
+        toolCallId: "t1",
+        content: [],
+        details: {
+          calls: Array.from({ length: count }, (_, index) => ({
+            name: "bash",
+            args: JSON.stringify({ command: echo(index) }),
+            status: "ok",
+          })),
+        },
+        nestedCalls: {
+          complete: false,
+          calls: Array.from({ length: 256 }, (_, index) => ({
+            id: `t1/${index + 1}`,
+            name: "bash",
+            status: "ok",
+            arguments: { command: echo(index) },
+          })),
+        },
+      },
+    },
+  );
+
+  const operations = parseSession(jsonl).operations;
+
+  assert.equal(operations.length, count);
+  assert.deepEqual(
+    operations.map((operation) => argument(operation, "command")),
+    Array.from({ length: count }, (_, index) => echo(index)),
+  );
+});
+
+test("a session head keeps a character whose bytes straddle two reads", () => {
+  const dir = mkdtempSync(join(tmpdir(), "session-head-"));
+
+  try {
+    const path = join(dir, "s.jsonl");
+    const opening = JSON.stringify({ type: "session", id: "s" });
+    // U+3000 takes three bytes in UTF-8; padding puts its first byte at offset 4095.
+    const prefix = `${opening}\n{"type":"message","id":"u1","message":{"role":"user","content":[{"type":"text","text":"`;
+    const pad = "x".repeat(4095 - Buffer.byteLength(prefix));
+    const head = lines({ type: "session", id: "s" }, user("u1", `${pad}\u3000# Implement a chunk`));
+
+    assert.equal(Buffer.byteLength(head.slice(0, head.indexOf("\u3000"))), 4095);
+    writeFileSync(path, `${head}\n`);
+
+    assert.equal(sessionHead(path), head);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a session head ends at the first user message and stops reading before the file's 4 GiB tail", () => {
   const dir = mkdtempSync(join(tmpdir(), "session-head-"));
 
   try {

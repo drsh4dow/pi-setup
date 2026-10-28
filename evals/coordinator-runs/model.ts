@@ -38,6 +38,8 @@ export interface Chunk {
 export interface GradedSession {
   readonly id: string;
   readonly file: string;
+  /** The directory the session ran in, from its header. */
+  readonly cwd: string;
   readonly chunk: Chunk;
   readonly mode: Mode;
   readonly role: string;

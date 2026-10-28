@@ -108,21 +108,49 @@ export class CannotRun extends Error {}
 
 const run = promisify(execFile);
 
-/** The pull request as `gh` reports it, or none when `gh` finds no such pull request. */
+/** The stderr a failed `execFile` carries. */
+const decodeExecFailure = Schema.decodeUnknownOption(Schema.Struct({ stderr: Schema.String }));
+
+// What gh prints when GitHub has no such pull request, or no such repository.
+const NOT_FOUND = /Could not resolve to a (?:PullRequest|Repository)\b/;
+
+/**
+ * The pull request as `gh` reports it, or none when GitHub answers that it has no such pull
+ * request or repository. Any other failure, such as an expired login or a network error, and an
+ * answer that is no pull request, throw `CannotRun` naming the pull request and the cause.
+ */
 export async function ghPullRequest(ref: PrRef): Promise<PullRequest | undefined> {
   const args = ["pr", "view", String(ref.number), "--repo", `${ref.owner}/${ref.repo}`];
+  let stdout: string;
 
   try {
-    const { stdout } = await run("gh", [...args, "--json", "state,headRefOid,headRefName"]);
-
-    return Option.getOrUndefined(decodePullRequest(stdout));
+    ({ stdout } = await run("gh", [...args, "--json", "state,headRefOid,headRefName"]));
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       throw new CannotRun("gh is not on PATH, so merged heads cannot be read");
     }
 
-    return undefined;
+    const stderr = Option.match(decodeExecFailure(error), {
+      onNone: () => "",
+      onSome: (failure) => failure.stderr.trim(),
+    });
+
+    if (NOT_FOUND.test(stderr)) return undefined;
+
+    const cause = stderr || (error instanceof Error ? error.message : String(error));
+
+    throw new CannotRun(`gh pr view ${formatPr(ref)} failed: ${cause}`, { cause: error });
   }
+
+  const pull = decodePullRequest(stdout);
+
+  if (Option.isNone(pull)) {
+    throw new CannotRun(
+      `gh pr view ${formatPr(ref)} printed no pull request: ${stdout.slice(0, 200)}`,
+    );
+  }
+
+  return pull.value;
 }
 
 export function escapeRegExp(text: string): string {

@@ -5,6 +5,7 @@
 //   node evals/coordinator-runs/grade.ts --sessions <dir> --state <chunk state folder>... --out <dir>
 
 import { mkdirSync, readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
+import { Option, Schema } from "effect";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
@@ -15,6 +16,7 @@ import {
   promptSections,
   sessionHead,
   skillLoads,
+  type ToolOperation,
 } from "../lib/session.ts";
 import { runPool } from "../lib/pool.ts";
 import {
@@ -42,6 +44,7 @@ import type {
   Position,
 } from "./model.ts";
 import { findingsTable, sessionsTable, summary } from "./report.ts";
+import { shellStatements } from "./shell-writes.ts";
 import { firstSha, rowLink, type StateRowLink, writesUnit, writesVerdict } from "./state-writes.ts";
 
 export { FINDING_CLASSES, type Finding, type FindingClass } from "./model.ts";
@@ -96,7 +99,13 @@ function mentions(text: string, dir: string): number {
  * chunks and every sibling chunk folder beside them. A session that names an ungraded sibling
  * most, such as a run still going, belongs to no graded chunk.
  */
-function chunkOfSession(text: string, graded: readonly Chunk[]): Chunk | undefined {
+interface SessionChunk {
+  readonly chunk: Chunk | undefined;
+  /** The graded chunks the session names that it does not belong to. */
+  readonly passedOver: readonly Chunk[];
+}
+
+function chunkOfSession(text: string, graded: readonly Chunk[]): SessionChunk {
   const siblings = [...new Set(graded.map((chunk) => dirname(chunk.dir)))].flatMap((parent) =>
     readdirSync(parent, { withFileTypes: true }).flatMap((entry) =>
       entry.isDirectory() ? [join(parent, entry.name)] : [],
@@ -111,7 +120,24 @@ function chunkOfSession(text: string, graded: readonly Chunk[]): Chunk | undefin
     })
     .toSorted((a, b) => b.count - a.count);
 
-  return graded.find((chunk) => chunk.dir === counted[0]?.dir);
+  const chunk = graded.find((candidate) => candidate.dir === counted[0]?.dir);
+
+  const passedOver = graded.filter(
+    (candidate) => candidate !== chunk && counted.some((entry) => entry.dir === candidate.dir),
+  );
+
+  return { chunk, passedOver };
+}
+
+const decodeSessionHeader = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ type: Schema.Literal("session"), cwd: Schema.String })),
+);
+
+/** The directory a session ran in, from the header on its first line. */
+function sessionCwd(jsonl: string): string {
+  const header = decodeSessionHeader(jsonl.split("\n", 1)[0]);
+
+  return Option.isSome(header) ? header.value.cwd : "/";
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -133,6 +159,7 @@ function gradeSessionFile(input: {
 
   return {
     ...input,
+    cwd: sessionCwd(input.jsonl),
     skillTable: promptSections(input.jsonl).skills ?? "",
     operations: session.operations,
     launches,
@@ -188,12 +215,11 @@ function launchTree(
 const TERMINAL_UNIT_STATES = new Set(["merged", "done", "abandoned", "reconciled"]);
 
 /**
- * A free-text unit state is terminal when its first word is: its first run of letters, which ends
- * at a `-`, `(`, space, or any other non-letter, so `abandoned-canceled(...)` and `done: 0 act-on`
- * are terminal.
+ * A free-text unit state's first word: its first run of letters, which ends at a `-`, `(`,
+ * space, or any other non-letter, so `abandoned-canceled(...)` and `done: 0 act-on` read as
+ * `abandoned` and `done`.
  */
-const isTerminal = (state: string) =>
-  TERMINAL_UNIT_STATES.has(/[a-z]+/.exec(state.toLowerCase())?.[0] ?? "");
+const firstWord = (state: string) => /[a-z]+/.exec(state.toLowerCase())?.[0] ?? "";
 
 function sessionFindings(session: GradedSession): Finding[] {
   const findings: Finding[] = [];
@@ -220,24 +246,31 @@ function sessionFindings(session: GradedSession): Finding[] {
   }
 
   if (session.position.at === "root") {
-    const cwd =
-      /"cwd":"([^"]*)"/.exec(readFileSync(session.file, "utf8").slice(0, 4096))?.[1] ?? "/";
-
     for (const operation of session.operations) {
-      if (!operation.succeeded || (operation.tool !== "edit" && operation.tool !== "write"))
-        continue;
-
-      const written = argument(operation, "path");
-
-      if (written === undefined) continue;
-
-      const path = resolve(cwd, written.replace(/^~(?=\/)/, homedir()));
-
-      if (!insideStateFolder(path, session.chunk.dir)) add(operation.entryId, "root-edit", path);
+      for (const path of writtenPaths(operation, session.cwd)) {
+        if (!insideStateFolder(path, session.chunk.dir)) add(operation.entryId, "root-edit", path);
+      }
     }
   }
 
   return findings;
+}
+
+/** The absolute paths a successful call wrote: an `edit` or `write` path, or a bash command's shell writes. */
+function writtenPaths(operation: ToolOperation, cwd: string): string[] {
+  if (!operation.succeeded) return [];
+
+  if (operation.tool === "edit" || operation.tool === "write") {
+    const written = argument(operation, "path");
+
+    return written === undefined ? [] : [resolve(cwd, written.replace(/^~(?=\/)/, homedir()))];
+  }
+
+  const command = operation.tool === "bash" ? argument(operation, "command") : undefined;
+
+  return command === undefined
+    ? []
+    : shellStatements(command, cwd).flatMap((statement) => statement.writes);
 }
 
 async function chunkFindings(
@@ -367,9 +400,9 @@ async function chunkFindings(
 
   for (const unit of units) {
     const state = unit.cell("state");
-    const first = state.toLowerCase().match(/[a-z-]+/)?.[0] ?? "";
+    const first = firstWord(state);
 
-    if (isTerminal(state)) continue;
+    if (TERMINAL_UNIT_STATES.has(first)) continue;
 
     const brief = unit.cell("brief");
 
@@ -405,6 +438,7 @@ export async function gradeChunks(input: {
   const chunks = input.stateDirs.map(chunkAt);
   const files = sessionFiles(input.sessionsDir);
   const byChunk = new Map<string, GradedSession[]>(chunks.map((chunk) => [chunk.dir, []]));
+  const passedOverBy = new Map<string, number>();
   const seen = new Set<string>();
 
   const coordinators = [...files]
@@ -417,7 +451,11 @@ export async function gradeChunks(input: {
 
   for (const { id, file, mode } of coordinators) {
     const jsonl = readFileSync(file, "utf8");
-    const chunk = chunkOfSession(jsonl, chunks);
+    const { chunk, passedOver } = chunkOfSession(jsonl, chunks);
+
+    for (const other of passedOver) {
+      passedOverBy.set(other.dir, (passedOverBy.get(other.dir) ?? 0) + 1);
+    }
 
     if (chunk === undefined) continue;
 
@@ -442,14 +480,22 @@ export async function gradeChunks(input: {
     chunks.map(async (chunk): Promise<ChunkGrade> => {
       const sessions = byChunk.get(chunk.dir) ?? [];
 
-      if (sessions.length === 0) {
+      const passedOver = passedOverBy.get(chunk.dir) ?? 0;
+
+      if (sessions.length === 0 && passedOver === 0) {
         input.warn(`${chunk.name}: no coordinator session names ${chunk.dir}`);
+      } else if (sessions.length === 0) {
+        input.warn(
+          `${chunk.name}: ${passedOver === 1 ? "1 coordinator session names" : `${passedOver} coordinator sessions name`} ${chunk.dir}, but ${passedOver === 1 ? "names" : "each names"} another chunk folder more often, so none is graded here`,
+        );
       }
 
+      // The warning leaves out the recorded command, which can hold a credential or a private
+      // prompt; the session file and entry id find it.
       for (const session of sessions) {
         for (const call of session.uncountedLaunches) {
           input.warn(
-            `${session.file}: entry ${call.entry}: not counted as a launch: codemode cut its recorded command short and it started no child session: ${call.command}`,
+            `${session.file}: entry ${call.entry}: not counted as a launch: codemode cut its recorded command short and it started no child session`,
           );
         }
       }

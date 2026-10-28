@@ -2,6 +2,7 @@
 // codemode scripts expanded into the calls they made. Graders build their metrics on this view.
 
 import { closeSync, openSync, readSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { Option, Schema } from "effect";
 
 const ToolCallPart = Schema.Struct({
@@ -60,9 +61,11 @@ const decodeCodemodeDetails = Schema.decodeUnknownSync(
   Schema.Struct({ calls: Schema.optionalKey(Schema.Array(TruncatedCall)) }),
 );
 
-// Newer codemode results also record each nested call's arguments untruncated, in the same order
-// as `details.calls`. A call whose arguments were too large records only their size, so its
-// arguments are the truncated ones `details` holds at the same position.
+// Newer codemode results also record each nested call untruncated in `nestedCalls`, in the same
+// order as `details.calls`. Pi's record keeps at most 256 calls and marks itself incomplete when
+// it drops any, so the calls past its end are the truncated ones `details` holds. A call whose
+// arguments were too large records only their size, so its arguments are the truncated ones
+// `details` holds at the same position.
 const FullCall = Schema.Struct({
   name: Schema.String,
   status: Schema.String,
@@ -70,7 +73,7 @@ const FullCall = Schema.Struct({
 });
 
 const decodeNestedCalls = Schema.decodeUnknownOption(
-  Schema.Struct({ calls: Schema.Array(FullCall) }),
+  Schema.Struct({ calls: Schema.Array(FullCall), complete: Schema.optionalKey(Schema.Boolean) }),
 );
 
 interface NestedCall {
@@ -96,14 +99,25 @@ function nestedCallsOf(result: ToolResultMessage): readonly NestedCall[] {
     }));
   }
 
-  const calls = full.value.calls;
-  const truncated = calls.every((call) => call.arguments !== undefined) ? [] : truncatedCalls();
+  const { calls, complete } = full.value;
 
-  return calls.map((call, index) => ({
-    name: call.name,
-    argumentsJson: fullOrTruncated(call, truncated[index]),
-    status: call.status,
-  }));
+  const truncated =
+    complete === false || calls.some((call) => call.arguments === undefined)
+      ? truncatedCalls()
+      : [];
+
+  return [
+    ...calls.map((call, index) => ({
+      name: call.name,
+      argumentsJson: fullOrTruncated(call, truncated[index]),
+      status: call.status,
+    })),
+    ...truncated.slice(calls.length).map((call) => ({
+      name: call.name,
+      argumentsJson: call.args,
+      status: call.status,
+    })),
+  ];
 }
 
 /** A nested call's arguments: in full, else the truncated ones recorded for the same call. */
@@ -395,6 +409,8 @@ const HEAD_CHUNK_BYTES = 4 * 1024;
 export function sessionHead(path: string): string {
   const descriptor = openSync(path, "r");
   const buffer = Buffer.alloc(HEAD_CHUNK_BYTES);
+  // Keeps a character whose bytes straddle two reads whole.
+  const decoder = new StringDecoder("utf8");
   const kept: string[] = [];
   let pending = "";
 
@@ -403,7 +419,7 @@ export function sessionHead(path: string): string {
       const read = readSync(descriptor, buffer, 0, HEAD_CHUNK_BYTES, null);
       const done = read === 0;
 
-      pending += buffer.toString("utf8", 0, read);
+      pending += done ? decoder.end() : decoder.write(buffer.subarray(0, read));
 
       const complete = pending.split("\n");
 

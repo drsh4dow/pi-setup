@@ -29,49 +29,44 @@ const PASS_THROUGH = new Set([
   "{",
 ]);
 
-interface Word {
+export interface Word {
   /** Where the word starts in the command text. */
   readonly start: number;
+  /** Where the word ends in the command text, one past its last character. */
+  readonly end: number;
   /** The word with its quotes and escapes removed. */
   readonly text: string;
+  /** The redirection operator the word is the target of, such as `>`, `>>`, or `2>&`. */
+  readonly redirect: string | undefined;
 }
 
 /**
- * The words of a shell command that run as commands. A launcher named in quoted text, as an
- * argument, or as a redirection target, such as `cat > bin/spawn.sh`, runs nothing.
+ * The command's simple commands, each the list of its words, split at unquoted `;`, `&&`,
+ * `||`, `|`, `&`, parentheses, backticks, and line ends.
  */
-export function commandWords(shell: string): Word[] {
-  const words: Word[] = [];
-  let atCommand = true;
-  let passThrough = false;
-  let redirectTarget = false;
+export function simpleCommands(shell: string): Word[][] {
+  const commands: Word[][] = [];
+  let words: Word[] = [];
+  let redirect: string | undefined;
   let start = -1;
   let text = "";
 
-  const endWord = () => {
+  const endWord = (end: number) => {
     if (start < 0) return;
 
-    const word = { start, text };
-
+    words.push({ start, end, text, redirect });
+    redirect = undefined;
     start = -1;
     text = "";
+  };
 
-    if (redirectTarget) {
-      redirectTarget = false;
+  const endCommand = (end: number) => {
+    endWord(end);
 
-      return;
-    }
+    if (words.length > 0) commands.push(words);
 
-    if (!atCommand) return;
-
-    // An assignment before the command, or a pass-through word's flags and durations.
-    if (/^[A-Za-z_]\w*=/.test(word.text)) return;
-
-    if (passThrough && /^(?:-|\d)/.test(word.text)) return;
-
-    words.push(word);
-    passThrough = PASS_THROUGH.has(word.text.split("/").pop() ?? "");
-    atCommand = passThrough;
+    words = [];
+    redirect = undefined;
   };
 
   const extend = (index: number, char: string) => {
@@ -92,7 +87,7 @@ export function commandWords(shell: string): Word[] {
       text += char === "'" ? quoted : quoted.replace(/\\(.)/g, "$1");
       index = close < 0 ? shell.length : close;
     } else if (char === "\\") {
-      if (shell[index + 1] === "\n") endWord();
+      if (shell[index + 1] === "\n") endWord(index);
       else extend(index, shell[index + 1] ?? "");
 
       index++;
@@ -101,29 +96,71 @@ export function commandWords(shell: string): Word[] {
 
       index = newline < 0 ? shell.length : newline - 1;
     } else if (char === " " || char === "\t") {
-      endWord();
-    } else if (char === ">" || char === "<") {
+      endWord(index);
+    } else if (char === ">" || char === "<" || (char === "&" && shell[index + 1] === ">")) {
       // A file descriptor number before the operator, as in `2>`, is part of it.
+      let operator = "";
+
       if (start >= 0 && /^\d+$/.test(text)) {
+        operator = text;
         start = -1;
         text = "";
-      } else endWord();
+      } else endWord(index);
 
-      redirectTarget = true;
-    } else if (char === "&" && (shell[index - 1] === ">" || shell[index - 1] === "<")) {
-      // `>&2` duplicates a descriptor; the target follows.
+      const rest = /^(?:&>>?|>>|>[|&]?|<[&]?)/.exec(shell.slice(index))?.[0] ?? char;
+
+      redirect = operator + rest;
+      index += rest.length - 1;
     } else if ("\n;&|()`".includes(char)) {
-      endWord();
-      atCommand = true;
-      passThrough = false;
-      redirectTarget = false;
+      endCommand(index);
     } else extend(index, char);
   }
 
-  endWord();
+  endCommand(shell.length);
 
-  return words;
+  return commands;
 }
+
+/**
+ * The positions of the words of a simple command that run as commands. A launcher named in
+ * quoted text, as an argument, or as a redirection target, such as `cat > bin/spawn.sh`, runs
+ * nothing.
+ */
+export function commandIndices(words: readonly Word[]): number[] {
+  const found: number[] = [];
+  let atCommand = true;
+  let passThrough = false;
+
+  words.forEach((word, index) => {
+    if (word.redirect !== undefined || !atCommand) return;
+
+    // An assignment before the command, or a pass-through word's flags and durations.
+    if (/^[A-Za-z_]\w*=/.test(word.text)) return;
+
+    if (passThrough && /^(?:-|\d)/.test(word.text)) return;
+
+    found.push(index);
+    passThrough = PASS_THROUGH.has(commandName(word));
+    atCommand = passThrough;
+  });
+
+  return found;
+}
+
+/** The name a command word runs, without its directory. */
+export const commandName = (word: Word) => word.text.split("/").pop() ?? "";
+
+/** The value of a `--flag value` or `--flag=value` argument. */
+export function flagValue(args: readonly string[], flag: string): string | undefined {
+  const index = args.findIndex((arg) => arg === flag || arg.startsWith(`${flag}=`));
+
+  if (index < 0) return undefined;
+
+  return args[index] === flag ? args[index + 1] : args[index].slice(flag.length + 1);
+}
+
+/** Codemode cuts long recorded arguments and marks the cut with an ellipsis. */
+export const CUT = /(?:\.\.\.|…)$/;
 
 function closingDoubleQuote(shell: string, open: number): number {
   for (let index = open + 1; index < shell.length; index++) {

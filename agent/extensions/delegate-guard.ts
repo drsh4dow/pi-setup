@@ -7,11 +7,10 @@ type LaunchKind = "root" | "owner" | "delegate";
 
 type PiLaunchArgv = readonly string[];
 
-const UNATTENDED_PROMPT = "skills/subagents/unattended.md";
+// A subagent runs on a generated role prompt, and the directory that prompt sits in is its kind.
+const OWNER_PROMPTS = "system/generated/owner/";
 
-const OWNER_PROMPT = "skills/subagents/owner.md";
-
-const DELEGATE_PROMPT = "skills/subagents/delegate.md";
+const DELEGATE_PROMPTS = "system/generated/delegate/";
 
 const LAUNCHER = "skills/subagents/scripts/launch.ts";
 
@@ -34,26 +33,26 @@ const DELEGATE_REASON =
   "Delegates spawn nothing. Finish your piece, and name in your report the helper your parent should spawn.";
 
 const OWNER_REASON =
-  "Owners launch only delegates. Append skills/subagents/delegate.md to every pi-subagent launch, and pass --kind delegate to skills/subagents/scripts/launch.ts, per the subagents skill.";
+  "Owners launch only delegates. Pass --kind delegate to skills/subagents/scripts/launch.ts, and give every pi-subagent launch a --system-prompt from agent/system/generated/delegate/, per the subagents skill.";
 
-function appendedPrompts(argv: readonly string[]): string[] {
-  return argv.flatMap((arg, index) => {
-    const next = argv[index + 1];
+// Pi takes the last --system-prompt, as text or as a file path. Only a role prompt's path,
+// a single line ending in .md, names a kind, so a prompt text that quotes one stays a root.
+function promptKind(argv: readonly string[]): LaunchKind {
+  const prompt = argv
+    .flatMap((arg, index) => {
+      const next = argv[index + 1];
 
-    if (arg === "--append-system-prompt" && next !== undefined) return [next];
+      return arg === "--system-prompt" && next !== undefined ? [next] : [];
+    })
+    .at(-1);
 
-    return [];
-  });
-}
+  if (prompt === undefined || prompt.includes("\n") || !prompt.endsWith(".md")) return "root";
 
-function launchKind(argv: readonly string[]): LaunchKind {
-  const prompts = appendedPrompts(argv);
+  if (prompt.includes(OWNER_PROMPTS)) return "owner";
 
-  if (!prompts.some((prompt) => prompt.endsWith(UNATTENDED_PROMPT))) return "root";
+  if (prompt.includes(DELEGATE_PROMPTS)) return "delegate";
 
-  if (prompts.some((prompt) => prompt.endsWith(OWNER_PROMPT))) return "owner";
-
-  return "delegate";
+  return "root";
 }
 
 function isPi(word: string): boolean {
@@ -64,7 +63,7 @@ function isPiSubagent(word: string): boolean {
   return word === "pi-subagent" || word.endsWith("/pi-subagent");
 }
 
-// The brief launcher appends the kind file itself, named by its --kind flag.
+// The brief launcher picks the role prompt itself, and its --kind flag names the kind.
 function isLauncher(word: string): boolean {
   return word.endsWith(LAUNCHER);
 }
@@ -128,18 +127,13 @@ function launcherKind(launch: PiLaunchArgv): string | undefined {
 function launchesDelegate(launch: PiLaunchArgv): boolean {
   if (isLauncher(launch[0] ?? "")) return launcherKind(launch) === "delegate";
 
-  const prompts = appendedPrompts(launch);
-
-  return (
-    prompts.some((prompt) => prompt.endsWith(DELEGATE_PROMPT)) &&
-    !prompts.some((prompt) => prompt.endsWith(OWNER_PROMPT))
-  );
+  return promptKind(launch) === "delegate";
 }
 
 export function spawnGuard(
   argv: readonly string[],
 ): ((command: string) => string | undefined) | undefined {
-  const kind = launchKind(argv);
+  const kind = promptKind(argv);
 
   switch (kind) {
     case "root":

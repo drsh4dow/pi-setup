@@ -7,33 +7,36 @@ user-invokable: false
 
 # Subagents
 
-A subagent is a separate Pi process, started with `pi-subagent`, with the
-normal prompt, skills, and tools. It receives one assignment and returns one
-report.
+A subagent is a separate Pi process, started with `pi-subagent`, that runs on
+its role prompt: the core of this harness's system prompt, the text every
+subagent shares, its kind's text, and its role's text. It loads only the
+skills its assignment names, and receives one assignment and returns one
+report. Each role prompt is generated into
+`~/.pi/agent/system/generated/<kind>/<role>.md` from the parts in
+`~/.pi/agent/system/`.
 
 ## Kinds
 
-Every subagent is a delegate, except one a playbook hands a whole unit, which
-is an owner. The launch names the kind, and the `delegate-guard` extension
-blocks any spawn the kind does not allow.
+Every subagent is a delegate, except one handed a whole unit of work, which is
+an owner. Each role runs as one kind, the directory its prompt sits in, and the
+`delegate-guard` extension reads that directory from the child's
+`--system-prompt` to block any spawn the kind does not allow.
 
 - **Delegate.** Does one piece of its parent's step: code for a written scope,
   an exploration, a review, a swarm lane, an arena or architect candidate, or
-  Comment Sicko. It is a leaf. Its parent owns the playbook, the todolist, the
-  review of its output, and every spawn.
-- **Owner.** Carries one unit a playbook hands it: a PR under Autopilot-full,
-  Autopilot-stack, or a multi-phase plan, code-coupled Feature work, a Visual
-  parity component, or an Orchestrate track. It runs its unit the way a
-  top-level session would, keeps the todolist, and launches each of its
-  workers and verifiers as a delegate. An owner is a background terminal of
-  its parent, so it ends with its parent, and its children are absent from the
-  parent's `bg_list`. Record each owner's children in the agent store so the
-  root can probe them.
+  Comment Sicko. It is a leaf. Its parent owns the plan, the review of its
+  output, and every spawn.
+- **Owner.** Carries one whole unit, such as a PR or a stack, the way a
+  top-level session would: it keeps the todolist and launches each of its
+  workers and verifiers as a delegate. An owner is a background terminal of its
+  parent, so it ends with its parent, and its children are absent from the
+  parent's `bg_list`. Name in its assignment the file where it records each
+  child's terminal id, session id, and branch, so the root can probe them.
 
 ## Models
 
-Every subagent runs at `--thinking high`, on the model of the role a skill or
-playbook names.
+Every subagent runs at `--thinking high`, on the model of the role the
+launching skill names.
 
 - `openai/gpt-6.1-sol` is exhaustive on details and edge cases: boundaries,
   proofs, exploits, spec gaps. It runs `cross-family reviewer`,
@@ -59,7 +62,7 @@ conversation. An assignment is ready when it states:
 
 - The kind, owner or delegate.
 - The task, with the context and source leads it needs.
-- The skills the work requires, by name.
+- The skills the work requires, by name. The child loads only these.
 - The write scope: the files the child owns, or that it changes nothing.
 - A done condition the child can check.
 - The report: changes made, findings with references, judgment calls, and open
@@ -89,8 +92,9 @@ tracker or observability tools:
 pi-subagent \
   --model <model> \
   --thinking high \
-  --append-system-prompt "$HOME/.pi/agent/skills/subagents/unattended.md" \
-  --append-system-prompt "$HOME/.pi/agent/skills/subagents/delegate.md" \
+  --system-prompt "$HOME/.pi/agent/system/generated/delegate/assignment.md" \
+  --no-skills \
+  --skill "$HOME/.pi/agent/skills/<skill>" \
   --name "subagent: <short assignment>" <<'SUBAGENT_PROMPT'
 <assignment>
 SUBAGENT_PROMPT
@@ -101,16 +105,20 @@ runs as a read-only Pi chat in a pane of the parent's workspace. Outside
 herdr, it runs `pi --print`. Either way, the launch prints the child's report
 on stdout and exits 0 on success, as `pi --print` does.
 
-An owner launch appends `owner.md` in place of `delegate.md`. A launch
-without `owner.md` is a delegate. Use the session name as the
-terminal title. Keep the `subagent:` prefix: the
+The `assignment` prompt makes the child a delegate. `--no-skills` keeps every
+other skill out of its skill table, and each `--skill` loads one skill
+directory: pass one per skill the assignment names, and none when it names
+none. Pi leaves a skill hidden from the model out of the table even then, so
+the role prompt has the child read each named skill it does not hold, and it
+can read any other skill by path the same way. Launch an owner from a brief,
+below. Use the session name as the terminal title. Keep the `subagent:` prefix: the
 fast-mode extension reads it to apply each provider's `subagentsEnabled`
 setting. Pick a heredoc delimiter that does not occur as a standalone line in
 the assignment.
 
 ## Launch from a brief
 
-A playbook that writes each assignment to a file, such as implement-chunk's
+A skill that writes each assignment to a file, such as implement-chunk's
 briefs or code-review's persona assignments, launches it with
 [`scripts/launch.ts`](scripts/launch.ts) instead of the raw block above, in a
 `bg_start` command in the project directory:
@@ -126,11 +134,21 @@ $HOME/.pi/agent/skills/subagents/scripts/launch.ts \
   --name "subagent: <short assignment>"
 ```
 
-The launcher appends `unattended.md`, the kind's file, a heading that names
-the orders file, the orders file, and each `--append <file>` to the system
-prompt, and pipes the brief to `pi-subagent` as the prompt. Pi reads the appends when
-the child starts, so every spawn and resume carries the orders as they stand.
-Pass `--orders none` only when no standing-orders file exists.
+The launcher starts the child on its role's prompt,
+`~/.pi/agent/system/generated/<kind>/<role>.md`, with skill discovery off and
+one `--skill` per name in the brief's SKILLS field. SKILLS lists names
+separated by commas or `and`, and each item's leading name counts, so
+`**tdd** (red first)` names `tdd`, and a field that opens with `none` names
+nothing. Each name resolves to `~/.pi/agent/skills/<name>/` first, then to
+`.agents/skills/<name>/` in the launch directory. The launcher appends to the
+system prompt, in order: a `# Skill: <name>` heading and that skill's
+`SKILL.md` for each name, a heading that names the orders file, the orders
+file, and each `--append <file>`. The appended `SKILL.md` reaches the child
+even when the skill sets `disable-model-invocation: true`, which keeps it out
+of the skill table. The launcher pipes the brief to `pi-subagent` as the
+prompt. Pi reads the prompt and the appends when the child starts, so every
+spawn and resume carries the skills and the orders as they stand. Pass `--orders none`
+only when no standing-orders file exists.
 
 Before it starts Pi, it refuses with exit 2 and a `launch: refused:` line
 naming the cause:
@@ -141,7 +159,9 @@ naming the cause:
   brief whose first line starts with `COLLAPSED` needs only GOAL, SCOPE,
   VERIFY, and REPORT named in its paragraph. `persona` and `assignment` need
   no fields;
+- a `--kind` other than the role's kind, the directory of its prompt;
 - a KIND field that disagrees with `--kind`;
+- a SKILLS name that is no skill in either directory;
 - a placeholder outside fenced code, such as `undefined`, `NaN`,
   `[object Object]`, `origin/origin/`, `${…}`, or `<sha>`, printed with its
   line;
@@ -156,11 +176,14 @@ with their limits every `--poll-seconds`.
 The child's report is the launcher's stdout. Exit 0 means the child reported,
 and 1 means it failed. Stderr names the session id. To resume the child, run
 the same command with `--resume <session id>` and a brief file holding the new
-directive, which needs no template fields. Pi sends a resumed child's current
-orders as a system update after the earlier text, so the launcher opens the
-directive with a note that the update is current. `--dry-run` runs every check, then
-prints the command, the content of every append with the orders' line count,
-and the prompt, and starts no Pi.
+directive, which needs no template fields. Its SKILLS field, when it has one,
+sets the resumed child's skills; without one, the child resumes with none in
+its table. Pi sends a resumed child's current orders as a system update after
+the earlier text, so the launcher opens the directive with a note that the
+update is current. `--dry-run` runs every check, then prints the command, the
+role prompt, each skill with its directory, the content of every append, each
+skill's `SKILL.md` included, with
+the orders' line count, and the prompt, and starts no Pi.
 
 ## Retry
 
@@ -177,6 +200,6 @@ Retry a failed child by how it failed:
 ## Use the report
 
 Read an owner's todolist before its diff, and send back a skipped step its
-playbook marks mandatory. For changes, read the diff and run the repository's verification yourself: the
+skill marks mandatory. For changes, read the diff and run the repository's verification yourself: the
 report states what the child intended, and the diff shows what it did. For
 findings, check consequential claims against their cited sources.

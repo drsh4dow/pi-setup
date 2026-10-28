@@ -5,8 +5,8 @@ Settles two questions by measurement:
 - Should a subagent worker be able to ask its parent a question mid-run?
 - Should a parent be able to push a message into a running worker?
 
-Today [`unattended.md`](../../agent/skills/subagents/unattended.md) says nobody answers before the
-final message. The worker decides on the evidence, continues, and lists the question in its report.
+Today the shared subagent part, [`subagent.md`](../../agent/system/subagent.md), says nobody
+answers before the final message. The worker decides on the evidence, continues, and lists the question in its report.
 implement-chunk then respawns a fresh worker with the answer.
 
 Every channel is compared against an improved no-channel baseline: arm C, which uses hardened
@@ -57,16 +57,18 @@ to `parent-log.jsonl` with its input, reply, latency, and cost. A review turn al
 
 [`arms.ts`](arms.ts) defines the arms as configuration, not as separate harness checkouts. Every
 arm loads the system prompt, skills, and prompts from `--harness`, which defaults to this
-repository, through `checkoutHarnessArgs`. Like `pi-subagent`, every arm then appends its protocol
-prompt and [`delegate.md`](../../agent/skills/subagents/delegate.md).
+repository, through `checkoutHarnessArgs`. Every arm then appends its protocol prompt and the
+delegate kind part, [`kinds/delegate.md`](../../agent/system/kinds/delegate.md). The parts carry
+the generator's slot lines, which reach the worker as HTML comments. Unlike a `pi-subagent` launch,
+the arms keep general mode's prompt and the full skill table.
 
 | Arm    | Brief    | Protocol prompt                                                                                                                                        | Follow-up round on a directive                                        |
 | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| A      | today's  | `unattended.md`                                                                                                                                        | fresh worker: brief, directive, and prior report, in the same workdir |
-| C      | hardened | `unattended.md`                                                                                                                                        | fresh worker, as A                                                    |
+| A      | today's  | `subagent.md`                                                                                                                                          | fresh worker: brief, directive, and prior report, in the same workdir |
+| C      | hardened | `subagent.md`                                                                                                                                          | fresh worker, as A                                                    |
 | R      | hardened | [`overlays/resume-question.md`](overlays/resume-question.md): save the work, end on a `QUESTION:` block, get resumed with the answer (at most 3 times) | resume the same session                                               |
 | L      | hardened | [`overlays/ask-parent.md`](overlays/ask-parent.md): `ask-parent "<question>"` blocks until the parent answers, or 10 minutes pass and it exits 3       | fresh worker, as A                                                    |
-| C+push | hardened | `unattended.md`, plus [`push-extension.ts`](push-extension.ts)                                                                                         | fresh worker, as A                                                    |
+| C+push | hardened | `subagent.md`, plus [`push-extension.ts`](push-extension.ts)                                                                                           | fresh worker, as A                                                    |
 
 The push extension delivers whatever the parent drops into the run's mailbox file. It arrives in
 the running worker as a steering message at the next tool result or turn end.

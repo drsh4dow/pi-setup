@@ -1,8 +1,12 @@
 // The guard judges each call synchronously inside Pi's handler, which has no Effect runtime.
 // @effect-diagnostics-next-line nodeBuiltinImport:off
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import { homedir, tmpdir } from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import { fileURLToPath } from "node:url";
 
 import {
   type ExtensionAPI,
@@ -185,7 +189,9 @@ export function spawnGuard(
 // A coordinator is a root session in sh4dow mode or one that runs the implement-chunk prompt, the
 // two kinds evals/coordinator-runs grades. It is read-only on code: subagents make every change,
 // so its own edit and write calls stay in the state root and the temp directory.
-const IMPLEMENT_CHUNK_HEADING = "# Implement a chunk";
+// A session becomes a coordinator at any user message that opens with this heading as a whole line,
+// which is how Pi records an expanded /implement-chunk, and stays one for the rest of the session.
+const IMPLEMENT_CHUNK_HEADING = /^# Implement a chunk(?:\r?\n|$)/;
 
 // The state folders of every project, which SYSTEM.md roots here. The guard cannot tell which
 // chunk folder a coordinator owns, so any folder under the root counts as its own.
@@ -197,18 +203,16 @@ const ROOT_EDIT_REASON =
 
 type SessionEntries = ReturnType<ExtensionContext["sessionManager"]["getEntries"]>;
 
-function firstUserText(entries: SessionEntries): string | undefined {
-  for (const entry of entries) {
-    if (entry.type !== "message" || entry.message.role !== "user") continue;
+function userTexts(entries: SessionEntries): string[] {
+  return entries.flatMap((entry) => {
+    if (entry.type !== "message" || entry.message.role !== "user") return [];
 
     const { content } = entry.message;
 
-    if (!Array.isArray(content)) return content;
+    if (!Array.isArray(content)) return [content];
 
-    return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
-  }
-
-  return undefined;
+    return [content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")];
+  });
 }
 
 export function isCoordinatorSession(entries: SessionEntries): boolean {
@@ -217,34 +221,76 @@ export function isCoordinatorSession(entries: SessionEntries): boolean {
   );
 
   return (
-    sh4dow || (firstUserText(entries)?.trimStart().startsWith(IMPLEMENT_CHUNK_HEADING) ?? false)
+    sh4dow || userTexts(entries).some((text) => IMPLEMENT_CHUNK_HEADING.test(text.trimStart()))
   );
 }
 
 // The file an edit or write call names, resolved as Pi's tools resolve it: a leading `@` dropped,
-// `~` expanded, and a relative path taken from the session's directory.
+// `~` expanded, a file URL read as its path, and a relative path taken from the session's directory.
 function targetOf(path: string, cwd: string): string {
   const named = path.startsWith("@") ? path.slice(1) : path;
 
   if (named === "~") return homedir();
 
+  if (named.startsWith("file://")) return resolve(fileURLToPath(named));
+
   return resolve(cwd, named.startsWith("~/") ? join(homedir(), named.slice(2)) : named);
 }
 
+// Past this many links the filesystem refuses the path too (ELOOP), so the guard stops following.
+const MAX_LINKS = 40;
+
+// Where a write to this absolute path lands: the real path of its nearest existing ancestor, with
+// the missing rest appended. A dangling link is followed from the directory it really sits in,
+// since writing through it creates its target.
+function landingOf(path: string, links = 0): string {
+  const stats = lstatSync(path, { throwIfNoEntry: false });
+
+  if (stats !== undefined && !stats.isSymbolicLink()) return realpathSync.native(path);
+
+  const parent = dirname(path);
+
+  if (parent === path) return path;
+
+  const here = join(landingOf(parent, links), relative(parent, path));
+
+  if (stats === undefined || links >= MAX_LINKS) return here;
+
+  return landingOf(resolve(dirname(here), readlinkSync(here)), links + 1);
+}
+
+// Undefined when the filesystem refuses to resolve the path, as it would refuse the write.
+function landingOrUnknown(path: string): string | undefined {
+  try {
+    return landingOf(path);
+  } catch {
+    return undefined;
+  }
+}
+
+// Inside by whole segments, so `/tmp/..notes` is a child of /tmp and `/tmp/../home` is not.
 function isInside(directory: string, path: string): boolean {
   const rest = relative(directory, path);
 
-  return rest !== "" && !rest.startsWith("..") && !isAbsolute(rest);
+  return rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest);
 }
 
-/** Why a coordinator may not write `path`, or undefined when it is in the state root or a temp directory. */
+/** Why a coordinator may not write `path`, or undefined when it lands in the state root or a temp directory. */
 export function rootEditRefusal(path: string, cwd: string): string | undefined {
   const target = targetOf(path, cwd);
-  const allowed = [STATE_ROOT, tmpdir(), "/tmp"];
+  const landing = landingOrUnknown(target);
 
-  if (allowed.some((directory) => isInside(directory, target))) return undefined;
+  if (landing === undefined) {
+    return `${ROOT_EDIT_REASON} Refused: ${target}, which does not resolve`;
+  }
 
-  return `${ROOT_EDIT_REASON} Refused: ${target}`;
+  const allowed = [STATE_ROOT, tmpdir(), "/tmp"].flatMap((root) => landingOrUnknown(root) ?? []);
+
+  if (allowed.some((directory) => isInside(directory, landing))) return undefined;
+
+  const refused = landing === target ? target : `${target}, which lands at ${landing}`;
+
+  return `${ROOT_EDIT_REASON} Refused: ${refused}`;
 }
 
 export function refuseRootEdits(pi: ExtensionAPI): void {

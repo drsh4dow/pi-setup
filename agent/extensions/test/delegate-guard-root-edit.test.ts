@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -165,4 +165,88 @@ test("root-edit: a coordinator writes its state folder and temp files, and other
   );
 
   assert.match(escaped?.reason ?? "", ROOT_EDIT, "a relative path that leaves the state folder");
+});
+
+test("root-edit: a session that starts the implement-chunk prompt after a general task is a coordinator from then on", async () => {
+  const call = session(rootArgv);
+  const general = userMessage("fix the typo in README.md");
+
+  const coordinator = userMessage(
+    "# Implement a chunk\n\nSTOP: write later.md and call no other tool",
+  );
+
+  const [before, after, afterAnotherMessage] = await Promise.all([
+    call([general], "/home/u/p", "write", inputOf("write", "later.md")),
+    call([general, coordinator], "/home/u/p", "write", inputOf("write", "later.md")),
+    call([general, coordinator, general], "/home/u/p", "edit", inputOf("edit", "later.md")),
+  ]);
+
+  assert.equal(before, undefined, "the general task alone writes code");
+  assert.match(after?.reason ?? "", ROOT_EDIT);
+  assert.match(afterAnotherMessage?.reason ?? "", ROOT_EDIT, "it stays a coordinator");
+});
+
+test("root-edit: a general task whose heading only begins with the prompt's heading writes code", async () => {
+  const call = session(rootArgv);
+
+  const [uploader, heading] = await Promise.all([
+    call(
+      [userMessage("# Implement a chunked uploader\nPlease write code.")],
+      "/home/u/p",
+      "write",
+      inputOf("write", "uploader.md"),
+    ),
+    call([userMessage("# Implement a chunk")], "/home/u/p", "write", inputOf("write", "a.md")),
+  ]);
+
+  assert.equal(uploader, undefined);
+  assert.match(heading?.reason ?? "", ROOT_EDIT, "the heading alone is the prompt");
+});
+
+test("root-edit: a coordinator's write through a temp link is judged by where it lands", async (t) => {
+  const call = session(rootArgv);
+  const coordinator = [userMessage("# Implement a chunk\n\n#197")];
+  const scratch = mkdtempSync(join(tmpdir(), "root-edit-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  // The filesystem root is outside the state root and every temp directory on any host.
+  symlinkSync("/", join(scratch, "root-link"), "dir");
+  symlinkSync("/root-edit-missing.ts", join(scratch, "dangling.ts"));
+
+  const [throughLink, throughDanglingLink, scratchFile] = await Promise.all([
+    call(coordinator, "/home/u/p", "write", inputOf("write", join(scratch, "root-link/u/a.ts"))),
+    call(coordinator, "/home/u/p", "write", inputOf("write", join(scratch, "dangling.ts"))),
+    call(coordinator, "/home/u/p", "write", inputOf("write", join(scratch, "notes/a.md"))),
+  ]);
+
+  assert.match(throughLink?.reason ?? "", ROOT_EDIT, "a temp link into code");
+  assert.match(throughLink?.reason ?? "", /\s\/u\/a\.ts\b/, "the refusal names where it lands");
+  assert.match(throughDanglingLink?.reason ?? "", ROOT_EDIT, "a temp link to a missing code file");
+  assert.equal(scratchFile, undefined, "a new file in the same temp directory");
+});
+
+test("root-edit: a temp child whose name starts with two dots is inside the temp directory", async () => {
+  const call = session(rootArgv);
+  const coordinator = [userMessage("# Implement a chunk\n\n#197")];
+
+  const [dotDotName, parent] = await Promise.all([
+    call(coordinator, "/home/u/p", "write", inputOf("write", "/tmp/..notes/file.md")),
+    call(coordinator, "/tmp/x", "write", inputOf("write", "../../home/u/p/a.ts")),
+  ]);
+
+  assert.equal(dotDotName, undefined);
+  assert.match(parent?.reason ?? "", ROOT_EDIT, "a real parent segment still leaves it");
+});
+
+test("root-edit: a coordinator's file URL is judged by the path Pi's tools write", async () => {
+  const call = session(rootArgv);
+  const state = join(homedir(), ".local/state/pi-agent/p/c");
+
+  const refusal = await call(
+    [userMessage("# Implement a chunk\n\n#197")],
+    state,
+    "write",
+    inputOf("write", "file:///home/u/p/a.ts"),
+  );
+
+  assert.match(refusal?.reason ?? "", ROOT_EDIT);
 });

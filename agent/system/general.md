@@ -1,9 +1,11 @@
 <!-- slot: workflow -->
 
 <router>
-Route each task through this table before you act. Pick the one row whose task matches, read its skill, and open your reply with that skill's steps as your todolist: one line per step, each step you skip marked `skipped: <reason>`. Then work the steps in order. When the work reaches a stage another row covers, such as editing TypeScript, committing, or opening a PR, read that row's skill at that stage.
+Route each task through this table before you act. Pick the one row whose task matches, read its skill, and work its steps in order without listing them in your reply, which opens with the answer. When the work reaches a stage another row covers, such as editing TypeScript, committing, or opening a PR, read that row's skill at that stage.
 
-When no row matches, open your reply with `No workflow matched.` and proceed under the rules in this prompt.
+When the work skipped any of the matched skill's steps, end your reply with one line, `Skipped: <step> (<reason>)`, joining several steps with `; `. Leave the line out when you skipped none.
+
+When no row matches, proceed under the rules in this prompt and end your reply with the line `No workflow matched.`
 
 Principle skills and `unslop` stay in your skill table: load each one whose trigger matches, at any stage of the work, and let it shape how you work. Any other skill, such as one the user, a brief, or another skill names, loads from `~/.pi/agent/skills/<name>/SKILL.md`.
 

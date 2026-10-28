@@ -1,6 +1,7 @@
 // The arms: communication protocols, each a configuration of the same harness checkout. An arm
-// picks the brief variant, the subagent prompt appended in place of unattended.md, the tools on
-// PATH, the push extension, and how a review directive reaches the worker.
+// picks the brief variant, the subagent prompt it appends (the shared subagent part
+// agent/system/subagent.md, or an overlay), the tools on PATH, the push extension, and how a
+// review directive reaches the worker.
 
 import { dirname, join } from "node:path";
 import type { BriefVariant } from "./briefs.ts";
@@ -11,7 +12,7 @@ const HERE = dirname(new URL(import.meta.url).pathname);
 export interface Arm {
   readonly id: ArmId;
   readonly brief: BriefVariant;
-  /** The prompt appended where pi-subagent appends unattended.md, under the harness root or this folder. */
+  /** The subagent prompt it appends: the shared subagent part under the harness root, or an overlay in this folder. */
   readonly protocol:
     | { readonly kind: "harness"; readonly path: string }
     | { readonly kind: "overlay"; readonly path: string };
@@ -23,16 +24,16 @@ export interface Arm {
   readonly followUp: "fresh" | "resume";
 }
 
-const UNATTENDED = {
+const SUBAGENT_PART = {
   kind: "harness",
-  path: join("agent", "skills", "subagents", "unattended.md"),
+  path: join("agent", "system", "subagent.md"),
 } as const;
 
 export const ARMS: Readonly<Record<ArmId, Arm>> = {
   A: {
     id: "A",
     brief: "today",
-    protocol: UNATTENDED,
+    protocol: SUBAGENT_PART,
     askParent: false,
     questionBlocks: false,
     push: false,
@@ -41,7 +42,7 @@ export const ARMS: Readonly<Record<ArmId, Arm>> = {
   C: {
     id: "C",
     brief: "hardened",
-    protocol: UNATTENDED,
+    protocol: SUBAGENT_PART,
     askParent: false,
     questionBlocks: false,
     push: false,
@@ -68,7 +69,7 @@ export const ARMS: Readonly<Record<ArmId, Arm>> = {
   "C+push": {
     id: "C+push",
     brief: "hardened",
-    protocol: UNATTENDED,
+    protocol: SUBAGENT_PART,
     askParent: false,
     questionBlocks: false,
     push: true,
@@ -81,7 +82,7 @@ export function protocolFile(arm: Arm, harness: string): string {
 }
 
 export const delegateFile = (harness: string) =>
-  join(harness, "agent", "skills", "subagents", "delegate.md");
+  join(harness, "agent", "system", "kinds", "delegate.md");
 
 export const PUSH_EXTENSION = join(HERE, "push-extension.ts");
 

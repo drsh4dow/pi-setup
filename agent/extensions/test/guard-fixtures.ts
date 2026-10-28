@@ -8,13 +8,12 @@ import { echoedText, type Printer } from "../../lib/command-input.ts";
 import hostGuardExtension from "../host-guard.ts";
 import { extensionTestAdapter, unsafeFixture } from "./adapter.ts";
 
-// The kind files the subagents skill appends, and the argv of each kind of Pi session.
+// Role prompts the subagents launcher passes, and the argv of each kind of Pi session. A role
+// prompt's directory under system/generated/ is its kind.
 
-export const UNATTENDED = "/h/.pi/agent/skills/subagents/unattended.md";
+export const DELEGATE_PROMPT = "/h/.pi/agent/system/generated/delegate/implementer.md";
 
-export const OWNER = "/h/.pi/agent/skills/subagents/owner.md";
-
-export const DELEGATE = "/h/.pi/agent/skills/subagents/delegate.md";
+export const OWNER_PROMPT = "/h/.pi/agent/system/generated/owner/babysitter.md";
 
 export const rootArgv = ["node", "pi"];
 
@@ -22,21 +21,12 @@ export const delegateArgv = [
   "node",
   "pi",
   "--print",
-  "--append-system-prompt",
-  UNATTENDED,
-  "--append-system-prompt",
-  DELEGATE,
+  "--system-prompt",
+  DELEGATE_PROMPT,
+  "--no-skills",
 ];
 
-export const ownerArgv = [
-  "node",
-  "pi",
-  "--print",
-  "--append-system-prompt",
-  UNATTENDED,
-  "--append-system-prompt",
-  OWNER,
-];
+export const ownerArgv = ["node", "pi", "--print", "--system-prompt", OWNER_PROMPT, "--no-skills"];
 
 // A `tool_call` handler blocks with `{ block: true, reason }` and lets a call run with `undefined`.
 export const Refusal = Schema.Struct({ block: Schema.Literal(true), reason: Schema.String });

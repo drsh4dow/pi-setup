@@ -111,7 +111,11 @@ export function setupChecks(context: CheckContext): SetupCheck[] {
       existsSync(protocolFile(arm, harness)),
       protocolFile(arm, harness),
     ),
-    check("delegate.md exists", existsSync(delegateFile(harness)), delegateFile(harness)),
+    check(
+      "the delegate kind part exists",
+      existsSync(delegateFile(harness)),
+      delegateFile(harness),
+    ),
     check(
       arm.askParent ? "ask-parent is on PATH" : "ask-parent is not on PATH",
       (askParent.exit === 0) === arm.askParent,

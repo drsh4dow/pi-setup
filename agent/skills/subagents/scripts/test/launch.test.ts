@@ -20,6 +20,9 @@ const CODE_REVIEW_SKILL = new URL("../../../code-review/SKILL.md", import.meta.u
 
 const SUBAGENTS_SKILL = new URL("../../SKILL.md", import.meta.url).pathname;
 
+// The harness's agent directory, which holds the generated role prompts and the skills.
+const AGENT_DIR = new URL("../../../..", import.meta.url).pathname.replace(/\/$/, "");
+
 const IMPLEMENTER_BRIEF = `GOAL         Add a retry to the upload client so a dropped connection resumes.
 KIND         delegate
 SCOPE        writes src/upload/**; worktree .worktrees/unit-1 on branch unit-1
@@ -178,15 +181,243 @@ test("a launch passes the brief on stdin and the appends on the command line", (
 
   const argv = readFileSync(`${h.marker}.argv`, "utf8").split("\0");
   const appends = argv.flatMap((word, index) => (word === "--append-system-prompt" ? [argv[index + 1] ?? ""] : []));
-  const [unattended, kind, heading, orders, ...rest] = appends;
+  const [skillHeading, skill, heading, orders, ...rest] = appends;
 
-  assert.match(unattended ?? "", /\/skills\/subagents\/unattended\.md$/);
-  assert.match(kind ?? "", /\/skills\/subagents\/delegate\.md$/);
+  assert.equal(argv[argv.indexOf("--system-prompt") + 1], `${AGENT_DIR}/system/generated/delegate/implementer.md`);
+  assert.ok(argv.includes("--no-skills"), argv.join(" "));
+  assert.deepEqual(flagValues(argv, "--skill"), [`${AGENT_DIR}/skills/tdd`]);
+  assert.match(skillHeading ?? "", /^# Skill: tdd\n/, "a literal heading labels the skill");
+  assert.equal(skill, `${AGENT_DIR}/skills/tdd/SKILL.md`, "the skill travels as a path Pi reads at start");
   assert.match(heading ?? "", /^# Standing orders\n/, "a literal heading labels the orders");
   assert.ok(heading?.includes(h.orders), "the heading names the orders file");
   assert.equal(orders, h.orders, "the orders travel as a path Pi reads at start");
   assert.deepEqual(rest, []);
   assert.equal(argv[argv.indexOf("--name") + 1], "subagent: unit-1");
+});
+
+function flagValues(words: readonly string[], flag: string): string[] {
+  return words.flatMap((word, index) => (word === flag ? [words[index + 1] ?? ""] : []));
+}
+
+function commandWords(run: Run): string[] {
+  const command = /^command: pi-subagent (.*)$/m.exec(run.stdout)?.[1];
+  assert.ok(command, run.stdout);
+
+  return command.split(" ");
+}
+
+const TDD_SKILL = `${AGENT_DIR}/skills/tdd/SKILL.md`;
+
+// The kind of each role, the directory of its part under agent/system/roles/: the babysitter owns its unit.
+const ROLE_KINDS = {
+  implementer: "delegate",
+  explorer: "delegate",
+  verifier: "delegate",
+  merger: "delegate",
+  "pr-writer": "delegate",
+  "live-verifier": "delegate",
+  persona: "delegate",
+  assignment: "delegate",
+  "brief-auditor": "delegate",
+  babysitter: "owner",
+} as const;
+
+function roleBrief(role: keyof typeof ROLE_KINDS): string {
+  const kind = ROLE_KINDS[role];
+
+  if (role === "persona" || role === "assignment")
+    return "Review the diff `git diff main...HEAD`.\n\nSKILLS tdd\n";
+
+  const brief = IMPLEMENTER_BRIEF.replace("KIND         delegate", `KIND         ${kind}`);
+
+  return role === "merger" ? brief.replace(/^VERIFY /m, "STEPS  ") : brief;
+}
+
+for (const role of Object.keys(ROLE_KINDS) as (keyof typeof ROLE_KINDS)[]) {
+  test(`the ${role} role runs on its role prompt alone, with no kind file appended, and loads its brief's skills`, (t) => {
+    const h = host(t);
+    const kind = ROLE_KINDS[role];
+    const args = baseArgs(h, h.brief("brief.md", roleBrief(role)), role);
+    args[args.indexOf("--kind") + 1] = kind;
+
+    const run = launch(h, [...args, "--dry-run"]);
+    assert.equal(run.status, 0, run.stderr);
+
+    const words = commandWords(run);
+    const prompt = `${AGENT_DIR}/system/generated/${kind}/${role}.md`;
+
+    assert.deepEqual(flagValues(words, "--system-prompt"), [prompt]);
+    assert.ok(words.includes("--no-skills"), "skill discovery is off");
+    assert.doesNotMatch(run.stdout, /subagents\/(unattended|delegate|owner)\.md/, "no kind file is appended");
+    assert.ok(run.stdout.includes(`--- system prompt: ${prompt} ---\n${readFileSync(prompt, "utf8").trimEnd()}\n`), run.stdout);
+    assert.doesNotMatch(run.stdout, /<collaboration>|<skill_workflow>|<router>/, "no general-mode part");
+    assert.deepEqual(flagValues(words, "--skill"), [`${AGENT_DIR}/skills/tdd`], "the brief names tdd");
+    assert.ok(run.stdout.includes("--- system prompt append: literal text ---\n# Skill: tdd\n"), run.stdout);
+    assert.ok(run.stdout.includes(`--- system prompt append: ${TDD_SKILL} (skill tdd) ---\n${readFileSync(TDD_SKILL, "utf8").trimEnd()}\n`), run.stdout);
+  });
+}
+
+test("a resume directive's SKILLS field replaces the skills, and a directive without one loads none", (t) => {
+  const h = host(t);
+  const resume = (name: string, text: string) =>
+    launch(h, [...baseArgs(h, h.brief(name, text)), "--resume", "session-1", "--dry-run"]);
+
+  const replaced = resume("unslop.md", "Also tighten the PR body.\n\nSKILLS unslop\n");
+  assert.equal(replaced.status, 0, replaced.stderr);
+  assert.deepEqual(flagValues(commandWords(replaced), "--skill"), [`${AGENT_DIR}/skills/unslop`]);
+  assert.ok(replaced.stdout.includes(`(skill unslop) ---`), replaced.stdout);
+  assert.ok(!replaced.stdout.includes("(skill tdd)"), "the first brief's tdd is gone");
+
+  const bare = resume("bare.md", "Also cover the timeout path.\n");
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.deepEqual(flagValues(commandWords(bare), "--skill"), []);
+  assert.doesNotMatch(bare.stdout, /\(skill \S+\) ---/, "no skill is appended");
+
+  assertRefused(h, resume("unknown.md", "Also cover it.\n\nSKILLS no-such-skill\n"), /SKILLS names no-such-skill/);
+});
+
+test("a brief-auditor brief needs every template field, or GOAL, SCOPE, VERIFY, and REPORT when collapsed", (t) => {
+  const h = host(t);
+  const noVerify = h.brief("auditor-no-verify.md", IMPLEMENTER_BRIEF.replace(/^VERIFY .*\n/m, ""));
+  const collapsed = h.brief(
+    "auditor-collapsed.md",
+    "COLLAPSED audit of three briefs. GOAL: name each brief's gaps. SCOPE: reads briefs/*.md. REPORT: one line per gap.\n",
+  );
+
+  assertRefused(h, dryRun(h, noVerify, "brief-auditor"), /brief-auditor brief is missing required field VERIFY/);
+  assertRefused(h, dryRun(h, collapsed, "brief-auditor"), /collapsed brief-auditor brief does not name required field VERIFY/);
+});
+
+test("a child loads exactly the skills its brief's SKILLS field names", (t) => {
+  const h = host(t);
+  const skills = IMPLEMENTER_BRIEF.replace(
+    "SKILLS       tdd",
+    "SKILLS       **tdd** (red first, then green), `unslop`\n             and writing-good-commits",
+  );
+  const run = dryRun(h, h.brief("skills.md", skills));
+  assert.equal(run.status, 0, run.stderr);
+
+  const dirs = ["tdd", "unslop", "writing-good-commits"].map((name) => `${AGENT_DIR}/skills/${name}`);
+
+  assert.deepEqual(flagValues(commandWords(run), "--skill"), dirs);
+  assert.ok(
+    run.stdout.includes(`--- skills ---\ntdd\t${dirs[0]}\nunslop\t${dirs[1]}\nwriting-good-commits\t${dirs[2]}\n`),
+    run.stdout,
+  );
+});
+
+test("a free-form brief's SKILLS line ends at the prose after it", (t) => {
+  const h = host(t);
+  const brief = h.brief(
+    "free-skills.md",
+    "Check what this run loads.\n\nSKILLS tdd, unslop\n\n1. Reply with the names in your skill table, exactly as listed.\n2. Read the skill and write one commit subject.\n",
+  );
+  const run = dryRun(h, brief, "assignment");
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(flagValues(commandWords(run), "--skill"), [
+    `${AGENT_DIR}/skills/tdd`,
+    `${AGENT_DIR}/skills/unslop`,
+  ]);
+});
+
+test("a brief whose SKILLS is none, or that has no SKILLS field, loads no skill", (t) => {
+  const h = host(t);
+  const none = h.brief("none.md", IMPLEMENTER_BRIEF.replace("SKILLS       tdd", "SKILLS       none: the unit is one command"));
+  const free = h.brief("free.md", "Review the diff `git diff main...HEAD`.\n");
+
+  for (const run of [dryRun(h, none), dryRun(h, free, "assignment")]) {
+    assert.equal(run.status, 0, run.stderr);
+    assert.ok(commandWords(run).includes("--no-skills"), run.stdout);
+    assert.deepEqual(flagValues(commandWords(run), "--skill"), []);
+  }
+});
+
+test("a skill name resolves to the harness's skill first, then to the launch directory's", (t) => {
+  const h = host(t);
+  const work = join(h.dir, "project");
+
+  for (const name of ["local-check", "tdd"]) {
+    mkdirSync(join(work, ".agents/skills", name), { recursive: true });
+    writeFileSync(join(work, ".agents/skills", name, "SKILL.md"), `---\nname: ${name}\n---\n`);
+  }
+
+  const brief = h.brief("local.md", IMPLEMENTER_BRIEF.replace("SKILLS       tdd", "SKILLS       tdd, local-check"));
+  const run = dryRun(h, brief, "implementer", work);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(flagValues(commandWords(run), "--skill"), [
+    `${AGENT_DIR}/skills/tdd`,
+    join(work, ".agents/skills/local-check"),
+  ]);
+});
+
+// The system prompt Pi builds from the argv the fake pi-subagent received: the --system-prompt
+// file, then each --append-system-prompt, read as a file when the value is a path that exists
+// and taken as literal text otherwise. The skill table Pi adds is left out, because Pi drops
+// every skill with `disable-model-invocation: true` from it.
+function recordedSystemPrompt(h: Host): string {
+  const argv = readFileSync(`${h.marker}.argv`, "utf8").split("\0");
+  const read = (value: string) => (existsSync(value) ? readFileSync(value, "utf8") : value);
+
+  return [
+    ...flagValues(argv, "--system-prompt"),
+    ...flagValues(argv, "--append-system-prompt"),
+  ].map(read).join("\n\n");
+}
+
+test("a named skill hidden from the model's skill table is still in the child's system prompt", (t) => {
+  const h = host(t);
+  const work = join(h.dir, "project");
+  const hidden = join(work, ".agents/skills/hidden-check");
+  mkdirSync(hidden, { recursive: true });
+  writeFileSync(
+    join(hidden, "SKILL.md"),
+    "---\nname: hidden-check\ndescription: A check the router hides.\ndisable-model-invocation: true\n---\n\nRun the hidden check before you commit.\n",
+  );
+
+  const brief = h.brief("hidden.md", IMPLEMENTER_BRIEF.replace("SKILLS       tdd", "SKILLS       hidden-check, tdd"));
+  const run = launch(h, baseArgs(h, brief), work);
+  assert.equal(run.status, 0, run.stderr);
+
+  const prompt = recordedSystemPrompt(h);
+
+  for (const [name, file, body] of [
+    ["hidden-check", join(hidden, "SKILL.md"), "Run the hidden check before you commit."],
+    ["tdd", `${AGENT_DIR}/skills/tdd/SKILL.md`, "# Test-driven development"],
+  ] as const) {
+    assert.match(prompt, new RegExp(`^# Skill: ${name}$`, "m"), `a heading names ${name}`);
+    assert.ok(prompt.includes(file), `the prompt names ${file}`);
+    assert.ok(prompt.includes(body), `the prompt holds the text of ${file}`);
+  }
+});
+
+test("a brief naming an unknown skill is refused before launch", (t) => {
+  const h = host(t);
+  const brief = h.brief("unknown.md", IMPLEMENTER_BRIEF.replace("SKILLS       tdd", "SKILLS       tdd, no-such-skill"));
+
+  for (const args of [[...baseArgs(h, brief), "--dry-run"], baseArgs(h, brief)]) {
+    const run = launch(h, args);
+
+    assertRefused(h, run, /launch: refused: /);
+    assert.ok(
+      run.stderr.includes(
+        `launch: refused: ${brief}: SKILLS names no-such-skill, which is no skill in ${AGENT_DIR}/skills or ${h.dir}/.agents/skills\n`,
+      ),
+      run.stderr,
+    );
+  }
+});
+
+test("a launch whose --kind is not its role's kind is refused", (t) => {
+  const h = host(t);
+  const owner = h.brief("owner.md", IMPLEMENTER_BRIEF.replace("KIND         delegate", "KIND         owner"));
+  const asOwner = baseArgs(h, owner);
+  asOwner[asOwner.indexOf("--kind") + 1] = "owner";
+
+  const run = launch(h, asOwner);
+  assertRefused(h, run, /launch: refused: role implementer runs as delegate, but the launch is --kind owner\n/);
+
+  const babysitter = baseArgs(h, h.brief("b.md", IMPLEMENTER_BRIEF), "babysitter");
+  assertRefused(h, launch(h, babysitter), /launch: refused: role babysitter runs as owner, but the launch is --kind delegate\n/);
 });
 
 test("a missing or empty brief is refused", (t) => {

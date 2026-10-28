@@ -225,10 +225,19 @@ export function isCoordinatorSession(entries: SessionEntries): boolean {
   );
 }
 
-// The file an edit or write call names, resolved as Pi's tools resolve it: a leading `@` dropped,
-// `~` expanded, a file URL read as its path, and a relative path taken from the session's directory.
-function targetOf(path: string, cwd: string): string {
-  const named = path.startsWith("@") ? path.slice(1) : path;
+// The Unicode spaces Pi's edit and write tools read as an ASCII space, as their resolveToCwd does
+// (dist/utils/paths.js). The package does not export it, so the agreement test in
+// test/delegate-guard-root-edit.test.ts holds this copy to Pi's real write tool.
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+/**
+ * The file an edit or write call names, resolved as Pi's tools resolve it: Unicode spaces read as
+ * spaces, then a leading `@` dropped, `~` expanded, a file URL read as its path, and a relative path
+ * taken from the session's directory.
+ */
+export function editTarget(path: string, cwd: string): string {
+  const spaced = path.replace(UNICODE_SPACES, " ");
+  const named = spaced.startsWith("@") ? spaced.slice(1) : spaced;
 
   if (named === "~") return homedir();
 
@@ -277,7 +286,7 @@ function isInside(directory: string, path: string): boolean {
 
 /** Why a coordinator may not write `path`, or undefined when it lands in the state root or a temp directory. */
 export function rootEditRefusal(path: string, cwd: string): string | undefined {
-  const target = targetOf(path, cwd);
+  const target = editTarget(path, cwd);
   const landing = landingOrUnknown(target);
 
   if (landing === undefined) {

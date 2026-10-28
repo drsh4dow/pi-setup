@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import type { ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import {
+  createWriteTool,
+  type ExtensionContext,
+  type ToolCallEvent,
+} from "@earendil-works/pi-coding-agent";
 import { Schema } from "effect";
 
-import delegateGuardExtension from "../delegate-guard.ts";
+import delegateGuardExtension, { editTarget } from "../delegate-guard.ts";
 import { SH4DOW_MODE_ENTRY } from "../sh4dow/index.ts";
 import { extensionTestAdapter, unsafeFixture } from "./adapter.ts";
 import { decodeDecision, delegateArgv, rootArgv } from "./guard-fixtures.ts";
@@ -82,6 +86,25 @@ type ToolInput = Record<string, string>;
 
 const inputOf = (toolName: string, path: string): ToolInput =>
   toolName === "write" ? { path, content: "x" } : { path, oldText: "a", newText: "b" };
+
+// The file Pi's own write tool writes for this call, recorded at its file-system operations
+// instead of written, so a path into code or the home directory touches nothing.
+async function piWritePath(path: string, cwd: string): Promise<string | undefined> {
+  let written: string | undefined;
+
+  const tool = createWriteTool(cwd, {
+    operations: {
+      mkdir: async () => {},
+      writeFile: async (absolutePath) => {
+        written = absolutePath;
+      },
+    },
+  });
+
+  await tool.execute("probe", { path, content: "x" });
+
+  return written;
+}
 
 test("root-edit: each past coordinator's edit outside its state folder is refused", async () => {
   const call = session(rootArgv);
@@ -222,6 +245,83 @@ test("root-edit: a coordinator's write through a temp link is judged by where it
   assert.match(throughLink?.reason ?? "", /\s\/u\/a\.ts\b/, "the refusal names where it lands");
   assert.match(throughDanglingLink?.reason ?? "", ROOT_EDIT, "a temp link to a missing code file");
   assert.equal(scratchFile, undefined, "a new file in the same temp directory");
+});
+
+test("root-edit: a no-break space in a temp path is read as Pi's tools read it, as a space", async (t) => {
+  const call = session(rootArgv);
+  const coordinator = [userMessage("# Implement a chunk\n\n#197")];
+  const scratch = mkdtempSync(join(tmpdir(), "root-edit-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  // `space link` leads into code; the no-break-space name a call types does not exist.
+  symlinkSync("/", join(scratch, "space link"), "dir");
+  const intoCode = join(scratch, "space\u00A0link", "u", "a.ts");
+
+  assert.equal(await piWritePath(intoCode, "/home/u/p"), join(scratch, "space link", "u", "a.ts"));
+  assert.equal(realpathSync(join(scratch, "space link")), "/", "Pi's write lands in code");
+
+  const refusal = await call(coordinator, "/home/u/p", "write", inputOf("write", intoCode));
+
+  assert.match(refusal?.reason ?? "", ROOT_EDIT, "a write that lands in code");
+});
+
+test("root-edit: a no-break-space link into code does not refuse the temp write Pi makes beside it", async (t) => {
+  const call = session(rootArgv);
+  const coordinator = [userMessage("# Implement a chunk\n\n#197")];
+  const scratch = mkdtempSync(join(tmpdir(), "root-edit-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  // The literal no-break-space name leads into code; Pi writes the space-named temp directory.
+  symlinkSync("/", join(scratch, "unicode\u00A0link"), "dir");
+  mkdirSync(join(scratch, "unicode link"));
+  const named = join(scratch, "unicode\u00A0link", "a.txt");
+
+  const decision = await call(coordinator, "/home/u/p", "write", inputOf("write", named));
+
+  await createWriteTool("/home/u/p").execute("probe", { path: named, content: "temp" });
+
+  assert.equal(readFileSync(join(scratch, "unicode link", "a.txt"), "utf8"), "temp");
+  assert.equal(decision, undefined, "Pi's write lands in the temp directory");
+});
+
+// Every Unicode space Pi's tools read as a space: U+00A0, U+2000 to U+200A, U+202F, U+205F, U+3000.
+const UNICODE_SPACES = [
+  0xa0, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
+  0x202f, 0x205f, 0x3000,
+].map((code) => String.fromCodePoint(code));
+
+test("root-edit: the guard judges every path at the file Pi's write tool writes", async () => {
+  const cwd = "/home/u/p";
+  const nbsp = "\u00A0";
+
+  const paths = [
+    ...UNICODE_SPACES.flatMap((space) => [`a${space}b/c.ts`, `/tmp/x${space}y/c.ts`]),
+    "src/a.ts",
+    "./src/../b.ts",
+    "../q/a.ts",
+    "/home/u/p/a.ts",
+    "@src/a.ts",
+    "@/tmp/a.ts",
+    "@@a.ts",
+    `${nbsp}@a.ts`,
+    `@${nbsp}a.ts`,
+    "~",
+    "~/a.ts",
+    "@~/a.ts",
+    `~${nbsp}/a.ts`,
+    `~/a${nbsp}b.ts`,
+    "~user/a.ts",
+    "file:///home/u/p/a.ts",
+    "@file:///tmp/a.ts",
+    "file:///tmp/a%20b.ts",
+    `file:///tmp/a${nbsp}b.ts`,
+    `file:///tmp/a%C2%A0b.ts`,
+  ];
+
+  const written = await Promise.all(paths.map((path) => piWritePath(path, cwd)));
+
+  assert.deepEqual(
+    paths.map((path) => [path, editTarget(path, cwd)]),
+    paths.map((path, index) => [path, written[index]]),
+  );
 });
 
 test("root-edit: a temp child whose name starts with two dots is inside the temp directory", async () => {

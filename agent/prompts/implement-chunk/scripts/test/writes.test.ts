@@ -5,27 +5,36 @@ import { join } from "node:path";
 import test from "node:test";
 import { LEDGER_HEADER, UNITS_HEADER, promptsDir, run, scratch, sha } from "./harness.ts";
 
-test("the prompt names the columns the CLI writes", () => {
-  const prompt = readFileSync(join(promptsDir, "implement-chunk.md"), "utf8");
+// Both coordinator prompts document the CLI: the /implement-chunk template and sh4dow mode's
+// coordinator part.
+const COORDINATOR_PROMPTS = {
+  "implement-chunk.md": join(promptsDir, "implement-chunk.md"),
+  "system/sh4dow.md": join(promptsDir, "..", "system", "sh4dow.md"),
+};
 
-  const columns = (file: string) =>
-    prompt
-      .match(new RegExp(`\`${file}\` columns: \`([^\`]+)\``))?.[1]
-      ?.split(" ")
-      .join("\t");
+for (const [name, path] of Object.entries(COORDINATOR_PROMPTS)) {
+  test(`${name} names the columns the CLI writes`, () => {
+    const prompt = readFileSync(path, "utf8");
 
-  assert.equal(columns("units.tsv"), UNITS_HEADER);
-  assert.equal(columns("ledger.tsv"), LEDGER_HEADER);
-});
+    const columns = (file: string) =>
+      prompt
+        .match(new RegExp(`\`${file}\` columns: \`([^\`]+)\``))?.[1]
+        ?.split(" ")
+        .join("\t");
 
-test("the prompt names the unit states the CLI accepts", () => {
-  const prompt = readFileSync(join(promptsDir, "implement-chunk.md"), "utf8");
+    assert.equal(columns("units.tsv"), UNITS_HEADER);
+    assert.equal(columns("ledger.tsv"), LEDGER_HEADER);
+  });
 
-  assert.equal(
-    prompt.match(/`units.tsv` states: `([^`]+)`/)?.[1],
-    "planned running pr-open merged done abandoned reconciled",
-  );
-});
+  test(`${name} names the unit states the CLI accepts`, () => {
+    const prompt = readFileSync(path, "utf8");
+
+    assert.equal(
+      prompt.match(/`units.tsv` states: `([^`]+)`/)?.[1],
+      "planned running pr-open merged done abandoned reconciled",
+    );
+  });
+}
 
 test("ledger record appends a row and refuses an outcome outside the vocabulary", (t) => {
   const state = scratch(t);

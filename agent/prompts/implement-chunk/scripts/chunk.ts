@@ -11,6 +11,11 @@ import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } f
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  type FinalPrHead,
+  reportOnlyMergeProblems,
+  unterminatedSubagentProblems,
+} from "./checks.ts";
 import { type Outcomes, parseOutcomes } from "./outcomes.ts";
 import {
   PR_VIEW_FIELDS,
@@ -28,10 +33,12 @@ import {
   UNIT_COLUMNS,
   UNIT_STATES,
   type UnitColumn,
+  carrySource,
   type Verdict,
   isUnitColumn,
   ledgerColumnsOf,
   parseLedger,
+  parseSpawns,
   parseUnits,
 } from "./state.ts";
 import { createWhole, withLock } from "./lock.ts";
@@ -253,9 +260,7 @@ function carryVerdict(state: string, args: readonly string[], repoDir: string): 
   const path = join(state, "ledger.tsv");
   const rows = ledgerRows(path);
 
-  const from =
-    rows.findLast((row) => row.sha === fromSha && formatPrRef(row.pr) === formatPrRef(pr)) ??
-    rows.findLast((row) => row.sha === fromSha);
+  const from = carrySource(rows, pr, fromSha);
 
   if (from === undefined) throw new Refusal(`${path}: no verdict at ${fromSha} to carry`);
 
@@ -392,29 +397,64 @@ function report(state: string): Result {
 
   if (unitsText === null) throw new Refusal(`${unitsPath}: missing`);
 
-  const tickets = ticketsOf(parseUnits(unitsPath, unitsText));
+  const units = parseUnits(unitsPath, unitsText);
+  const tickets = ticketsOf(units);
 
   if (tickets.length === 0) throw new Refusal(`${unitsPath}: no unit names a ticket`);
 
+  const mode = runMode(state);
   const ledgerPath = join(state, "ledger.tsv");
+  const ledger = ledgerRows(ledgerPath);
   const lookups = new Map<string, Lookup>();
+
+  const lookup = (ref: PrRef): Lookup => {
+    const key = formatPrRef(ref);
+    const cached = lookups.get(key) ?? lookupPr(ref);
+
+    lookups.set(key, cached);
+
+    return cached;
+  };
+
+  const finalPrs = new Map<string, FinalPrHead>();
+
+  for (const { finalPr } of tickets) {
+    if (finalPr.kind !== "opened") continue;
+
+    const found = lookup(finalPr.ref);
+
+    if (found.kind === "found") {
+      finalPrs.set(formatPrRef(finalPr.ref), { ref: finalPr.ref, head: found.view.headRefOid });
+    }
+  }
+
+  const reportOnlyMerge = () => {
+    const spawnsPath = join(state, "spawns.tsv");
+    const spawnsText = readIfPresent(spawnsPath);
+
+    return reportOnlyMergeProblems({
+      ledgerFile: ledgerPath,
+      ledger,
+      spawns: spawnsText === null ? [] : parseSpawns(spawnsPath, spawnsText),
+      finalPrs: [...finalPrs.values()],
+    });
+  };
+
+  const structural = [
+    ...unterminatedSubagentProblems(unitsPath, units),
+    ...(mode === "sh4dow" ? reportOnlyMerge() : []),
+  ];
 
   const { text, exit } = renderReport({
     tickets,
-    ledger: ledgerRows(ledgerPath),
+    ledger,
     ledgerFile: ledgerPath,
     outcomes: readOutcomes(),
     outcomesFile: BRIEF,
     decisions: { name: "decisions.md", text: readIfPresent(join(state, "decisions.md")) },
     attention: { name: "attention.md", text: readIfPresent(join(state, "attention.md")) },
-    lookup: (ref) => {
-      const key = formatPrRef(ref);
-      const cached = lookups.get(key) ?? lookupPr(ref);
-
-      lookups.set(key, cached);
-
-      return cached;
-    },
+    lookup,
+    structural,
   });
 
   return { out: text, exit };

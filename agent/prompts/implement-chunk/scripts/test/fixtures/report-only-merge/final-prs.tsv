@@ -1,0 +1,10 @@
+pr	merged_head	session	entry	source
+viveaesthetics/monorepo#5950	3671c49c59fd769e0a9463909922e106bbe64d51	01a1687f-8696-7677-88b6-ca2a490037e8	-	3y-harness/implement-chunk/card-flow/ledger.tsv:14
+viveaesthetics/monorepo#5949	fb217395ffb512b905a35293467b038cf94f4adb	01a1687f-8696-7677-88b6-ca2a490037e8	-	3y-harness/implement-chunk/card-flow/ledger.tsv:13
+viveaesthetics/monorepo#5947	cf59b9a5f10a46f3c04e2357b592a9d1dcc2b0f6	01a1687f-8696-7677-88b6-ca2a490037e8	-	3y-harness/implement-chunk/card-flow/ledger.tsv:12
+viveaesthetics/client-onboarding-automation#906	fb42efcfa5b788f19214f30b435fc78afe46eca8	01a17925-8c19-71aa-99a9-081ff7b6d690	1b531287	3y-harness/implement-chunk/vob-summary-history/ledger.tsv:48
+viveaesthetics/client-onboarding-automation#911	495eebb3a239b44ea0f58f0d67e2142c90e1c34f	01a17925-8c19-71aa-99a9-081ff7b6d690	afcd583a	3y-harness/implement-chunk/vob-summary-history/ledger.tsv:50
+viveaesthetics/monorepo#5961	041e42551145ae2ad16045554617491b66089398	01a17925-8c19-71aa-99a9-081ff7b6d690	aa90a2e5	3y-harness/implement-chunk/vob-summary-history/ledger.tsv:47
+drsh4dow/pi-setup#128	357f1870a4eb5b282a205252c9843293aa7eac6b	01a17900-dd48-7175-9429-561e94154ab1	184f4207	pi-setup/implement-chunk/agent-friction/ledger.tsv:21
+drsh4dow/pi-setup#129	00a4db029faa456ed6eff37e827448d0e6f4749e	01a17900-dd48-7175-9429-561e94154ab1	efb420b7	pi-setup/implement-chunk/agent-friction/ledger.tsv:24
+drsh4dow/pi-setup#136	4e79347710bbada89cd52ad471a634f10c1b5fa9	01a17900-dd48-7175-9429-561e94154ab1	0327b1b9	pi-setup/implement-chunk/agent-friction/ledger.tsv:27

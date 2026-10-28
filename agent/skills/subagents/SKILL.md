@@ -36,11 +36,14 @@ an owner. Each role runs as one kind, the directory its prompt sits in, and the
 ## Models
 
 Every subagent runs at `--thinking high`, on the model of the role the
-launching skill names.
+launching skill names. The launcher holds each launcher role's default model
+and thinking level in `ROLE_DEFAULTS` in [`scripts/brief.ts`](scripts/brief.ts),
+and `vp run verify` fails when this section gives a launcher role another one.
 
 - `openai/gpt-6.1-sol` is exhaustive on details and edge cases: boundaries,
-  proofs, exploits, spec gaps. It runs `cross-family reviewer`,
-  `code-review detail personas`, `reflect divergent`, and `researcher`.
+  proofs, exploits, spec gaps. It runs `cross-family-reviewer`, `verifier`,
+  `live-verifier`, `brief-auditor`, `code-review detail personas`,
+  `reflect divergent`, and `researcher`.
 - `anthropic/claude-opus-5-5` has taste: it writes, plans, and implements
   best, and judges whether code reads well and has the simplest shape. It runs
   every other role.
@@ -51,7 +54,10 @@ launching skill names.
 
 A new role takes the model whose strength the job needs. A reviewer or verifier
 that must differ in family from the work's author takes the
-`cross-family reviewer` role, on the model the author did not use.
+`cross-family-reviewer` role, on the model the author did not use. Launch it
+from a brief with `--role cross-family-reviewer`: it runs the `assignment`
+prompt and checks on the model above, and `--model` names the other family when
+the author ran on that one.
 
 ## Prepare
 
@@ -129,13 +135,13 @@ $HOME/.pi/agent/skills/subagents/scripts/launch.ts \
   --role <role> \
   --brief "<state folder>/<brief>.md" \
   --orders "<state folder>/orders.md" \
-  --model <model> \
-  --thinking high \
   --name "subagent: <short assignment>"
 ```
 
 The launcher starts the child on its role's prompt,
-`~/.pi/agent/system/generated/<kind>/<role>.md`, with skill discovery off and
+`~/.pi/agent/system/generated/<kind>/<role>.md`, on the role's model and
+thinking level from the Models section above, or on `--model` and `--thinking`
+when the launch passes them, with skill discovery off and
 one `--skill` per name in the brief's SKILLS field. SKILLS lists names
 separated by commas or `and`, and each item's leading name counts, so
 `**tdd** (red first)` names `tdd`, and a field that opens with `none` names
@@ -157,8 +163,8 @@ naming the cause:
 - a brief that lacks a field its `--role` requires. The implement-chunk roles
   need every template field (a merger needs STEPS in place of VERIFY), and a
   brief whose first line starts with `COLLAPSED` needs only GOAL, SCOPE,
-  VERIFY, and REPORT named in its paragraph. `persona` and `assignment` need
-  no fields;
+  VERIFY, and REPORT named in its paragraph. `persona`, `assignment`, and
+  `cross-family-reviewer` need no fields;
 - a `--kind` other than the role's kind, the directory of its prompt;
 - a KIND field that disagrees with `--kind`;
 - a SKILLS name that is no skill in either directory;
@@ -167,7 +173,23 @@ naming the cause:
   line;
 - an input branch that the launch directory's `origin` lacks: each
   `origin/<name>`, and the branch SCOPE names after "based on". Write a branch
-  the unit creates without `origin/`.
+  the unit creates without `origin/`;
+- any launch from a delegate: `launch: refused: a delegate launches nothing`;
+- an owner launched by an owner:
+  `launch: refused: an owner launches only delegates (--kind delegate)`;
+- a child past depth 2, where the root is 0:
+  `launch: refused: depth 3 is past the limit of 2`;
+- a `--state` folder that does not exist, or a registry row `chunk` refuses.
+
+The launcher gives each child its place in the tree, `PI_SUBAGENT_KIND`,
+`PI_SUBAGENT_TREE_DEPTH`, and `PI_SUBAGENT_SESSION`, and a launch from
+inside the child reads its parent's place from them. With `--state <dir>`,
+or `$IMPLEMENT_CHUNK_STATE` set, it adds the child's row to the spawn
+registry `<dir>/spawns.tsv` through implement-chunk's `chunk spawn` before
+Pi starts, records `reported` or `failed` when the child ends, and exports
+`IMPLEMENT_CHUNK_STATE` to the child, so the child's own launches register
+too. `--unit <id>` names the row's `units.tsv` unit. A resume keeps the row's
+kind, role, and unit, and is refused under any other.
 
 While the one-minute load exceeds `--max-load` (default `nproc`) or
 `MemAvailable` is below `--min-mem-gib` (default 4), it holds and prints both
@@ -181,9 +203,9 @@ sets the resumed child's skills; without one, the child resumes with none in
 its table. Pi sends a resumed child's current orders as a system update after
 the earlier text, so the launcher opens the directive with a note that the
 update is current. `--dry-run` runs every check and starts no Pi. It prints
-the command, the role prompt, each skill with its directory, the content of
-every append (each skill's `SKILL.md` among them), the orders' line count, and
-the prompt.
+the command, the child's place in the tree and its environment, the role
+prompt, each skill with its directory, the content of every append (each
+skill's `SKILL.md` among them), the orders' line count, and the prompt.
 
 ## Retry
 

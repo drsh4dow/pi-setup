@@ -151,7 +151,7 @@ Size each ticket as a vertical slice. It cuts a narrow path through every layer 
 Write the body to a file and run both gates.
 
 1. **Structure.** Run `../writing-good-prs/scripts/check-body.ts ticket <body-file> --title "<title>"`, with `--template <path>` when the repository has an issue template. Fix each printed problem and rerun until it exits 0. Exit 0 means the headings and title parse. It says nothing about the case the body makes.
-2. **Implementer read.** Give one subagent in the `cross-family reviewer` role, per the **subagents** skill, only the title and the body file. Ask it to:
+2. **Implementer read.** Give one subagent in the `cross-family-reviewer` role, per the **subagents** skill, only the title and the body file. Ask it to:
    1. Retell the problem as one story, with who it costs, and name the witness that shows it, or write `none visible`.
    2. For each Done-when item, say exactly what it would run and what result counts as done, or write `unclear`.
    3. As the implementer, list what it would still need to start, or write `nothing`.

@@ -1,7 +1,20 @@
-import { type ExtensionAPI, parseArgs } from "@earendil-works/pi-coding-agent";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import {
+  type ExtensionAPI,
+  type ExtensionContext,
+  isToolCallEventType,
+  parseArgs,
+} from "@earendil-works/pi-coding-agent";
 
 import { refuseCommands } from "../lib/command-tool-call.ts";
 import { basename, commandArgv, isShell, pipelines } from "../lib/shell-command.ts";
+import { isSh4dowSession } from "./sh4dow/index.ts";
 
 type LaunchKind = "root" | "owner" | "delegate";
 
@@ -170,7 +183,128 @@ export function spawnGuard(
   }
 }
 
+// A coordinator is a root session in sh4dow mode or one that runs the implement-chunk prompt, the
+// two kinds evals/coordinator-runs grades. It is read-only on code: subagents make every change,
+// so its own edit and write calls stay in the state root and the temp directory.
+const IMPLEMENT_CHUNK_HEADING = /^# Implement a chunk(?:\r?\n|$)/;
+
+// The guard cannot tell which chunk folder a coordinator owns, so any folder under the root counts.
+const STATE_ROOT = join(homedir(), ".local", "state", "pi-agent");
+
+const ROOT_EDIT_REASON =
+  "root-edit: a coordinator is read-only on code, so it writes only its state folder under " +
+  `${STATE_ROOT} and scratch files in the temp directory. Brief a subagent to make this change.`;
+
+type SessionEntries = ReturnType<ExtensionContext["sessionManager"]["getEntries"]>;
+
+function userTexts(entries: SessionEntries): string[] {
+  return entries.flatMap((entry) => {
+    if (entry.type !== "message" || entry.message.role !== "user") return [];
+
+    const { content } = entry.message;
+
+    if (!Array.isArray(content)) return [content];
+
+    return [content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")];
+  });
+}
+
+function isCoordinatorSession(entries: SessionEntries): boolean {
+  return (
+    isSh4dowSession(entries) ||
+    userTexts(entries).some((text) => IMPLEMENT_CHUNK_HEADING.test(text.trimStart()))
+  );
+}
+
+// The Unicode spaces Pi's edit and write tools read as an ASCII space, as normalizePath does
+// (dist/utils/paths.js). The package does not export it, so the agreement test in
+// test/delegate-guard-root-edit.test.ts holds this copy to Pi's real write tool.
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+/**
+ * The file an edit or write call names, resolved as Pi's tools resolve it: Unicode spaces read as
+ * spaces, then a leading `@` dropped, `~` expanded, a file URL read as its path, and a relative path
+ * taken from the session's directory.
+ */
+export function editTarget(path: string, cwd: string): string {
+  const spaced = path.replace(UNICODE_SPACES, " ");
+  const named = spaced.startsWith("@") ? spaced.slice(1) : spaced;
+
+  if (named === "~") return homedir();
+
+  if (named.startsWith("file://")) return resolve(fileURLToPath(named));
+
+  return resolve(cwd, named.startsWith("~/") ? join(homedir(), named.slice(2)) : named);
+}
+
+// Past this many links the filesystem refuses the path too (ELOOP), so the guard stops following.
+const MAX_LINKS = 40;
+
+// A dangling link is followed from the directory it really sits in, since writing through it
+// creates its target.
+function landingOf(path: string, links = 0): string {
+  const stats = lstatSync(path, { throwIfNoEntry: false });
+
+  if (stats !== undefined && !stats.isSymbolicLink()) return realpathSync.native(path);
+
+  const parent = dirname(path);
+
+  if (parent === path) return path;
+
+  const here = join(landingOf(parent, links), relative(parent, path));
+
+  if (stats === undefined || links >= MAX_LINKS) return here;
+
+  return landingOf(resolve(dirname(here), readlinkSync(here)), links + 1);
+}
+
+function landingOrUnknown(path: string): string | undefined {
+  try {
+    return landingOf(path);
+  } catch {
+    return undefined;
+  }
+}
+
+function isInside(directory: string, path: string): boolean {
+  const rest = relative(directory, path);
+
+  return rest !== ".." && !rest.startsWith(`..${sep}`) && !isAbsolute(rest);
+}
+
+/** Why a coordinator may not write `path`, or undefined when it lands in the state root or a temp directory. */
+function rootEditRefusal(path: string, cwd: string): string | undefined {
+  const target = editTarget(path, cwd);
+  const landing = landingOrUnknown(target);
+
+  if (landing === undefined) {
+    return `${ROOT_EDIT_REASON} Refused: ${target}, which does not resolve`;
+  }
+
+  const allowed = [STATE_ROOT, tmpdir(), "/tmp"].flatMap((root) => landingOrUnknown(root) ?? []);
+
+  if (allowed.some((directory) => isInside(directory, landing))) return undefined;
+
+  const refused = landing === target ? target : `${target}, which lands at ${landing}`;
+
+  return `${ROOT_EDIT_REASON} Refused: ${refused}`;
+}
+
+function refuseRootEdits(pi: ExtensionAPI): void {
+  pi.on("tool_call", (event, ctx) => {
+    const writes = isToolCallEventType("edit", event) || isToolCallEventType("write", event);
+
+    if (!writes || !isCoordinatorSession(ctx.sessionManager.getEntries())) return undefined;
+
+    const reason = rootEditRefusal(event.input.path, ctx.cwd);
+
+    return reason === undefined ? undefined : { block: true, reason };
+  });
+}
+
 export default function delegateGuard(pi: ExtensionAPI): void {
+  if (promptKind(process.argv.slice(2)) === "root") refuseRootEdits(pi);
+
   const blockReason = spawnGuard(process.argv);
 
   if (blockReason === undefined) return;

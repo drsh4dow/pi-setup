@@ -26,6 +26,7 @@ const verifyChecks = [
   "verify:strict-diagnostics",
   "verify:skills",
   "verify:prompts",
+  "verify:role-models",
   "verify:terminal-delivery-citations",
   "verify:babysit-scripts",
   "verify:implement-chunk-scripts",
@@ -60,6 +61,9 @@ export default defineConfig({
       // memory and fails on any prompt that differs from the file on disk.
       "generate:prompts": { command: "node scripts/generate-prompts.ts", cache: false },
       "verify:prompts": { command: "node scripts/generate-prompts.ts --check", cache: false },
+      // The subagents skill's Models section must give each launcher role the model and thinking
+      // level the launcher's ROLE_DEFAULTS does.
+      "verify:role-models": "node scripts/verify-role-models.ts",
       "verify:terminal-delivery-citations": {
         command: ".agents/skills/verify-terminal-delivery/scripts/check --citations",
         cache: false,

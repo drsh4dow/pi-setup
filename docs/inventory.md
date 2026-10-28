@@ -136,7 +136,11 @@ The agent loads these on its own when the trigger matches.
   is a delegate and may run no `pi --print`, `pi -p`, `pi-subagent`, or
   `subagents/scripts/launch.ts` launch. An owner, a subagent on a prompt under
   `agent/system/generated/owner/` that carries a whole unit such as a PR, may
-  launch only delegates. It checks `bash`, `bg_start`, and codemode alike
+  launch only delegates. It checks `bash`, `bg_start`, and codemode alike.
+  `launch.ts` refuses the same spawns, and any child past depth 2, from the
+  `PI_SUBAGENT_*` variables it gives each child. In a root coordinator session,
+  one in sh4dow mode or one that ran `/implement-chunk`, it also refuses `edit`
+  and `write` calls outside `~/.local/state/pi-agent/` and the temp directory
 - `fast-mode`: `/fast` and `Ctrl-Alt-M` toggle Fast mode for the models listed
   under `fastMode` in `agent/settings.json`, and the footer shows `⚡ Fast` while
   it is on. A provider entry with `subagentsEnabled: false` skips sessions
@@ -186,6 +190,11 @@ The agent loads these on its own when the trigger matches.
   memory pressure
 - `session-timer`: branch duration since the first user message, with clock
   footers on responses
+- `sh4dow`: `/sh4dow <ticket reference> [base branch] [target environment]`
+  opens a new session, linked to the current one as its parent, that runs on
+  the sh4dow mode prompt with no skill table, and starts the coordinator on the
+  chunk. The mode survives `/reload` and a resume, and `/sh4dow` inside a
+  sh4dow session is refused
 - `skill-visibility`: `/skill-visibility` controls which loaded skills the model
   can discover, and skills marked `user-invokable: false` stay out of `/skill:`
   autocomplete

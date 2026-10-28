@@ -52,6 +52,9 @@ The default kind of subagent: a leaf that does one piece of its parent's step an
 The kind of subagent that carries a whole unit of work, such as a PR, and launches delegates of its own.
 _Avoid_: owner for the session that owns a background terminal; say owning session
 
+**Final-PR owner**:
+The owner that runs one final PR's implement, verify, and fix loop with its own delegates.
+
 **Role**:
 The named job a subagent is launched for, which fixes its model, thinking level, and role prompt. A role with several models is a panel.
 _Avoid_: kind, which is delegate or owner
@@ -60,11 +63,31 @@ _Avoid_: kind, which is delegate or owner
 A command that runs alongside the session that started it, wakes that session when it finishes, and ends with it.
 _Avoid_: background task, watcher
 
+### sh4dow runs
+
+**Coordinator**:
+The root agent of a sh4dow-mode or `/implement-chunk` session that owns a chunk. It plans and launches subagents, and a subagent makes every change.
+_Avoid_: lead; root, which is the tree position at depth 0
+
+**Spawn registry**:
+The state-folder table that records every subagent of a chunk at every depth, with its parent, kind, role, session, and state.
+
+**Drain point**:
+A fixed moment at which the coordinator processes the completions waiting for it.
+
 ### Records
 
 **State folder**:
 The per-project directory outside the repository that keeps what later sessions reuse, such as research, reviews, and eval runs.
 _Avoid_: runtime state
+
+**Risk call**:
+A verifier's judgment that a PR is low, medium, or high risk, with a one-line reason, stored in its verdict's ledger row: the risk columns on a sh4dow run, the evidence text on an implement-chunk run.
+_Avoid_: risk score, severity
+
+**Sample**:
+The short read a finished chunk hands the user: the riskiest diffs, the overruled verdicts, and the Attention flags.
+_Avoid_: summary, digest
 
 **Config record**:
 The committed facts a repository gives the engineering skills: its issue tracker, domain docs, and standards.

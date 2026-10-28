@@ -1,0 +1,10 @@
+pr	head_sha	outcome	evidence	recorded_at
+viveaesthetics/monorepo#5947	cf59b9a5f10a46f3c04e2357b592a9d1dcc2b0f6	unit-test-verified	merge of main 62727069bc into verified 33e74c15ca; A's own file list vs main unchanged (reports/M21.md); CI run 40555096915 all required checks pass incl. Hasura, Kotlin	2026-10-27T18:10:38.328Z
+viveaesthetics/monorepo#5949	fb217395ffb512b905a35293467b038cf94f4adb	unit-test-verified	merge of main ce8a36356a into verified 7bc525f93a; conflicts kept C's side, own file list unchanged, benefits gate 961 (reports/P-C3.md); CI run 40560795683 green	2026-10-27T18:45:26.461Z
+viveaesthetics/monorepo#5950	3671c49c59fd769e0a9463909922e106bbe64d51	unit-test-verified	merge of main 31da7e9593 into verified 9ee8b73ed4; 8 conflicts kept D's side, diff(main,head) byte-equal to diff(7bc525f93a,9ee8b73ed4), benefits gate 996, differential 324 (reports/P-D3.md); CI run 40565691436 attempt 2 green (attempt 1 PhiGuard word-name flake)	2026-10-27T19:34:13.167Z
+viveaesthetics/monorepo#5961	f7ca57627088bfa870e495b16ffc9601bd44c88c	unit-test-verified	evidence/fix-D2/	2026-10-27T13:47:38.647Z
+viveaesthetics/client-onboarding-automation#906	fb42efcfa5b788f19214f30b435fc78afe46eca8	unit-test-verified	evidence/rebase-stack/tree-check.md	2026-10-27T17:55:32.516Z
+viveaesthetics/client-onboarding-automation#911	495eebb3a239b44ea0f58f0d67e2142c90e1c34f	unit-test-verified	evidence/rebase-stack/tree-check.md	2026-10-27T17:58:16.844Z
+128	357f1870a4eb5b282a205252c9843293aa7eac6b	live-ui-verified	evidence/F/lead-verdict.md	2026-10-26T20:39:49.369Z
+129	00a4db029faa456ed6eff37e827448d0e6f4749e	unit-test-verified	evidence/E-verify/lead-verdict.md	2026-10-26T20:59:40.181Z
+136	4e79347710bbada89cd52ad471a634f10c1b5fa9	unit-test-verified	evidence/L/lead-verdict.md	2026-10-26T21:25:04.420Z

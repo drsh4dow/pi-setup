@@ -63,7 +63,7 @@ Correct the log, not the story. The audit never edits or removes a row, even an 
 
 ## Cross-model review of the trail
 
-Before handing back, launch a delegate in the `cross-family reviewer` role of the **subagents** skill, on the model family that did not do the work. Self-review is not a substitute. Its assignment names the log and this run's session file, its write scope changes nothing, and it flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky:
+Before handing back, launch a delegate in the `cross-family-reviewer` role of the **subagents** skill, on the model family that did not do the work. Self-review is not a substitute. Its assignment names the log and this run's session file, its write scope changes nothing, and it flags what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky:
 
 - Decisions logged with weak or absent evidence.
 - Verification steps skipped or claimed without proof in the transcript.

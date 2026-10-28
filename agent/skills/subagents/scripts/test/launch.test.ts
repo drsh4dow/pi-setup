@@ -227,6 +227,7 @@ const ROLE_KINDS = {
   "live-verifier": "delegate",
   persona: "delegate",
   assignment: "delegate",
+  "cross-family-reviewer": "delegate",
   "brief-auditor": "delegate",
   babysitter: "owner",
   "final-pr-owner": "owner",
@@ -235,7 +236,7 @@ const ROLE_KINDS = {
 function roleBrief(role: keyof typeof ROLE_KINDS): string {
   const kind = ROLE_KINDS[role];
 
-  if (role === "persona" || role === "assignment")
+  if (role === "persona" || role === "assignment" || role === "cross-family-reviewer")
     return "Review the diff `git diff main...HEAD`.\n\nSKILLS tdd\n";
 
   const brief = IMPLEMENTER_BRIEF.replace("KIND         delegate", `KIND         ${kind}`);
@@ -254,7 +255,9 @@ for (const role of Object.keys(ROLE_KINDS) as (keyof typeof ROLE_KINDS)[]) {
     assert.equal(run.status, 0, run.stderr);
 
     const words = commandWords(run);
-    const prompt = `${AGENT_DIR}/system/generated/${kind}/${role}.md`;
+    // The cross-family reviewer runs the assignment template.
+    const part = role === "cross-family-reviewer" ? "assignment" : role;
+    const prompt = `${AGENT_DIR}/system/generated/${kind}/${part}.md`;
 
     assert.deepEqual(flagValues(words, "--system-prompt"), [prompt]);
     assert.ok(words.includes("--no-skills"), "skill discovery is off");
@@ -266,6 +269,31 @@ for (const role of Object.keys(ROLE_KINDS) as (keyof typeof ROLE_KINDS)[]) {
     assert.ok(run.stdout.includes(`--- system prompt append: ${TDD_SKILL} (skill tdd) ---\n${readFileSync(TDD_SKILL, "utf8").trimEnd()}\n`), run.stdout);
   });
 }
+
+function withoutModel(args: readonly string[]): string[] {
+  const at = args.indexOf("--model");
+
+  return [...args.slice(0, at), ...args.slice(at + 2)];
+}
+
+test("a cross-family-reviewer runs the assignment template on openai/gpt-6.1-sol unless --model overrides it", (t) => {
+  const h = host(t);
+  const brief = h.brief("review.md", "Review the diff `git diff main...HEAD` for gaps.\n");
+  const args = withoutModel(baseArgs(h, brief, "cross-family-reviewer"));
+
+  const run = launch(h, [...args, "--dry-run"]);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(flagValues(commandWords(run), "--system-prompt"), [`${AGENT_DIR}/system/generated/delegate/assignment.md`]);
+  assert.deepEqual(flagValues(commandWords(run), "--model"), ["openai/gpt-6.1-sol"], "the Models section's model");
+
+  const other = launch(h, [...args, "--model", "anthropic/claude-opus-5-5", "--dry-run"]);
+  assert.equal(other.status, 0, other.stderr);
+  assert.deepEqual(flagValues(commandWords(other), "--model"), ["anthropic/claude-opus-5-5"], "--model overrides it");
+
+  const slot = h.brief("slot.md", "Review the diff at <sha>.\n");
+  assertRefused(h, launch(h, [...withoutModel(baseArgs(h, slot, "cross-family-reviewer")), "--dry-run"]), /unfilled placeholder/);
+  assertRefused(h, launch(h, [...withoutModel(baseArgs(h, brief)), "--dry-run"]), /--model is required/);
+});
 
 test("a resume directive's SKILLS field replaces the skills, and a directive without one loads none", (t) => {
   const h = host(t);

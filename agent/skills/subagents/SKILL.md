@@ -39,7 +39,7 @@ Every subagent runs at `--thinking high`, on the model of the role the
 launching skill names.
 
 - `openai/gpt-6.1-sol` is exhaustive on details and edge cases: boundaries,
-  proofs, exploits, spec gaps. It runs `cross-family reviewer`,
+  proofs, exploits, spec gaps. It runs `cross-family-reviewer`,
   `code-review detail personas`, `reflect divergent`, and `researcher`.
 - `anthropic/claude-opus-5-5` has taste: it writes, plans, and implements
   best, and judges whether code reads well and has the simplest shape. It runs
@@ -51,7 +51,10 @@ launching skill names.
 
 A new role takes the model whose strength the job needs. A reviewer or verifier
 that must differ in family from the work's author takes the
-`cross-family reviewer` role, on the model the author did not use.
+`cross-family-reviewer` role, on the model the author did not use. Launch it
+from a brief with `--role cross-family-reviewer`: it runs the `assignment`
+prompt and checks on the model above, and `--model` names the other family when
+the author ran on that one.
 
 ## Prepare
 
@@ -135,7 +138,8 @@ $HOME/.pi/agent/skills/subagents/scripts/launch.ts \
 ```
 
 The launcher starts the child on its role's prompt,
-`~/.pi/agent/system/generated/<kind>/<role>.md`, with skill discovery off and
+`~/.pi/agent/system/generated/<kind>/<role>.md`, on `--model`, or without it
+on the model the Models section above gives the role, with skill discovery off and
 one `--skill` per name in the brief's SKILLS field. SKILLS lists names
 separated by commas or `and`, and each item's leading name counts, so
 `**tdd** (red first)` names `tdd`, and a field that opens with `none` names
@@ -157,8 +161,8 @@ naming the cause:
 - a brief that lacks a field its `--role` requires. The implement-chunk roles
   need every template field (a merger needs STEPS in place of VERIFY), and a
   brief whose first line starts with `COLLAPSED` needs only GOAL, SCOPE,
-  VERIFY, and REPORT named in its paragraph. `persona` and `assignment` need
-  no fields;
+  VERIFY, and REPORT named in its paragraph. `persona`, `assignment`, and
+  `cross-family-reviewer` need no fields;
 - a `--kind` other than the role's kind, the directory of its prompt;
 - a KIND field that disagrees with `--kind`;
 - a SKILLS name that is no skill in either directory;

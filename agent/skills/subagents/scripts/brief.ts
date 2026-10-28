@@ -12,11 +12,18 @@ export const ROLES = [
   "live-verifier",
   "persona",
   "assignment",
+  "cross-family-reviewer",
   "brief-auditor",
   "final-pr-owner",
 ] as const;
 
 export type Role = (typeof ROLES)[number];
+
+// The role whose generated prompt a role runs on. The cross-family reviewer runs the assignment
+// template, its prompt and its brief checks, on a model from the other family.
+export function promptRole(role: Role): Role {
+  return role === "cross-family-reviewer" ? "assignment" : role;
+}
 
 export const KINDS = ["delegate", "owner"] as const;
 
@@ -50,11 +57,13 @@ type Field = (typeof TEMPLATE_FIELDS)[number] | "STEPS";
 
 const FIELD_NAMES: readonly Field[] = [...TEMPLATE_FIELDS, "STEPS"];
 
-// The persona and free-form assignment roles carry no template, so only the text checks apply.
+// The persona, free-form assignment, and cross-family reviewer roles carry no template, so only
+// the text checks apply.
 function requiredFields(role: Role, collapsed: boolean): readonly Field[] {
   switch (role) {
     case "persona":
     case "assignment":
+    case "cross-family-reviewer":
       return [];
     case "merger":
       return collapsed

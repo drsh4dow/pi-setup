@@ -21,6 +21,7 @@ import {
   briefSkills,
   inputBranches,
   KINDS,
+  promptRole,
   ROLES,
   type Kind,
   type Problem,
@@ -33,16 +34,19 @@ const HARNESS_SKILLS = join(AGENT_DIRECTORY, "skills");
 
 const ROLE_PROMPTS = join(AGENT_DIRECTORY, "system", "generated");
 
+const SUBAGENTS_SKILL = join(HARNESS_SKILLS, "subagents", "SKILL.md");
+
 const CHUNK = join(AGENT_DIRECTORY, "prompts", "implement-chunk", "scripts", "chunk.ts");
 
 const MAX_DEPTH = 2;
 
 const USAGE = `usage: launch.ts --kind <delegate|owner> --role <role> --brief <file> --orders <file|none>
-                 --model <model> --thinking <level> --name <short assignment>
+                 [--model <model>] --thinking <level> --name <short assignment>
                  [--append <file>]... [--resume <session>] [--dry-run]
                  [--state <dir>] [--unit <units.tsv id>]
                  [--max-load <n>] [--min-mem-gib <n>] [--poll-seconds <n>]
 roles: ${ROLES.join(", ")}
+--model defaults to the model the subagents skill's Models section gives the role, where it names one.
 The state folder comes from --state, else $IMPLEMENT_CHUNK_STATE; without one, no spawn is registered.`;
 
 class Refusal {
@@ -83,6 +87,18 @@ function required(value: string | undefined, flag: string): string {
   if (value === undefined || value.trim() === "") throw new UsageError(`${flag} is required`);
 
   return value;
+}
+
+// The model the subagents skill's Models section gives a role: the leading model of the bullet
+// that names the role in backticks, so that section stays the one place the model is stated.
+function tableModel(role: Role): string | undefined {
+  const models = readFileSync(SUBAGENTS_SKILL, "utf8").split(/^## Models$/m)[1]?.split(/^## /m)[0] ?? "";
+  const bullet = models
+    .split(/\n(?=- )/)
+    .map((item) => item.split("\n\n")[0] ?? "")
+    .find((item) => item.startsWith("- ") && item.includes(`\`${role}\``));
+
+  return /^- `([^`]+)`/.exec(bullet ?? "")?.[1];
 }
 
 function positive(value: string | undefined, flag: string, fallback: number): number {
@@ -143,7 +159,7 @@ function parseOptions(argv: readonly string[]): Options {
     role,
     brief: required(values.brief, "--brief"),
     orders: orders === "none" ? null : resolve(orders),
-    model: required(values.model, "--model"),
+    model: required(values.model ?? tableModel(role), "--model"),
     thinking: required(values.thinking, "--thinking"),
     name: required(values.name, "--name"),
     appends: values.append.map((path) => resolve(path)),
@@ -173,7 +189,8 @@ function readFilled(path: string, what: string): string {
 
 // A role's kind is the directory its generated prompt sits in, so --kind must agree with it.
 function rolePrompt(options: Options): string {
-  const kind = KINDS.find((candidate) => existsSync(join(ROLE_PROMPTS, candidate, `${options.role}.md`)));
+  const file = `${promptRole(options.role)}.md`;
+  const kind = KINDS.find((candidate) => existsSync(join(ROLE_PROMPTS, candidate, file)));
 
   if (kind === undefined)
     throw new Refusal([
@@ -183,7 +200,7 @@ function rolePrompt(options: Options): string {
   if (kind !== options.kind)
     throw new Refusal([`role ${options.role} runs as ${kind}, but the launch is --kind ${options.kind}`]);
 
-  return join(ROLE_PROMPTS, kind, `${options.role}.md`);
+  return join(ROLE_PROMPTS, kind, file);
 }
 
 type TreePosition =

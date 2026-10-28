@@ -207,7 +207,7 @@ Its Why lists symbols instead of a story, so the reader never learns what the mo
 Write the body to a file and run both gates.
 
 1. **Structure.** Run `scripts/check-body.ts pr <body-file> --title "<title>"`, with `--template <path>` when the repository has a PR template. Fix each printed problem and rerun until it exits 0. Exit 0 means the headings, the title's form and length, and the Why length pass. It says nothing about the case the body makes. A `warning:` line leaves the exit code alone and marks a sentence about how the work was produced. Rewrite it for the reader of this diff, or keep it when that reader needs it to merge or deploy.
-2. **Expert read.** Give one subagent in the `cross-family reviewer` role, per the **subagents** skill, only the title and the body file, with no diff, ticket, or chat. Ask it to:
+2. **Expert read.** Give one subagent in the `cross-family-reviewer` role, per the **subagents** skill, only the title and the body file, with no diff, ticket, or chat. Ask it to:
    1. Retell the problem as one story, and why this fix rather than the alternative.
    2. As an expert in this domain who must own the change, list every question it would need answered to trust the proof. For each, quote the line that answers it, or write `unanswered`.
    3. State the blast radius and the door, or write `unclear`.

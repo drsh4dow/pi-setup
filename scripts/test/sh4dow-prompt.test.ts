@@ -109,11 +109,11 @@ test("close audits the decision trail and has a cross-family reviewer write the 
   assert.match(close, /\*\*show-me-your-work\*\*/);
   assert.match(close, /decisions\.tsv/);
   assert.match(close, /\$PI_SESSION_FILE/);
-  assert.match(close, /`cross-family reviewer` delegate/);
+  assert.match(close, /`--role cross-family-reviewer`/);
   assert.match(close, /`<state folder>\/attention\.md`/);
 });
 
-/** The model the subagents skill's Models section gives the `cross-family reviewer` role. */
+/** The model the subagents skill's Models section gives the `cross-family-reviewer` role. */
 function crossFamilyModel(): string {
   const models =
     read("agent/skills/subagents/SKILL.md")
@@ -122,29 +122,32 @@ function crossFamilyModel(): string {
 
   const bullet = models
     .split(/\n(?=- )/)
-    .find((item) => item.includes("runs `cross-family reviewer`"));
+    .find((item) => item.includes("runs `cross-family-reviewer`"));
 
   const model = bullet?.match(/^- `([^`]+)`/)?.[1];
   assert.ok(
     model,
-    "the subagents skill's Models section names no model for `cross-family reviewer`",
+    "the subagents skill's Models section names no model for `cross-family-reviewer`",
   );
 
   return model;
 }
 
-test("each cross-family reviewer the sh4dow prompts name launches with a launcher role on the cross-family model", () => {
+test("each cross-family reviewer the sh4dow prompts name launches with a launcher role, and only a role without its own model names one", () => {
   const model = crossFamilyModel();
 
   for (const path of [
     "agent/system/generated/sh4dow.md",
     "agent/system/generated/owner/final-pr-owner.md",
   ]) {
-    const sentences = read(path)
+    const text = read(path);
+
+    const sentences = text
       .split(/\n|(?<=\.)\s+(?=[A-Z`(])/)
-      .filter((sentence) => sentence.includes("`cross-family reviewer`"));
+      .filter((sentence) => /cross-family[ -]reviewer/.test(sentence));
 
     assert.ok(sentences.length > 0, `${path} names no cross-family reviewer`);
+    assert.doesNotMatch(text, /--role assignment --model/, path);
 
     for (const sentence of sentences) {
       const roles = [...sentence.matchAll(/--role ([a-z-]+)/g)].map((match) => match[1] ?? "");
@@ -156,10 +159,14 @@ test("each cross-family reviewer the sh4dow prompts name launches with a launche
           ROLES.some((known) => known === role),
           `${path}: --role ${role}`,
         );
-      assert.ok(
-        sentence.includes(`--model ${model}`),
-        `${path}: no --model ${model} in: ${sentence}`,
-      );
+
+      if (roles.includes("cross-family-reviewer"))
+        assert.doesNotMatch(sentence, /--model/, `${path}: the role brings its model: ${sentence}`);
+      else
+        assert.ok(
+          sentence.includes(`--model ${model}`),
+          `${path}: no --model ${model} in: ${sentence}`,
+        );
     }
   }
 });
@@ -173,5 +180,6 @@ test("close starts the cross-family review after the trail audit, on the audited
   assert.match(audit, /^Audit `decisions\.tsv`/);
   assert.match(review, /^(After|Once)\b.*?\baudit\b.*?, launch /, "the review waits on the audit");
   assert.match(review, /the audited `decisions\.tsv`/);
-  assert.ok(review.includes(`--role assignment --model ${crossFamilyModel()}`), review);
+  assert.match(review, /`--role cross-family-reviewer`/);
+  assert.doesNotMatch(review, /--model/, "the role brings its model");
 });

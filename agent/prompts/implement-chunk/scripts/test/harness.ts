@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
@@ -16,6 +24,8 @@ export const UNITS_HEADER =
   "id\tticket\tintake_state\tfinal_pr\tstate\tbranch\tintermediate_pr\thead_sha\tbrief";
 
 export const LEDGER_HEADER = "pr\thead_sha\toutcome\tevidence\trecorded_at";
+
+export const RISK_LEDGER_HEADER = "pr\thead_sha\toutcome\tevidence\trisk\trisk_reason\trecorded_at";
 
 export const DEFINED_OUTCOMES = [
   "live-deployed-verified",
@@ -73,8 +83,21 @@ export interface PrFixture {
 
 export interface Fixture {
   readonly units: readonly (readonly [string, string, string])[];
-  readonly ledger?: readonly (readonly [string, string, string, string])[];
+  readonly ledger?: readonly (
+    | readonly [string, string, string, string]
+    | readonly [string, string, string, string, string, string]
+  )[];
   readonly prs?: readonly PrFixture[];
+}
+
+function whichOf(name: string): string {
+  const dir = (process.env.PATH ?? "")
+    .split(":")
+    .find((entry) => entry !== "" && existsSync(join(entry, name)));
+
+  assert.ok(dir !== undefined, `${name} is not on PATH`);
+
+  return join(dir, name);
 }
 
 /** A state folder with units.tsv and ledger.tsv, and a stub `gh` that answers from `prs`. */
@@ -99,8 +122,10 @@ export function chunk(t: TestContext, fixture: Fixture) {
   writeFileSync(
     join(state, "ledger.tsv"),
     [
-      LEDGER_HEADER,
-      ...(fixture.ledger ?? []).map((row) => [...row, "2026-10-23T19:57:00Z"].join("\t")),
+      RISK_LEDGER_HEADER,
+      ...(fixture.ledger ?? []).map((row) =>
+        [...row, ...(row.length === 4 ? ["", ""] : []), "2026-10-23T19:57:00Z"].join("\t"),
+      ),
     ].join("\n") + "\n",
   );
 
@@ -135,10 +160,15 @@ cat "${stub}/$3.json"
   );
   chmodSync(join(bin, "gh"), 0o755);
 
-  const env = { PATH: `${bin}:${process.env.PATH ?? ""}` };
+  // The PATH holds the stub and only what chunk.ts and the stub run, so the real gh is unreachable.
+  symlinkSync(process.execPath, join(bin, "node"));
+  symlinkSync(whichOf("cat"), join(bin, "cat"));
+
+  const env = { PATH: bin };
 
   return {
     state,
+    path: env.PATH,
     report: (entry = cli) => run(["--state", state, "report"], env, entry),
   };
 }

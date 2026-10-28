@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { cpSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import {
   DEFINED_OUTCOMES,
   LEDGER_HEADER,
+  RISK_LEDGER_HEADER,
   cellsOf,
   chunk,
   promptsDir,
@@ -14,6 +15,14 @@ import {
   scriptsDir,
   sha,
 } from "./harness.ts";
+
+test("the report's PATH reaches the stub gh and no other", (t) => {
+  const { path } = chunk(t, { units: [["u1", "T1", "7"]] });
+  const ghs = path.split(":").filter((dir) => existsSync(join(dir, "gh")));
+
+  assert.equal(ghs.length, 1, `gh on PATH in: ${ghs.join(", ")}`);
+  assert.ok(readFileSync(join(ghs[0] ?? "", "gh"), "utf8").includes("unexpected gh call"));
+});
 
 test("a PR whose current head has no ledger row is not merge-ready", (t) => {
   const { report } = chunk(t, {
@@ -369,7 +378,7 @@ test("the vocabulary lives only in brief.md's Ledger outcomes table", (t) => {
   assert.match(removed.stdout, /ledger\.tsv:2: "ci-green" is not a Ledger outcome/);
 });
 
-test("the report refuses a ledger whose header differs and prints the expected one", (t) => {
+test("the report refuses a ledger whose header differs and prints both it accepts", (t) => {
   const fixture = chunk(t, { units: [["u1", "T1", "7"]], prs: [{ number: 7, head: sha("a") }] });
 
   writeFileSync(join(fixture.state, "ledger.tsv"), "pr\thead_sha\tverdict\tby\tevidence\n");
@@ -378,6 +387,7 @@ test("the report refuses a ledger whose header differs and prints the expected o
 
   assert.equal(result.status, 2);
   assert.ok(result.stderr.includes(LEDGER_HEADER), result.stderr);
+  assert.ok(result.stderr.includes(RISK_LEDGER_HEADER), result.stderr);
 });
 
 test("a gh failure makes the report exit 2, never a clean or violation code", (t) => {
@@ -385,4 +395,189 @@ test("a gh failure makes the report exit 2, never a clean or violation code", (t
 
   assert.equal(result.status, 2);
   assert.match(cellsOf(rowOf(result.stdout, "T1"))[6] ?? "", /^unknown: .*no pull requests found/);
+});
+
+function part(output: string, heading: string): string[] {
+  const lines = output.split("\n");
+  const start = lines.indexOf(heading);
+
+  assert.ok(start !== -1, `no ${heading} in:\n${output}`);
+
+  const end = lines.findIndex((line, index) => index > start && /^#{2,3} /.test(line));
+
+  return lines.slice(start + 1, end === -1 ? undefined : end).filter((line) => line !== "");
+}
+
+function diffLink(n: number): string {
+  return `https://github.com/owner/repo/pull/${n}/files`;
+}
+
+function verified(n: number, hex: string, ...call: [] | [string, string]) {
+  return [String(n), sha(hex), "unit-test-verified", "evidence/u/test.log", ...call] as const;
+}
+
+test("the report opens with the sample: every high PR, then up to three more by risk", (t) => {
+  const result = chunk(t, {
+    units: [["u1", "T1", "2"]],
+    ledger: [
+      verified(1, "1", "low", "fixes a typo"),
+      verified(2, "2", "high", "rewrites merge order"),
+      verified(3, "3", "medium", "adds a flag"),
+      verified(4, "4"),
+      verified(5, "5", "high", "touches auth"),
+      verified(6, "6", "low", "adds a test"),
+      verified(7, "7", "medium", "first look"),
+      verified(7, "8", "low", "rechecked: docs only"),
+      verified(8, "9", "low", "renames a file"),
+    ],
+    prs: [1, 2, 3, 4, 5, 6, 7, 8].map((number) => ({ number, head: sha(String(number)) })),
+  }).report();
+
+  const headings = result.stdout.split("\n").filter((line) => line.startsWith("#"));
+
+  assert.deepEqual(headings.slice(0, 4), [
+    "## Sample",
+    "### Riskiest diffs",
+    "### Overruled verdicts",
+    "### Attention",
+  ]);
+  assert.equal(result.stdout.split("\n")[0], "## Sample");
+  assert.deepEqual(part(result.stdout, "### Riskiest diffs"), [
+    `- high ${diffLink(2)}: rewrites merge order`,
+    `- high ${diffLink(5)}: touches auth`,
+    `- medium ${diffLink(3)}: adds a flag`,
+    `- low ${diffLink(1)}: fixes a typo`,
+    `- low ${diffLink(6)}: adds a test`,
+  ]);
+  assert.ok(
+    result.stdout.indexOf("### Attention") < result.stdout.indexOf("| Ticket |"),
+    "the sample comes before the final PRs",
+  );
+});
+
+test("every high PR prints even when there are more than three", (t) => {
+  const result = chunk(t, {
+    units: [["u1", "T1", "1"]],
+    ledger: [1, 2, 3, 4, 5].map((n) => [
+      String(n),
+      sha(String(n)),
+      "unit-test-verified",
+      "evidence/u/test.log",
+      n === 5 ? "medium" : "high",
+      `reason ${n}`,
+    ]),
+    prs: [1, 2, 3, 4, 5].map((number) => ({ number, head: sha(String(number)) })),
+  }).report();
+
+  assert.deepEqual(
+    part(result.stdout, "### Riskiest diffs").map((line) => line.split(" ")[2]),
+    [1, 2, 3, 4, 5].map(diffLink).map((link) => `${link}:`),
+  );
+});
+
+test("overruled verdicts come from decisions.md headings, each with its reason", (t) => {
+  const fixture = chunk(t, { units: [["u1", "T1", "7"]], prs: [{ number: 7, head: sha("a") }] });
+
+  writeFileSync(
+    join(fixture.state, "decisions.md"),
+    [
+      "# Decisions",
+      "",
+      "## 2026-10-27T10:00:00Z intake answers",
+      "The user overruled nothing here.",
+      "## 2026-10-27T11:00:00Z overruled 7 at abc1234: the flake reproduces at base",
+      "Evidence: evidence/u7/base.log",
+      `## 2026-10-27T12:00:00Z overruled owner/repo#9 at ${sha("b")}: the lane ran the wrong test`,
+      "## 2026-10-27T13:00:00Z overruled seven at x: no",
+      "",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(part(fixture.report().stdout, "### Overruled verdicts"), [
+    "- 7 at abc1234: the flake reproduces at base (decisions.md:5)",
+    `- owner/repo#9 at ${sha("b")}: the lane ran the wrong test (decisions.md:7)`,
+    '- decisions.md:8: unreadable, expected "## <ISO time> overruled <pr> at <sha>: <reason>": ' +
+      "## 2026-10-27T13:00:00Z overruled seven at x: no",
+  ]);
+});
+
+test("an empty part of the sample says none and the other parts still print", (t) => {
+  const fixture = chunk(t, {
+    units: [["u1", "T1", "7"]],
+    ledger: [["7", sha("a"), "unit-test-verified", "evidence/u/test.log", "high", "new parser"]],
+    prs: [{ number: 7, head: sha("a") }],
+  });
+
+  writeFileSync(
+    join(fixture.state, "attention.md"),
+    "reviewed by gpt-5.5\n\n- Row 12 claims a merge with no evidence.\n",
+  );
+
+  const result = fixture.report();
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(part(result.stdout, "### Riskiest diffs"), [
+    `- high ${diffLink(7)}: new parser`,
+  ]);
+  assert.deepEqual(part(result.stdout, "### Overruled verdicts"), ["none"]);
+  assert.deepEqual(part(result.stdout, "### Attention"), [
+    "reviewed by gpt-5.5",
+    "- Row 12 claims a merge with no evidence.",
+  ]);
+});
+
+test("a ledger from before risk calls still reports, with no diff to sample", (t) => {
+  const fixture = chunk(t, { units: [["u1", "T1", "7"]], prs: [{ number: 7, head: sha("a") }] });
+
+  writeFileSync(
+    join(fixture.state, "ledger.tsv"),
+    "pr\thead_sha\toutcome\tevidence\trecorded_at\n" +
+      `7\t${sha("a")}\tunit-test-verified\tevidence/u/test.log\t2026-10-23T19:57:00Z\n`,
+  );
+
+  const result = fixture.report();
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(cellsOf(rowOf(result.stdout, "T1"))[6], "yes");
+  assert.deepEqual(part(result.stdout, "### Riskiest diffs"), ["none"]);
+  assert.deepEqual(part(result.stdout, "### Attention"), [
+    "none: no attention.md in the state folder",
+  ]);
+});
+
+test("a sampled PR that gh cannot find keeps its place and reason", (t) => {
+  const result = chunk(t, {
+    units: [["u1", "T1", "7"]],
+    ledger: [
+      ["7", sha("a"), "unit-test-verified", "evidence/u/test.log"],
+      ["12", sha("b"), "unit-test-verified", "evidence/u/test.log", "high", "new parser"],
+    ],
+    prs: [{ number: 7, head: sha("a") }],
+  }).report();
+
+  assert.equal(result.status, 0, "a missing diff link leaves merge readiness alone");
+  assert.match(
+    part(result.stdout, "### Riskiest diffs").join("\n"),
+    /^- high 12 \(no diff link: .*no pull requests found.*\): new parser$/,
+  );
+});
+
+test("the report refuses a ledger row whose risk call is half there or outside the levels", (t) => {
+  for (const [risk, reason] of [
+    ["severe", "new parser"],
+    ["severe", ""],
+    ["high", ""],
+    ["", "new parser"],
+  ] as const) {
+    const fixture = chunk(t, {
+      units: [["u1", "T1", "7"]],
+      ledger: [["7", sha("a"), "unit-test-verified", "evidence/u/test.log", risk, reason]],
+      prs: [{ number: 7, head: sha("a") }],
+    });
+
+    const result = fixture.report();
+
+    assert.equal(result.status, 2, `${risk}/${reason}`);
+    assert.match(result.stderr, /ledger\.tsv:2: a risk call is a level/);
+  }
 });

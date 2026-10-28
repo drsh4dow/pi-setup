@@ -72,6 +72,14 @@ _Avoid_: lead; root, which is the tree position at depth 0
 The per-project directory outside the repository that keeps what later sessions reuse, such as research, reviews, and eval runs.
 _Avoid_: runtime state
 
+**Risk call**:
+A verifier's judgment that a PR is low, medium, or high risk, with a one-line reason, stored in its verdict's ledger row: the risk columns on a sh4dow run, the evidence text on an implement-chunk run.
+_Avoid_: risk score, severity
+
+**Sample**:
+The short read a finished chunk hands the user: the riskiest diffs, the overruled verdicts, and the Attention flags.
+_Avoid_: summary, digest
+
 **Config record**:
 The committed facts a repository gives the engineering skills: its issue tracker, domain docs, and standards.
 _Avoid_: tracker record

@@ -29,7 +29,45 @@ export const UNIT_STATES = [
   "reconciled",
 ] as const;
 
+/**
+ * A ledger's header is fixed when `chunk` creates the file, and no command rewrites it, so a
+ * ledger stays readable by every CLI version that wrote it. A state folder whose `mode` file
+ * reads sh4dow gets RISK_LEDGER_COLUMNS; a folder with no `mode` file gets LEDGER_COLUMNS, which
+ * hold no risk call, and any other mode is refused.
+ */
 export const LEDGER_COLUMNS = ["pr", "head_sha", "outcome", "evidence", "recorded_at"] as const;
+
+export const RISK_LEDGER_COLUMNS = [
+  "pr",
+  "head_sha",
+  "outcome",
+  "evidence",
+  "risk",
+  "risk_reason",
+  "recorded_at",
+] as const;
+
+export type LedgerColumn = (typeof RISK_LEDGER_COLUMNS)[number];
+
+/** The columns of a ledger file, read from its header line. */
+export function ledgerColumnsOf(file: string, text: string): readonly LedgerColumn[] {
+  const header = text.split("\n", 1)[0];
+  const columns = [LEDGER_COLUMNS, RISK_LEDGER_COLUMNS].find((c) => c.join("\t") === header);
+
+  if (columns === undefined) {
+    throw new Refusal(
+      `${file}:1: the header matches neither tab-separated ledger header:\n` +
+        `${LEDGER_COLUMNS.join("\t")}\n${RISK_LEDGER_COLUMNS.join("\t")}`,
+    );
+  }
+
+  return columns;
+}
+
+/** A verifier's risk call on a PR, riskiest last. */
+export const RISK_LEVELS = ["low", "medium", "high"] as const;
+
+export type RiskLevel = (typeof RISK_LEVELS)[number];
 
 export function isUnitColumn(name: string): name is UnitColumn {
   return UNIT_COLUMNS.some((column) => column === name);
@@ -50,16 +88,45 @@ export interface Verdict {
   readonly sha: string;
   readonly outcome: string;
   readonly evidence: string;
+  /** The verifier's risk call, or null for a row recorded without one. */
+  readonly risk: RiskLevel | null;
+  /** The risk call's one-line reason; empty exactly when `risk` is null. */
+  readonly riskReason: string;
 }
 
 export function parseLedger(file: string, text: string): Verdict[] {
-  return parseTsv(file, text, LEDGER_COLUMNS).map(({ line, cells }) => {
-    const [prText = "", sha = "", outcome = "", evidence = ""] = cells;
+  const header = ledgerColumnsOf(file, text);
+
+  return parseTsv(file, text, header).map(({ line, cells }) => {
+    const cell = (column: LedgerColumn) => cells[header.indexOf(column)] ?? "";
+    const prText = cell("pr");
     const pr = parsePrRef(prText);
 
     if (pr === null) throw new Refusal(`${file}:${line}: unreadable pr ${JSON.stringify(prText)}`);
 
-    return { line, pr, sha, outcome, evidence };
+    const riskText = cell("risk");
+    const riskReason = cell("risk_reason");
+    const risk = RISK_LEVELS.find((level) => level === riskText) ?? null;
+
+    const unknownLevel = risk === null && riskText !== "";
+    const halfCall = (risk === null) !== (riskReason === "");
+
+    if (unknownLevel || halfCall) {
+      throw new Refusal(
+        `${file}:${line}: a risk call is a level (${RISK_LEVELS.join(", ")}) with a reason, ` +
+          `or neither; got ${JSON.stringify(riskText)} and ${JSON.stringify(riskReason)}`,
+      );
+    }
+
+    return {
+      line,
+      pr,
+      sha: cell("head_sha"),
+      outcome: cell("outcome"),
+      evidence: cell("evidence"),
+      risk,
+      riskReason,
+    };
   });
 }
 

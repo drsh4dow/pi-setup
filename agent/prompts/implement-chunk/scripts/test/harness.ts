@@ -27,6 +27,8 @@ export const LEDGER_HEADER = "pr\thead_sha\toutcome\tevidence\trecorded_at";
 
 export const RISK_LEDGER_HEADER = "pr\thead_sha\toutcome\tevidence\trisk\trisk_reason\trecorded_at";
 
+export const SPAWNS_HEADER = "session\tparent\tkind\trole\tdepth\tunit\tname\tstate\trecorded_at";
+
 export const DEFINED_OUTCOMES = [
   "live-deployed-verified",
   "live-ui-verified",

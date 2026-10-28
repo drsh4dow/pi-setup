@@ -136,7 +136,9 @@ The agent loads these on its own when the trigger matches.
   is a delegate and may run no `pi --print`, `pi -p`, `pi-subagent`, or
   `subagents/scripts/launch.ts` launch. An owner, a subagent on a prompt under
   `agent/system/generated/owner/` that carries a whole unit such as a PR, may
-  launch only delegates. It checks `bash`, `bg_start`, and codemode alike
+  launch only delegates. It checks `bash`, `bg_start`, and codemode alike.
+  `launch.ts` refuses the same spawns, and any child past depth 2, from the
+  `PI_SUBAGENT_*` variables it gives each child
 - `fast-mode`: `/fast` and `Ctrl-Alt-M` toggle Fast mode for the models listed
   under `fastMode` in `agent/settings.json`, and the footer shows `⚡ Fast` while
   it is on. A provider entry with `subagentsEnabled: false` skips sessions

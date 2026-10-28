@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 
+import type { Kind, Role } from "../brief.ts";
+
 const LAUNCH = new URL("../launch.ts", import.meta.url).pathname;
 
 const CODE_REVIEW_SKILL = new URL("../../../code-review/SKILL.md", import.meta.url).pathname;
@@ -71,16 +73,23 @@ function host(t: TestContext): Host {
   );
   chmodSync(fake, 0o755);
 
+  // A launch reads its tree position and state folder from its environment, and this test may
+  // run inside a subagent, so the host launches as the root with no state folder.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    PI_LAUNCH_LOADAVG: loadavg,
+    PI_LAUNCH_MEMINFO: meminfo,
+  };
+
+  for (const name of ["PI_SUBAGENT_KIND", "PI_SUBAGENT_TREE_DEPTH", "PI_SUBAGENT_SESSION", "IMPLEMENT_CHUNK_STATE"])
+    delete env[name];
+
   return {
     dir,
     orders,
     marker,
-    env: {
-      ...process.env,
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
-      PI_LAUNCH_LOADAVG: loadavg,
-      PI_LAUNCH_MEMINFO: meminfo,
-    },
+    env,
     brief(name, text) {
       const path = join(dir, name);
       writeFileSync(path, text);
@@ -218,14 +227,16 @@ const ROLE_KINDS = {
   "live-verifier": "delegate",
   persona: "delegate",
   assignment: "delegate",
+  "cross-family-reviewer": "delegate",
   "brief-auditor": "delegate",
   babysitter: "owner",
-} as const;
+  "final-pr-owner": "owner",
+} as const satisfies Record<Role, Kind>;
 
 function roleBrief(role: keyof typeof ROLE_KINDS): string {
   const kind = ROLE_KINDS[role];
 
-  if (role === "persona" || role === "assignment")
+  if (role === "persona" || role === "assignment" || role === "cross-family-reviewer")
     return "Review the diff `git diff main...HEAD`.\n\nSKILLS tdd\n";
 
   const brief = IMPLEMENTER_BRIEF.replace("KIND         delegate", `KIND         ${kind}`);
@@ -244,7 +255,9 @@ for (const role of Object.keys(ROLE_KINDS) as (keyof typeof ROLE_KINDS)[]) {
     assert.equal(run.status, 0, run.stderr);
 
     const words = commandWords(run);
-    const prompt = `${AGENT_DIR}/system/generated/${kind}/${role}.md`;
+    // The cross-family reviewer runs the assignment template.
+    const part = role === "cross-family-reviewer" ? "assignment" : role;
+    const prompt = `${AGENT_DIR}/system/generated/${kind}/${part}.md`;
 
     assert.deepEqual(flagValues(words, "--system-prompt"), [prompt]);
     assert.ok(words.includes("--no-skills"), "skill discovery is off");
@@ -254,6 +267,50 @@ for (const role of Object.keys(ROLE_KINDS) as (keyof typeof ROLE_KINDS)[]) {
     assert.deepEqual(flagValues(words, "--skill"), [`${AGENT_DIR}/skills/tdd`], "the brief names tdd");
     assert.ok(run.stdout.includes("--- system prompt append: literal text ---\n# Skill: tdd\n"), run.stdout);
     assert.ok(run.stdout.includes(`--- system prompt append: ${TDD_SKILL} (skill tdd) ---\n${readFileSync(TDD_SKILL, "utf8").trimEnd()}\n`), run.stdout);
+  });
+}
+
+function without(args: readonly string[], ...flags: string[]): string[] {
+  return args.filter((word, index) => !flags.includes(word) && !flags.includes(args[index - 1] ?? ""));
+}
+
+test("a cross-family-reviewer runs the assignment template and its brief checks", (t) => {
+  const h = host(t);
+  const brief = h.brief("review.md", "Review the diff `git diff main...HEAD` for gaps.\n");
+
+  const run = launch(h, [...baseArgs(h, brief, "cross-family-reviewer"), "--dry-run"]);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(flagValues(commandWords(run), "--system-prompt"), [`${AGENT_DIR}/system/generated/delegate/assignment.md`]);
+
+  const slot = h.brief("slot.md", "Review the diff at <sha>.\n");
+  assertRefused(h, launch(h, [...baseArgs(h, slot, "cross-family-reviewer"), "--dry-run"]), /unfilled placeholder/);
+});
+
+// The defaults the user set: the roles that judge another family's work run on GPT, every other
+// role on Opus, and every subagent thinks high.
+const DEFAULT_MODELS: readonly (readonly [Role, string])[] = [
+  ["cross-family-reviewer", "openai/gpt-6.1-sol"],
+  ["verifier", "openai/gpt-6.1-sol"],
+  ["live-verifier", "openai/gpt-6.1-sol"],
+  ["brief-auditor", "openai/gpt-6.1-sol"],
+  ["implementer", "anthropic/claude-opus-5-5"],
+];
+
+for (const [role, model] of DEFAULT_MODELS) {
+  test(`the ${role} role runs on ${model} at high without --model or --thinking, and both flags override`, (t) => {
+    const h = host(t);
+    const args = without(baseArgs(h, h.brief("brief.md", roleBrief(role)), role), "--model", "--thinking");
+
+    const run = launch(h, [...args, "--dry-run"]);
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(flagValues(commandWords(run), "--model"), [model]);
+    assert.deepEqual(flagValues(commandWords(run), "--thinking"), ["high"]);
+
+    const other = model === "openai/gpt-6.1-sol" ? "anthropic/claude-opus-5-5" : "openai/gpt-6.1-sol";
+    const given = launch(h, [...args, "--model", other, "--thinking", "medium", "--dry-run"]);
+    assert.equal(given.status, 0, given.stderr);
+    assert.deepEqual(flagValues(commandWords(given), "--model"), [other]);
+    assert.deepEqual(flagValues(commandWords(given), "--thinking"), ["medium"]);
   });
 }
 

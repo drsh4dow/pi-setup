@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { ROLES } from "../../agent/skills/subagents/scripts/brief.ts";
 
 const root = new URL("../../", import.meta.url);
 
@@ -81,14 +82,68 @@ function section(heading: string): string {
   return text;
 }
 
+test("the tree is flat up to one final PR of six tickets and deep past it, with one owner per final PR", () => {
+  const tree = section("Tree");
+  const flat = tree.match(/^- \*\*Flat\*\*: (.*)$/m)?.[1] ?? "";
+  const deep = tree.match(/^- \*\*Deep\*\*: (.*)$/m)?.[1] ?? "";
+
+  assert.match(flat, /^one final PR with six tickets or fewer\./);
+  assert.match(deep, /^two or more final PRs, or more than six tickets\./);
+  assert.match(deep, /one `final-pr-owner` per final PR with `--kind owner`/);
+});
+
+test("the coordinator drains its inbox at the four drain points", () => {
+  const points = section("Drain points").match(/^\d+\. \*\*[^*]+\*\*/gm) ?? [];
+
+  assert.deepEqual(points, [
+    "1. **After recording a completion.**",
+    "2. **At each owner rollup.**",
+    "3. **On each watcher wake.**",
+    "4. **Before every message to the user.**",
+  ]);
+});
+
 test("close audits the decision trail and has a cross-family reviewer write the Attention flags", () => {
   const close = section("Steps").split(/^### 8\. Close$/m)[1] ?? "";
 
   assert.match(close, /\*\*show-me-your-work\*\*/);
   assert.match(close, /decisions\.tsv/);
   assert.match(close, /\$PI_SESSION_FILE/);
-  assert.match(close, /`cross-family reviewer` delegate/);
+  assert.match(close, /`--role cross-family-reviewer`/);
   assert.match(close, /`<state folder>\/attention\.md`/);
+});
+
+test("each cross-family reviewer the sh4dow and implement-chunk prompts name launches with a launcher role that brings its model", () => {
+  for (const path of [
+    "agent/system/generated/sh4dow.md",
+    "agent/system/generated/owner/final-pr-owner.md",
+    "agent/prompts/implement-chunk.md",
+  ]) {
+    const text = read(path);
+
+    const sentences = text
+      .split(/\n|(?<=\.)\s+(?=[A-Z`(])/)
+      .filter((sentence) =>
+        /cross-family[ -]reviewer|--role (verifier|live-verifier|brief-auditor)\b/.test(sentence),
+      );
+
+    assert.ok(sentences.length > 0, `${path} launches no cross-family reviewer`);
+    assert.doesNotMatch(text, /--role assignment --model/, path);
+
+    for (const sentence of sentences) {
+      const roles = [...sentence.matchAll(/--role ([a-z-]+)/g)].map((match) => match[1] ?? "");
+
+      assert.ok(roles.length > 0, `${path}: no --role in: ${sentence}`);
+
+      for (const role of roles)
+        assert.ok(
+          ROLES.some((known) => known === role),
+          `${path}: --role ${role}`,
+        );
+
+      assert.doesNotMatch(sentence, /--model/, `${path}: the role brings its model: ${sentence}`);
+    }
+  }
 });
 
 test("close starts the cross-family review after the trail audit, on the audited trail", () => {
@@ -100,4 +155,6 @@ test("close starts the cross-family review after the trail audit, on the audited
   assert.match(audit, /^Audit `decisions\.tsv`/);
   assert.match(review, /^(After|Once)\b.*?\baudit\b.*?, launch /, "the review waits on the audit");
   assert.match(review, /the audited `decisions\.tsv`/);
+  assert.match(review, /`--role cross-family-reviewer`/);
+  assert.doesNotMatch(review, /--model/, "the role brings its model");
 });

@@ -364,6 +364,78 @@ test("a resumed child's row runs again and ends again", (t) => {
   assert.match(h.seen()[1]?.registry ?? "", /\trunning\t[^\n]*\n$/, "the resume's running row precedes Pi");
 });
 
+test("a resumed child is registered under the parent that resumed it, at that parent's depth", (t) => {
+  const h = host(t);
+  const first = delegateLaunch(h, ["--state", h.state, "--unit", "final-a"], parentAt("owner", 1, "owner-a"));
+
+  assert.equal(first.status, 0, first.stderr);
+
+  const child = sessionOf(first);
+  const directive = h.brief("resume.md", "Continue the same work.\n");
+  const resume = (env: NodeJS.ProcessEnv) =>
+    launch(h, [...args(h, "delegate", "implementer", directive), "--resume", child, "--state", h.state], env);
+
+  // The original owner, another owner, then the coordinator after both owners ended.
+  for (const env of [parentAt("owner", 1, "owner-a"), parentAt("owner", 1, "owner-b"), {}]) {
+    const run = resume(env);
+
+    assert.equal(run.status, 0, run.stderr);
+  }
+
+  const rows = registry(h).map(({ session, parent, kind, role, depth, unit, name, state }) => [
+    session,
+    parent,
+    kind,
+    role,
+    depth,
+    unit,
+    name,
+    state,
+  ]);
+  const named = ["final-a", "subagent: implementer A"];
+
+  assert.deepEqual(rows, [
+    [child, "owner-a", "delegate", "implementer", "2", ...named, "running"],
+    [child, "owner-a", "delegate", "implementer", "2", ...named, "reported"],
+    [child, "owner-a", "delegate", "implementer", "2", ...named, "running"],
+    [child, "owner-a", "delegate", "implementer", "2", ...named, "reported"],
+    [child, "owner-b", "delegate", "implementer", "2", ...named, "running"],
+    [child, "owner-b", "delegate", "implementer", "2", ...named, "reported"],
+    [child, "root", "delegate", "implementer", "1", ...named, "running"],
+    [child, "root", "delegate", "implementer", "1", ...named, "reported"],
+  ]);
+  assert.deepEqual(
+    h.seen().map(({ env }) => env.PI_SUBAGENT_TREE_DEPTH),
+    ["2", "2", "2", "1"],
+    "each child runs at the depth its row records",
+  );
+});
+
+test("a resume refuses what a launch refuses and writes no row", (t) => {
+  const h = host(t);
+  const first = delegateLaunch(h, ["--state", h.state], parentAt("owner", 1, "owner-a"));
+
+  assert.equal(first.status, 0, first.stderr);
+
+  const before = readFileSync(join(h.state, "spawns.tsv"), "utf8");
+  const directive = h.brief("resume.md", "Continue the same work.\n");
+  const resume = (env: NodeJS.ProcessEnv) =>
+    launch(h, [...args(h, "delegate", "implementer", directive), "--resume", sessionOf(first), "--state", h.state], env);
+
+  for (const [env, line] of [
+    [parentAt("delegate", 2), "launch: refused: a delegate launches nothing"],
+    [parentAt("owner", 2), "launch: refused: depth 3 is past the limit of 2"],
+  ] as const) {
+    const run = resume(env);
+
+    assert.equal(run.status, 2, run.stderr);
+    assert.ok(run.stderr.split("\n").includes(line), run.stderr);
+  }
+
+  assert.equal(readFileSync(join(h.state, "spawns.tsv"), "utf8"), before);
+  assert.equal(h.seen().length, 1, "only the first launch started Pi");
+});
+
 test("a dry run and a refused launch write no registry row", (t) => {
   const h = host(t);
 

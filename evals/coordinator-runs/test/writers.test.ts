@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { grade, placeFixtures, type Rows, readTsv, stubGh } from "./harness.ts";
+import { fixtureRoot, grade, placeFixtures, type Rows, readTsv, stubGh } from "./harness.ts";
 
 describe("grading a chunk whose pull requests share head SHAs, and whose coordinator edits files with sed", () => {
   let root = "";
@@ -14,7 +14,7 @@ describe("grading a chunk whose pull requests share head SHAs, and whose coordin
   let findings: Rows = [];
 
   before(() => {
-    root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+    root = fixtureRoot();
     stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
     placeFixtures(root);
     stubGh(stubDir);

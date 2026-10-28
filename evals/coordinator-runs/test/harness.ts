@@ -1,9 +1,20 @@
 // Runs the grader's CLI on a copy of the synthetic chunks under fixtures/, with a stub `gh` on a
 // PATH that cannot reach the real one.
 
-import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -26,6 +37,8 @@ export const PULL_REQUESTS = {
   "14": { state: "MERGED", headRefOid: "6".repeat(40), headRefName: "u/z-14" },
   "15": { state: "MERGED", headRefOid: "9".repeat(40), headRefName: "chunk/zeta/app" },
   "16": { state: "MERGED", headRefOid: "8".repeat(40), headRefName: "u/z-16" },
+  "17": { state: "MERGED", headRefOid: "abc1234".padEnd(40, "0"), headRefName: "chunk/theta/app" },
+  "18": { state: "MERGED", headRefOid: "def5678".padEnd(40, "0"), headRefName: "u/theta-18" },
 } satisfies Record<string, PullRequest>;
 
 interface PullRequest {
@@ -67,7 +80,20 @@ export function readTsv(path: string): Rows {
   });
 }
 
-/** Copies the fixtures into `root`, writing `root` wherever a fixture says `{{ROOT}}`. */
+/**
+ * A new directory to place the fixtures in, under `/var/tmp`. The grader counts no write under
+ * `/tmp` or the system temp directory as a root edit, so the fixtures' repositories must sit
+ * outside both for their edits to count.
+ */
+export const fixtureRoot = () => mkdtempSync(join("/var/tmp", "coordinator-runs-"));
+
+/** The repository the theta coordinator ran in, whose `origin` is acme/app. */
+export const REPOSITORY = "repo";
+
+/**
+ * Copies the fixtures into `root`, writing `root` wherever a fixture says `{{ROOT}}`, and makes
+ * `root/repo` a git repository whose `origin` is acme/app on GitHub.
+ */
 export function placeFixtures(root: string) {
   cpSync(FIXTURES, root, { recursive: true });
 
@@ -78,9 +104,45 @@ export function placeFixtures(root: string) {
 
     writeFileSync(path, readFileSync(path, "utf8").replaceAll("{{ROOT}}", root));
   }
+
+  const repository = join(root, REPOSITORY);
+
+  mkdirSync(repository);
+  execFileSync("git", ["init", "-q", repository]);
+  execFileSync("git", [
+    "-C",
+    repository,
+    "remote",
+    "add",
+    "origin",
+    "https://github.com/acme/app.git",
+  ]);
 }
 
+/** Puts the real `git` on the PATH directory `dir`, which the grader reads `origin` with. */
+function linkGit(dir: string) {
+  const git = (process.env.PATH ?? "")
+    .split(delimiter)
+    .map((entry) => join(entry, "git"))
+    .find((path) => {
+      try {
+        accessSync(path, constants.X_OK);
+
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+  if (git === undefined) throw new Error("no git on PATH, which the grader needs");
+
+  symlinkSync(git, join(dir, "git"));
+}
+
+/** Writes a stub `gh` into `dir`, beside the real `git`. */
 export function stubGh(dir: string, answers: Readonly<Record<string, GhAnswer>> = {}) {
+  linkGit(dir);
+
   const path = join(dir, "gh");
 
   writeFileSync(
@@ -114,7 +176,11 @@ export function grade(root: string, pathDir: string, out: string, chunk = "alpha
       "--out",
       out,
     ],
-    { encoding: "utf8", env: { PATH: pathDir, HOME: join(root, "home") }, timeout: 60_000 },
+    {
+      encoding: "utf8",
+      env: { PATH: pathDir, HOME: join(root, "home"), TMPDIR: join(root, "tmp") },
+      timeout: 60_000,
+    },
   );
 
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };

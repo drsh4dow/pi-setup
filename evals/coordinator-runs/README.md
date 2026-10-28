@@ -19,7 +19,8 @@ It writes three files to `--out`:
 
 - `sessions.tsv`, one row per graded session, with columns `session file project chunk mode
   role parent depth skill_table_chars skill_table_tokens skill_table_tokens_source
-  skills_read`.
+  skills_read`. A subagent's `parent` is the session that launched it; a handoff session's is
+  the coordinator session it continues.
 - `findings.tsv`, one row per counted event, with columns `session entry class detail`.
   Each row names the session and the entry id that recorded the event. `sessions.tsv` maps
   the session to its file. A finding read from a `units.tsv` or `ledger.tsv` row names the
@@ -37,7 +38,8 @@ session entry is often the last line of a session still being written; that sess
 sessions it launched are not graded. A warning about a launch call names its session file and
 entry id, and one about a session line names its file and line number, never the command or
 the line, which can hold a credential. It exits 2 when it cannot run: on bad arguments, when
-the chunk names pull requests and `gh` is not on `PATH`, or when `gh` fails for any other
+the chunk names pull requests and `gh` is not on `PATH`, when it names one by a bare number,
+none by its full repository, and `git` is not on `PATH`, or when `gh` fails for any other
 reason than a missing pull request or repository, such as an expired login, or prints no pull
 request. The message names the pull request and what `gh` printed.
 
@@ -48,6 +50,11 @@ request. The message names the pull request and what `gh` printed.
   one that carries a `sh4dow-mode` custom entry (`SH4DOW_MODE_ENTRY`) before its first
   user message. It reads every other session file in 4 KiB chunks and stops at the chunk
   that holds the end of its first user message, so at most 4 KiB past that point is read.
+- **Handoff sessions.** A session whose header's `parentSession` names a graded coordinator's
+  session file, as Pi's handoff writes it, continues that coordinator. It is graded as a
+  coordinator of the same chunk, in the same mode, with the tree it launched, and so is a
+  handoff of a handoff. A handoff pasted into a new session by hand, whose header names no
+  parent, is not: its first user message is free text the grader cannot tell from any other.
 - **The chunk a coordinator ran.** This is the state folder its session names most often,
   among the `--state` folders and every sibling folder beside them. A coordinator that names
   an ungraded sibling most, such as a chunk still running, is left out. A state folder
@@ -56,7 +63,17 @@ request. The message names the pull request and what `gh` printed.
 - **Subagent sessions.** It follows only the session ids its graded sessions launched. The
   launcher prints `launch: session <uuid>` to stderr. That line reaches the parent in a
   `background-terminal-results` message, a `bg_status` result, or a `bash` result. A launch
-  without that line is listed with `child=unknown`, and nothing below it is graded.
+  whose output went to files, such as a `bg_start` running `launch.ts ... > report.md
+  2> launch.log`, prints no such line to the parent. Its child is the session Pi started under
+  the name the launch gives it: launch.ts passes Pi `--name`, opened with `subagent: ` when it
+  does not open so, and raw `pi-subagent` passes its `--name` as it is. The grader reads that
+  name from each session's head, which it reads anyway, and takes the earliest session with it
+  that started at or after the call and that no other launch took, and before the same
+  session's next launch under that name. So a retry takes its own child rather than the one its
+  failed try left, and the launches one call makes under one name take one child each. A launch
+  with no `--name`, such as one through `spawn.sh`, or with no
+  recorded time, is listed with `child=unknown`, and nothing below it is graded. The grader
+  reads no launch's output files, which are outside the sessions it grades.
 - **Terminal runs.** A resumed session's new Pi process numbers its background terminals from
   `bt-1` again, so a terminal id names one run only from one start to the next. For a
   top-level `bg_start`, the grader uses the command recorded in the call and reads the child
@@ -75,8 +92,14 @@ request. The message names the pull request and what `gh` printed.
   `84187d1 (carries to e8a0353)`. An abbreviation of seven or more characters matches a full
   SHA.
 - **Pull requests.** Every PR the state files name is looked up once with
-  `gh pr view --json state,headRefOid,headRefName`. A short reference (`repo#n`, `n`)
-  resolves only when the state files name exactly one matching repository in full.
+  `gh pr view --json state,headRefOid,headRefName`. A short reference (`repo#n`, `219`,
+  `#219`) resolves against the one matching repository the state files name in full. When
+  they name none, a bare number names a pull request of the repository the chunk's coordinator
+  sessions ran in: the GitHub repository that `git remote get-url origin` names in their
+  working directory, when they all ran in one. When they name several, a bare number stays
+  unresolved. The state files come first because a coordinator can run in a checkout other
+  than its pull requests' repository: the 3y-harness card-flow coordinator ran in the harness
+  repository, and its state files name its pull requests in two product repositories.
 
 ## Mode, skill table, and launches
 
@@ -115,7 +138,7 @@ request. The message names the pull request and what `gh` printed.
 | `skill-read`            | a session's first successful read of a `SKILL.md` (`read`, codemode `tools.read`, or a printing bash command)                                                   | skill name                                        |
 | `launch`                | each launch                                                                                                                                                     | `kind=<k> role=<r> depth=<d> child=<id\|unknown>` |
 | `wrong-spawn`           | a delegate launches, an owner launches an owner, or a launch goes past depth 2                                                                                  | the reason, then the launch detail                |
-| `root-edit`             | a coordinator's successful `edit`, `write`, or `bash` write outside its state folder                                                                            | the absolute path                                 |
+| `root-edit`             | a coordinator's successful `edit`, `write`, or `bash` write outside its state folder and the temp directories                                                   | the absolute path                                 |
 | `stale-verdict`         | a merged PR whose ledger rows name no SHA it merged at, not even through a carry row                                                                            | `<pr> <ledger file>:<line of its last row>`       |
 | `report-only-merge`     | a merged final PR (head branch `chunk/...`) whose merged head no `verifier` session's final message names                                                       | `<pr> <merged head> <state file>:<line>`          |
 | `unterminated-subagent` | a `units.tsv` row whose state's first word is not `merged`, `done`, `abandoned`, or `reconciled`, leaving out a `planned` row that no launch names by its brief | `<id> <state> <units file>:<line>`                |
@@ -130,8 +153,11 @@ grader does not model control flow, so a target in a branch that may not run sti
 and expands variables the same command assigned. It leaves out a path it cannot resolve: one
 that holds a variable the command never set, a command substitution, or a glob, a relative
 path after a `cd` to such a place, and `/dev/` targets. A file written any other way, such
-as by a script the command runs, is not seen. A coordinator's scratch file under `/tmp`
-counts too, because it is a write outside the state folder. `unterminated-subagent` judges a free-text state by its first
+as by a script the command runs, is not seen. A write under `/tmp` or the system temp
+directory (`os.tmpdir()`, from `TMPDIR`), as written or as each resolves, is a scratch file and
+no root-edit, since the delegate guard lets a coordinator write there. The grader takes its own
+temp directory for the coordinator's, so run it with the environment the coordinator had.
+`unterminated-subagent` judges a free-text state by its first
 word, its first run of letters, which ends at a `-`, `(`, space, or any other non-letter. So
 past states such as `done: 0 act-on` and `abandoned-canceled(repo archived)` are terminal, and
 `running bt-1` is not.
@@ -167,16 +193,21 @@ time counts as earlier than any timed one. A call writes the row in one of these
   command is not a write of the row.
 
 With no such call, the entry is `-`. The usual causes are a coordinator that continued in a
-session whose first user message is not the prompt, and a codemode call recorded without its
-full arguments, whose cut ones end before the row.
+session pasted by hand rather than through Pi's handoff (see Handoff sessions), and a codemode
+call recorded without its full arguments, whose cut ones end before the row.
 
 ## Test
 
-`vp run test:evals` runs `test/grade.test.ts` and `test/writers.test.ts` on the synthetic
-chunks under [`fixtures/`](fixtures/), with a stub `gh` on a `PATH` that cannot reach the real
-one. `writers.test.ts` covers pull requests whose ledger rows share a head SHA and `sed -i` in
-each option form. `grade.test.ts` gives the unrelated session a 4 GiB sparse tail, so a grader
-that read it past its first user message would fail. `evals/lib/test/session.test.ts` counts the bytes a head
-read takes from the kernel's `/proc/self/io`. It fails when the read takes more than one 4 KiB
-chunk past the end of the first user message. Where `/proc/self/io` is missing, as on macOS,
-that test is skipped.
+`vp run test:evals` runs the tests in `test/` on the synthetic chunks under
+[`fixtures/`](fixtures/), with a stub `gh` and the real `git` on a `PATH` that cannot reach
+the real `gh`. Each test places the fixtures under `/var/tmp`, since a write under `/tmp` or
+the temp directory is no root-edit, and runs the grader with `TMPDIR` inside the placed root.
+`redirected-launches.test.ts` grades the theta and iota chunks, whose coordinators launch
+through `bg_start` into files; theta's runs in a git repository whose `origin` is `acme/app`.
+`gh.test.ts` covers gh failures. `writers.test.ts` covers pull requests whose ledger rows share
+a head SHA and `sed -i` in each option form. `grade.test.ts` gives the unrelated session a
+4 GiB sparse tail, so a grader that read it past its first user message would fail. Theta's
+run gives the same tail to an earlier session that carries one of its launches' child names.
+`evals/lib/test/session.test.ts` counts the bytes a head read takes from the kernel's
+`/proc/self/io`. It fails when the read takes more than one 4 KiB chunk past the end of the
+first user message. Where `/proc/self/io` is missing, as on macOS, that test is skipped.

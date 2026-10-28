@@ -22,6 +22,10 @@ export interface Launch {
   readonly command: string;
   /** The child session id, absent when no record names it. */
   readonly child: string | undefined;
+  /** The name the launcher gives the child's session, absent when the command does not say. */
+  readonly childName: string | undefined;
+  /** When the model issued the call, absent in sessions that record no timestamps. */
+  readonly calledAt: string | undefined;
 }
 
 /**
@@ -45,6 +49,19 @@ interface LaunchCommand {
   readonly text: string;
   /** The session a `--session <id>` argument resumes. */
   readonly resumed: string | undefined;
+  readonly childName: string | undefined;
+}
+
+/**
+ * The name the launcher gives the child's session from its `--name`: launch.ts opens it with
+ * `subagent: ` when the name does not, and pi-subagent passes it to Pi as it is.
+ */
+function childNameIn(launcher: string, args: readonly string[]): string | undefined {
+  const name = flagValue(args, "--name");
+
+  if (name === undefined || launcher !== "launch.ts" || name.startsWith("subagent: ")) return name;
+
+  return `subagent: ${name}`;
 }
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f-]{27}$/;
@@ -99,14 +116,15 @@ function launchCommands(command: string): LaunchCommand[] {
 
       if (launcher === "spawn.sh") {
         // spawn.sh <brief> <model> <thinking> <name> [owner]
-        return [
-          { kind: args.at(-1) === "owner" ? "owner" : "delegate", role: "unknown", text, resumed },
-        ];
+        // The name the wrapper gives the session is the wrapper's own, so it is left unknown.
+        const kind = args.at(-1) === "owner" ? "owner" : "delegate";
+
+        return [{ kind, role: "unknown", text, resumed, childName: undefined }];
       }
 
       const role = /^[a-z-]+/.exec(flagValue(args, "--role") ?? "")?.[0] ?? "unknown";
 
-      return [{ kind: kindIn(args), role, text, resumed }];
+      return [{ kind: kindIn(args), role, text, resumed, childName: childNameIn(launcher, args) }];
     });
   });
 }
@@ -319,7 +337,15 @@ export function launchCalls(jsonl: string, operations: readonly ToolOperation[])
         return;
       }
 
-      launches.push({ entry, kind: launch.kind, role: launch.role, command: launch.text, child });
+      launches.push({
+        entry,
+        kind: launch.kind,
+        role: launch.role,
+        command: launch.text,
+        child,
+        childName: launch.childName,
+        calledAt: operation.calledAt,
+      });
     });
   }
 

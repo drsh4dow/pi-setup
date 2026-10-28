@@ -1,5 +1,6 @@
 // Reads a chunk state folder's units.tsv and ledger.tsv by header name, so past layouts still
-// read, and looks up the pull requests they name through gh.
+// read, and looks up the pull requests they name through gh, and the repository a bare pull
+// request number names through git.
 
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -67,8 +68,31 @@ export function looseRefs(cell: string): LooseRef[] {
   return refs;
 }
 
-/** Resolves short references against the repositories the chunk's state files name in full. */
-export function resolver(cells: readonly string[]) {
+/** A GitHub repository, `owner/repo`. */
+export interface Repository {
+  readonly owner: string;
+  readonly repo: string;
+}
+
+/**
+ * Whether {@link resolver} needs `origin` for these cells: some cell names a pull request by its
+ * bare number, and none names a repository in full.
+ */
+export function needsOrigin(cells: readonly string[]): boolean {
+  const refs = cells.flatMap(looseRefs);
+
+  return refs.some((ref) => ref.form === "bare") && !refs.some((ref) => ref.form === "full");
+}
+
+/**
+ * Resolves short references. A bare number, like `repo#n`, resolves against the one matching
+ * repository the chunk's state files name in full. When they name none, a bare number resolves
+ * against `origin`, the repository the chunk's coordinators ran in, when there is one. The state
+ * files come first, and a chunk whose state files name several repositories leaves a bare number
+ * unresolved, because a coordinator can run in a checkout other than its pull requests'
+ * repository, such as a harness checkout beside the product's.
+ */
+export function resolver(cells: readonly string[], origin: Repository | undefined) {
   const repos = new Map<string, PrRef>();
 
   for (const loose of cells.flatMap(looseRefs)) {
@@ -85,9 +109,15 @@ export function resolver(cells: readonly string[]) {
 
     const owners = new Set(candidates.map((ref) => `${ref.owner}/${ref.repo}`));
 
-    if (owners.size !== 1) return undefined;
+    if (owners.size === 1) {
+      return { owner: candidates[0].owner, repo: candidates[0].repo, number: loose.number };
+    }
 
-    return { owner: candidates[0].owner, repo: candidates[0].repo, number: loose.number };
+    if (loose.form === "bare" && known.length === 0 && origin !== undefined) {
+      return { ...origin, number: loose.number };
+    }
+
+    return undefined;
   };
 }
 
@@ -151,6 +181,35 @@ export async function ghPullRequest(ref: PrRef): Promise<PullRequest | undefined
   }
 
   return pull.value;
+}
+
+// The owner and repository a GitHub remote URL names, over HTTPS or SSH.
+const GITHUB_REMOTE = /github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/;
+
+/**
+ * The GitHub repository that `origin` names in the git repository holding `dir`, or none when
+ * `dir` is in no repository, is gone, or has no `origin` on GitHub. No git on PATH throws
+ * `CannotRun`, since a bare pull request number then cannot be resolved.
+ */
+export async function gitOrigin(dir: string): Promise<Repository | undefined> {
+  let stdout: string;
+
+  try {
+    ({ stdout } = await run("git", ["-C", dir, "remote", "get-url", "origin"]));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new CannotRun(
+        "git is not on PATH, so a bare pull request number cannot be resolved against the coordinator's repository",
+      );
+    }
+
+    // git exits non-zero for a directory in no repository, one that is gone, and no origin.
+    return undefined;
+  }
+
+  const remote = GITHUB_REMOTE.exec(stdout.trim());
+
+  return remote === null ? undefined : { owner: remote[1], repo: remote[2] };
 }
 
 export function escapeRegExp(text: string): string {

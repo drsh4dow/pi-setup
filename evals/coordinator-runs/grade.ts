@@ -4,8 +4,15 @@
 // where a chunk's verdicts, merges, and units went wrong. Usage:
 //   node evals/coordinator-runs/grade.ts --sessions <dir> --state <chunk state folder>... --out <dir>
 
-import { mkdirSync, readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  existsSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   argument,
@@ -16,24 +23,23 @@ import {
   skillLoads,
   type ToolOperation,
 } from "../lib/session.ts";
-import { runPool } from "../lib/pool.ts";
 import {
   CannotRun,
-  escapeRegExp,
-  formatPr,
   ghPullRequest,
+  gitOrigin,
   insideStateFolder,
-  looseRefs,
-  namesSha,
   stateFolderSource,
-  readTable,
-  resolver,
-  type PrRef,
-  type PullRequest,
-  type TableRow,
 } from "./chunk-state.ts";
-import { launchCalls } from "./launches.ts";
-import { readSessionFile, sessionCwd, sessionFiles } from "./session-files.ts";
+import { chunkFindings, type PullRequestSources } from "./chunk-findings.ts";
+import { type Launch, launchCalls } from "./launches.ts";
+import { namedChildJoiner } from "./named-children.ts";
+import {
+  type HeadFacts,
+  headFacts,
+  readSessionFile,
+  sessionCwd,
+  sessionFiles,
+} from "./session-files.ts";
 import type {
   Chunk,
   ChunkGrade,
@@ -45,14 +51,6 @@ import type {
 } from "./model.ts";
 import { findingsTable, sessionsTable, summary } from "./report.ts";
 import { shellStatements } from "./shell-writes.ts";
-import {
-  firstSha,
-  rowLink,
-  type StateRowLink,
-  type VerdictRow,
-  writesUnit,
-  writesVerdict,
-} from "./state-writes.ts";
 
 export { FINDING_CLASSES, type Finding, type FindingClass } from "./model.ts";
 
@@ -124,9 +122,13 @@ function chunkOfSession(text: string, graded: readonly Chunk[]): SessionChunk {
 // ---------------------------------------------------------------------------------------------
 // The launch tree
 
+/** Joins one session's launches, in call order, to the child sessions no record names. */
+type ChildJoin = (launches: readonly Launch[]) => Launch[];
+
 /** The graded session, or none when a line of its file is no session entry. */
 function gradeSessionFile({
   warn,
+  joinChildren,
   ...input
 }: {
   readonly id: string;
@@ -138,13 +140,16 @@ function gradeSessionFile({
   readonly parent: string | undefined;
   readonly depth: number;
   readonly jsonl: string;
+  readonly joinChildren: ChildJoin;
   readonly warn: (line: string) => void;
 }): GradedSession | undefined {
   const session = readSessionFile(input.file, input.jsonl, warn);
 
   if (session === undefined) return undefined;
 
-  const { launches, uncounted } = launchCalls(input.jsonl, session.operations);
+  const calls = launchCalls(input.jsonl, session.operations);
+  const launches = joinChildren(calls.launches);
+  const uncounted = calls.uncounted;
 
   return {
     ...input,
@@ -162,6 +167,7 @@ function launchTree(
   coordinator: GradedSession,
   files: ReadonlyMap<string, string>,
   seen: Set<string>,
+  joinChildren: ChildJoin,
   warn: (line: string) => void,
 ): GradedSession[] {
   const visit = (session: GradedSession): GradedSession[] => [
@@ -189,6 +195,7 @@ function launchTree(
         parent: session.id,
         depth: session.depth + 1,
         jsonl: readFileSync(file, "utf8"),
+        joinChildren,
         warn,
       });
 
@@ -201,24 +208,6 @@ function launchTree(
 
 // ---------------------------------------------------------------------------------------------
 // Findings
-
-const TERMINAL_UNIT_STATES = new Set(["merged", "done", "abandoned", "reconciled"]);
-
-/**
- * A free-text unit state's first word: its first run of letters, which ends at a `-`, `(`,
- * space, or any other non-letter, so `abandoned-canceled(...)` and `done: 0 act-on` read as
- * `abandoned` and `done`.
- */
-const firstWord = (state: string) => /[a-z]+/.exec(state.toLowerCase())?.[0] ?? "";
-
-/**
- * Matches a command that names the brief path `brief` whole: after the start, a space, a quote,
- * `=`, or `/`, and before the end or a character no path goes on with. So `briefs/m0.md` is named
- * by `spawn.sh briefs/m0.md` and by `.../state/briefs/m0.md`, not by `xbriefs/m0.md` or
- * `briefs/m0.md.bak`.
- */
-const namingBrief = (brief: string) =>
-  new RegExp(`(?:^|[\\s"'=/])${escapeRegExp(brief)}(?=$|[\\s"'\`;&|()<>])`);
 
 function sessionFindings(session: GradedSession): Finding[] {
   const findings: Finding[] = [];
@@ -247,13 +236,34 @@ function sessionFindings(session: GradedSession): Finding[] {
   if (session.position.at === "root") {
     for (const operation of session.operations) {
       for (const path of writtenPaths(operation, session.cwd)) {
-        if (!insideStateFolder(path, session.chunk.dir)) add(operation.entryId, "root-edit", path);
+        if (insideStateFolder(path, session.chunk.dir) || insideTempDir(path)) continue;
+
+        add(operation.entryId, "root-edit", path);
       }
     }
   }
 
   return findings;
 }
+
+/** The directory `dir` resolves to, or `dir` itself when it does not resolve. */
+function landing(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
+/**
+ * The temp directories the delegate guard lets a coordinator write scratch files in: `/tmp` and
+ * the system temp directory, as written and as each resolves. The grader takes its own system temp
+ * directory for the coordinator's, as both run as one user.
+ */
+const TEMP_DIRS = [...new Set(["/tmp", tmpdir()].flatMap((dir) => [dir, landing(dir)]))];
+
+const insideTempDir = (path: string) =>
+  TEMP_DIRS.some((dir) => path === dir || path.startsWith(`${dir.replace(/\/$/, "")}/`));
 
 /** The absolute paths a successful call wrote: an `edit` or `write` path, or a bash command's shell writes. */
 function writtenPaths(operation: ToolOperation, cwd: string): string[] {
@@ -272,178 +282,22 @@ function writtenPaths(operation: ToolOperation, cwd: string): string[] {
     : shellStatements(command, cwd).flatMap((statement) => statement.writes);
 }
 
-async function chunkFindings(
-  chunk: Chunk,
-  sessions: readonly GradedSession[],
-  lookup: (ref: PrRef) => Promise<PullRequest | undefined>,
-  warn: (line: string) => void,
-): Promise<Finding[]> {
-  const findings: Finding[] = [];
-  const coordinators = sessions.filter((session) => session.position.at === "root");
-  const unitsFile = join(chunk.dir, "units.tsv");
-  const units = readTable(unitsFile);
-  const ledgerFile = join(chunk.dir, "ledger.tsv");
-  const ledger = readTable(ledgerFile);
-
-  const resolveRef = resolver([
-    ...units.flatMap((unit) => [unit.cell("final_pr"), unit.cell("intermediate_pr")]),
-    ...ledger.map((row) => row.cell("pr")),
-  ]);
-
-  /** The identity of `pr`'s ledger row `row`: the pull request and the row's head SHA. */
-  const verdictOf = (pr: string, row: TableRow): VerdictRow => ({
-    sha: firstSha(row),
-    namesPr: (word) =>
-      looseRefs(word).some((loose) => {
-        const ref = resolveRef(loose);
-
-        return ref !== undefined && formatPr(ref) === pr;
-      }),
-  });
-
-  // Pull requests the state files name, each looked up once.
-  const refs = new Map<string, PrRef>();
-
-  for (const cell of [
-    ...units.flatMap((unit) => [unit.cell("final_pr"), unit.cell("intermediate_pr")]),
-    ...ledger.map((row) => row.cell("pr").split(/\s+/)[0] ?? ""),
-  ]) {
-    for (const loose of looseRefs(cell)) {
-      const ref = resolveRef(loose);
-
-      if (ref) refs.set(formatPr(ref), ref);
-    }
-  }
-
-  const pulls = new Map<string, PullRequest>();
-
-  await runPool([...refs.values()], 6, async (ref) => {
-    const pull = await lookup(ref);
-
-    if (pull) pulls.set(formatPr(ref), pull);
-    else warn(`${chunk.name}: gh found no pull request ${formatPr(ref)}`);
-  });
-
-  // Stale verdicts: a merged pull request whose ledger rows name no head it merged at.
-  const rowsByPr = new Map<string, TableRow[]>();
-
-  for (const row of ledger) {
-    const loose = looseRefs(row.cell("pr").split(/\s+/)[0] ?? "")[0];
-    const ref = loose && resolveRef(loose);
-
-    if (!ref) {
-      warn(`${chunk.name}: ${ledgerFile}:${row.line}: no pull request in "${row.cell("pr")}"`);
-      continue;
-    }
-
-    rowsByPr.set(formatPr(ref), [...(rowsByPr.get(formatPr(ref)) ?? []), row]);
-  }
-
-  for (const [pr, rows] of rowsByPr) {
-    const pull = pulls.get(pr);
-
-    if (pull?.state !== "MERGED") continue;
-
-    if (rows.some((row) => namesSha(row.cell("head_sha"), pull.headRefOid))) continue;
-
-    const last = rows[rows.length - 1];
-    const link = rowLink(coordinators, ledgerFile, last, writesVerdict(chunk, verdictOf(pr, last)));
-
-    findings.push({
-      session: link.session,
-      entry: link.entry,
-      findingClass: "stale-verdict",
-      detail: `${pr} ${link.at}`,
-    });
-  }
-
-  // Report-only merges: a merged final PR whose merged head no verifier session's verdict names.
-  const verdicts = sessions.flatMap((session) =>
-    session.role === "verifier" ? [session.finalText] : [],
-  );
-
-  for (const [pr, pull] of pulls) {
-    if (pull.state !== "MERGED" || !pull.headRefName.startsWith("chunk/")) continue;
-
-    if (verdicts.some((verdict) => namesSha(verdict, pull.headRefOid))) continue;
-
-    // The row the merge comes from: the verdict at the merged head, else the unit that owns the
-    // PR, else the PR's last verdict.
-    const prRows = rowsByPr.get(pr) ?? [];
-    const verdictRow = prRows.findLast((row) => namesSha(row.cell("head_sha"), pull.headRefOid));
-
-    const unitRow = units.findLast((unit) =>
-      [unit.cell("final_pr"), unit.cell("intermediate_pr")].flatMap(looseRefs).some((loose) => {
-        const ref = resolveRef(loose);
-
-        return ref !== undefined && formatPr(ref) === pr;
-      }),
-    );
-
-    const ledgerRow = verdictRow ?? (unitRow === undefined ? prRows.at(-1) : undefined);
-
-    let link: StateRowLink | undefined;
-
-    if (ledgerRow !== undefined) {
-      link = rowLink(
-        coordinators,
-        ledgerFile,
-        ledgerRow,
-        writesVerdict(chunk, verdictOf(pr, ledgerRow)),
-      );
-    } else if (unitRow !== undefined) {
-      link = rowLink(coordinators, unitsFile, unitRow, writesUnit(chunk, unitRow.cell("id")));
-    }
-
-    findings.push({
-      session: link?.session ?? coordinators[0]?.id ?? "-",
-      entry: link?.entry ?? "-",
-      findingClass: "report-only-merge",
-      detail: `${pr} ${pull.headRefOid}${link === undefined ? "" : ` ${link.at}`}`,
-    });
-  }
-
-  // Unterminated subagents: a unit whose state is not terminal, unless it was planned and never launched.
-  const launches = sessions.flatMap((session) =>
-    session.launches.map((launch) => ({ session: session.id, launch })),
-  );
-
-  for (const unit of units) {
-    const state = unit.cell("state");
-    const first = firstWord(state);
-
-    if (TERMINAL_UNIT_STATES.has(first)) continue;
-
-    const brief = unit.cell("brief");
-    const names = brief === "" || brief === "-" ? undefined : namingBrief(brief);
-
-    const launched =
-      names === undefined
-        ? undefined
-        : launches.findLast(({ launch }) => names.test(launch.command));
-
-    if (first === "planned" && launched === undefined) continue;
-
-    const link = rowLink(coordinators, unitsFile, unit, writesUnit(chunk, unit.cell("id")));
-
-    findings.push({
-      session: link.session,
-      entry: link.entry,
-      findingClass: "unterminated-subagent",
-      detail: `${unit.cell("id")} ${state} ${link.at}`,
-    });
-  }
-
-  return findings;
-}
-
 // ---------------------------------------------------------------------------------------------
 // Grading a set of chunks
+
+/** A session file and what its head says. */
+interface SessionHeadOf extends HeadFacts {
+  readonly id: string;
+  readonly file: string;
+  /** The mode it ran in when it is a coordinator session, judged from its head alone. */
+  readonly mode: Mode | undefined;
+}
 
 export async function gradeChunks(input: {
   readonly sessionsDir: string;
   readonly stateDirs: readonly string[];
-  readonly lookup: (ref: PrRef) => Promise<PullRequest | undefined>;
+  readonly lookup: PullRequestSources["lookup"];
+  readonly origin: PullRequestSources["origin"];
   readonly warn: (line: string) => void;
 }): Promise<ChunkGrade[]> {
   const chunks = input.stateDirs.map(chunkAt);
@@ -452,13 +306,68 @@ export async function gradeChunks(input: {
   const passedOverBy = new Map<string, number>();
   const seen = new Set<string>();
 
-  const coordinators = [...files]
+  // Each session's head is read once, and no session is read past it unless it is graded.
+  const heads: SessionHeadOf[] = [...files]
     .toSorted(([, a], [, b]) => basename(a).localeCompare(basename(b)))
-    .flatMap(([id, file]) => {
-      const mode = coordinatorMode(sessionHead(file));
+    .map(([id, file]) => {
+      const head = sessionHead(file);
+      const { startedAt, continues, name } = headFacts(head);
 
-      return mode === undefined ? [] : [{ id, file, mode }];
+      return { id, file, mode: coordinatorMode(head), startedAt, continues, name };
     });
+
+  const joiner = namedChildJoiner(
+    heads.flatMap(({ id, mode, continues, name, startedAt }) =>
+      mode === undefined && continues === undefined && name !== undefined
+        ? [{ id, name, startedAt }]
+        : [],
+    ),
+  );
+
+  const joinChildren: ChildJoin = (launches) => joiner(launches, seen);
+
+  const coordinators = heads.flatMap(({ id, file, mode }) =>
+    mode === undefined ? [] : [{ id, file, mode }],
+  );
+
+  /**
+   * The sessions that continue `continued` through Pi's handoff, each graded as a coordinator of
+   * its chunk and in its mode, then the trees they launched and the handoffs that continue them.
+   */
+  const handoffTrees = (continued: GradedSession): GradedSession[] => {
+    const trees: GradedSession[] = [];
+
+    for (const head of heads) {
+      if (head.mode !== undefined || head.continues !== continued.id || seen.has(head.id)) {
+        continue;
+      }
+
+      seen.add(head.id);
+
+      const handoff = gradeSessionFile({
+        id: head.id,
+        file: head.file,
+        chunk: continued.chunk,
+        mode: continued.mode,
+        role: "coordinator",
+        position: { at: "root" },
+        parent: continued.id,
+        depth: 0,
+        jsonl: readFileSync(head.file, "utf8"),
+        joinChildren,
+        warn: input.warn,
+      });
+
+      if (handoff === undefined) continue;
+
+      trees.push(
+        ...launchTree(handoff, files, seen, joinChildren, input.warn),
+        ...handoffTrees(handoff),
+      );
+    }
+
+    return trees;
+  };
 
   for (const { id, file, mode } of coordinators) {
     const jsonl = readFileSync(file, "utf8");
@@ -482,12 +391,18 @@ export async function gradeChunks(input: {
       parent: undefined,
       depth: 0,
       jsonl,
+      joinChildren,
       warn: input.warn,
     });
 
     if (coordinator === undefined) continue;
 
-    byChunk.get(chunk.dir)?.push(...launchTree(coordinator, files, seen, input.warn));
+    byChunk
+      .get(chunk.dir)
+      ?.push(
+        ...launchTree(coordinator, files, seen, joinChildren, input.warn),
+        ...handoffTrees(coordinator),
+      );
   }
 
   return Promise.all(
@@ -519,7 +434,7 @@ export async function gradeChunks(input: {
         sessions,
         findings: [
           ...sessions.flatMap(sessionFindings),
-          ...(await chunkFindings(chunk, sessions, input.lookup, input.warn)),
+          ...(await chunkFindings(chunk, sessions, input, input.warn)),
         ],
         unlinkedLaunches: sessions
           .flatMap((session) => session.launches)
@@ -566,7 +481,14 @@ const warn = (line: string) => process.stderr.write(`${line}\n`);
 
 async function main(args: readonly string[]) {
   const { sessionsDir, stateDirs, out } = parseArgs(args);
-  const grades = await gradeChunks({ sessionsDir, stateDirs, lookup: ghPullRequest, warn });
+
+  const grades = await gradeChunks({
+    sessionsDir,
+    stateDirs,
+    lookup: ghPullRequest,
+    origin: gitOrigin,
+    warn,
+  });
 
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, "sessions.tsv"), sessionsTable(grades));

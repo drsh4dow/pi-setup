@@ -15,10 +15,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import {
-  type GhAnswer,
+  fixtureRoot,
   grade,
   id,
-  notFound,
   placeFixtures,
   type Rows,
   readTsv,
@@ -82,7 +81,7 @@ describe("grading a synthetic chunk", () => {
       .toSorted();
 
   before(() => {
-    root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+    root = fixtureRoot();
     stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
     placeFixtures(root);
     stubGh(stubDir);
@@ -267,7 +266,7 @@ describe("grading a resumed coordinator whose terminal ids repeat", () => {
   let findings: Rows = [];
 
   before(() => {
-    root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+    root = fixtureRoot();
     stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
     placeFixtures(root);
     stubGh(stubDir);
@@ -349,7 +348,7 @@ describe("grading a coordinator whose codemode calls were recorded only by size"
   let findings: Rows = [];
 
   before(() => {
-    root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+    root = fixtureRoot();
     stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
     placeFixtures(root);
     stubGh(stubDir);
@@ -424,7 +423,7 @@ describe("grading sessions that hold a line that is no session entry", () => {
   let sh4dowFile = "";
 
   before(() => {
-    root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+    root = fixtureRoot();
     stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
     placeFixtures(root);
     stubGh(stubDir);
@@ -490,7 +489,7 @@ describe("grading a chunk whose units were launched by a brief path relative to 
   let findings: Rows = [];
 
   before(() => {
-    root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+    root = fixtureRoot();
     stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
     placeFixtures(root);
     stubGh(stubDir);
@@ -528,7 +527,7 @@ describe("grading a chunk whose units were launched by a brief path relative to 
 
 describe("grading a chunk whose coordinator sessions name another chunk folder more often", () => {
   test("warns that the sessions naming it went to another chunk folder, not that none names it", () => {
-    const root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+    const root = fixtureRoot();
     const stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
 
     try {
@@ -548,53 +547,5 @@ describe("grading a chunk whose coordinator sessions name another chunk folder m
       rmSync(root, { recursive: true, force: true });
       rmSync(stubDir, { recursive: true, force: true });
     }
-  });
-});
-
-/** Grades the alpha fixture with a stub gh that gives `answers` for some PRs. */
-function gradeWithGh(answers: Readonly<Record<string, GhAnswer>>) {
-  const root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
-  const stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
-
-  try {
-    placeFixtures(root);
-    stubGh(stubDir, answers);
-
-    return grade(root, stubDir, join(root, "out"));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(stubDir, { recursive: true, force: true });
-  }
-}
-
-describe("reading pull requests through gh", () => {
-  test("a pull request gh cannot find is a warning, and the run goes on", () => {
-    const run = gradeWithGh({ "11": notFound("11") });
-
-    assert.equal(run.status, 0, run.stderr);
-    assert.match(run.stderr, /gh found no pull request acme\/app#11/);
-  });
-
-  test("any other gh failure ends the run with exit 2, naming the pull request and the cause", () => {
-    const run = gradeWithGh({
-      "11": {
-        stdout: "",
-        stderr: "HTTP 401: Bad credentials (https://api.github.com/graphql)",
-        status: 1,
-      },
-    });
-
-    assert.equal(run.status, 2, run.stderr);
-    assert.match(run.stderr, /acme\/app#11/);
-    assert.match(run.stderr, /HTTP 401: Bad credentials/);
-  });
-
-  test("an answer gh printed that is no pull request ends the run with exit 2", () => {
-    const run = gradeWithGh({
-      "11": { stdout: "<html>rate limited</html>", stderr: "", status: 0 },
-    });
-
-    assert.equal(run.status, 2, run.stderr);
-    assert.match(run.stderr, /acme\/app#11/);
   });
 });

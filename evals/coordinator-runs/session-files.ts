@@ -32,6 +32,52 @@ export function sessionCwd(jsonl: string): string {
   return Option.isSome(header) ? header.value.cwd : "/";
 }
 
+/** What a session's head says about where it came from. */
+export interface HeadFacts {
+  /** When the session started, in milliseconds since the epoch, or NaN when its header says not. */
+  readonly startedAt: number;
+  /**
+   * The session it continues: the one whose file its header's `parentSession` names, as Pi's
+   * handoff writes it.
+   */
+  readonly continues: string | undefined;
+  /** The name its head gives it, such as the `subagent: <name>` that launch.ts passes Pi. */
+  readonly name: string | undefined;
+}
+
+const decodeHeadHeader = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      type: Schema.Literal("session"),
+      timestamp: Schema.optionalKey(Schema.String),
+      parentSession: Schema.optionalKey(Schema.String),
+    }),
+  ),
+);
+
+const decodeSessionInfo = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ type: Schema.Literal("session_info"), name: Schema.String }),
+  ),
+);
+
+/** The facts `head`, a session file's lines up to its first user message, records. */
+export function headFacts(head: string): HeadFacts {
+  const [first = "", ...rest] = head.split("\n");
+  const header = Option.getOrUndefined(decodeHeadHeader(first));
+  const parent = header?.parentSession;
+
+  const name = rest
+    .map((line) => Option.getOrUndefined(decodeSessionInfo(line))?.name)
+    .findLast((found) => found !== undefined);
+
+  return {
+    startedAt: Date.parse(header?.timestamp ?? ""),
+    continues: parent === undefined ? undefined : SESSION_FILE.exec(parent)?.[1],
+    name,
+  };
+}
+
 /**
  * The session that `file` holds as `jsonl`, or none when one of its lines is no session entry,
  * such as a last line cut short while the session was still being written. The warning names the

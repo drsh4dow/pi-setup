@@ -1,20 +1,45 @@
-// One writer at a time for a state file that a command rewrites whole. Several coordinators and
+// One writer at a time for a state file that a command rewrites whole. The coordinator and its
 // final-PR owners run `chunk unit set` on one units.tsv at once, and each reads the table, changes
 // a row, and renames a new table into place, so without the lock the last rename drops the other
 // writers' rows.
 //
-// The lock is `<file>.lock`, holding the holder's PID. It is created whole, by a hard link of a
-// finished file, so a waiter never reads it half written. Only its holder removes it. A lock
-// whose PID no process holds was left by a writer that was killed mid-write: it is refused, never
-// cleared, because a writer cannot remove a lock and know in the same step that the lock it
-// removed is still the dead one rather than a live writer's that replaced it. A lock whose holder
-// still runs is waited on for LOCK_WAIT_MS, then refused. Both refusals name the lock and its PID.
+// The lock is `<file>.lock`, holding the holder's PID, and only its holder removes it. A lock whose
+// PID no process holds is refused, never cleared, because a writer cannot remove a lock and know in
+// the same step that the lock it removed is still the dead one rather than a live writer's that
+// replaced it.
 
 import { linkSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { Refusal } from "./tsv.ts";
 
 /** How long a writer waits for a running holder. A write holds the lock for milliseconds. */
-export const LOCK_WAIT_MS = 5_000;
+const LOCK_WAIT_MS = 5_000;
+
+/** Whether `error` is a Node system error with this `code`, such as `EEXIST`. */
+export function hasCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+/**
+ * Creates `path` holding `text` unless it exists, and says whether it did. The file appears whole,
+ * by a hard link of a finished file, so a concurrent reader never sees it half written.
+ */
+export function createWhole(path: string, text: string): boolean {
+  const temporary = `${path}.${process.pid}.tmp`;
+
+  writeFileSync(temporary, text);
+
+  try {
+    linkSync(temporary, path);
+
+    return true;
+  } catch (error) {
+    if (hasCode(error, "EEXIST")) return false;
+
+    throw error;
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
 
 type Holder =
   | { readonly kind: "gone" }
@@ -27,8 +52,7 @@ function holderOf(lock: string): Holder {
   try {
     text = readFileSync(lock, "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT")
-      return { kind: "gone" };
+    if (hasCode(error, "ENOENT")) return { kind: "gone" };
 
     throw error;
   }
@@ -45,8 +69,18 @@ function isRunning(pid: number): boolean {
     return true;
   } catch (error) {
     // EPERM: the process exists under another user.
-    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+    return !hasCode(error, "ESRCH");
   }
+}
+
+/**
+ * Whether a lock whose holder has ended was left behind: a holder releases before it exits, so a
+ * lock that still names it was never released. A lock that changed meanwhile was released.
+ */
+function leftBehind(lock: string, holder: Holder): boolean {
+  const now = holderOf(lock);
+
+  return now.kind === "pid" && holder.kind === "pid" && now.pid === holder.pid;
 }
 
 function pause(ms: number): void {
@@ -54,49 +88,37 @@ function pause(ms: number): void {
 }
 
 function acquire(lock: string): void {
-  const token = `${lock}.${process.pid}.tmp`;
   const deadline = Date.now() + LOCK_WAIT_MS;
 
-  writeFileSync(token, `${process.pid}\n`);
+  for (;;) {
+    if (createWhole(lock, `${process.pid}\n`)) return;
 
-  try {
-    for (;;) {
-      try {
-        linkSync(token, lock);
+    const holder = holderOf(lock);
 
-        return;
-      } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    if (holder.kind === "gone") continue;
+
+    if (holder.kind === "pid" && !isRunning(holder.pid)) {
+      if (leftBehind(lock, holder)) {
+        throw new Refusal(
+          `${lock}: its holder, pid ${holder.pid}, ended without releasing it; ` +
+            `remove ${lock} once no chunk command runs, then rerun`,
+        );
       }
 
-      const holder = holderOf(lock);
-
-      if (holder.kind === "pid" && !isRunning(holder.pid)) {
-        // A holder releases before it exits, so a lock that still names it once it has ended
-        // was left behind. A lock that changed meanwhile was released and maybe retaken.
-        const now = holderOf(lock);
-
-        if (now.kind === "pid" && now.pid === holder.pid)
-          throw new Refusal(
-            `${lock}: its holder, pid ${holder.pid}, ended without releasing it; ` +
-              `remove ${lock} once no chunk command runs, then rerun`,
-          );
-      } else if (holder.kind !== "gone") {
-        if (Date.now() >= deadline) {
-          const who =
-            holder.kind === "pid" ? `pid ${holder.pid}, which still runs` : "no readable pid";
-
-          throw new Refusal(
-            `${lock}: another writer holds it (${who}) after ${LOCK_WAIT_MS / 1000} s; ` +
-              `rerun, or remove the lock if that process is not a chunk command`,
-          );
-        }
-
-        pause(5 + Math.random() * 20);
-      }
+      continue;
     }
-  } finally {
-    rmSync(token, { force: true });
+
+    if (Date.now() >= deadline) {
+      throw new Refusal(
+        holder.kind === "pid"
+          ? `${lock}: another writer holds it (pid ${holder.pid}, which still runs) after ` +
+              `${LOCK_WAIT_MS / 1000} s; rerun, or remove the lock if that process is not a chunk command`
+          : `${lock} holds no readable pid after ${LOCK_WAIT_MS / 1000} s; ` +
+              `remove it once no chunk command runs, then rerun`,
+      );
+    }
+
+    pause(5 + Math.random() * 20);
   }
 }
 

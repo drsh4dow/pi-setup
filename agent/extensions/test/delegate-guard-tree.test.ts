@@ -8,9 +8,6 @@ import { test, type TestContext } from "node:test";
 import { spawnGuard } from "../delegate-guard.ts";
 import { delegateArgv } from "./guard-fixtures.ts";
 
-// The guard reads a subagent's kind from its --system-prompt, and the launcher reads it from the
-// PI_SUBAGENT_KIND it gave the child. One launch writes both, so the two must agree.
-
 const LAUNCH = new URL("../../skills/subagents/scripts/launch.ts", import.meta.url).pathname;
 
 const TREE_VARIABLES = [
@@ -42,8 +39,6 @@ interface Started {
   readonly kind: string | undefined;
 }
 
-// Launches one child of a role from the root through a fake pi-subagent, and returns the argv
-// and the PI_SUBAGENT_KIND that child received.
 function started(t: TestContext, kind: string, role: string): Started {
   const dir = mkdtempSync(join(tmpdir(), "guard-tree-"));
   t.after(() => execFileSync("rm", ["-rf", dir]));

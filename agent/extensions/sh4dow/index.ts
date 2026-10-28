@@ -1,4 +1,3 @@
-// Each run reads the prompt synchronously inside Pi's handler, which has no Effect runtime.
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -12,10 +11,11 @@ export const SH4DOW_PROMPT = "system/generated/sh4dow.md";
 
 const USAGE = "Usage: /sh4dow <ticket reference> [base branch] [target environment]";
 
-function isSh4dowSession(sessionManager: ExtensionContext["sessionManager"]): boolean {
-  return sessionManager
-    .getEntries()
-    .some((entry) => entry.type === "custom" && entry.customType === SH4DOW_MODE_ENTRY);
+type SessionEntries = ReturnType<ExtensionContext["sessionManager"]["getEntries"]>;
+
+/** Whether the session's entries put it in sh4dow mode. */
+export function isSh4dowSession(entries: SessionEntries): boolean {
+  return entries.some((entry) => entry.type === "custom" && entry.customType === SH4DOW_MODE_ENTRY);
 }
 
 type PromptRead = { kind: "read"; text: string } | { kind: "unreadable"; reason: string };
@@ -28,9 +28,8 @@ function readPrompt(path: string): PromptRead {
   }
 }
 
-// A sh4dow session that cannot read its prompt still never runs on the general prompt.
 function unreadablePrompt(reason: string): string {
-  return `sh4dow mode ${reason}. Tell the user that sentence, and do nothing else until the prompt file is restored.`;
+  return `sh4dow mode ${reason}. Repeat that first sentence to the user, and make no tool calls until the user restores the file.`;
 }
 
 export function createSh4dowExtension(promptPath: string) {
@@ -47,7 +46,7 @@ export function createSh4dowExtension(promptPath: string) {
           return Promise.resolve();
         }
 
-        if (isSh4dowSession(ctx.sessionManager)) {
+        if (isSh4dowSession(ctx.sessionManager.getEntries())) {
           ctx.ui.notify(
             "/sh4dow refused: this session already runs in sh4dow mode. Type /sh4dow in a general session.",
             "error",
@@ -78,10 +77,8 @@ export function createSh4dowExtension(promptPath: string) {
       },
     });
 
-    // Every run reads the mode from the session's own entry and the prompt from disk, so a
-    // reload or a resume in a new process keeps the mode and picks up a regenerated prompt.
     pi.on("before_agent_start", ({ systemPromptOptions: options }, ctx) => {
-      if (!isSh4dowSession(ctx.sessionManager)) return;
+      if (!isSh4dowSession(ctx.sessionManager.getEntries())) return;
 
       const prompt = readPrompt(promptPath);
       options.customPrompt = prompt.kind === "read" ? prompt.text : unreadablePrompt(prompt.reason);

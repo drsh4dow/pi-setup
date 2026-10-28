@@ -1,16 +1,29 @@
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { reportOnlyMergeProblems, unterminatedSubagentProblems } from "../checks.ts";
+import {
+  type StructuralProblem,
+  reportOnlyMergeProblems,
+  unterminatedSubagentProblems,
+} from "../checks.ts";
 import { type PrRef, parsePrRef } from "../pull-request.ts";
 import { parseLedger, parseSpawns, parseUnits } from "../state.ts";
-import { SPAWNS_HEADER, UNITS_HEADER, chunk, sha } from "./harness.ts";
+import {
+  LEDGER_HEADER,
+  SPAWNS_HEADER,
+  UNITS_HEADER,
+  cellsOf,
+  chunk,
+  rowOf,
+  run,
+  scratch,
+  sha,
+} from "./harness.ts";
 
-// The rows past chunks left, copied from the lines the coordinator-runs baseline named; see
-// fixtures/README.md for each row's source, session, and entry.
 const fixtures = fileURLToPath(new URL("fixtures/", import.meta.url));
 
 function fixture(path: string) {
@@ -25,6 +38,10 @@ function prRef(text: string): PrRef {
   assert.ok(ref !== null, `not a PR reference: ${text}`);
 
   return ref;
+}
+
+function messages(problems: readonly StructuralProblem[]): string[] {
+  return problems.map(({ message }) => message);
 }
 
 function units(rows: readonly (readonly [string, string])[]) {
@@ -51,7 +68,7 @@ function spawns(rows: readonly (readonly [string, string, string, string])[]) {
 
 function ledger(rows: readonly (readonly [string, string, string, string])[]) {
   const text = [
-    "pr\thead_sha\toutcome\tevidence\trecorded_at",
+    LEDGER_HEADER,
     ...rows.map((row) => [...row, "2026-10-28T00:00:00Z"].join("\t")),
   ].join("\n");
 
@@ -60,7 +77,7 @@ function ledger(rows: readonly (readonly [string, string, string, string])[]) {
 
 test("unterminated-subagent: each unit row a past chunk left unended is a problem", () => {
   const { file, text } = fixture("unterminated-subagent/units.tsv");
-  const problems = unterminatedSubagentProblems(file, parseUnits(file, text));
+  const problems = messages(unterminatedSubagentProblems(file, parseUnits(file, text)));
 
   const recorded = [
     ["final-E/PE-6394", "pr-open"],
@@ -101,7 +118,9 @@ test("unterminated-subagent: an ended unit passes, in the free-text forms past c
   ]);
 
   assert.deepEqual(
-    unterminatedSubagentProblems("units.tsv", open).map((problem) => problem.split(" ")[2]),
+    messages(unterminatedSubagentProblems("units.tsv", open)).map(
+      (problem) => problem.split(" ")[2],
+    ),
     ["g", "h", "i"],
   );
 });
@@ -117,12 +136,14 @@ test("report-only-merge: each merged final PR whose verdict no verifier reported
 
   const finalPrs = heads.map(([pr = "", head = ""]) => ({ ref: prRef(pr), head }));
 
-  const problems = reportOnlyMergeProblems({
-    ledgerFile: file,
-    ledger: parseLedger(file, text),
-    spawns: [],
-    finalPrs,
-  });
+  const problems = messages(
+    reportOnlyMergeProblems({
+      ledgerFile: file,
+      ledger: parseLedger(file, text),
+      spawns: [],
+      finalPrs,
+    }),
+  );
 
   assert.equal(problems.length, heads.length, problems.join("\n"));
 
@@ -132,7 +153,6 @@ test("report-only-merge: each merged final PR whose verdict no verifier reported
     assert.ok(problem.includes(` ${pr} `) && problem.includes(head), problem);
   });
 
-  // monorepo#5961 merged at a head no ledger row names.
   assert.match(problems[5] ?? "", /no verdict at its head/);
 });
 
@@ -199,6 +219,94 @@ test("report-only-merge: a verdict passes only on evidence of a verifier that re
   );
 });
 
+test("report-only-merge: a chain unit's verifier passes on its whole id, and only on it", () => {
+  const pr = "owner/repo#7";
+  const head = sha("a");
+
+  const check = (evidence: string, unit: string) =>
+    reportOnlyMergeProblems({
+      ledgerFile: "ledger.tsv",
+      ledger: ledger([[pr, head, "unit-test-verified", evidence]]),
+      spawns: spawns([["s1", "verifier", unit, "reported"]]),
+      finalPrs: [{ ref: prRef(pr), head }],
+    }).length;
+
+  assert.equal(check("evidence/chain/T1/REPORT.md", "chain/T1"), 0, "a chain id holds a slash");
+  assert.equal(check("see /state/evidence/V7/REPORT.md", "V7"), 0, "an absolute citation");
+  assert.equal(check("evidence/chain/T2/REPORT.md", "chain/T1"), 1, "another ticket of the chain");
+  assert.equal(check("evidence/V7x/REPORT.md", "V7"), 1, "a unit whose id starts the same");
+  assert.equal(check("evidence/chain/V7/REPORT.md", "V7"), 1, "a unit of that name in a chain");
+});
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@t",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@t",
+    },
+  }).trim();
+}
+
+test("ledger carry and chunk report stand a carried verdict on the same source row", (t) => {
+  const repo = join(scratch(t), "repo");
+
+  mkdirSync(repo);
+  git(repo, "init", "-q", "-b", "main");
+  git(repo, "commit", "-q", "--allow-empty", "-m", "verified");
+
+  const from = git(repo, "rev-parse", "HEAD");
+
+  git(repo, "commit", "-q", "--allow-empty", "-m", "same tree");
+
+  const head = git(repo, "rev-parse", "HEAD");
+
+  // Both rows sit at the SHA carried from: PR 7's, written bare, then another PR's.
+  const folder = chunk(t, {
+    units: [["V7", "T1", "owner/repo#7", "done"]],
+    ledger: [
+      ["7", from, "unit-test-verified", "evidence/V7/REPORT.md", "medium", "verified"],
+      ["owner/repo#8", from, "unit-test-verified", "evidence/LEAD/report.md", "low", "lead only"],
+    ],
+    prs: [{ number: 7, head }],
+  });
+
+  writeFileSync(join(folder.state, "mode"), "sh4dow\n");
+  writeFileSync(
+    join(folder.state, "spawns.tsv"),
+    `${SPAWNS_HEADER}\ns1\troot\tdelegate\tverifier\t1\tV7\tverify\treported\t2026-10-28T00:00:00Z\n`,
+  );
+
+  const carried = run([
+    "--state",
+    folder.state,
+    "ledger",
+    "carry",
+    "owner/repo#7",
+    head,
+    from,
+    "-C",
+    repo,
+  ]);
+
+  assert.equal(carried.status, 0, carried.stderr);
+
+  const rows = readFileSync(join(folder.state, "ledger.tsv"), "utf8").trimEnd().split("\n");
+
+  assert.deepEqual(
+    rows.at(-1)?.split("\t").slice(4, 6),
+    ["medium", "verified"],
+    "PR 7's risk call",
+  );
+
+  const report = folder.report();
+
+  assert.equal(report.status, 0, report.stdout + report.stderr);
+});
+
 test("chunk report holds a sh4dow chunk back on a past report-only merge, and passes a verified one", (t) => {
   const pr = "drsh4dow/pi-setup#128";
   const head = "357f1870a4eb5b282a205252c9843293aa7eac6b";
@@ -235,24 +343,46 @@ test("chunk report holds a sh4dow chunk back on a past report-only merge, and pa
   assert.doesNotMatch(passed.stdout, /report-only-merge/);
 });
 
-test("an implement-chunk chunk, which keeps no spawn registry, is not judged for report-only merges", (t) => {
-  const pr = "drsh4dow/pi-setup#128";
-  const head = "357f1870a4eb5b282a205252c9843293aa7eac6b";
+test("a final PR a structural check holds back is not merge-ready in the table or the summary", (t) => {
+  const head = sha("a");
 
-  const run = chunk(t, {
-    units: [["F", "126", pr]],
-    ledger: [[pr, head, "live-ui-verified", "evidence/F/lead-verdict.md"]],
-    prs: [{ number: 128, repo: "drsh4dow/pi-setup", head, state: "MERGED" }],
-  }).report();
+  const folder = chunk(t, {
+    units: [
+      ["F", "T1", "7", "done"],
+      ["G", "T2", "8", "done"],
+    ],
+    ledger: [
+      ["7", head, "unit-test-verified", "evidence/F/implementer.md", "high", "protocol"],
+      ["8", head, "unit-test-verified", "evidence/V8/REPORT.md", "low", "docs"],
+    ],
+    prs: [
+      { number: 7, head },
+      { number: 8, head },
+    ],
+  });
 
-  assert.equal(run.status, 0, run.stdout + run.stderr);
+  writeFileSync(join(folder.state, "mode"), "sh4dow\n");
+  writeFileSync(
+    join(folder.state, "spawns.tsv"),
+    `${SPAWNS_HEADER}\ns1\troot\tdelegate\tverifier\t1\tV8\tverify\treported\t2026-10-28T00:00:00Z\n`,
+  );
+
+  const result = folder.report();
+
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(cellsOf(rowOf(result.stdout, "T1"))[6] ?? "", /^no: /);
+  assert.equal(cellsOf(rowOf(result.stdout, "T2"))[6], "yes");
+  assert.match(
+    result.stdout,
+    /^merge-ready or merged: 1 of 2 tickets; .*the chunk is not merge-ready$/m,
+  );
 });
 
-test("chunk report holds a chunk back while a past unit is still running", (t) => {
+test("any structural problem makes the summary say the chunk is not merge-ready", (t) => {
   const pr = "drsh4dow/pi-setup#128";
   const head = sha("c");
 
-  const run = chunk(t, {
+  const result = chunk(t, {
     units: [
       ["F", "126", pr],
       ["F-A6", "-", "-", "running"],
@@ -261,6 +391,58 @@ test("chunk report holds a chunk back while a past unit is still running", (t) =
     prs: [{ number: 128, repo: "drsh4dow/pi-setup", head, state: "MERGED" }],
   }).report();
 
-  assert.equal(run.status, 1, run.stdout + run.stderr);
-  assert.match(run.stdout, /units\.tsv:3: unit F-A6 is running/);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.equal(cellsOf(rowOf(result.stdout, "126"))[6], "merged");
+  assert.match(
+    result.stdout,
+    /^merge-ready or merged: 1 of 1 tickets; .*the chunk is not merge-ready$/m,
+  );
+});
+
+test("an implement-chunk chunk, which keeps no spawn registry, is not judged for report-only merges", (t) => {
+  const pr = "drsh4dow/pi-setup#128";
+  const head = "357f1870a4eb5b282a205252c9843293aa7eac6b";
+
+  const result = chunk(t, {
+    units: [["F", "126", pr]],
+    ledger: [[pr, head, "live-ui-verified", "evidence/F/lead-verdict.md"]],
+    prs: [{ number: 128, repo: "drsh4dow/pi-setup", head, state: "MERGED" }],
+  }).report();
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+test("chunk report refuses a state folder whose mode is neither absent nor sh4dow", (t) => {
+  const pr = "drsh4dow/pi-setup#128";
+  const head = sha("c");
+
+  const folder = chunk(t, {
+    units: [["F", "126", pr]],
+    ledger: [[pr, head, "unit-test-verified", "evidence/F/lead-verdict.md"]],
+    prs: [{ number: 128, repo: "drsh4dow/pi-setup", head, state: "MERGED" }],
+  });
+
+  writeFileSync(join(folder.state, "mode"), "shadow\n");
+
+  const result = folder.report();
+
+  assert.equal(result.status, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /unknown mode "shadow"/);
+});
+
+test("chunk report holds a chunk back while a past unit is still running", (t) => {
+  const pr = "drsh4dow/pi-setup#128";
+  const head = sha("c");
+
+  const result = chunk(t, {
+    units: [
+      ["F", "126", pr],
+      ["F-A6", "-", "-", "running"],
+    ],
+    ledger: [[pr, head, "unit-test-verified", "evidence/V-F/REPORT.md"]],
+    prs: [{ number: 128, repo: "drsh4dow/pi-setup", head, state: "MERGED" }],
+  }).report();
+
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /units\.tsv:3: unit F-A6 is running/);
 });

@@ -8,8 +8,7 @@ const read = (path: string) => readFileSync(new URL(path, root), "utf8");
 
 const CORE_BLOCKS = ["codemode", "state", "git", "guardrails", "context"];
 
-// The coordinator part's top-level headings, in order. Later tickets fill some of them.
-const COORDINATOR_HEADINGS = [
+const REQUIRED_COORDINATOR_HEADINGS = [
   "## Your role",
   "## State folder",
   "## Steps",
@@ -52,8 +51,8 @@ test("the sh4dow prompt carries the coordinator part and none of the general par
   }
 
   const headings = prompt.split("\n").filter((line) => line.startsWith("## "));
-  const coordinatorOrder = headings.filter((line) => COORDINATOR_HEADINGS.includes(line));
-  assert.deepEqual(coordinatorOrder, COORDINATOR_HEADINGS);
+  const coordinatorOrder = headings.filter((line) => REQUIRED_COORDINATOR_HEADINGS.includes(line));
+  assert.deepEqual(coordinatorOrder, REQUIRED_COORDINATOR_HEADINGS);
 });
 
 test("the last step of the coordinator part is Close", () => {
@@ -71,4 +70,44 @@ test("the coordinator part states its own rules without overriding another promp
     part,
     /overrid|supersede|takes precedence|instead of (the|your) (system prompt|usual)|general[- ]mode|collaboration cases|<collaboration>|skill table says/i,
   );
+});
+
+/** The text of a `## ` section of the generated sh4dow prompt, up to the next `## ` heading. */
+function section(heading: string): string {
+  const prompt = read("agent/system/generated/sh4dow.md");
+  const text = prompt.split(new RegExp(`^## ${heading}$`, "m"))[1]?.split(/^## /m)[0];
+  assert.ok(text, `the sh4dow prompt has no ## ${heading}`);
+
+  return text;
+}
+
+test("the tree is flat up to one final PR of six tickets and deep past it, with one owner per final PR", () => {
+  const tree = section("Tree");
+  const flat = tree.match(/^- \*\*Flat\*\*: (.*)$/m)?.[1] ?? "";
+  const deep = tree.match(/^- \*\*Deep\*\*: (.*)$/m)?.[1] ?? "";
+
+  assert.match(flat, /^one final PR with six tickets or fewer\./);
+  assert.match(deep, /^two or more final PRs, or more than six tickets\./);
+  assert.match(deep, /one `final-pr-owner` per final PR with `--kind owner`/);
+});
+
+test("the coordinator drains its inbox at the four drain points", () => {
+  const points = section("Drain points").match(/^\d+\. \*\*[^*]+\*\*/gm) ?? [];
+
+  assert.deepEqual(points, [
+    "1. **After recording a completion.**",
+    "2. **At each owner rollup.**",
+    "3. **On each watcher wake.**",
+    "4. **Before every message to the user.**",
+  ]);
+});
+
+test("close audits the decision trail and has a cross-family reviewer write the Attention flags", () => {
+  const close = section("Steps").split(/^### 8\. Close$/m)[1] ?? "";
+
+  assert.match(close, /\*\*show-me-your-work\*\*/);
+  assert.match(close, /decisions\.tsv/);
+  assert.match(close, /\$PI_SESSION_FILE/);
+  assert.match(close, /`cross-family reviewer` delegate/);
+  assert.match(close, /`<state folder>\/attention\.md`/);
 });

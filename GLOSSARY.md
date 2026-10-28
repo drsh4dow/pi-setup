@@ -66,7 +66,7 @@ _Avoid_: background task, watcher
 ### sh4dow runs
 
 **Coordinator**:
-The agent in a sh4dow-mode session that owns a chunk: it plans, launches subagents, and merges, but writes no code.
+The root agent of a sh4dow-mode or `/implement-chunk` session that owns a chunk. It plans and launches subagents, and a subagent makes every change.
 _Avoid_: lead; root, which is the tree position at depth 0
 
 **Spawn registry**:

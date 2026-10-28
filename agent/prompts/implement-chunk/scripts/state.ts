@@ -1,5 +1,4 @@
-// The state files the CLI owns. The coordinator prompts name these columns, and tests hold the
-// prompts and these lists equal.
+// The coordinator prompts name these columns, and tests hold the prompts and these lists equal.
 
 import { type PrRef, parsePrRef, samePr } from "./pull-request.ts";
 import { Refusal, type Row, parseTsv } from "./tsv.ts";
@@ -32,7 +31,8 @@ export const UNIT_STATES = [
 /**
  * A ledger's header is fixed when `chunk` creates the file, and no command rewrites it, so a
  * ledger stays readable by every CLI version that wrote it. A state folder whose `mode` file
- * reads sh4dow gets RISK_LEDGER_COLUMNS; any other gets LEDGER_COLUMNS, which hold no risk call.
+ * reads sh4dow gets RISK_LEDGER_COLUMNS; a folder with no `mode` file gets LEDGER_COLUMNS, which
+ * hold no risk call, and any other mode is refused.
  */
 export const LEDGER_COLUMNS = ["pr", "head_sha", "outcome", "evidence", "recorded_at"] as const;
 
@@ -55,7 +55,7 @@ export function ledgerColumnsOf(file: string, text: string): readonly LedgerColu
 
   if (columns === undefined) {
     throw new Refusal(
-      `${file}:1: the header is neither tab-separated ledger header:\n` +
+      `${file}:1: the header matches neither tab-separated ledger header:\n` +
         `${LEDGER_COLUMNS.join("\t")}\n${RISK_LEDGER_COLUMNS.join("\t")}`,
     );
   }
@@ -107,7 +107,10 @@ export function parseLedger(file: string, text: string): Verdict[] {
     const riskReason = cell("risk_reason");
     const risk = RISK_LEVELS.find((level) => level === riskText) ?? null;
 
-    if ((risk === null && riskText !== "") || (risk === null) !== (riskReason === "")) {
+    const unknownLevel = risk === null && riskText !== "";
+    const halfCall = (risk === null) !== (riskReason === "");
+
+    if (unknownLevel || halfCall) {
       throw new Refusal(
         `${file}:${line}: a risk call is a level (${RISK_LEVELS.join(", ")}) with a reason, ` +
           `or neither; got ${JSON.stringify(riskText)} and ${JSON.stringify(riskReason)}`,
@@ -206,4 +209,16 @@ export function parseSpawns(file: string, text: string): Spawn[] {
 /** The verdict that stands for a PR at a SHA: the last row recorded on that key. */
 export function verdictAt(ledger: readonly Verdict[], pr: PrRef, sha: string): Verdict | undefined {
   return ledger.findLast((row) => row.sha === sha && samePr(row.pr, pr));
+}
+
+/**
+ * The verdict `ledger carry` copies to a new SHA: the last row at `sha` on the same PR, else the
+ * last row at `sha` on any PR.
+ */
+export function carrySource(
+  ledger: readonly Verdict[],
+  pr: PrRef,
+  sha: string,
+): Verdict | undefined {
+  return verdictAt(ledger, pr, sha) ?? ledger.findLast((row) => row.sha === sha);
 }

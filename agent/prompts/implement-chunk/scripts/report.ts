@@ -1,8 +1,4 @@
-// The chunk report. It opens with the sample, the short read the user takes from a finished
-// chunk, then gives the merge-ready table: one row per ticket, read from units.tsv, the ledger,
-// and each final PR's live state. A PR is merge-ready only on a passing verdict at its current
-// head.
-
+import type { StructuralProblem } from "./checks.ts";
 import type { MergeRule, Outcomes } from "./outcomes.ts";
 import {
   type PrRef,
@@ -236,7 +232,6 @@ export interface StateFile {
 
 type RiskyVerdict = Verdict & { readonly risk: RiskLevel };
 
-/** A verdict the coordinator overruled, from its heading line in decisions.md. */
 type Overrule =
   | {
       readonly kind: "read";
@@ -247,16 +242,8 @@ type Overrule =
     }
   | { readonly kind: "unreadable"; readonly line: number; readonly text: string };
 
-/** The short read a finished chunk hands the user, ahead of the merge-ready table. */
-export interface Sample {
-  /** Every PR whose standing risk call is high, then up to three more, riskiest first. */
-  readonly riskiest: readonly RiskyVerdict[];
-  readonly overruled: readonly Overrule[];
-  readonly decisionsName: string;
-  readonly attention: StateFile;
-}
-
-const MORE_THAN_HIGH = 3;
+/** How many PRs the sample shows past those whose risk call is high. */
+const SHOWN_BEYOND_HIGH = 3;
 
 const RISK_RANK = { high: 0, medium: 1, low: 2 } satisfies Record<RiskLevel, number>;
 
@@ -264,25 +251,30 @@ function hasRiskCall(verdict: Verdict): verdict is RiskyVerdict {
   return verdict.risk !== null;
 }
 
-/** Each PR's latest risk call, ranked high first, and within a level in ledger order. */
+/**
+ * Each PR's latest risk call, ranked high first, and within a level in the ledger order of those
+ * latest calls: every high one, then up to SHOWN_BEYOND_HIGH more.
+ */
 function riskiestOf(ledger: readonly Verdict[]): RiskyVerdict[] {
   const standing: RiskyVerdict[] = [];
 
-  for (const verdict of ledger.toReversed()) {
-    if (hasRiskCall(verdict) && !standing.some((other) => samePr(other.pr, verdict.pr))) {
-      standing.unshift(verdict);
-    }
+  for (const verdict of ledger.filter(hasRiskCall)) {
+    const earlier = standing.findIndex((other) => samePr(other.pr, verdict.pr));
+
+    if (earlier !== -1) standing.splice(earlier, 1);
+
+    standing.push(verdict);
   }
 
   const ranked = standing.toSorted((left, right) => RISK_RANK[left.risk] - RISK_RANK[right.risk]);
+
   const high = ranked.filter((verdict) => verdict.risk === "high").length;
 
-  return ranked.slice(0, high + MORE_THAN_HIGH);
+  return ranked.slice(0, high + SHOWN_BEYOND_HIGH);
 }
 
 const OVERRULE_FORMAT = "## <ISO time> overruled <pr> at <sha>: <reason>";
 
-/** `## <ISO time> overruled <pr> at <sha>: <one-line reason>`, one heading per overruling. */
 const OVERRULE = /^## \S+ overruled (\S+) at ([0-9a-f]{7,40}): (\S.*)$/;
 
 const OVERRULE_HEADING = /^## \S+ overruled /;
@@ -299,19 +291,6 @@ function overrulesOf(decisions: string | null): Overrule[] {
       ? [{ kind: "unreadable", line, text }]
       : [{ kind: "read", line, pr, sha, reason }];
   });
-}
-
-export function sampleOf(
-  ledger: readonly Verdict[],
-  decisions: StateFile,
-  attention: StateFile,
-): Sample {
-  return {
-    riskiest: riskiestOf(ledger),
-    overruled: overrulesOf(decisions.text),
-    decisionsName: decisions.name,
-    attention,
-  };
 }
 
 function diffLink(lookup: Lookup, ref: PrRef): string {
@@ -338,31 +317,48 @@ function orNone(lines: readonly string[]): readonly string[] {
   return lines.length === 0 ? ["none"] : lines;
 }
 
-/** The sample's three parts in order. A part with nothing in it reads `none`. */
-export function renderSample(sample: Sample, lookup: (ref: PrRef) => Lookup): string[] {
-  const attention = sample.attention.text?.trim() ?? null;
+/** attention.md's flags, `none` for an empty file, and why there are none for a missing one. */
+function attentionPart(attention: StateFile): string {
+  const flags = attention.text?.trim();
+
+  if (flags === undefined) return `none: no ${attention.name} in the state folder`;
+
+  return flags === "" ? "none" : flags;
+}
+
+/**
+ * The sample, the short read a finished chunk hands the user, in its three parts: the riskiest
+ * diffs, the overruled verdicts, and the Attention flags. A part with nothing in it reads `none`.
+ */
+function renderSample(
+  ledger: readonly Verdict[],
+  decisions: StateFile,
+  attention: StateFile,
+  lookup: (ref: PrRef) => Lookup,
+): string[] {
+  const riskiest = riskiestOf(ledger).map(
+    (verdict) =>
+      `- ${verdict.risk} ${diffLink(lookup(verdict.pr), verdict.pr)}: ${verdict.riskReason}`,
+  );
+
+  const overruled = overrulesOf(decisions.text).map((overrule) =>
+    overruleLine(overrule, decisions.name),
+  );
 
   return [
     "## Sample",
     "",
     "### Riskiest diffs",
     "",
-    ...orNone(
-      sample.riskiest.map(
-        (verdict) =>
-          `- ${verdict.risk} ${diffLink(lookup(verdict.pr), verdict.pr)}: ${verdict.riskReason}`,
-      ),
-    ),
+    ...orNone(riskiest),
     "",
     "### Overruled verdicts",
     "",
-    ...orNone(sample.overruled.map((overrule) => overruleLine(overrule, sample.decisionsName))),
+    ...orNone(overruled),
     "",
     "### Attention",
     "",
-    attention === null
-      ? `none: no ${sample.attention.name} in the state folder`
-      : attention || "none",
+    attentionPart(attention),
   ];
 }
 
@@ -377,11 +373,22 @@ export interface ReportInput {
   readonly decisions: StateFile;
   /** attention.md, the cross-family review's Attention section that close writes. */
   readonly attention: StateFile;
+  /** The structural checks' problems; any one keeps the chunk from merge-ready. */
+  readonly structural: readonly StructuralProblem[];
 }
 
 export interface ReportOutput {
   readonly text: string;
   readonly exit: number;
+}
+
+/** A row whose final PR a structural problem names is not merge-ready, whatever its verdict. */
+function heldBack(row: ReportRow, ref: PrRef, input: ReportInput): ReportRow {
+  const held = input.structural.some(({ finalPr }) => finalPr !== null && samePr(finalPr, ref));
+
+  if (!held || (row.readiness.kind !== "ready" && row.readiness.kind !== "merged")) return row;
+
+  return { ...row, readiness: { kind: "not-ready", reason: "a structural check holds it back" } };
 }
 
 export function renderReport(input: ReportInput): ReportOutput {
@@ -426,7 +433,7 @@ export function renderReport(input: ReportInput): ReportOutput {
       const lookup = input.lookup(ticket.finalPr.ref);
 
       if (lookup.kind === "found" && lookup.view.url === view.url) {
-        rows.push(rowFor(ticket.name, view, ledger, outcomes));
+        rows.push(heldBack(rowFor(ticket.name, view, ledger, outcomes), ticket.finalPr.ref, input));
       }
     }
   }
@@ -441,9 +448,17 @@ export function renderReport(input: ReportInput): ReportOutput {
     );
 
   const ready = all.filter((row) => ["ready", "merged"].includes(row.readiness.kind)).length;
+  const { structural } = input;
+
+  const summary =
+    `merge-ready or merged: ${ready} of ${all.length} tickets; ` +
+    `ledger violations: ${violations.length}` +
+    (structural.length === 0
+      ? ""
+      : `; structural problems: ${structural.length}, so the chunk is not merge-ready`);
 
   const lines = [
-    ...renderSample(sampleOf(ledger, input.decisions, input.attention), input.lookup),
+    ...renderSample(ledger, input.decisions, input.attention, input.lookup),
     "",
     "## Final PRs",
     "",
@@ -472,12 +487,17 @@ export function renderReport(input: ReportInput): ReportOutput {
     ),
     "",
     ...violations,
-    `merge-ready or merged: ${ready} of ${all.length} tickets; ledger violations: ${violations.length}`,
+    ...(structural.length === 0
+      ? []
+      : ["## Structural checks", "", ...structural.map(({ message }) => message), ""]),
+    summary,
   ];
 
   const text = lines.join("\n");
 
   if (all.some((row) => row.readiness.kind === "unknown")) return { text, exit: 2 };
 
-  return { text, exit: ready === all.length && violations.length === 0 ? 0 : 1 };
+  const clean = ready === all.length && violations.length === 0 && structural.length === 0;
+
+  return { text, exit: clean ? 0 : 1 };
 }

@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   createWriteTool,
   type ExtensionContext,
+  stripFrontmatter,
   type ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 import { Schema } from "effect";
@@ -16,8 +17,6 @@ import { SH4DOW_MODE_ENTRY } from "../sh4dow/index.ts";
 import { extensionTestAdapter, unsafeFixture } from "./adapter.ts";
 import { decodeDecision, delegateArgv, rootArgv } from "./guard-fixtures.ts";
 
-// The root-edit findings of the coordinator-runs baseline that are real edits, not /tmp
-// scratch files: each past coordinator's write or edit outside its state folder.
 const RecordedCall = Schema.Struct({
   session: Schema.String,
   entry: Schema.String,
@@ -55,6 +54,8 @@ const sh4dowEntry = unsafeFixture<Entry>({
   data: {},
 });
 
+type ToolInput = Record<string, string>;
+
 function session(argv: readonly string[]) {
   const launchArgv = process.argv;
   process.argv = [...argv];
@@ -81,14 +82,9 @@ function session(argv: readonly string[]) {
     );
 }
 
-// The guard reads only an edit or write call's path.
-type ToolInput = Record<string, string>;
-
 const inputOf = (toolName: string, path: string): ToolInput =>
   toolName === "write" ? { path, content: "x" } : { path, oldText: "a", newText: "b" };
 
-// The file Pi's own write tool writes for this call, recorded at its file-system operations
-// instead of written, so a path into code or the home directory touches nothing.
 async function piWritePath(path: string, cwd: string): Promise<string | undefined> {
   let written: string | undefined;
 
@@ -190,6 +186,20 @@ test("root-edit: a coordinator writes its state folder and temp files, and other
   assert.match(escaped?.reason ?? "", ROOT_EDIT, "a relative path that leaves the state folder");
 });
 
+test("root-edit: a session that ran the /implement-chunk prompt Pi loads is a coordinator", async () => {
+  const prompt = new URL("../../prompts/implement-chunk.md", import.meta.url);
+  const expanded = stripFrontmatter(readFileSync(prompt, "utf8")).replaceAll("$@", "#197");
+
+  const decision = await session(rootArgv)(
+    [userMessage(expanded)],
+    "/home/u/p",
+    "write",
+    inputOf("write", "src/a.ts"),
+  );
+
+  assert.match(decision?.reason ?? "", ROOT_EDIT);
+});
+
 test("root-edit: a session that starts the implement-chunk prompt after a general task is a coordinator from then on", async () => {
   const call = session(rootArgv);
   const general = userMessage("fix the typo in README.md");
@@ -231,7 +241,6 @@ test("root-edit: a coordinator's write through a temp link is judged by where it
   const coordinator = [userMessage("# Implement a chunk\n\n#197")];
   const scratch = mkdtempSync(join(tmpdir(), "root-edit-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
-  // The filesystem root is outside the state root and every temp directory on any host.
   symlinkSync("/", join(scratch, "root-link"), "dir");
   symlinkSync("/root-edit-missing.ts", join(scratch, "dangling.ts"));
 
@@ -252,7 +261,6 @@ test("root-edit: a no-break space in a temp path is read as Pi's tools read it, 
   const coordinator = [userMessage("# Implement a chunk\n\n#197")];
   const scratch = mkdtempSync(join(tmpdir(), "root-edit-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
-  // `space link` leads into code; the no-break-space name a call types does not exist.
   symlinkSync("/", join(scratch, "space link"), "dir");
   const intoCode = join(scratch, "space\u00A0link", "u", "a.ts");
 
@@ -269,7 +277,6 @@ test("root-edit: a no-break-space link into code does not refuse the temp write 
   const coordinator = [userMessage("# Implement a chunk\n\n#197")];
   const scratch = mkdtempSync(join(tmpdir(), "root-edit-"));
   t.after(() => rmSync(scratch, { recursive: true, force: true }));
-  // The literal no-break-space name leads into code; Pi writes the space-named temp directory.
   symlinkSync("/", join(scratch, "unicode\u00A0link"), "dir");
   mkdirSync(join(scratch, "unicode link"));
   const named = join(scratch, "unicode\u00A0link", "a.txt");
@@ -282,7 +289,6 @@ test("root-edit: a no-break-space link into code does not refuse the temp write 
   assert.equal(decision, undefined, "Pi's write lands in the temp directory");
 });
 
-// Every Unicode space Pi's tools read as a space: U+00A0, U+2000 to U+200A, U+202F, U+205F, U+3000.
 const UNICODE_SPACES = [
   0xa0, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
   0x202f, 0x205f, 0x3000,

@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 
-// The tree a launch builds: the environment the launcher gives each child, the refusals it reads
-// from its own environment, and the spawn registry rows it writes through chunk.
 
 const LAUNCH = new URL("../launch.ts", import.meta.url).pathname;
 
@@ -40,8 +38,6 @@ interface Host {
   readonly orders: string;
   readonly env: NodeJS.ProcessEnv;
   brief(name: string, text: string): string;
-  // What each fake pi-subagent saw, in the order they ended: its session, environment, and the
-  // registry as it stood when the child started.
   seen(): Seen[];
 }
 
@@ -52,12 +48,9 @@ interface Seen {
   readonly nested: number | null;
 }
 
-// A scratch state folder, an idle injected host, and a fake pi-subagent that records what it
-// saw. When FAKE_NESTED_BRIEF is set it launches a delegate from inside the child, through its
-// inherited environment, as a real owner would from its bash tool.
 function host(t: TestContext): Host {
   const dir = mkdtempSync(join(tmpdir(), "tree-test-"));
-  t.after(() => execFileSync("rm", ["-rf", dir]));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
 
   const state = join(dir, "state");
   mkdirSync(state);
@@ -179,7 +172,6 @@ function delegateLaunch(h: Host, extra: readonly string[] = [], env: NodeJS.Proc
   return launch(h, [...args(h, "delegate", "implementer", h.brief("delegate.md", BRIEF("delegate"))), ...extra], env);
 }
 
-// The environment of a parent at a position in the tree, as the launcher gave it to that parent.
 function parentAt(kind: string, depth: number, session = "11111111-2222-4333-8444-555555555555"): NodeJS.ProcessEnv {
   return { PI_SUBAGENT_KIND: kind, PI_SUBAGENT_TREE_DEPTH: String(depth), PI_SUBAGENT_SESSION: session };
 }
@@ -191,7 +183,6 @@ function sessionOf(run: Run): string {
   return session;
 }
 
-// The registry's rows as column maps, in file order.
 function registry(h: Host): Record<string, string>[] {
   const path = join(h.state, "spawns.tsv");
 
@@ -434,6 +425,35 @@ test("a resume refuses what a launch refuses and writes no row", (t) => {
 
   assert.equal(readFileSync(join(h.state, "spawns.tsv"), "utf8"), before);
   assert.equal(h.seen().length, 1, "only the first launch started Pi");
+});
+
+test("a resume under another role, kind, or unit than its row records is refused and writes no row", (t) => {
+  const h = host(t);
+  const first = delegateLaunch(h, ["--state", h.state, "--unit", "old-unit"]);
+
+  assert.equal(first.status, 0, first.stderr);
+
+  const before = readFileSync(join(h.state, "spawns.tsv"), "utf8");
+  const directive = h.brief("resume.md", "Continue the same work.\n");
+  const resume = (kind: string, role: string, extra: readonly string[] = []) =>
+    launch(h, [...args(h, kind, role, directive), "--resume", sessionOf(first), "--state", h.state, ...extra]);
+
+  for (const run of [
+    resume("delegate", "verifier"),
+    resume("owner", "final-pr-owner"),
+    resume("delegate", "implementer", ["--unit", "new-unit"]),
+  ]) {
+    assert.equal(run.status, 2, run.stderr);
+    assert.match(run.stderr, /^launch: refused: could not register the spawn in .*: .* recorded /m);
+  }
+
+  assert.equal(readFileSync(join(h.state, "spawns.tsv"), "utf8"), before);
+  assert.equal(h.seen().length, 1, "only the first launch started Pi");
+
+  const same = resume("delegate", "implementer", ["--unit", "old-unit"]);
+
+  assert.equal(same.status, 0, same.stderr);
+  assert.equal(resume("delegate", "implementer").status, 0, "a resume without --unit keeps the unit");
 });
 
 test("a dry run and a refused launch write no registry row", (t) => {

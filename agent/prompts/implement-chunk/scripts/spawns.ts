@@ -1,8 +1,5 @@
-// The spawn registry's writes: `chunk spawn add` registers a subagent, and `chunk spawn set`
-// changes its row. The subagents launcher runs both around every launch it is given a state
-// folder for.
-
-import { appendFileSync, existsSync, linkSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { createWhole } from "./lock.ts";
 import {
   SPAWN_COLUMNS,
   SPAWN_KINDS,
@@ -16,6 +13,9 @@ import { Refusal, tsvLine } from "./tsv.ts";
 
 /** What `spawn add` writes in a column the command leaves out. Every other column is required. */
 const NEW_SPAWN: Partial<Record<SpawnColumn, string>> = { unit: "-", state: "running" };
+
+/** The columns `spawn set` keeps as `spawn add` recorded them: a subagent's identity. */
+const FIXED_AT_ADD = ["kind", "role", "unit"] as const satisfies readonly SpawnColumn[];
 
 function spawnValues(args: readonly string[]): Map<SpawnColumn, string> {
   const values = new Map<SpawnColumn, string>();
@@ -66,31 +66,16 @@ function spawnCells(spawn: Spawn): Record<SpawnColumn, string> {
   };
 }
 
-/** Creates the registry with its header, whole, unless another launch got there first. */
-function createRegistry(path: string): void {
-  const temporary = `${path}.${process.pid}.tmp`;
-
-  writeFileSync(temporary, `${tsvLine(SPAWN_COLUMNS)}\n`);
-
-  try {
-    linkSync(temporary, path);
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-  } finally {
-    rmSync(temporary, { force: true });
-  }
-}
-
 /**
  * Registers a subagent (`add`) or changes its row (`set`) by appending the session's whole row,
  * so launches that start or end at once never overwrite each other. The last row per session
  * stands.
  */
-export function writeSpawn(path: string, mode: "add" | "set", args: readonly string[]): string {
+export function writeSpawn(path: string, action: "add" | "set", args: readonly string[]): string {
   const [session = "", ...assignments] = args;
 
-  if (session === "" || (mode === "set" && assignments.length === 0)) {
-    throw new Refusal(`spawn ${mode} takes <session> <column>=<value>...`);
+  if (session === "" || (action === "set" && assignments.length === 0)) {
+    throw new Refusal(`spawn ${action} takes <session> <column>=<value>...`);
   }
 
   const values = spawnValues(assignments);
@@ -100,13 +85,25 @@ export function writeSpawn(path: string, mode: "add" | "set", args: readonly str
     (spawn) => spawn.session === session,
   );
 
-  if (mode === "add" && current !== undefined) {
+  if (action === "add" && current !== undefined) {
     throw new Refusal(`${path}: spawn ${session} exists; change its state with spawn set`);
   }
 
-  if (mode === "set" && current === undefined) throw new Refusal(`${path}: no spawn ${session}`);
+  if (action === "set" && current === undefined) throw new Refusal(`${path}: no spawn ${session}`);
 
   const cells = current === undefined ? null : spawnCells(current);
+
+  for (const column of FIXED_AT_ADD) {
+    const value = values.get(column);
+    const recorded = cells?.[column];
+
+    if (action === "set" && value !== undefined && value !== recorded) {
+      throw new Refusal(
+        `${path}: spawn ${session} was recorded with ${column}=${recorded ?? ""}, so it cannot ` +
+          `run again as ${column}=${value}; launch a fresh subagent instead`,
+      );
+    }
+  }
 
   const row = SPAWN_COLUMNS.map((column) => {
     if (column === "session") return session;
@@ -120,14 +117,13 @@ export function writeSpawn(path: string, mode: "add" | "set", args: readonly str
     return value;
   });
 
-  // Built before the registry is created, so a refused cell leaves a fresh state folder as it was.
   const line = `${tsvLine(row)}\n`;
 
-  if (text === null) createRegistry(path);
+  if (text === null) createWhole(path, `${tsvLine(SPAWN_COLUMNS)}\n`);
 
   appendFileSync(path, line);
 
   const shown = SPAWN_COLUMNS.map((column, index) => `${column}=${row[index]}`);
 
-  return `${path}: ${mode} ${shown.join(" ")}`;
+  return `${path}: ${action} ${shown.join(" ")}`;
 }

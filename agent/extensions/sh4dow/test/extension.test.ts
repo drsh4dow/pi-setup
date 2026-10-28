@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import test, { type TestContext } from "node:test";
+import { stripVTControlCharacters } from "node:util";
 import { fauxAssistantMessage, fauxProvider, type SystemMessage } from "@earendil-works/pi-ai";
 import {
   type AgentSessionRuntime,
@@ -13,8 +14,11 @@ import {
   type FileEntry,
   parseSessionEntries,
   type SessionHeader,
+  initTheme,
   SessionManager,
+  SessionSelectorComponent,
   SettingsManager,
+  TreeSelectorComponent,
 } from "@earendil-works/pi-coding-agent";
 import promptContext from "../../prompt-context/index.ts";
 import { unsafeFixture } from "../../test/adapter.ts";
@@ -36,9 +40,7 @@ type Sections = NonNullable<SystemMessage["sections"]>;
 interface Pi {
   readonly runtime: AgentSessionRuntime;
   readonly notices: string[];
-  /** Send text as the user types it in the editor, and wait for every run it starts. */
   type(text: string): Promise<void>;
-  /** The active session's file. */
   file(): string;
 }
 
@@ -66,8 +68,6 @@ function home(t: TestContext): Home {
   return { cwd, agentDir, sessionDir };
 }
 
-// A Pi process on one home, with the extensions in their load order. `session` picks what it
-// opens: a new session, or an existing file, as a resume in a new process does.
 async function launch(
   t: TestContext,
   { cwd, agentDir, sessionDir }: Home,
@@ -171,7 +171,6 @@ function systemMessages(file: string): Sections[] {
   );
 }
 
-// The prompt the next request would carry: every system message replayed in order.
 function recordedPrompt(file: string): ReadonlyMap<string, string> {
   const prompt = new Map<string, string>();
 
@@ -196,7 +195,6 @@ function userTexts(file: string): string[] {
   });
 }
 
-// The start of a recorded preamble, enough to tell the prompts apart in a failure message.
 function head(preamble: string | null | undefined): string {
   return JSON.stringify(preamble?.split("\n").slice(0, 4).join("\n"));
 }
@@ -211,7 +209,6 @@ function assertSh4dowPrompt(file: string) {
   assert.ok(prompt.get("tools")?.includes("- read:"), "the tools section stays");
   assert.ok(prompt.get("rules"), "the rules section stays");
 
-  // No run ever recorded anything else: every patch keeps the sh4dow preamble and no skills.
   for (const patch of systemMessages(file)) {
     if ("preamble" in patch) assert.ok(patch.preamble === SH4DOW_PROMPT_TEXT, head(patch.preamble));
     assert.ok(!patch.skills, "a run recorded a skill table");
@@ -352,10 +349,75 @@ test("/sh4dow as the first message of a brand-new session names a parent file th
     [[child, unwritten]],
   );
 
-  // Resuming it works: the missing parent file is never opened.
   const resumed = await launch(t, where, { session: child });
   await resumed.type("after resume");
   assertSh4dowPrompt(child);
+});
+
+function ignore(): void {}
+
+/** The threaded /resume view of a home's sessions, as Pi renders it, without colors. */
+function resumeView({ cwd, sessionDir }: Home): Promise<string[]> {
+  initTheme("dark", false);
+
+  const load = () => SessionManager.list(cwd, sessionDir);
+  const listed = Promise.withResolvers<string[]>();
+  let selector: SessionSelectorComponent | undefined = undefined;
+
+  const rendered = () => {
+    const lines = (selector?.getSessionList().render(160) ?? []).map((line) =>
+      stripVTControlCharacters(line),
+    );
+
+    if (lines.some((line) => line.includes("The chunk:"))) listed.resolve(lines);
+  };
+
+  selector = new SessionSelectorComponent(load, load, ignore, ignore, ignore, rendered);
+
+  const timer = setTimeout(
+    () => listed.reject(new Error("the /resume view listed no session within 5 s")),
+    5_000,
+  );
+
+  return listed.promise.finally(() => clearTimeout(timer));
+}
+
+/** The session tree /tree shows for a session file, as Pi renders it, without colors. */
+function treeView(file: string, sessionDir: string): string[] {
+  const manager = SessionManager.open(file, sessionDir);
+
+  const selector = new TreeSelectorComponent(
+    manager.getTree(),
+    manager.getLeafId(),
+    40,
+    ignore,
+    ignore,
+  );
+
+  return selector.render(160).map((line) => stripVTControlCharacters(line));
+}
+
+test("the /resume and /tree views show a brand-new /sh4dow session at the top, a linked one under its parent", async (t) => {
+  const where = home(t);
+  const pi = await launch(t, where);
+  await pi.type("hello");
+  await pi.type("/sh4dow owner/repo#7");
+
+  const fresh = await launch(t, where);
+  await fresh.type("/sh4dow owner/repo#8");
+  const brandNew = fresh.file();
+
+  const rows = await resumeView(where);
+  const row = (text: string) => rows.find((line) => line.includes(text)) ?? "";
+
+  assert.match(row("The chunk: owner/repo#7"), /└─ The chunk: owner\/repo#7/, rows.join("\n"));
+  assert.match(row("The chunk: owner/repo#8"), /^\S* *The chunk: owner\/repo#8/, rows.join("\n"));
+  assert.doesNotMatch(row("The chunk: owner/repo#8"), /[└├]─/, rows.join("\n"));
+
+  const tree = treeView(brandNew, where.sessionDir).join("\n");
+
+  assert.match(tree, /• \[system\]\n *• user: The chunk: owner\/repo#8\n/, tree);
+  assert.doesNotMatch(tree, /hello/, tree);
 });
 
 test("a missing sh4dow prompt refuses /sh4dow and keeps a sh4dow session off the general prompt", async (t) => {

@@ -1,23 +1,14 @@
 #!/usr/bin/env node
 
-// The implement-chunk lead's bookkeeping CLI: it writes units.tsv, ledger.tsv, and spawns.tsv in
-// the state folder and prints the merge-ready report from them and the live PRs. A units.tsv
-// write holds units.tsv.lock, per lock.ts.
+// The coordinator's bookkeeping CLI: it writes units.tsv, ledger.tsv, and spawns.tsv in the state
+// folder and prints the merge-ready report from them and the live PRs.
 //
 // Exit codes: 0 clean, 1 a violation (not merge-ready, trees differ), 2 could not run or
 // refused input.
 
 import { spawnSync } from "node:child_process";
-import {
-  appendFileSync,
-  existsSync,
-  linkSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -42,6 +33,7 @@ import {
   UNIT_COLUMNS,
   UNIT_STATES,
   type UnitColumn,
+  carrySource,
   type Verdict,
   isUnitColumn,
   ledgerColumnsOf,
@@ -49,7 +41,7 @@ import {
   parseSpawns,
   parseUnits,
 } from "./state.ts";
-import { withLock } from "./lock.ts";
+import { createWhole, withLock } from "./lock.ts";
 import { writeSpawn } from "./spawns.ts";
 import { Refusal, tsvLine } from "./tsv.ts";
 
@@ -60,7 +52,7 @@ const USAGE = `Usage: chunk.ts --state <dir> <command>
   unit add <id> <column>=<value>...
   unit set <id> <column>=<value>...
   spawn add <session> <column>=<value>...
-  spawn set <session> <column>=<value>...
+  spawn set <session> <column>=<value>...   (kind, role, and unit stay as spawn add recorded them)
   report
 
 The state folder comes from --state, else $IMPLEMENT_CHUNK_STATE.
@@ -104,46 +96,40 @@ function ledgerRows(path: string): Verdict[] {
   return text === null ? [] : parseLedger(path, text);
 }
 
-/** A verdict as `ledger record` and `ledger carry` write it. */
 type NewVerdict = Pick<Verdict, "sha" | "outcome" | "evidence" | "risk" | "riskReason"> & {
   readonly pr: string;
 };
 
+/** Which coordinator runs the chunk. */
+type RunMode = "sh4dow" | "implement-chunk";
+
 /**
- * Creates the ledger with its header unless another writer got there first. The header lands
- * whole, by a hard link of a finished file, so a concurrent writer never reads it half written.
+ * The run mode the state folder's `mode` file names: absent for /implement-chunk, and `sh4dow`
+ * for a sh4dow run, whose every verdict carries a risk call. Any other mode is refused.
  */
-function createLedger(path: string, columns: readonly LedgerColumn[]): void {
-  const temporary = `${path}.${process.pid}.tmp`;
+function runMode(state: string): RunMode {
+  const file = join(state, "mode");
+  const mode = readIfPresent(file)?.trim() ?? null;
 
-  writeFileSync(temporary, `${tsvLine(columns)}\n`);
+  if (mode === null) return "implement-chunk";
 
-  try {
-    linkSync(temporary, path);
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-  } finally {
-    rmSync(temporary, { force: true });
-  }
+  if (mode === "sh4dow") return mode;
+
+  throw new Refusal(
+    `${file}: unknown mode ${JSON.stringify(mode)}; a sh4dow run writes "sh4dow" there, ` +
+      "and an implement-chunk run writes no mode file",
+  );
 }
 
 /**
  * Appends one row, and never rewrites what the ledger holds, so concurrent writers and older
- * CLI versions can share it. The state folder's `mode` file says which coordinator runs the
- * chunk: absent for /implement-chunk, and `sh4dow` for a sh4dow run, whose every verdict carries
- * a risk call. It also fixes the header of a ledger created now.
+ * CLI versions can share it. The run mode fixes the header of a ledger created now.
  */
-function appendVerdict(path: string, verdict: NewVerdict): Result {
-  const modePath = join(dirname(path), "mode");
-  const mode = readIfPresent(modePath)?.trim() ?? null;
+function appendVerdict(state: string, verdict: NewVerdict): Result {
+  const path = join(state, "ledger.tsv");
+  const modePath = join(state, "mode");
+  const mode = runMode(state);
   const shown = [verdict.pr, verdict.sha, verdict.outcome, verdict.evidence].join("\t");
-
-  if (mode !== null && mode !== "sh4dow") {
-    throw new Refusal(
-      `${modePath}: unknown mode ${JSON.stringify(mode)}; a sh4dow run writes "sh4dow" there, ` +
-        "and an implement-chunk run writes no mode file",
-    );
-  }
 
   if (mode === "sh4dow" && verdict.risk === null) {
     throw new Refusal(
@@ -171,7 +157,8 @@ function appendVerdict(path: string, verdict: NewVerdict): Result {
     throw new Refusal(
       `${path} has no risk columns, so it takes no risk call: chunk gives a ledger risk ` +
         `columns only when ${modePath} reads sh4dow as the ledger is created, and never ` +
-        `rewrites a ledger's header; refused this line:\n${shown}`,
+        `rewrites a ledger's header. Record the verdict without --risk and put ` +
+        `"risk: <level>: <reason>" in the evidence text; refused this line:\n${shown}`,
     );
   }
 
@@ -179,8 +166,9 @@ function appendVerdict(path: string, verdict: NewVerdict): Result {
   const row = `${tsvLine(columns.map((column) => cells[column]))}\n`;
 
   if (existing === null) {
-    createLedger(path, columns);
+    createWhole(path, `${tsvLine(columns)}\n`);
 
+    // ledgerColumnsOf returns one of the two column constants, so they compare by identity.
     if (ledgerColumnsOf(path, readFileSync(path, "utf8")) !== columns) {
       throw new Refusal(`${path}: another writer created it with other columns; rerun`);
     }
@@ -202,7 +190,7 @@ interface RiskFlags {
   readonly reason: string | undefined;
 }
 
-function recordVerdict(path: string, args: readonly string[], flags: RiskFlags): Result {
+function recordVerdict(state: string, args: readonly string[], flags: RiskFlags): Result {
   const [prText = "", shaText = "", outcome = "", evidence = "", ...extra] = args;
 
   if (extra.length > 0 || evidence === "") {
@@ -213,9 +201,9 @@ function recordVerdict(path: string, args: readonly string[], flags: RiskFlags):
   }
 
   const level = RISK_LEVELS.find((name) => name === flags.risk) ?? null;
-  const noRiskCall = flags.risk === undefined && flags.reason === undefined;
+  const riskCallGiven = flags.risk !== undefined || flags.reason !== undefined;
 
-  if (!noRiskCall && (level === null || (flags.reason ?? "").trim() === "")) {
+  if (riskCallGiven && (level === null || (flags.reason ?? "").trim() === "")) {
     throw new Refusal(
       `a risk call is --risk <${RISK_LEVELS.join("|")}> with --risk-reason <text>, ` +
         `a one-line reason; got --risk ${JSON.stringify(flags.risk ?? null)} ` +
@@ -227,7 +215,7 @@ function recordVerdict(path: string, args: readonly string[], flags: RiskFlags):
   const sha = fullSha(shaText);
   const outcomes = readOutcomes();
 
-  ledgerRows(path);
+  ledgerRows(join(state, "ledger.tsv"));
 
   if (!outcomes.has(outcome)) {
     throw new Refusal(
@@ -237,7 +225,7 @@ function recordVerdict(path: string, args: readonly string[], flags: RiskFlags):
     );
   }
 
-  return appendVerdict(path, {
+  return appendVerdict(state, {
     pr,
     sha,
     outcome,
@@ -259,7 +247,7 @@ function treeOf(repoDir: string, sha: string): string {
   return git.stdout.trim();
 }
 
-function carryVerdict(path: string, args: readonly string[], repoDir: string): Result {
+function carryVerdict(state: string, args: readonly string[], repoDir: string): Result {
   const [prText = "", newText = "", fromText = "", ...extra] = args;
 
   if (extra.length > 0 || fromText === "") {
@@ -269,11 +257,10 @@ function carryVerdict(path: string, args: readonly string[], repoDir: string): R
   const pr = prArgument(prText);
   const newSha = fullSha(newText);
   const fromSha = fullSha(fromText);
+  const path = join(state, "ledger.tsv");
   const rows = ledgerRows(path);
 
-  const from =
-    rows.findLast((row) => row.sha === fromSha && formatPrRef(row.pr) === formatPrRef(pr)) ??
-    rows.findLast((row) => row.sha === fromSha);
+  const from = carrySource(rows, pr, fromSha);
 
   if (from === undefined) throw new Refusal(`${path}: no verdict at ${fromSha} to carry`);
 
@@ -287,7 +274,7 @@ function carryVerdict(path: string, args: readonly string[], repoDir: string): R
     };
   }
 
-  return appendVerdict(path, {
+  return appendVerdict(state, {
     pr: formatPrRef(pr),
     sha: newSha,
     outcome: from.outcome,
@@ -331,22 +318,23 @@ const NEW_UNIT: Partial<Record<UnitColumn, string>> = {
   state: "planned",
 };
 
-function writeUnit(path: string, mode: string, args: readonly string[]): Result {
+type Action = "add" | "set";
+
+function writeUnit(path: string, action: Action, args: readonly string[]): Result {
   const [id = "", ...assignments] = args;
 
-  if (id === "" || (mode === "set" && assignments.length === 0)) {
-    throw new Refusal(`unit ${mode} takes <id> <column>=<value>...`);
+  if (id === "" || (action === "set" && assignments.length === 0)) {
+    throw new Refusal(`unit ${action} takes <id> <column>=<value>...`);
   }
 
   const values = columnValues(assignments);
 
-  // Owners and the coordinator set rows at once, and each rewrites the whole table.
-  return withLock(path, () => replaceUnit(path, mode, id, values));
+  return withLock(path, () => replaceUnit(path, action, id, values));
 }
 
 function replaceUnit(
   path: string,
-  mode: string,
+  action: Action,
   id: string,
   values: ReadonlyMap<string, string>,
 ): Result {
@@ -355,9 +343,9 @@ function replaceUnit(
   const lines = rows.map((row) => row.cells.slice());
   const existing = lines.find((cells) => cells[0] === id);
 
-  if (mode === "add" && existing !== undefined) throw new Refusal(`${path}: unit ${id} exists`);
+  if (action === "add" && existing !== undefined) throw new Refusal(`${path}: unit ${id} exists`);
 
-  if (mode === "set" && existing === undefined) throw new Refusal(`${path}: no unit ${id}`);
+  if (action === "set" && existing === undefined) throw new Refusal(`${path}: no unit ${id}`);
 
   const cells =
     existing ?? UNIT_COLUMNS.map((column) => NEW_UNIT[column] ?? (column === "id" ? id : ""));
@@ -378,7 +366,7 @@ function replaceUnit(
     cells[index] ? [`${column}=${cells[index]}`] : [],
   );
 
-  return { out: `${path}: ${mode} ${filled.join(" ")}`, exit: 0 };
+  return { out: `${path}: ${action} ${filled.join(" ")}`, exit: 0 };
 }
 
 function lookupPr(ref: PrRef): Lookup {
@@ -414,9 +402,48 @@ function report(state: string): Result {
 
   if (tickets.length === 0) throw new Refusal(`${unitsPath}: no unit names a ticket`);
 
+  const mode = runMode(state);
   const ledgerPath = join(state, "ledger.tsv");
   const ledger = ledgerRows(ledgerPath);
   const lookups = new Map<string, Lookup>();
+
+  const lookup = (ref: PrRef): Lookup => {
+    const key = formatPrRef(ref);
+    const cached = lookups.get(key) ?? lookupPr(ref);
+
+    lookups.set(key, cached);
+
+    return cached;
+  };
+
+  const finalPrs = new Map<string, FinalPrHead>();
+
+  for (const { finalPr } of tickets) {
+    if (finalPr.kind !== "opened") continue;
+
+    const found = lookup(finalPr.ref);
+
+    if (found.kind === "found") {
+      finalPrs.set(formatPrRef(finalPr.ref), { ref: finalPr.ref, head: found.view.headRefOid });
+    }
+  }
+
+  const reportOnlyMerge = () => {
+    const spawnsPath = join(state, "spawns.tsv");
+    const spawnsText = readIfPresent(spawnsPath);
+
+    return reportOnlyMergeProblems({
+      ledgerFile: ledgerPath,
+      ledger,
+      spawns: spawnsText === null ? [] : parseSpawns(spawnsPath, spawnsText),
+      finalPrs: [...finalPrs.values()],
+    });
+  };
+
+  const structural = [
+    ...unterminatedSubagentProblems(unitsPath, units),
+    ...(mode === "sh4dow" ? reportOnlyMerge() : []),
+  ];
 
   const { text, exit } = renderReport({
     tickets,
@@ -426,47 +453,11 @@ function report(state: string): Result {
     outcomesFile: BRIEF,
     decisions: { name: "decisions.md", text: readIfPresent(join(state, "decisions.md")) },
     attention: { name: "attention.md", text: readIfPresent(join(state, "attention.md")) },
-    lookup: (ref) => {
-      const key = formatPrRef(ref);
-      const cached = lookups.get(key) ?? lookupPr(ref);
-
-      lookups.set(key, cached);
-
-      return cached;
-    },
+    lookup,
+    structural,
   });
 
-  const finalPrs = tickets.flatMap(({ finalPr }): FinalPrHead[] => {
-    if (finalPr.kind !== "opened") return [];
-
-    const lookup = lookups.get(formatPrRef(finalPr.ref));
-
-    return lookup?.kind === "found" ? [{ ref: finalPr.ref, head: lookup.view.headRefOid }] : [];
-  });
-
-  // Only a sh4dow run keeps the spawn registry that says which subagents are verifiers.
-  const spawnsPath = join(state, "spawns.tsv");
-  const spawnsText = readIfPresent(spawnsPath);
-  const sh4dow = readIfPresent(join(state, "mode"))?.trim() === "sh4dow";
-
-  const problems = [
-    ...unterminatedSubagentProblems(unitsPath, units),
-    ...(sh4dow
-      ? reportOnlyMergeProblems({
-          ledgerFile: ledgerPath,
-          ledger,
-          spawns: spawnsText === null ? [] : parseSpawns(spawnsPath, spawnsText),
-          finalPrs: [...new Map(finalPrs.map((pr) => [formatPrRef(pr.ref), pr])).values()],
-        })
-      : []),
-  ];
-
-  if (problems.length === 0) return { out: text, exit };
-
-  return {
-    out: [text, "", "## Structural checks", "", ...problems].join("\n"),
-    exit: exit === 2 ? 2 : 1,
-  };
+  return { out: text, exit };
 }
 
 function run(argv: readonly string[]): Result {
@@ -491,18 +482,17 @@ function run(argv: readonly string[]): Result {
   if (!existsSync(state)) throw new Refusal(`state folder missing: ${state}`);
 
   const [group = "", command = "", ...args] = positionals;
-  const ledgerPath = join(state, "ledger.tsv");
 
   const flags = { risk: values.risk, reason: values["risk-reason"] };
 
-  if (group === "ledger" && command === "record") return recordVerdict(ledgerPath, args, flags);
+  if (group === "ledger" && command === "record") return recordVerdict(state, args, flags);
 
   if (flags.risk !== undefined || flags.reason !== undefined) {
     throw new Refusal("--risk and --risk-reason go only with ledger record");
   }
 
   if (group === "ledger" && command === "carry") {
-    return carryVerdict(ledgerPath, args, values["repo-dir"] ?? process.cwd());
+    return carryVerdict(state, args, values["repo-dir"] ?? process.cwd());
   }
 
   if (group === "unit" && (command === "add" || command === "set")) {

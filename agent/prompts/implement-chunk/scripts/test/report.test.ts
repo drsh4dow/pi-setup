@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -15,6 +15,14 @@ import {
   scriptsDir,
   sha,
 } from "./harness.ts";
+
+test("the report's PATH reaches the stub gh and no other", (t) => {
+  const { path } = chunk(t, { units: [["u1", "T1", "7"]] });
+  const ghs = path.split(":").filter((dir) => existsSync(join(dir, "gh")));
+
+  assert.equal(ghs.length, 1, `gh on PATH in: ${ghs.join(", ")}`);
+  assert.ok(readFileSync(join(ghs[0] ?? "", "gh"), "utf8").includes("unexpected gh call"));
+});
 
 test("a PR whose current head has no ledger row is not merge-ready", (t) => {
   const { report } = chunk(t, {
@@ -389,7 +397,6 @@ test("a gh failure makes the report exit 2, never a clean or violation code", (t
   assert.match(cellsOf(rowOf(result.stdout, "T1"))[6] ?? "", /^unknown: .*no pull requests found/);
 });
 
-/** The non-blank lines under one heading of the report, up to the next heading. */
 function part(output: string, heading: string): string[] {
   const lines = output.split("\n");
   const start = lines.indexOf(heading);

@@ -15,15 +15,12 @@ import {
   sha,
 } from "./harness.ts";
 
-// Both coordinator prompts document the CLI: the /implement-chunk template and sh4dow mode's
-// coordinator part.
 const COORDINATOR_PROMPTS = {
   "implement-chunk.md": join(promptsDir, "implement-chunk.md"),
   "system/sh4dow.md": join(promptsDir, "..", "system", "sh4dow.md"),
 };
 
 for (const [name, path] of Object.entries(COORDINATOR_PROMPTS)) {
-  // Each names the ledger header its coordinator's state folder gets.
   const ledgerHeader = name === "system/sh4dow.md" ? RISK_LEDGER_HEADER : LEDGER_HEADER;
 
   test(`${name} names the columns the CLI writes`, () => {
@@ -115,14 +112,12 @@ function ledgerLines(state: string): string[] {
   return readFileSync(join(state, "ledger.tsv"), "utf8").split("\n");
 }
 
-/** The risk and risk_reason cells of each ledger row. */
 function riskCalls(state: string): string[][] {
   return ledgerLines(state)
     .slice(1, -1)
     .map((line) => line.split("\t").slice(4, 6));
 }
 
-/** Marks a state folder as a sh4dow run's, the way sh4dow.md tells its coordinator to. */
 function sh4dow(state: string): void {
   writeFileSync(join(state, "mode"), "sh4dow\n");
 }
@@ -239,13 +234,13 @@ test("a state folder whose mode is neither absent nor sh4dow is refused", (t) =>
 
   writeFileSync(join(state, "mode"), "shadow\n");
 
-  const refused = record(state, "7", "a", "--risk", "low", "--risk-reason", "docs only");
+  const refused = record(state, "7", "a");
 
   assert.equal(refused.status, 2);
-  assert.match(refused.stderr, /mode/);
+  assert.match(refused.stderr, /unknown mode "shadow"/);
+  assert.equal(existsSync(join(state, "ledger.tsv")), false, "a refusal creates no ledger");
 });
 
-/** A five-column ledger as the CLI wrote it before risk calls, with `rows` verdicts on PR 1. */
 function fiveColumnLedger(state: string, rows = 1): string {
   const text =
     `${LEDGER_HEADER}\n` +
@@ -335,7 +330,7 @@ for (const mode of ["absent", "sh4dow"] as const) {
   });
 }
 
-function recordAtOnce(state: string, pr: string, hex: string): Promise<Run> {
+function recordAtOnce(state: string, pr: string, hex: string, ...flags: string[]): Promise<Run> {
   const child = spawn(cli, [
     "--state",
     state,
@@ -345,6 +340,7 @@ function recordAtOnce(state: string, pr: string, hex: string): Promise<Run> {
     sha(hex),
     "unit-test-verified",
     `evidence/u${pr}/test.log`,
+    ...flags,
   ]);
 
   let stdout = "";
@@ -382,6 +378,28 @@ test("two verdicts recorded at once on a five-column ledger both stand", async (
     ["2", "3"],
   );
 });
+
+for (const mode of ["absent", "sh4dow"] as const) {
+  test(`with mode ${mode}, first verdicts recorded at once into no ledger all stand under one header`, async (t) => {
+    const state = scratch(t);
+    const prs = Array.from({ length: 12 }, (_, index) => String(index + 1));
+    const flags = mode === "sh4dow" ? ["--risk", "low", "--risk-reason", "docs"] : [];
+
+    if (mode === "sh4dow") sh4dow(state);
+
+    const results = await Promise.all(prs.map((pr) => recordAtOnce(state, pr, "a", ...flags)));
+
+    for (const result of results) assert.equal(result.status, 0, result.stderr);
+
+    const [header, ...rows] = ledgerLines(state).slice(0, -1);
+
+    assert.equal(header, mode === "sh4dow" ? RISK_LEDGER_HEADER : LEDGER_HEADER);
+    assert.deepEqual(
+      rows.map((line) => line.split("\t")[0] ?? "").toSorted((a, b) => Number(a) - Number(b)),
+      prs,
+    );
+  });
+}
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], {

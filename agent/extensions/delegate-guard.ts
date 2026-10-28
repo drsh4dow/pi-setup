@@ -1,11 +1,8 @@
-// The guard judges each call synchronously inside Pi's handler, which has no Effect runtime.
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import { lstatSync, readlinkSync, realpathSync } from "node:fs";
-// @effect-diagnostics-next-line nodeBuiltinImport:off
 import { homedir, tmpdir } from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-// @effect-diagnostics-next-line nodeBuiltinImport:off
 import { fileURLToPath } from "node:url";
 
 import {
@@ -17,7 +14,7 @@ import {
 
 import { refuseCommands } from "../lib/command-tool-call.ts";
 import { basename, commandArgv, isShell, pipelines } from "../lib/shell-command.ts";
-import { SH4DOW_MODE_ENTRY } from "./sh4dow/index.ts";
+import { isSh4dowSession } from "./sh4dow/index.ts";
 
 type LaunchKind = "root" | "owner" | "delegate";
 
@@ -189,12 +186,9 @@ export function spawnGuard(
 // A coordinator is a root session in sh4dow mode or one that runs the implement-chunk prompt, the
 // two kinds evals/coordinator-runs grades. It is read-only on code: subagents make every change,
 // so its own edit and write calls stay in the state root and the temp directory.
-// A session becomes a coordinator at any user message that opens with this heading as a whole line,
-// which is how Pi records an expanded /implement-chunk, and stays one for the rest of the session.
 const IMPLEMENT_CHUNK_HEADING = /^# Implement a chunk(?:\r?\n|$)/;
 
-// The state folders of every project, which SYSTEM.md roots here. The guard cannot tell which
-// chunk folder a coordinator owns, so any folder under the root counts as its own.
+// The guard cannot tell which chunk folder a coordinator owns, so any folder under the root counts.
 const STATE_ROOT = join(homedir(), ".local", "state", "pi-agent");
 
 const ROOT_EDIT_REASON =
@@ -215,17 +209,14 @@ function userTexts(entries: SessionEntries): string[] {
   });
 }
 
-export function isCoordinatorSession(entries: SessionEntries): boolean {
-  const sh4dow = entries.some(
-    (entry) => entry.type === "custom" && entry.customType === SH4DOW_MODE_ENTRY,
-  );
-
+function isCoordinatorSession(entries: SessionEntries): boolean {
   return (
-    sh4dow || userTexts(entries).some((text) => IMPLEMENT_CHUNK_HEADING.test(text.trimStart()))
+    isSh4dowSession(entries) ||
+    userTexts(entries).some((text) => IMPLEMENT_CHUNK_HEADING.test(text.trimStart()))
   );
 }
 
-// The Unicode spaces Pi's edit and write tools read as an ASCII space, as their resolveToCwd does
+// The Unicode spaces Pi's edit and write tools read as an ASCII space, as normalizePath does
 // (dist/utils/paths.js). The package does not export it, so the agreement test in
 // test/delegate-guard-root-edit.test.ts holds this copy to Pi's real write tool.
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -249,9 +240,8 @@ export function editTarget(path: string, cwd: string): string {
 // Past this many links the filesystem refuses the path too (ELOOP), so the guard stops following.
 const MAX_LINKS = 40;
 
-// Where a write to this absolute path lands: the real path of its nearest existing ancestor, with
-// the missing rest appended. A dangling link is followed from the directory it really sits in,
-// since writing through it creates its target.
+// A dangling link is followed from the directory it really sits in, since writing through it
+// creates its target.
 function landingOf(path: string, links = 0): string {
   const stats = lstatSync(path, { throwIfNoEntry: false });
 
@@ -268,7 +258,6 @@ function landingOf(path: string, links = 0): string {
   return landingOf(resolve(dirname(here), readlinkSync(here)), links + 1);
 }
 
-// Undefined when the filesystem refuses to resolve the path, as it would refuse the write.
 function landingOrUnknown(path: string): string | undefined {
   try {
     return landingOf(path);
@@ -277,7 +266,6 @@ function landingOrUnknown(path: string): string | undefined {
   }
 }
 
-// Inside by whole segments, so `/tmp/..notes` is a child of /tmp and `/tmp/../home` is not.
 function isInside(directory: string, path: string): boolean {
   const rest = relative(directory, path);
 
@@ -285,7 +273,7 @@ function isInside(directory: string, path: string): boolean {
 }
 
 /** Why a coordinator may not write `path`, or undefined when it lands in the state root or a temp directory. */
-export function rootEditRefusal(path: string, cwd: string): string | undefined {
+function rootEditRefusal(path: string, cwd: string): string | undefined {
   const target = editTarget(path, cwd);
   const landing = landingOrUnknown(target);
 
@@ -302,7 +290,7 @@ export function rootEditRefusal(path: string, cwd: string): string | undefined {
   return `${ROOT_EDIT_REASON} Refused: ${refused}`;
 }
 
-export function refuseRootEdits(pi: ExtensionAPI): void {
+function refuseRootEdits(pi: ExtensionAPI): void {
   pi.on("tool_call", (event, ctx) => {
     const writes = isToolCallEventType("edit", event) || isToolCallEventType("write", event);
 

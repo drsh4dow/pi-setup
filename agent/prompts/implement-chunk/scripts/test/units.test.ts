@@ -5,7 +5,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { type Run, UNITS_HEADER, cli, run, scratch } from "./harness.ts";
 
-/** A units.tsv of `count` planned units, `u0` to `u<count - 1>`. */
 function unitsTable(state: string, count: number): void {
   const rows = Array.from({ length: count }, (_, index) =>
     [`u${index}`, `T${index}`, "open", "-", "planned", "", "", "", ""].join("\t"),
@@ -39,7 +38,6 @@ function runAtOnce(args: readonly string[]): Promise<Run> {
   );
 }
 
-/** A PID no process holds: a child that has exited and been reaped. */
 function deadPid(): number {
   const child = spawnSync(process.execPath, ["-e", ""]);
 
@@ -52,7 +50,6 @@ test("unit set calls made at once on distinct rows all land", async (t) => {
   const state = scratch(t);
   const writers = 16;
 
-  // A long table widens the window in which a writer that rewrites the file races the others.
   unitsTable(state, 20_000);
 
   const targets = Array.from({ length: writers }, (_, index) => `u${index * 1000}`);
@@ -80,7 +77,6 @@ test("a units.tsv lock held by a running process refuses the write after the wai
 
   const before = readFileSync(join(state, "units.tsv"), "utf8");
 
-  // The test runner is the running holder.
   writeFileSync(lock, `${process.pid}\n`);
 
   const result = run(["--state", state, "unit", "set", "u1", "state=merged"]);
@@ -110,7 +106,6 @@ test("a units.tsv lock left by a process that has ended refuses the write until 
   assert.equal(readFileSync(lock, "utf8"), `${pid}\n`);
   assert.deepEqual(readdirSync(state).toSorted(), ["units.tsv", "units.tsv.lock"]);
 
-  // The caller removes the lock once no chunk command runs, and the rerun lands.
   rmSync(lock);
 
   const rerun = run(["--state", state, "unit", "set", "u1", "state=merged"]);

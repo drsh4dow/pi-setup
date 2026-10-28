@@ -5,10 +5,6 @@
 // the standing orders appended. Pi reads the prompt and every append at process start, so a
 // spawn and a resume both see the skills and the orders as they stand. The child's report goes to stdout; launcher lines go to stderr.
 //
-// Each child learns its place in the subagent tree from the environment this launcher gives it,
-// so a launch from inside a child reads its parent's kind and depth and refuses a spawn the tree
-// does not allow. Given a state folder, the launcher registers each child in its spawns.tsv.
-//
 // Exit codes: 0 the child reported (or the dry run passed), 1 the child failed, 2 refused or
 // could not run, with no Pi process started.
 
@@ -37,10 +33,8 @@ const HARNESS_SKILLS = join(AGENT_DIRECTORY, "skills");
 
 const ROLE_PROMPTS = join(AGENT_DIRECTORY, "system", "generated");
 
-// implement-chunk's bookkeeping CLI, which owns the spawn registry.
 const CHUNK = join(AGENT_DIRECTORY, "prompts", "implement-chunk", "scripts", "chunk.ts");
 
-// The root is depth 0, what it launches depth 1, and what an owner launches depth 2.
 const MAX_DEPTH = 2;
 
 const USAGE = `usage: launch.ts --kind <delegate|owner> --role <role> --brief <file> --orders <file|none>
@@ -79,7 +73,7 @@ interface Options {
   readonly resume: string | null;
   readonly dryRun: boolean;
   readonly state: string | null;
-  readonly unit: string;
+  readonly unit: string | null;
   readonly maxLoad: number;
   readonly minMemGib: number;
   readonly pollSeconds: number;
@@ -156,7 +150,7 @@ function parseOptions(argv: readonly string[]): Options {
     resume: values.resume ?? null,
     dryRun: values["dry-run"],
     state: state === "" ? null : resolve(state),
-    unit: values.unit ?? "-",
+    unit: values.unit ?? null,
     maxLoad: positive(values["max-load"], "--max-load", availableParallelism()),
     minMemGib: positive(values["min-mem-gib"], "--min-mem-gib", 4),
     pollSeconds: positive(values["poll-seconds"], "--poll-seconds", 30),
@@ -192,12 +186,10 @@ function rolePrompt(options: Options): string {
   return join(ROLE_PROMPTS, kind, `${options.role}.md`);
 }
 
-// Where a process sits in the subagent tree. A process no launcher started is the root.
 type TreePosition =
   | { readonly kind: "root" }
   | { readonly kind: Kind; readonly depth: number; readonly session: string };
 
-// The launcher gives each child these variables, and reads its own parent's position from them.
 function treePosition(env: NodeJS.ProcessEnv): TreePosition {
   const { PI_SUBAGENT_KIND: kind, PI_SUBAGENT_TREE_DEPTH: depth, PI_SUBAGENT_SESSION: session } = env;
 
@@ -218,9 +210,16 @@ function treePosition(env: NodeJS.ProcessEnv): TreePosition {
   return { kind: known, depth: Number(depth), session };
 }
 
-// A delegate is a leaf, an owner launches only delegates, and the tree stops at MAX_DEPTH.
+function childDepth(parent: TreePosition): number {
+  return parent.kind === "root" ? 1 : parent.depth + 1;
+}
+
+function parentId(parent: TreePosition): string {
+  return parent.kind === "root" ? "root" : parent.session;
+}
+
 function treeRefusals(parent: TreePosition, kind: Kind): string[] {
-  const depth = parent.kind === "root" ? 1 : parent.depth + 1;
+  const depth = childDepth(parent);
 
   return [
     ...(parent.kind === "delegate" ? ["a delegate launches nothing"] : []),
@@ -424,7 +423,8 @@ function shellQuote(word: string): string {
   return /^[\w./:=@-]+$/.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
 }
 
-// The child's own position, which the launcher hands it, and the state folder it registers in.
+type Child = Extract<TreePosition, { readonly session: string }>;
+
 function childEnvironment(child: Child, options: Options): Record<string, string> {
   return {
     PI_SUBAGENT_KIND: child.kind,
@@ -434,14 +434,12 @@ function childEnvironment(child: Child, options: Options): Record<string, string
   };
 }
 
-type Child = Extract<TreePosition, { readonly session: string }>;
-
-function childOf(parent: TreePosition, options: Options, launch: Launch): Child {
-  return { kind: options.kind, depth: parent.kind === "root" ? 1 : parent.depth + 1, session: launch.session };
+function childOf(parent: TreePosition, kind: Kind, session: string): Child {
+  return { kind, depth: childDepth(parent), session };
 }
 
 function printDryRun(launch: Launch, options: Options, parent: TreePosition): void {
-  const child = childOf(parent, options, launch);
+  const child = childOf(parent, options.kind, launch.session);
   const environment = Object.entries(childEnvironment(child, options)).map(([name, value]) => `${name}=${value}`);
   const out: string[] = [
     "launch: dry run, no Pi process started",
@@ -512,24 +510,25 @@ function runChunk(state: string, words: readonly string[]): ChunkResult {
   return { ok: true };
 }
 
-// The child's row lands before Pi starts, so no subagent runs unregistered. A resume runs an
-// existing row again under the parent that resumed it, which may differ from the one that
-// launched it (the coordinator resumes a child whose owner ended); kind, role, unit, and name
-// stay as recorded.
-function registerSpawn(state: string, parent: TreePosition, child: Child, options: Options, launch: Launch): void {
-  const position = [`parent=${parent.kind === "root" ? "root" : parent.session}`, `depth=${child.depth}`];
+interface Registration {
+  readonly state: string;
+  readonly parent: TreePosition;
+  readonly child: Child;
+  readonly options: Options;
+  readonly launch: Launch;
+}
+
+function registerSpawn({ state, parent, child, options, launch }: Registration): void {
+  const identity = [
+    `kind=${child.kind}`,
+    `role=${options.role}`,
+    ...(options.unit === null && options.resume !== null ? [] : [`unit=${options.unit ?? "-"}`]),
+  ];
+  const position = [`parent=${parentId(parent)}`, `depth=${child.depth}`];
   const words =
     options.resume === null
-      ? [
-          "add",
-          child.session,
-          ...position,
-          `kind=${child.kind}`,
-          `role=${options.role}`,
-          `unit=${options.unit}`,
-          `name=${launch.name}`,
-        ]
-      : ["set", child.session, ...position, "state=running"];
+      ? ["add", child.session, ...position, ...identity, `name=${launch.name}`]
+      : ["set", child.session, ...position, ...identity, "state=running"];
   const result = runChunk(state, words);
 
   if (!result.ok)
@@ -637,9 +636,9 @@ async function main(argv: readonly string[]): Promise<number> {
       return 0;
     }
 
-    const child = childOf(parent, options, launch);
+    const child = childOf(parent, options.kind, launch.session);
 
-    if (options.state !== null) registerSpawn(options.state, parent, child, options, launch);
+    if (options.state !== null) registerSpawn({ state: options.state, parent, child, options, launch });
 
     process.stderr.write(`launch: session ${launch.session}\n`);
 

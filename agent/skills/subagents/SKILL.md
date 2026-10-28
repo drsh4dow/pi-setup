@@ -182,7 +182,8 @@ or `$IMPLEMENT_CHUNK_STATE` set, it adds the child's row to the spawn
 registry `<dir>/spawns.tsv` through implement-chunk's `chunk spawn` before
 Pi starts, records `reported` or `failed` when the child ends, and exports
 `IMPLEMENT_CHUNK_STATE` to the child, so the child's own launches register
-too. `--unit <id>` names the row's `units.tsv` unit.
+too. `--unit <id>` names the row's `units.tsv` unit. A resume keeps the row's
+kind, role, and unit, and is refused under any other.
 
 While the one-minute load exceeds `--max-load` (default `nproc`) or
 `MemAvailable` is below `--min-mem-gib` (default 4), it holds and prints both

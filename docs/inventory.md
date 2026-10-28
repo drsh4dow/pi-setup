@@ -138,7 +138,9 @@ The agent loads these on its own when the trigger matches.
   `agent/system/generated/owner/` that carries a whole unit such as a PR, may
   launch only delegates. It checks `bash`, `bg_start`, and codemode alike.
   `launch.ts` refuses the same spawns, and any child past depth 2, from the
-  `PI_SUBAGENT_*` variables it gives each child
+  `PI_SUBAGENT_*` variables it gives each child. In a root coordinator session,
+  one in sh4dow mode or one that ran `/implement-chunk`, it also refuses `edit`
+  and `write` calls outside `~/.local/state/pi-agent/` and the temp directory
 - `fast-mode`: `/fast` and `Ctrl-Alt-M` toggle Fast mode for the models listed
   under `fastMode` in `agent/settings.json`, and the footer shows `⚡ Fast` while
   it is on. A provider entry with `subagentsEnabled: false` skips sessions

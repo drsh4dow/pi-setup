@@ -13,6 +13,7 @@ export const ROLES = [
   "persona",
   "assignment",
   "brief-auditor",
+  "final-pr-owner",
 ] as const;
 
 export type Role = (typeof ROLES)[number];
@@ -66,6 +67,7 @@ function requiredFields(role: Role, collapsed: boolean): readonly Field[] {
     case "babysitter":
     case "live-verifier":
     case "brief-auditor":
+    case "final-pr-owner":
       return collapsed ? ["GOAL", "SCOPE", "VERIFY", "REPORT"] : TEMPLATE_FIELDS;
     default: {
       const unexpected: never = role;

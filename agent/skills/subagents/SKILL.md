@@ -167,7 +167,22 @@ naming the cause:
   line;
 - an input branch that the launch directory's `origin` lacks: each
   `origin/<name>`, and the branch SCOPE names after "based on". Write a branch
-  the unit creates without `origin/`.
+  the unit creates without `origin/`;
+- any launch from a delegate: `launch: refused: a delegate launches nothing`;
+- an owner launched by an owner:
+  `launch: refused: an owner launches only delegates (--kind delegate)`;
+- a child past depth 2, where the root is 0:
+  `launch: refused: depth 3 is past the limit of 2`;
+- a `--state` folder that does not exist, or a registry row `chunk` refuses.
+
+The launcher gives each child its place in the tree, `PI_SUBAGENT_KIND`,
+`PI_SUBAGENT_TREE_DEPTH`, and `PI_SUBAGENT_SESSION`, and a launch from
+inside the child reads its parent's place from them. With `--state <dir>`,
+or `$IMPLEMENT_CHUNK_STATE` set, it adds the child's row to the spawn
+registry `<dir>/spawns.tsv` through implement-chunk's `chunk spawn` before
+Pi starts, records `reported` or `failed` when the child ends, and exports
+`IMPLEMENT_CHUNK_STATE` to the child, so the child's own launches register
+too. `--unit <id>` names the row's `units.tsv` unit.
 
 While the one-minute load exceeds `--max-load` (default `nproc`) or
 `MemAvailable` is below `--min-mem-gib` (default 4), it holds and prints both
@@ -181,9 +196,9 @@ sets the resumed child's skills; without one, the child resumes with none in
 its table. Pi sends a resumed child's current orders as a system update after
 the earlier text, so the launcher opens the directive with a note that the
 update is current. `--dry-run` runs every check and starts no Pi. It prints
-the command, the role prompt, each skill with its directory, the content of
-every append (each skill's `SKILL.md` among them), the orders' line count, and
-the prompt.
+the command, the child's place in the tree and its environment, the role
+prompt, each skill with its directory, the content of every append (each
+skill's `SKILL.md` among them), the orders' line count, and the prompt.
 
 ## Retry
 

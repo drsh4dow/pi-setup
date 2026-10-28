@@ -5,6 +5,10 @@
 // the standing orders appended. Pi reads the prompt and every append at process start, so a
 // spawn and a resume both see the skills and the orders as they stand. The child's report goes to stdout; launcher lines go to stderr.
 //
+// Each child learns its place in the subagent tree from the environment this launcher gives it,
+// so a launch from inside a child reads its parent's kind and depth and refuses a spawn the tree
+// does not allow. Given a state folder, the launcher registers each child in its spawns.tsv.
+//
 // Exit codes: 0 the child reported (or the dry run passed), 1 the child failed, 2 refused or
 // could not run, with no Pi process started.
 
@@ -33,11 +37,19 @@ const HARNESS_SKILLS = join(AGENT_DIRECTORY, "skills");
 
 const ROLE_PROMPTS = join(AGENT_DIRECTORY, "system", "generated");
 
+// implement-chunk's bookkeeping CLI, which owns the spawn registry.
+const CHUNK = join(AGENT_DIRECTORY, "prompts", "implement-chunk", "scripts", "chunk.ts");
+
+// The root is depth 0, what it launches depth 1, and what an owner launches depth 2.
+const MAX_DEPTH = 2;
+
 const USAGE = `usage: launch.ts --kind <delegate|owner> --role <role> --brief <file> --orders <file|none>
                  --model <model> --thinking <level> --name <short assignment>
                  [--append <file>]... [--resume <session>] [--dry-run]
+                 [--state <dir>] [--unit <units.tsv id>]
                  [--max-load <n>] [--min-mem-gib <n>] [--poll-seconds <n>]
-roles: ${ROLES.join(", ")}`;
+roles: ${ROLES.join(", ")}
+The state folder comes from --state, else $IMPLEMENT_CHUNK_STATE; without one, no spawn is registered.`;
 
 class Refusal {
   readonly reasons: readonly string[];
@@ -66,6 +78,8 @@ interface Options {
   readonly appends: readonly string[];
   readonly resume: string | null;
   readonly dryRun: boolean;
+  readonly state: string | null;
+  readonly unit: string;
   readonly maxLoad: number;
   readonly minMemGib: number;
   readonly pollSeconds: number;
@@ -106,6 +120,8 @@ function parseOptions(argv: readonly string[]): Options {
         append: { type: "string", multiple: true, default: [] },
         resume: { type: "string" },
         "dry-run": { type: "boolean", default: false },
+        state: { type: "string" },
+        unit: { type: "string" },
         "max-load": { type: "string" },
         "min-mem-gib": { type: "string" },
         "poll-seconds": { type: "string" },
@@ -126,6 +142,7 @@ function parseOptions(argv: readonly string[]): Options {
   if (role === undefined) throw new UsageError(`--role must be one of ${ROLES.join(", ")}`);
 
   const orders = required(values.orders, "--orders");
+  const state = values.state ?? process.env.IMPLEMENT_CHUNK_STATE ?? "";
 
   return {
     kind,
@@ -138,6 +155,8 @@ function parseOptions(argv: readonly string[]): Options {
     appends: values.append.map((path) => resolve(path)),
     resume: values.resume ?? null,
     dryRun: values["dry-run"],
+    state: state === "" ? null : resolve(state),
+    unit: values.unit ?? "-",
     maxLoad: positive(values["max-load"], "--max-load", availableParallelism()),
     minMemGib: positive(values["min-mem-gib"], "--min-mem-gib", 4),
     pollSeconds: positive(values["poll-seconds"], "--poll-seconds", 30),
@@ -171,6 +190,43 @@ function rolePrompt(options: Options): string {
     throw new Refusal([`role ${options.role} runs as ${kind}, but the launch is --kind ${options.kind}`]);
 
   return join(ROLE_PROMPTS, kind, `${options.role}.md`);
+}
+
+// Where a process sits in the subagent tree. A process no launcher started is the root.
+type TreePosition =
+  | { readonly kind: "root" }
+  | { readonly kind: Kind; readonly depth: number; readonly session: string };
+
+// The launcher gives each child these variables, and reads its own parent's position from them.
+function treePosition(env: NodeJS.ProcessEnv): TreePosition {
+  const { PI_SUBAGENT_KIND: kind, PI_SUBAGENT_TREE_DEPTH: depth, PI_SUBAGENT_SESSION: session } = env;
+
+  if (kind === undefined && depth === undefined && session === undefined) return { kind: "root" };
+
+  const known = KINDS.find((candidate) => candidate === kind);
+  const where = "a launcher sets PI_SUBAGENT_KIND, PI_SUBAGENT_TREE_DEPTH, and PI_SUBAGENT_SESSION together";
+
+  if (known === undefined)
+    throw new Refusal([`PI_SUBAGENT_KIND is ${JSON.stringify(kind ?? null)}, not delegate or owner; ${where}`]);
+
+  if (depth === undefined || !/^[1-9]\d*$/.test(depth))
+    throw new Refusal([`PI_SUBAGENT_TREE_DEPTH is ${JSON.stringify(depth ?? null)}, not a depth of 1 or more; ${where}`]);
+
+  if (session === undefined || session === "")
+    throw new Refusal([`PI_SUBAGENT_SESSION is ${JSON.stringify(session ?? null)}, not a session id; ${where}`]);
+
+  return { kind: known, depth: Number(depth), session };
+}
+
+// A delegate is a leaf, an owner launches only delegates, and the tree stops at MAX_DEPTH.
+function treeRefusals(parent: TreePosition, kind: Kind): string[] {
+  const depth = parent.kind === "root" ? 1 : parent.depth + 1;
+
+  return [
+    ...(parent.kind === "delegate" ? ["a delegate launches nothing"] : []),
+    ...(parent.kind === "owner" && kind === "owner" ? ["an owner launches only delegates (--kind delegate)"] : []),
+    ...(depth > MAX_DEPTH ? [`depth ${depth} is past the limit of ${MAX_DEPTH}`] : []),
+  ];
 }
 
 interface Skill {
@@ -280,6 +336,7 @@ type Append =
 
 interface Launch {
   readonly argv: readonly string[];
+  readonly name: string;
   readonly systemPrompt: string;
   readonly skills: readonly Skill[];
   readonly appends: readonly Append[];
@@ -339,6 +396,7 @@ function launchArguments({ options, brief, systemPrompt, skills }: LaunchInput):
   const name = options.name.startsWith("subagent: ") ? options.name : `subagent: ${options.name}`;
 
   return {
+    name,
     systemPrompt,
     skills,
     appends,
@@ -366,11 +424,32 @@ function shellQuote(word: string): string {
   return /^[\w./:=@-]+$/.test(word) ? word : `'${word.replaceAll("'", String.raw`'\''`)}'`;
 }
 
-function printDryRun(launch: Launch, options: Options): void {
+// The child's own position, which the launcher hands it, and the state folder it registers in.
+function childEnvironment(child: Child, options: Options): Record<string, string> {
+  return {
+    PI_SUBAGENT_KIND: child.kind,
+    PI_SUBAGENT_TREE_DEPTH: String(child.depth),
+    PI_SUBAGENT_SESSION: child.session,
+    ...(options.state === null ? {} : { IMPLEMENT_CHUNK_STATE: options.state }),
+  };
+}
+
+type Child = Extract<TreePosition, { readonly session: string }>;
+
+function childOf(parent: TreePosition, options: Options, launch: Launch): Child {
+  return { kind: options.kind, depth: parent.kind === "root" ? 1 : parent.depth + 1, session: launch.session };
+}
+
+function printDryRun(launch: Launch, options: Options, parent: TreePosition): void {
+  const child = childOf(parent, options, launch);
+  const environment = Object.entries(childEnvironment(child, options)).map(([name, value]) => `${name}=${value}`);
   const out: string[] = [
     "launch: dry run, no Pi process started",
     `command: pi-subagent ${launch.argv.map(shellQuote).join(" ")}`,
     `session: ${launch.session}${options.resume === null ? " (new)" : " (resumed)"}`,
+    `tree: ${child.kind} at depth ${child.depth}, parent ${parent.kind === "root" ? "root" : `${parent.session} (${parent.kind})`}`,
+    `environment: ${environment.join(" ")}`,
+    `registry: ${options.state === null ? "none" : `${join(options.state, "spawns.tsv")}, written only by a real launch`}`,
     `--- system prompt: ${launch.systemPrompt} ---`,
     readFileSync(launch.systemPrompt, "utf8").trimEnd(),
     "--- skills ---",
@@ -421,8 +500,52 @@ type ChildEnd =
   | { readonly kind: "signalled"; readonly signal: string }
   | { readonly kind: "unstarted"; readonly message: string };
 
-async function runChild(launch: Launch): Promise<number> {
-  const child = spawn("pi-subagent", [...launch.argv], { stdio: ["pipe", "inherit", "inherit"] });
+type ChunkResult = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+function runChunk(state: string, words: readonly string[]): ChunkResult {
+  const result = spawnSync(process.execPath, [CHUNK, "--state", state, "spawn", ...words], { encoding: "utf8" });
+
+  if (result.error !== undefined) return { ok: false, message: result.error.message };
+
+  if (result.status !== 0) return { ok: false, message: result.stderr.trim() };
+
+  return { ok: true };
+}
+
+// The child's row lands before Pi starts, so no subagent runs unregistered. A resume runs an
+// existing row again.
+function registerSpawn(state: string, parent: TreePosition, child: Child, options: Options, launch: Launch): void {
+  const words =
+    options.resume === null
+      ? [
+          "add",
+          child.session,
+          `parent=${parent.kind === "root" ? "root" : parent.session}`,
+          `kind=${child.kind}`,
+          `role=${options.role}`,
+          `depth=${child.depth}`,
+          `unit=${options.unit}`,
+          `name=${launch.name}`,
+        ]
+      : ["set", child.session, "state=running"];
+  const result = runChunk(state, words);
+
+  if (!result.ok)
+    throw new Refusal([`could not register the spawn in ${join(state, "spawns.tsv")}: ${result.message}`]);
+}
+
+function recordSpawnEnd(state: string, session: string, exit: number): void {
+  const result = runChunk(state, ["set", session, `state=${exit === 0 ? "reported" : "failed"}`]);
+
+  if (!result.ok)
+    process.stderr.write(`launch: could not record the end of spawn ${session} in ${join(state, "spawns.tsv")}: ${result.message}\n`);
+}
+
+async function runChild(launch: Launch, env: Readonly<Record<string, string>>): Promise<number> {
+  const child = spawn("pi-subagent", [...launch.argv], {
+    stdio: ["pipe", "inherit", "inherit"],
+    env: { ...process.env, ...env },
+  });
   const forward = (signal: NodeJS.Signals) => () => child.kill(signal);
 
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, forward(signal));
@@ -462,6 +585,14 @@ async function runChild(launch: Launch): Promise<number> {
 async function main(argv: readonly string[]): Promise<number> {
   try {
     const options = parseOptions(argv);
+    const parent = treePosition(process.env);
+    const refusals = treeRefusals(parent, options.kind);
+
+    if (refusals.length > 0) throw new Refusal(refusals);
+
+    if (options.state !== null && !existsSync(options.state))
+      throw new Refusal([`state folder ${options.state} does not exist`]);
+
     const systemPrompt = rolePrompt(options);
     const brief = readFilled(options.brief, "brief");
 
@@ -499,14 +630,22 @@ async function main(argv: readonly string[]): Promise<number> {
     const launch = launchArguments({ options, brief, systemPrompt, skills });
 
     if (options.dryRun) {
-      printDryRun(launch, options);
+      printDryRun(launch, options, parent);
 
       return 0;
     }
 
+    const child = childOf(parent, options, launch);
+
+    if (options.state !== null) registerSpawn(options.state, parent, child, options, launch);
+
     process.stderr.write(`launch: session ${launch.session}\n`);
 
-    return await runChild(launch);
+    const exit = await runChild(launch, childEnvironment(child, options));
+
+    if (options.state !== null) recordSpawnEnd(options.state, launch.session, exit);
+
+    return exit;
   } catch (error) {
     if (!(error instanceof Refusal)) {
       process.stderr.write(`launch: could not run: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);

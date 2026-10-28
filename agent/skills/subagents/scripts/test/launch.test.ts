@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 
+import type { Kind, Role } from "../brief.ts";
+
 const LAUNCH = new URL("../launch.ts", import.meta.url).pathname;
 
 const CODE_REVIEW_SKILL = new URL("../../../code-review/SKILL.md", import.meta.url).pathname;
@@ -71,16 +73,23 @@ function host(t: TestContext): Host {
   );
   chmodSync(fake, 0o755);
 
+  // A launch reads its tree position and state folder from its environment, and this test may
+  // run inside a subagent, so the host launches as the root with no state folder.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    PI_LAUNCH_LOADAVG: loadavg,
+    PI_LAUNCH_MEMINFO: meminfo,
+  };
+
+  for (const name of ["PI_SUBAGENT_KIND", "PI_SUBAGENT_TREE_DEPTH", "PI_SUBAGENT_SESSION", "IMPLEMENT_CHUNK_STATE"])
+    delete env[name];
+
   return {
     dir,
     orders,
     marker,
-    env: {
-      ...process.env,
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
-      PI_LAUNCH_LOADAVG: loadavg,
-      PI_LAUNCH_MEMINFO: meminfo,
-    },
+    env,
     brief(name, text) {
       const path = join(dir, name);
       writeFileSync(path, text);
@@ -220,7 +229,8 @@ const ROLE_KINDS = {
   assignment: "delegate",
   "brief-auditor": "delegate",
   babysitter: "owner",
-} as const;
+  "final-pr-owner": "owner",
+} as const satisfies Record<Role, Kind>;
 
 function roleBrief(role: keyof typeof ROLE_KINDS): string {
   const kind = ROLE_KINDS[role];

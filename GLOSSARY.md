@@ -52,6 +52,9 @@ The default kind of subagent: a leaf that does one piece of its parent's step an
 The kind of subagent that carries a whole unit of work, such as a PR, and launches delegates of its own.
 _Avoid_: owner for the session that owns a background terminal; say owning session
 
+**Final-PR owner**:
+The owner that runs one final PR's implement, verify, and fix loop with its own delegates.
+
 **Role**:
 The named job a subagent is launched for, which fixes its model, thinking level, and role prompt. A role with several models is a panel.
 _Avoid_: kind, which is delegate or owner
@@ -65,6 +68,12 @@ _Avoid_: background task, watcher
 **Coordinator**:
 The agent in a sh4dow-mode session that owns a chunk: it plans, launches subagents, and merges, but writes no code.
 _Avoid_: lead; root, which is the tree position at depth 0
+
+**Spawn registry**:
+The state-folder table that records every subagent of a chunk at every depth, with its parent, kind, role, session, and state.
+
+**Drain point**:
+A fixed moment at which the coordinator processes the completions waiting for it.
 
 ### Records
 

@@ -21,6 +21,9 @@ export const LEDGER_HEADER = "pr\thead_sha\toutcome\tevidence\trecorded_at";
 /** The ledger header chunk creates in a state folder whose `mode` file reads sh4dow. */
 export const RISK_LEDGER_HEADER = "pr\thead_sha\toutcome\tevidence\trisk\trisk_reason\trecorded_at";
 
+/** The spawn registry's header: one row per launch and per change of a subagent's state. */
+export const SPAWNS_HEADER = "session\tparent\tkind\trole\tdepth\tunit\tname\tstate\trecorded_at";
+
 export const DEFINED_OUTCOMES = [
   "live-deployed-verified",
   "live-ui-verified",

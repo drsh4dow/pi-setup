@@ -146,8 +146,7 @@ function markdownFiles(directory: string) {
     .toSorted();
 }
 
-// Builds are found by convention, so a new mode or role adds files and never edits this
-// script: general always, sh4dow when its part exists, and one prompt per role part, whose
+// The builds: general always, sh4dow when its part exists, and one prompt per role part, whose
 // directory is its kind.
 export function promptPlan(root: string): readonly PromptBuild[] {
   const plan: PromptBuild[] = [{ output: "agent/SYSTEM.md", parts: ["agent/system/general.md"] }];

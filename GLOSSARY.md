@@ -60,6 +60,12 @@ _Avoid_: kind, which is delegate or owner
 A command that runs alongside the session that started it, wakes that session when it finishes, and ends with it.
 _Avoid_: background task, watcher
 
+### sh4dow runs
+
+**Coordinator**:
+The root agent of a sh4dow-mode or `/implement-chunk` session that owns a chunk. It plans and launches subagents, and a subagent makes every change.
+_Avoid_: lead; root, which is the tree position at depth 0
+
 ### Records
 
 **State folder**:

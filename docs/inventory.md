@@ -26,25 +26,26 @@ skill's frontmatter.
 
 #### Build it
 
-| Skill                       | Who   | Use it to                                            |
-| --------------------------- | ----- | ---------------------------------------------------- |
-| `architect`                 | agent | Sketch types and signatures, then stop for review    |
-| `arena`                     | agent | Run N candidates, keep the best, graft in the rest   |
-| `code-review`               | both  | Review a branch with one persona subagent per lens   |
-| `babysit`                   | agent | Answer review threads and fix CI until merge-ready   |
-| `subagents`                 | agent | Delegate, with the model for each role               |
-| `swarm`                     | agent | Fan out parallel workers and merge one report        |
-| `background-terminals`      | agent | Run services, watchers, and subagents alongside work |
-| `tdd`                       | agent | Test-first loop for features and bug fixes           |
-| `diagnosing-bugs`           | agent | Find the cause of a hard bug through a red loop      |
-| `typescript-best-practices` | agent | Write TypeScript to this setup's standard            |
-| `frontend-design`           | agent | Give new UI a deliberate visual direction            |
-| `docs-search`               | agent | Check version-sensitive API behavior                 |
-| `web-search`                | agent | Find and read live sources                           |
-| `pi-harness`                | agent | Change or build on Pi itself                         |
-| `writing-good-commits`      | agent | Write and size commits                               |
-| `writing-good-prs`          | agent | Write a PR a reviewer can trust and own              |
-| `unslop`                    | agent | Cut AI tells from prose                              |
+| Skill                       | Who   | Use it to                                                  |
+| --------------------------- | ----- | ---------------------------------------------------------- |
+| `architect`                 | agent | Sketch types and signatures, then stop for review          |
+| `arena`                     | agent | Run N candidates, keep the best, graft in the rest         |
+| `code-review`               | both  | Review a branch with one persona subagent per lens         |
+| `babysit`                   | agent | Answer review threads and fix CI until merge-ready         |
+| `subagents`                 | agent | Delegate, with the model for each role                     |
+| `swarm`                     | agent | Fan out parallel workers and merge one report              |
+| `show-me-your-work`         | both  | Log each decision, audit it, and get a second-model review |
+| `background-terminals`      | agent | Run services, watchers, and subagents alongside work       |
+| `tdd`                       | agent | Test-first loop for features and bug fixes                 |
+| `diagnosing-bugs`           | agent | Find the cause of a hard bug through a red loop            |
+| `typescript-best-practices` | agent | Write TypeScript to this setup's standard                  |
+| `frontend-design`           | agent | Give new UI a deliberate visual direction                  |
+| `docs-search`               | agent | Check version-sensitive API behavior                       |
+| `web-search`                | agent | Find and read live sources                                 |
+| `pi-harness`                | agent | Change or build on Pi itself                               |
+| `writing-good-commits`      | agent | Write and size commits                                     |
+| `writing-good-prs`          | agent | Write a PR a reviewer can trust and own                    |
+| `unslop`                    | agent | Cut AI tells from prose                                    |
 
 #### Test it on the real app
 

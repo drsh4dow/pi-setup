@@ -81,6 +81,7 @@ skill's frontmatter.
 | `setup-sh4dow-skills` | you   | Record a repo's tracker, domain docs, and standards      |
 | `reflect`             | you   | Route each lesson from a session to a skill or the repo  |
 | `automate-me`         | you   | Capture your working style as a skill                    |
+| `eval`                | both  | Measure a skill or prompt change on blinded agent runs   |
 | `recall`              | agent | Look up an earlier chat or what came before compaction   |
 | `catchup`             | you   | Hear what changed since your last message, and each call |
 | `catchup-video`       | you   | Watch the catchup as a short narrated video              |

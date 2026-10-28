@@ -186,6 +186,11 @@ The agent loads these on its own when the trigger matches.
   memory pressure
 - `session-timer`: branch duration since the first user message, with clock
   footers on responses
+- `sh4dow`: `/sh4dow <ticket reference> [base branch] [target environment]`
+  opens a new session, linked to the current one as its parent, that runs on
+  the sh4dow mode prompt with no skill table, and starts the coordinator on the
+  chunk. The mode survives `/reload` and a resume, and `/sh4dow` inside a
+  sh4dow session is refused
 - `skill-visibility`: `/skill-visibility` controls which loaded skills the model
   can discover, and skills marked `user-invokable: false` stay out of `/skill:`
   autocomplete

@@ -1,0 +1,7 @@
+id	ticket	final_pr	state	brief
+a1	1	-	abandoned-canceled(repo archived; user call)	-
+x1	1	-	done-partial(5-7 rerun as X02)	-
+r1	1	-	running bt-1	-
+d1	1	-	done(see notes)	-
+m1	1	-	merged at 1234abc	-
+c1	1	-	done: 0 act-on	-

@@ -1,0 +1,6 @@
+id	ticket	intake_state	final_pr	state	branch	intermediate_pr	head_sha	brief
+impl-a	1	OPEN	acme/app#9	merged	u/impl-a	7	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	briefs/impl-a.md
+verify-a	1	OPEN	acme/app#9	done				briefs/verify-a.md
+babysit-9	1	OPEN	acme/app#9	running				briefs/babysit-9.md
+walk-9	1	OPEN	acme/app#9	planned				briefs/walk-9.md
+final-10	2	OPEN	acme/app#10	pr-open				briefs/final-10.md

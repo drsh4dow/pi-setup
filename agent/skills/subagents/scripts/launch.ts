@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Launch one subagent from a brief file, or refuse. It checks the brief, holds while the host
-// is saturated, then runs pi-subagent with the kind file and the standing orders appended to
-// the system prompt. Pi reads every append at process start, so a spawn and a resume both see
-// the orders as they stand. The child's report goes to stdout; launcher lines go to stderr.
+// is saturated, then runs pi-subagent on the role's generated prompt, with skill discovery off,
+// one --skill per name in the brief's SKILLS field, each of those skills' SKILL.md appended, and
+// the standing orders appended. Pi reads the prompt and every append at process start, so a
+// spawn and a resume both see the skills and the orders as they stand. The child's report goes to stdout; launcher lines go to stderr.
 //
 // Exit codes: 0 the child reported (or the dry run passed), 1 the child failed, 2 refused or
 // could not run, with no Pi process started.
@@ -15,9 +16,22 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 
-import { briefProblems, inputBranches, ROLES, type Kind, type Problem, type Role } from "./brief.ts";
+import {
+  briefProblems,
+  briefSkills,
+  inputBranches,
+  KINDS,
+  ROLES,
+  type Kind,
+  type Problem,
+  type Role,
+} from "./brief.ts";
 
-const SKILL_DIRECTORY = resolve(import.meta.dirname, "..");
+const AGENT_DIRECTORY = resolve(import.meta.dirname, "../../..");
+
+const HARNESS_SKILLS = join(AGENT_DIRECTORY, "skills");
+
+const ROLE_PROMPTS = join(AGENT_DIRECTORY, "system", "generated");
 
 const USAGE = `usage: launch.ts --kind <delegate|owner> --role <role> --brief <file> --orders <file|none>
                  --model <model> --thinking <level> --name <short assignment>
@@ -102,7 +116,7 @@ function parseOptions(argv: readonly string[]): Options {
   }
 
   const kindValue = required(values.kind, "--kind");
-  const kind = kindValue === "delegate" || kindValue === "owner" ? kindValue : undefined;
+  const kind = KINDS.find((candidate) => candidate === kindValue);
 
   if (kind === undefined) throw new UsageError(`--kind must be delegate or owner, got ${kindValue}`);
 
@@ -142,6 +156,43 @@ function readFilled(path: string, what: string): string {
   if (text.trim() === "") throw new Refusal([`${what} ${path} is empty`]);
 
   return text;
+}
+
+// A role's kind is the directory its generated prompt sits in, so --kind must agree with it.
+function rolePrompt(options: Options): string {
+  const kind = KINDS.find((candidate) => existsSync(join(ROLE_PROMPTS, candidate, `${options.role}.md`)));
+
+  if (kind === undefined)
+    throw new Refusal([
+      `role ${options.role} has no prompt under ${ROLE_PROMPTS}; run vp run generate:prompts in the harness checkout`,
+    ]);
+
+  if (kind !== options.kind)
+    throw new Refusal([`role ${options.role} runs as ${kind}, but the launch is --kind ${options.kind}`]);
+
+  return join(ROLE_PROMPTS, kind, `${options.role}.md`);
+}
+
+interface Skill {
+  readonly name: string;
+  readonly directory: string;
+}
+
+// Each name resolves to the harness's skill first, then to the launch directory's project skill.
+function resolveSkills(brief: string, names: readonly string[]): Skill[] {
+  const roots = [HARNESS_SKILLS, join(process.cwd(), ".agents", "skills")];
+  const skills = names.map((name) => ({
+    name,
+    directory: roots.map((root) => join(root, name)).find((dir) => existsSync(join(dir, "SKILL.md"))),
+  }));
+  const unknown = skills.flatMap(({ name, directory }) => (directory === undefined ? [name] : []));
+
+  if (unknown.length > 0)
+    throw new Refusal(
+      unknown.map((name) => `${brief}: SKILLS names ${name}, which is no skill in ${roots.join(" or ")}`),
+    );
+
+  return skills.flatMap(({ name, directory }) => (directory === undefined ? [] : [{ name, directory }]));
 }
 
 function problemLine(brief: string, problem: Problem): string {
@@ -224,10 +275,13 @@ function lineCount(text: string): number {
 type Append =
   | { readonly kind: "file"; readonly path: string }
   | { readonly kind: "orders"; readonly path: string }
+  | { readonly kind: "skill"; readonly name: string; readonly path: string }
   | { readonly kind: "text"; readonly text: string };
 
 interface Launch {
   readonly argv: readonly string[];
+  readonly systemPrompt: string;
+  readonly skills: readonly Skill[];
   readonly appends: readonly Append[];
   readonly session: string;
   readonly prompt: string;
@@ -246,11 +300,32 @@ function ordersHeading(path: string): string {
   return `# Standing orders\n\nThe next appended text is ${path}, the standing orders of the run that launched you, as the file stood when this process started. Each line binds your assignment unless your brief lifts it by number.`;
 }
 
+// Pi leaves a skill with `disable-model-invocation: true` out of the skill table even when
+// --skill loads it, so each named skill's SKILL.md travels as an append, labelled like the orders.
+function skillAppends({ name, directory }: Skill): Append[] {
+  const path = join(directory, "SKILL.md");
+
+  return [
+    {
+      kind: "text",
+      text: `# Skill: ${name}\n\nThe next appended text is ${path}, the ${name} skill your assignment's SKILLS field names, in full. Follow it, and resolve the relative paths in it against ${directory}.`,
+    },
+    { kind: "skill", name, path },
+  ];
+}
+
 function appendArgument(append: Append): string {
   return append.kind === "text" ? append.text : append.path;
 }
 
-function launchArguments(options: Options, brief: string): Launch {
+interface LaunchInput {
+  readonly options: Options;
+  readonly brief: string;
+  readonly systemPrompt: string;
+  readonly skills: readonly Skill[];
+}
+
+function launchArguments({ options, brief, systemPrompt, skills }: LaunchInput): Launch {
   const file = (path: string): Append => ({ kind: "file", path });
   const orders: Append[] =
     options.orders === null
@@ -259,16 +334,13 @@ function launchArguments(options: Options, brief: string): Launch {
           { kind: "text", text: ordersHeading(options.orders) },
           { kind: "orders", path: options.orders },
         ];
-  const appends = [
-    file(join(SKILL_DIRECTORY, "unattended.md")),
-    file(join(SKILL_DIRECTORY, `${options.kind}.md`)),
-    ...orders,
-    ...options.appends.map(file),
-  ];
+  const appends = [...skills.flatMap(skillAppends), ...orders, ...options.appends.map(file)];
   const session = options.resume ?? randomUUID();
   const name = options.name.startsWith("subagent: ") ? options.name : `subagent: ${options.name}`;
 
   return {
+    systemPrompt,
+    skills,
     appends,
     session,
     prompt: options.resume !== null && options.orders !== null ? resumeNote(options.orders) + brief : brief,
@@ -277,6 +349,10 @@ function launchArguments(options: Options, brief: string): Launch {
       options.model,
       "--thinking",
       options.thinking,
+      "--system-prompt",
+      systemPrompt,
+      "--no-skills",
+      ...skills.flatMap(({ directory }) => ["--skill", directory]),
       ...appends.flatMap((append) => ["--append-system-prompt", appendArgument(append)]),
       "--name",
       name,
@@ -295,12 +371,24 @@ function printDryRun(launch: Launch, options: Options): void {
     "launch: dry run, no Pi process started",
     `command: pi-subagent ${launch.argv.map(shellQuote).join(" ")}`,
     `session: ${launch.session}${options.resume === null ? " (new)" : " (resumed)"}`,
+    `--- system prompt: ${launch.systemPrompt} ---`,
+    readFileSync(launch.systemPrompt, "utf8").trimEnd(),
+    "--- skills ---",
+    ...(launch.skills.length === 0
+      ? ["none"]
+      : launch.skills.map(({ name, directory }) => `${name}\t${directory}`)),
   ];
 
   for (const append of launch.appends) {
     switch (append.kind) {
       case "text":
         out.push("--- system prompt append: literal text ---", append.text);
+        break;
+      case "skill":
+        out.push(
+          `--- system prompt append: ${append.path} (skill ${append.name}) ---`,
+          readFileSync(append.path, "utf8").trimEnd(),
+        );
         break;
       case "file":
         out.push(
@@ -374,6 +462,7 @@ async function runChild(launch: Launch): Promise<number> {
 async function main(argv: readonly string[]): Promise<number> {
   try {
     const options = parseOptions(argv);
+    const systemPrompt = rolePrompt(options);
     const brief = readFilled(options.brief, "brief");
 
     if (options.orders !== null) readFilled(options.orders, "orders file");
@@ -390,6 +479,7 @@ async function main(argv: readonly string[]): Promise<number> {
     if (problems.length > 0)
       throw new Refusal(problems.map((problem) => problemLine(options.brief, problem)));
 
+    const skills = resolveSkills(options.brief, briefSkills(brief));
     const missing = missingBranches(inputBranches(brief));
 
     if (missing.length > 0)
@@ -406,7 +496,7 @@ async function main(argv: readonly string[]): Promise<number> {
       process.stderr.write(`launch: standing orders ${options.orders}, ${lineCount(orders)} lines\n`);
     }
 
-    const launch = launchArguments(options, brief);
+    const launch = launchArguments({ options, brief, systemPrompt, skills });
 
     if (options.dryRun) {
       printDryRun(launch, options);

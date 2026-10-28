@@ -121,7 +121,8 @@ function missingInvocationFlags(skills: readonly Skill[]) {
 
 // The forms one document uses to send the agent to a skill: "the **how** skill", "the **a** and
 // **b** principle skills" (a principle skill's name carries the `principle-` prefix),
-// "**principle-x**", and "/skill:name". A bold term with no leading "the", such as "a
+// "**principle-x**", "/skill:name", and a path such as the router's
+// `~/.pi/agent/skills/name/SKILL.md`. A bold term with no leading "the", such as "a
 // **model-invoked** skill", names a kind of skill. A quoted `'/skill:pre'` is a keystroke
 // string, such as an autocomplete prefix.
 const BOLD_SKILL_SERIES =
@@ -132,6 +133,8 @@ const BOLD_NAME = /\*\*([a-z0-9-]+)\*\*/g;
 const BOLD_PRINCIPLE = /\*\*(principle-[a-z0-9-]+)\*\*/g;
 
 const SLASH_COMMAND = /(?<!')\/skill:([a-z0-9-]+)(?![a-z0-9-]*')/g;
+
+const SKILL_PATH = /skills\/([a-z0-9-]+)\/SKILL\.md/g;
 
 function pointedSkills(line: string) {
   const names = new Set<string>();
@@ -146,36 +149,74 @@ function pointedSkills(line: string) {
 
   for (const [, name] of line.matchAll(SLASH_COMMAND)) names.add(name);
 
+  for (const [, name] of line.matchAll(SKILL_PATH)) names.add(name);
+
   return names;
 }
+
+interface SkillPointer {
+  readonly path: string;
+  readonly line: number;
+  readonly name: string;
+}
+
+const markdown = execFileSync(
+  "git",
+  ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.md"],
+  { cwd: root, encoding: "utf8" },
+)
+  .split("\0")
+  .filter((path) => path !== "" && !isEvalFixturePath(path))
+  .filter((path) => lstatSync(resolve(root, path), { throwIfNoEntry: false }));
+
+const skillPointers: SkillPointer[] = markdown.flatMap((path) =>
+  readFileSync(resolve(root, path), "utf8")
+    .split("\n")
+    .flatMap((line, lineIndex) =>
+      [...pointedSkills(line)].map((name) => ({ path, line: lineIndex + 1, name })),
+    ),
+);
 
 function danglingSkillPointers(loaded: readonly Skill[]) {
   const names = new Set(loaded.map(({ name }) => name));
 
-  const markdown = execFileSync(
-    "git",
-    ["ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.md"],
-    { cwd: root, encoding: "utf8" },
-  )
-    .split("\0")
-    .filter((path) => path !== "" && !isEvalFixturePath(path))
-    .filter((path) => lstatSync(resolve(root, path), { throwIfNoEntry: false }));
+  return skillPointers.flatMap(({ path, line, name }) =>
+    names.has(name) ? [] : [`${path}:${line}: points to skill "${name}", which Pi does not load`],
+  );
+}
 
-  const errors: string[] = [];
+// A skill hidden from the model's table is a library skill: the model reaches it only through a
+// pointer in the router or another mode prompt, a role prompt, a prompt template, or another skill.
+function pointsIntoTheHarness(path: string, skillDirectories: readonly string[]) {
+  return (
+    path === "agent/SYSTEM.md" ||
+    path.startsWith("agent/system/") ||
+    path.startsWith("agent/prompts/") ||
+    skillDirectories.some((directory) => path.startsWith(directory))
+  );
+}
 
-  for (const path of markdown) {
-    const lines = readFileSync(resolve(root, path), "utf8").split("\n");
+function unreachableHiddenSkills(loaded: readonly Skill[]) {
+  const skillDirectories = loaded.map(({ baseDir }) => `${relative(root, baseDir)}/`);
 
-    for (const [lineIndex, line] of lines.entries()) {
-      for (const name of pointedSkills(line)) {
-        if (names.has(name)) continue;
+  return loaded.flatMap(({ name, baseDir, filePath, disableModelInvocation }) => {
+    if (!disableModelInvocation) return [];
 
-        errors.push(`${path}:${lineIndex + 1}: points to skill "${name}", which Pi does not load`);
-      }
-    }
-  }
+    const ownDirectory = `${relative(root, baseDir)}/`;
 
-  return errors;
+    const reached = skillPointers.some(
+      (pointer) =>
+        pointer.name === name &&
+        !pointer.path.startsWith(ownDirectory) &&
+        pointsIntoTheHarness(pointer.path, skillDirectories),
+    );
+
+    if (reached) return [];
+
+    return [
+      `${relative(root, filePath)}: hidden from the model (disable-model-invocation: true), and no router entry, skill, role prompt, or mode prompt points to it`,
+    ];
+  });
 }
 
 const settingsIgnoringUntrackedMachineSettings = SettingsManager.inMemory(
@@ -219,6 +260,7 @@ const errors = [
   ...nameDirectoryMismatches(skills),
   ...missingInvocationFlags(skills),
   ...danglingSkillPointers(skills),
+  ...unreachableHiddenSkills(skills),
 ];
 
 if (skills.length === 0) {

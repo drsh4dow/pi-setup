@@ -1,7 +1,7 @@
 ---
 name: to-spec
 description: "Synthesize the current conversation into a spec and publish it to the project's issue tracker, without an interview. Use when the user asks for a spec or PRD of what was discussed, or to file the agreed plan as a spec ticket."
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: true
 ---
 

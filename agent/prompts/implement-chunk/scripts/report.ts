@@ -1,9 +1,18 @@
-// The merge-ready report: one row per ticket, read from units.tsv, the ledger, and each final
-// PR's live state. A PR is merge-ready only on a passing verdict at its current head.
+// The chunk report. It opens with the sample, the short read the user takes from a finished
+// chunk, then gives the merge-ready table: one row per ticket, read from units.tsv, the ledger,
+// and each final PR's live state. A PR is merge-ready only on a passing verdict at its current
+// head.
 
 import type { MergeRule, Outcomes } from "./outcomes.ts";
-import { type PrRef, type PrView, formatPrRef, parsePrRef, viewRepo } from "./pull-request.ts";
-import { type Verdict, unitCell, verdictAt } from "./state.ts";
+import {
+  type PrRef,
+  type PrView,
+  formatPrRef,
+  parsePrRef,
+  samePr,
+  viewRepo,
+} from "./pull-request.ts";
+import { type RiskLevel, type Verdict, unitCell, verdictAt } from "./state.ts";
 import type { Row } from "./tsv.ts";
 
 export type Lookup =
@@ -219,6 +228,144 @@ function tableLine(cells: readonly string[]): string {
   return `| ${cells.map((cell) => cell.replaceAll("|", "\\|")).join(" | ")} |`;
 }
 
+/** A state-folder file the report reads, with `text` null when the file is absent. */
+export interface StateFile {
+  readonly name: string;
+  readonly text: string | null;
+}
+
+type RiskyVerdict = Verdict & { readonly risk: RiskLevel };
+
+/** A verdict the coordinator overruled, from its heading line in decisions.md. */
+type Overrule =
+  | {
+      readonly kind: "read";
+      readonly line: number;
+      readonly pr: string;
+      readonly sha: string;
+      readonly reason: string;
+    }
+  | { readonly kind: "unreadable"; readonly line: number; readonly text: string };
+
+/** The short read a finished chunk hands the user, ahead of the merge-ready table. */
+export interface Sample {
+  /** Every PR whose standing risk call is high, then up to three more, riskiest first. */
+  readonly riskiest: readonly RiskyVerdict[];
+  readonly overruled: readonly Overrule[];
+  readonly decisionsName: string;
+  readonly attention: StateFile;
+}
+
+const MORE_THAN_HIGH = 3;
+
+const RISK_RANK = { high: 0, medium: 1, low: 2 } satisfies Record<RiskLevel, number>;
+
+function hasRiskCall(verdict: Verdict): verdict is RiskyVerdict {
+  return verdict.risk !== null;
+}
+
+/** Each PR's latest risk call, ranked high first, and within a level in ledger order. */
+function riskiestOf(ledger: readonly Verdict[]): RiskyVerdict[] {
+  const standing: RiskyVerdict[] = [];
+
+  for (const verdict of ledger.toReversed()) {
+    if (hasRiskCall(verdict) && !standing.some((other) => samePr(other.pr, verdict.pr))) {
+      standing.unshift(verdict);
+    }
+  }
+
+  const ranked = standing.toSorted((left, right) => RISK_RANK[left.risk] - RISK_RANK[right.risk]);
+  const high = ranked.filter((verdict) => verdict.risk === "high").length;
+
+  return ranked.slice(0, high + MORE_THAN_HIGH);
+}
+
+const OVERRULE_FORMAT = "## <ISO time> overruled <pr> at <sha>: <reason>";
+
+/** `## <ISO time> overruled <pr> at <sha>: <one-line reason>`, one heading per overruling. */
+const OVERRULE = /^## \S+ overruled (\S+) at ([0-9a-f]{7,40}): (\S.*)$/;
+
+const OVERRULE_HEADING = /^## \S+ overruled /;
+
+function overrulesOf(decisions: string | null): Overrule[] {
+  return (decisions ?? "").split("\n").flatMap((text, index): Overrule[] => {
+    const line = index + 1;
+
+    if (!OVERRULE_HEADING.test(text)) return [];
+
+    const [, pr = "", sha = "", reason = ""] = text.match(OVERRULE) ?? [];
+
+    return parsePrRef(pr) === null
+      ? [{ kind: "unreadable", line, text }]
+      : [{ kind: "read", line, pr, sha, reason }];
+  });
+}
+
+export function sampleOf(
+  ledger: readonly Verdict[],
+  decisions: StateFile,
+  attention: StateFile,
+): Sample {
+  return {
+    riskiest: riskiestOf(ledger),
+    overruled: overrulesOf(decisions.text),
+    decisionsName: decisions.name,
+    attention,
+  };
+}
+
+function diffLink(lookup: Lookup, ref: PrRef): string {
+  return lookup.kind === "found"
+    ? `${lookup.view.url}/files`
+    : `${formatPrRef(ref)} (no diff link: ${lookup.message})`;
+}
+
+function overruleLine(overrule: Overrule, file: string): string {
+  switch (overrule.kind) {
+    case "read":
+      return `- ${overrule.pr} at ${overrule.sha}: ${overrule.reason} (${file}:${overrule.line})`;
+    case "unreadable":
+      return `- ${file}:${overrule.line}: unreadable, expected "${OVERRULE_FORMAT}": ${overrule.text}`;
+    default: {
+      const exhaustive: never = overrule;
+
+      return exhaustive;
+    }
+  }
+}
+
+function orNone(lines: readonly string[]): readonly string[] {
+  return lines.length === 0 ? ["none"] : lines;
+}
+
+/** The sample's three parts in order. A part with nothing in it reads `none`. */
+export function renderSample(sample: Sample, lookup: (ref: PrRef) => Lookup): string[] {
+  const attention = sample.attention.text?.trim() ?? null;
+
+  return [
+    "## Sample",
+    "",
+    "### Riskiest diffs",
+    "",
+    ...orNone(
+      sample.riskiest.map(
+        (verdict) =>
+          `- ${verdict.risk} ${diffLink(lookup(verdict.pr), verdict.pr)}: ${verdict.riskReason}`,
+      ),
+    ),
+    "",
+    "### Overruled verdicts",
+    "",
+    ...orNone(sample.overruled.map((overrule) => overruleLine(overrule, sample.decisionsName))),
+    "",
+    "### Attention",
+    "",
+    attention === null
+      ? `none: no ${sample.attention.name} in the state folder`
+      : attention || "none",
+  ];
+}
+
 export interface ReportInput {
   readonly tickets: readonly Ticket[];
   readonly ledger: readonly Verdict[];
@@ -226,6 +373,10 @@ export interface ReportInput {
   readonly outcomes: Outcomes;
   readonly outcomesFile: string;
   readonly lookup: (ref: PrRef) => Lookup;
+  /** decisions.md, whose overruled-verdict headings the sample lists. */
+  readonly decisions: StateFile;
+  /** attention.md, the cross-family review's Attention section that close writes. */
+  readonly attention: StateFile;
 }
 
 export interface ReportOutput {
@@ -292,6 +443,10 @@ export function renderReport(input: ReportInput): ReportOutput {
   const ready = all.filter((row) => ["ready", "merged"].includes(row.readiness.kind)).length;
 
   const lines = [
+    ...renderSample(sampleOf(ledger, input.decisions, input.attention), input.lookup),
+    "",
+    "## Final PRs",
+    "",
     tableLine([
       "Ticket",
       "Final PR",

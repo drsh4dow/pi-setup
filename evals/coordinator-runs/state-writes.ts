@@ -3,12 +3,12 @@
 // statement that redirects into it or edits it in place.
 
 import { homedir } from "node:os";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { Option, Schema } from "effect";
 import { argument, type ToolOperation } from "../lib/session.ts";
 import { escapeRegExp, HEX, insideStateFolder, type TableRow } from "./chunk-state.ts";
 import type { Chunk, GradedSession } from "./model.ts";
-import { statements } from "./shell.ts";
+import { shellStatements } from "./shell-writes.ts";
 
 /** Whether two SHAs, either abbreviated to seven or more characters, name one commit. */
 const sameSha = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
@@ -48,20 +48,29 @@ const UNITS: StateFile = { name: "units.tsv", cli: /\bunit\s+(?:set|add)\s/ };
 const LEDGER: StateFile = { name: "ledger.tsv", cli: /\bledger\s+(?:record|carry)\s/ };
 
 /**
- * What the call wrote into the chunk's state file: the arguments of an `edit` or `write` of it,
- * or each bash statement that runs its chunk CLI verbs, redirects into it, or edits it in place,
- * with printf's `\t` and `\n` read as a tab and a newline. A name written in another statement
- * of the same command, such as a note appended to decisions.md, is not part of the write.
+ * What the call, run from `cwd`, wrote into the chunk's state file: the arguments of an `edit`
+ * or `write` of it, the arguments of each chunk CLI call whose state folder is the chunk's and
+ * whose verb writes the file, or each bash statement that writes the file in the chunk's state
+ * folder. Every `\t` and `\n` in a statement is read as a tab and a newline, as printf and sed
+ * read them. A name written in another statement of the same command, such as a note appended to
+ * decisions.md, is not part of the write.
  */
-function writesInto(operation: ToolOperation, chunk: Chunk, file: StateFile): string[] {
+function writesInto(
+  operation: ToolOperation,
+  cwd: string,
+  chunk: Chunk,
+  file: StateFile,
+): string[] {
   if (!operation.succeeded) return [];
 
   if (operation.tool === "edit" || operation.tool === "write") {
-    const path = argument(operation, "path")?.replace(/^~(?=\/)/, homedir());
+    const written = argument(operation, "path");
 
-    if (path === undefined || basename(path) !== file.name || !insideStateFolder(path, chunk.dir)) {
-      return [];
-    }
+    if (written === undefined) return [];
+
+    const path = resolve(cwd, written.replace(/^~(?=\/)/, homedir()));
+
+    if (basename(path) !== file.name || !insideStateFolder(path, chunk.dir)) return [];
 
     return [editedText(operation)];
   }
@@ -70,15 +79,28 @@ function writesInto(operation: ToolOperation, chunk: Chunk, file: StateFile): st
 
   if (command === undefined) return [];
 
-  const name = escapeRegExp(file.name);
+  const isChunkFile = (path: string) =>
+    basename(path) === file.name && insideStateFolder(path, chunk.dir);
 
-  const redirects = new RegExp(
-    String.raw`(?:>>?|\btee\s+(?:-a\s+)?)\s*["']?[^\s;|&'"]*${name}|\bsed\s+-i[^\n]*?${name}`,
-  );
+  const texts: string[] = [];
 
-  return statements(command)
-    .filter((statement) => file.cli.test(statement) || redirects.test(statement))
-    .map((statement) => statement.replaceAll("\\t", "\t").replaceAll("\\n", "\n"));
+  for (const statement of shellStatements(command, cwd)) {
+    for (const call of statement.chunkCli) {
+      if (
+        call.state !== undefined &&
+        insideStateFolder(call.state, chunk.dir) &&
+        file.cli.test(`${call.args} `)
+      ) {
+        texts.push(call.args);
+      }
+    }
+
+    if (statement.writes.some(isChunkFile)) {
+      texts.push(statement.text.replaceAll("\\t", "\t").replaceAll("\\n", "\n"));
+    }
+  }
+
+  return texts;
 }
 
 /** Whether the call wrote the units.tsv row of unit `id`. */
@@ -88,15 +110,15 @@ export function writesUnit(chunk: Chunk, id: string) {
   // The row as a line of the file, or as a printf or sed pattern opens it.
   const line = new RegExp(String.raw`(?:^|[\n'"^])${unit}\t`);
 
-  return (operation: ToolOperation) =>
-    writesInto(operation, chunk, UNITS).some((text) => cli.test(text) || line.test(text));
+  return (operation: ToolOperation, cwd: string) =>
+    writesInto(operation, cwd, chunk, UNITS).some((text) => cli.test(text) || line.test(text));
 }
 
 /** Whether the call wrote a ledger.tsv row at head `sha`. */
 export function writesVerdict(chunk: Chunk, sha: string) {
-  return (operation: ToolOperation) =>
+  return (operation: ToolOperation, cwd: string) =>
     sha !== "" &&
-    writesInto(operation, chunk, LEDGER).some((text) => {
+    writesInto(operation, cwd, chunk, LEDGER).some((text) => {
       // `ledger record <pr> <sha> ...` and `ledger carry <pr> <new sha> <from sha>` write the
       // row at their second argument.
       const cli = /\bledger\s+(?:record|carry)\s+\S+\s+(\S+)/.exec(text)?.[1];
@@ -118,20 +140,32 @@ export interface StateRowLink {
   readonly at: string;
 }
 
+/**
+ * The row's link to the latest coordinator call that wrote it, by the time the call was issued.
+ * A call recorded with no time counts as earlier than any timed one; among calls with no time,
+ * or the same time, the later session file and then the later call wins.
+ */
 export function rowLink(
   coordinators: readonly GradedSession[],
   file: string,
   row: TableRow,
-  writes: (operation: ToolOperation) => boolean,
+  writes: (operation: ToolOperation, cwd: string) => boolean,
 ): StateRowLink {
   const at = `${file}:${row.line}`;
   let link: StateRowLink = { session: coordinators[0]?.id ?? "-", entry: "-", at };
+  let latest = -Infinity;
 
   for (const session of coordinators) {
-    const operation = session.operations.findLast(writes);
+    for (const operation of session.operations) {
+      if (operation.entryId === undefined || !writes(operation, session.cwd)) continue;
 
-    if (operation?.entryId !== undefined) {
-      link = { session: session.id, entry: operation.entryId, at };
+      const parsed = Date.parse(operation.calledAt ?? "");
+      const time = Number.isFinite(parsed) ? parsed : -Infinity;
+
+      if (link.entry === "-" || time >= latest) {
+        link = { session: session.id, entry: operation.entryId, at };
+        latest = time;
+      }
     }
   }
 

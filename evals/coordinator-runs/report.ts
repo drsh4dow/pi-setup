@@ -15,7 +15,7 @@ const cell = (value: string | number) => String(value).replace(/[\t\n\r]+/g, " "
 const tsv = (rows: readonly (readonly (string | number)[])[]) =>
   rows.map((row) => row.map(cell).join("\t")).join("\n") + "\n";
 
-/** The skill table's size in tokens, estimated at four characters per token. */
+/** A text's size in tokens, estimated at four characters per token. */
 const estimateTokens = (text: string) => Math.ceil(text.length / 4);
 
 export function sessionsTable(grades: readonly ChunkGrade[]): string {
@@ -98,7 +98,7 @@ export function summary(grades: readonly ChunkGrade[]): string {
         ...(unlinkedLaunches === 0
           ? []
           : [
-              `  ${unlinkedLaunches} launches name no child session, so their trees are not graded and report-only-merge is an upper bound`,
+              `  ${unlinkedLaunches === 1 ? "1 launch names" : `${unlinkedLaunches} launches name`} no child session, so ${unlinkedLaunches === 1 ? "its tree is" : "their trees are"} not graded and report-only-merge is an upper bound`,
             ]),
         ...(uncounted === 0
           ? []
@@ -113,7 +113,7 @@ export function summary(grades: readonly ChunkGrade[]): string {
       ];
 
       return [
-        `${chunk.project}/${chunk.name}: ${sessions.length} sessions`,
+        `${chunk.project}/${chunk.name}: ${sessions.length} ${sessions.length === 1 ? "session" : "sessions"}`,
         ...sessionLines,
         ...counts,
         ...caveat,

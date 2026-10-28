@@ -50,15 +50,35 @@ const GAMMA = id("c004");
 
 const DELTA = id("c005");
 
-// What GitHub reports for each PR of the fixture chunk: number -> [state, head at merge, head branch].
+// What GitHub reports for each PR of the fixture chunk.
 const PULL_REQUESTS = {
-  "7": ["MERGED", "b".repeat(40), "u/impl-a"],
-  "8": ["MERGED", "d".repeat(40), "u/impl-b"],
-  "9": ["MERGED", "e".repeat(40), "chunk/alpha/app"],
-  "10": ["MERGED", "f".repeat(40), "chunk/alpha/second"],
-  "11": ["OPEN", "1".repeat(40), "u/impl-c"],
-  "12": ["MERGED", "4444444".padEnd(40, "0"), "u/impl-d"],
-} satisfies Record<string, readonly [string, string, string]>;
+  "7": { state: "MERGED", headRefOid: "b".repeat(40), headRefName: "u/impl-a" },
+  "8": { state: "MERGED", headRefOid: "d".repeat(40), headRefName: "u/impl-b" },
+  "9": { state: "MERGED", headRefOid: "e".repeat(40), headRefName: "chunk/alpha/app" },
+  "10": { state: "MERGED", headRefOid: "f".repeat(40), headRefName: "chunk/alpha/second" },
+  "11": { state: "OPEN", headRefOid: "1".repeat(40), headRefName: "u/impl-c" },
+  "12": { state: "MERGED", headRefOid: "4444444".padEnd(40, "0"), headRefName: "u/impl-d" },
+} satisfies Record<string, PullRequest>;
+
+interface PullRequest {
+  readonly state: string;
+  readonly headRefOid: string;
+  readonly headRefName: string;
+}
+
+/** How the stub `gh` answers for one PR instead of reporting it. */
+interface GhAnswer {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly status: number;
+}
+
+/** What gh prints for a PR number its repository does not have. */
+const notFound = (pr: string): GhAnswer => ({
+  stdout: "",
+  stderr: `GraphQL: Could not resolve to a PullRequest with the number of ${pr}. (repository.pullRequest)`,
+  status: 1,
+});
 
 interface Run {
   readonly status: number | null;
@@ -92,7 +112,7 @@ function placeFixtures(root: string) {
   }
 }
 
-function stubGh(dir: string) {
+function stubGh(dir: string, answers: Readonly<Record<string, GhAnswer>> = {}) {
   const path = join(dir, "gh");
 
   writeFileSync(
@@ -100,11 +120,15 @@ function stubGh(dir: string) {
     [
       `#!${process.execPath}`,
       `const prs = ${JSON.stringify(PULL_REQUESTS)};`,
+      `const answers = ${JSON.stringify(answers)};`,
       `const args = process.argv.slice(2);`,
       `const repo = args[args.indexOf("--repo") + 1];`,
-      `const pr = prs[args[args.indexOf("view") + 1]];`,
-      `if (repo !== "acme/app" || !pr) { console.error("no pull request found"); process.exit(1); }`,
-      `console.log(JSON.stringify({ state: pr[0], headRefOid: pr[1], headRefName: pr[2] }));`,
+      `const number = args[args.indexOf("view") + 1];`,
+      `const answer = repo === "acme/app" ? answers[number] : undefined;`,
+      `if (answer) { process.stdout.write(answer.stdout); process.stderr.write(answer.stderr); process.exit(answer.status); }`,
+      `const pr = repo === "acme/app" ? prs[number] : undefined;`,
+      `if (!pr) { console.error(${JSON.stringify(notFound("<n>").stderr)}.replace("<n>", number)); process.exit(1); }`,
+      `console.log(JSON.stringify(pr));`,
     ].join("\n"),
   );
   chmodSync(path, 0o755);
@@ -245,7 +269,24 @@ describe("grading a synthetic chunk", () => {
   });
 
   test("flags a coordinator's edit outside its state folder, not one inside it, under its renamed project, or a subagent's", () => {
-    assert.deepEqual(found("root-edit"), [`${COORDINATOR} c0000006 ${root}/work/src/app.ts`]);
+    assert.deepEqual(
+      found("root-edit").filter((row) => row.includes(" c0000006 ")),
+      [`${COORDINATOR} c0000006 ${root}/work/src/app.ts`],
+    );
+  });
+
+  test("flags a coordinator's shell write outside its state folder: a redirection, tee, sed -i, or a cp or mv target", () => {
+    assert.deepEqual(
+      found("root-edit").filter((row) => !row.includes(" c0000006 ")),
+      [
+        `${COORDINATOR} c0000018 ${root}/work/src/gen.ts`,
+        `${COORDINATOR} c0000018 ${root}/work/lib/notes.txt`,
+        `${COORDINATOR} c0000018 ${root}/work/src/app.ts`,
+        `${COORDINATOR} c0000018 ${root}/work/dist/app.ts`,
+        `${COORDINATOR} c0000018 ${root}/work/out.txt`,
+        `${COORDINATOR} c0000019 ${root}/state/demo/implement-chunk/beta/units.tsv`,
+      ].toSorted(),
+    );
   });
 
   test("flags a verdict at a head the PR did not merge at, unless a carry row covers the merged head", () => {
@@ -260,6 +301,8 @@ describe("grading a synthetic chunk", () => {
     ]);
   });
 
+  // c0000014 wrote final-10's row last by time; c002, a later session file, wrote it earlier, and
+  // c0000019 only printed a chunk CLI call and wrote beta's units.tsv.
   test("flags units left running after a launch, but not a planned unit nobody launched, at the entry that last changed the row", () => {
     assert.deepEqual(found("unterminated-subagent"), [
       `${COORDINATOR} - babysit-9 running ${root}/state/demo/implement-chunk/alpha/units.tsv:4`,
@@ -284,6 +327,10 @@ describe("grading a synthetic chunk", () => {
     assert.match(run.stdout, /stale-verdict\s+1/);
   });
 
+  test("a launch call refused before it ran, which started no child session, is no launch", () => {
+    assert.ok(!findings.some((row) => row.entry === "c0000020"), JSON.stringify(findings));
+  });
+
   test("grades a coordinator of another chunk only when that chunk is graded", () => {
     assert.ok(!sessions.some((row) => row.session === GAMMA));
   });
@@ -305,6 +352,8 @@ describe("grading a synthetic chunk", () => {
 describe("grading a resumed coordinator whose terminal ids repeat", () => {
   let root = "";
   let stubDir = "";
+  let run: Run;
+  let sessions: Rows = [];
   let findings: Rows = [];
 
   before(() => {
@@ -313,9 +362,10 @@ describe("grading a resumed coordinator whose terminal ids repeat", () => {
     placeFixtures(root);
     stubGh(stubDir);
 
-    const run = grade(root, stubDir, join(root, "out"), "gamma");
+    run = grade(root, stubDir, join(root, "out"), "gamma");
 
     assert.equal(run.status, 0, run.stderr);
+    sessions = readTsv(join(root, "out/sessions.tsv"));
     findings = readTsv(join(root, "out/findings.tsv"));
   });
 
@@ -347,8 +397,27 @@ describe("grading a resumed coordinator whose terminal ids repeat", () => {
         `${GAMMA} g0000002 kind=delegate role=unknown depth=1 child=${id("a1")}`,
         `${GAMMA} g0000003 kind=delegate role=unknown depth=1 child=${id("a2")}`,
         `${GAMMA} g0000007 kind=owner role=unknown depth=1 child=${id("a3")}`,
+        `${GAMMA} g0000012 kind=delegate role=unknown depth=1 child=${id("a4")}`,
+        `${GAMMA} g0000013 kind=delegate role=unknown depth=1 child=${id("a5")}`,
+        `${GAMMA} g0000014 kind=owner role=unknown depth=1 child=${id("a6")}`,
+        `${GAMMA} g0000015 kind=delegate role=implementer depth=1 child=${id("a7")}`,
       ],
     );
+  });
+
+  test("a raw pi-subagent launch is graded with the kind its prompt names, and its session joins the tree", () => {
+    assert.ok(
+      sessions.some(
+        (row) =>
+          [row.session, row.chunk, row.mode, row.parent, row.depth].join(" ") ===
+          `${id("a6")} gamma subagent ${GAMMA} 1`,
+      ),
+      JSON.stringify(sessions),
+    );
+  });
+
+  test("says a count of one in the singular", () => {
+    assert.match(run.stdout, /^ {2}1 launch names no child session,/m);
   });
 
   // g0000011's script wrote a brief whose full arguments codemode left out, then units.tsv in full.
@@ -411,13 +480,100 @@ describe("grading a coordinator whose codemode calls were recorded only by size"
       findings
         .filter((row) => row.class === "unterminated-subagent")
         .map((row) => `${row.session} ${row.entry} ${row.detail}`),
-      [`${DELTA} - r1 running bt-1 ${root}/state/demo/implement-chunk/delta/units.tsv:4`],
+      [`${DELTA} d0000003 r1 running bt-1 ${root}/state/demo/implement-chunk/delta/units.tsv:4`],
     );
+  });
+
+  test("a planned unit nobody launched is not unterminated, whatever follows its first word", () => {
+    assert.ok(!findings.some((row) => row.detail.startsWith("p1 ")), JSON.stringify(findings));
+  });
+
+  test("a warning about an uncounted launch call names its session file and entry, never its command", () => {
+    assert.match(run.stderr, /d0000001/);
+    assert.ok(!run.stderr.includes("SYNTHETICMARKER"), run.stderr);
+    assert.ok(!run.stderr.includes("--role implementer"), run.stderr);
+  });
+
+  test("says a count of one session in the singular", () => {
+    assert.match(run.stdout, /^demo\/delta: 1 session$/m);
   });
 
   test("rounds the skill table's token estimate up", () => {
     // 37 characters: `<available_skills></available_skills>`.
     assert.deepEqual(skillTable(sessions, DELTA), ["37", "10", "estimate"]);
     assert.match(run.stdout, /37 chars, ~10 tokens \(estimate\)/);
+  });
+});
+
+describe("grading a chunk whose coordinator sessions name another chunk folder more often", () => {
+  test("warns that the sessions naming it went to another chunk folder, not that none names it", () => {
+    const root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+    const stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
+
+    try {
+      placeFixtures(root);
+      stubGh(stubDir);
+
+      const run = grade(root, stubDir, join(root, "out"), "epsilon");
+      const warning = run.stderr.split("\n").filter((line) => line.startsWith("epsilon: "));
+
+      assert.equal(run.status, 0, run.stderr);
+      assert.equal(warning.length, 1, run.stderr);
+      assert.match(
+        warning[0],
+        /1 coordinator session names .*epsilon, but names another chunk folder more often/,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(stubDir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Grades the alpha fixture with a stub gh that gives `answers` for some PRs. */
+function gradeWithGh(answers: Readonly<Record<string, GhAnswer>>) {
+  const root = mkdtempSync(join(tmpdir(), "coordinator-runs-"));
+  const stubDir = mkdtempSync(join(tmpdir(), "coordinator-runs-gh-"));
+
+  try {
+    placeFixtures(root);
+    stubGh(stubDir, answers);
+
+    return grade(root, stubDir, join(root, "out"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(stubDir, { recursive: true, force: true });
+  }
+}
+
+describe("reading pull requests through gh", () => {
+  test("a pull request gh cannot find is a warning, and the run goes on", () => {
+    const run = gradeWithGh({ "11": notFound("11") });
+
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stderr, /gh found no pull request acme\/app#11/);
+  });
+
+  test("any other gh failure ends the run with exit 2, naming the pull request and the cause", () => {
+    const run = gradeWithGh({
+      "11": {
+        stdout: "",
+        stderr: "HTTP 401: Bad credentials (https://api.github.com/graphql)",
+        status: 1,
+      },
+    });
+
+    assert.equal(run.status, 2, run.stderr);
+    assert.match(run.stderr, /acme\/app#11/);
+    assert.match(run.stderr, /HTTP 401: Bad credentials/);
+  });
+
+  test("an answer gh printed that is no pull request ends the run with exit 2", () => {
+    const run = gradeWithGh({
+      "11": { stdout: "<html>rate limited</html>", stderr: "", status: 0 },
+    });
+
+    assert.equal(run.status, 2, run.stderr);
+    assert.match(run.stderr, /acme\/app#11/);
   });
 });

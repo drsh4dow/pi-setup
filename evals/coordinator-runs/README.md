@@ -29,10 +29,14 @@ It writes three files to `--out`:
 - `command.txt`, the command line that produced them, to rerun from the repository root.
 
 It also prints each chunk's sessions as a tree, with the count for each finding class.
-Warnings go to stderr: a pull request that `gh` cannot find, a ledger row that names none, a
-launched session whose file is not under `--sessions`, or a launch call left uncounted because
-its command is cut short (see below). It exits 2 when it cannot run, such
-as on bad arguments or when the chunk names pull requests and `gh` is not on `PATH`.
+Warnings go to stderr: a pull request that GitHub says does not exist, a ledger row that names
+none, a launched session whose file is not under `--sessions`, a graded chunk that no
+coordinator session belongs to, or a launch call left uncounted because its command is cut
+short (see below). A warning about a launch call names its session file and entry id, never
+the command, which can hold a credential. It exits 2 when it cannot run: on bad arguments, when
+the chunk names pull requests and `gh` is not on `PATH`, or when `gh` fails for any other
+reason than a missing pull request or repository, such as an expired login, or prints no pull
+request. The message names the pull request and what `gh` printed.
 
 ## What it reads
 
@@ -51,16 +55,18 @@ as on bad arguments or when the chunk names pull requests and `gh` is not on `PA
   `background-terminal-results` message, a `bg_status` result, or a `bash` result. A launch
   without that line is listed with `child=unknown`, and nothing below it is graded.
 - **Terminal runs.** A resumed session's new Pi process numbers its background terminals from
-  `bt-1` again, so a terminal id names one run only from one start to the next. A top-level
-  `bg_start` keeps its own command and takes the child from the reports of the run it
-  started. A report whose command differs from its id's current run opens a new run. A
-  `bg_start` made inside a codemode script has its command recorded cut short. It takes the
-  first later run, not yet taken, whose full command starts with the recorded prefix.
+  `bt-1` again, so a terminal id names one run only from one start to the next. For a
+  top-level `bg_start`, the grader uses the command recorded in the call and reads the child
+  session id from the reports of the run that call started. When a report's command differs
+  from the current run of its id, the grader starts a new run for that id. Codemode records a
+  nested `bg_start` command cut short, so the grader matches it to the first later run that no
+  other call has matched and whose full command starts with the recorded prefix.
 - **Codemode calls.** A codemode result records each call its script made twice: cut short in
   `details.calls`, and in full in `nestedCalls.calls` when the session has that field. A call
-  whose arguments were too large to keep records only their size there. The grader takes each
-  call's full arguments where they exist, and the cut ones at the same position only for a
-  call recorded without them.
+  whose arguments were too large to keep records only their size there, and Pi keeps at most
+  256 calls there, marking the record incomplete when it drops any. The grader takes each
+  call's full arguments where they exist, the cut ones at the same position for a call
+  recorded without them, and the cut ones for every call past the end of `nestedCalls`.
 - **State files.** `units.tsv` and `ledger.tsv` are read by header name, so past layouts
   still read. A ledger's `head_sha` cell may hold several SHAs, as in
   `84187d1 (carries to e8a0353)`. An abbreviation of seven or more characters matches a full
@@ -86,7 +92,10 @@ as on bad arguments or when the chunk names pull requests and `gh` is not on `PA
 
   A launcher named as an argument (`chmod +x spawn.sh`), as a redirection target
   (`cat > spawn.sh`), or inside quotes runs nothing. Dry runs, help, and text inside a
-  heredoc's body are left out. Kind comes from `--kind` or from the appended kind prompt
+  heredoc's body are left out. A launcher's arguments end where its simple command ends, so
+  `--dry-run` in a later statement, or inside a quoted argument such as a `--name`, does
+  not make it a dry run. A call that failed, such as one the delegate guard refused, and
+  started no child session is not a launch. Kind comes from `--kind` or from the appended kind prompt
   (`delegate.md`, `owner.md`). Role comes from `--role`. Either is `unknown` when the command
   does not say.
 
@@ -103,14 +112,19 @@ as on bad arguments or when the chunk names pull requests and `gh` is not on `PA
 | `skill-read`            | a session's first successful read of a `SKILL.md` (`read`, codemode `tools.read`, or a printing bash command)                                                   | skill name                                        |
 | `launch`                | each launch                                                                                                                                                     | `kind=<k> role=<r> depth=<d> child=<id\|unknown>` |
 | `wrong-spawn`           | a delegate launches, an owner launches an owner, or a launch goes past depth 2                                                                                  | the reason, then the launch detail                |
-| `root-edit`             | a coordinator's successful `edit` or `write` outside its state folder                                                                                           | the absolute path                                 |
+| `root-edit`             | a coordinator's successful `edit`, `write`, or `bash` write outside its state folder                                                                            | the absolute path                                 |
 | `stale-verdict`         | a merged PR whose ledger rows name no SHA it merged at, not even through a carry row                                                                            | `<pr> <ledger file>:<line of its last row>`       |
 | `report-only-merge`     | a merged final PR (head branch `chunk/...`) whose merged head no `verifier` session's final message names                                                       | `<pr> <merged head> <state file>:<line>`          |
 | `unterminated-subagent` | a `units.tsv` row whose state's first word is not `merged`, `done`, `abandoned`, or `reconciled`, leaving out a `planned` row that no launch names by its brief | `<id> <state> <units file>:<line>`                |
 
-`root-edit` counts the `edit` and `write` tools only. A file a coordinator changed through
-`bash` is not seen. A coordinator's scratch file under `/tmp` counts too, because it is a
-write outside the state folder. `unterminated-subagent` judges a free-text state by its first
+`root-edit` counts the `edit` and `write` tools, and the files a successful `bash` call
+writes through a redirection (`>`, `>>`), `tee`, `sed -i`, or as a `cp` or `mv`
+destination. The grader resolves a relative path from the session's directory, follows `cd`,
+and expands variables the same command assigned. It leaves out a path it cannot resolve: one
+that holds a variable the command never set, a command substitution, or a glob, a relative
+path after a `cd` to such a place, and `/dev/` targets. A file written any other way, such
+as by a script the command runs, is not seen. A coordinator's scratch file under `/tmp`
+counts too, because it is a write outside the state folder. `unterminated-subagent` judges a free-text state by its first
 word, its first run of letters, which ends at a `-`, `(`, space, or any other non-letter. So
 past states such as `done: 0 act-on` and `abandoned-canceled(repo archived)` are terminal, and
 `running bt-1` is not.
@@ -127,17 +141,21 @@ Each state-row class reads one row:
   it as `final_pr` or `intermediate_pr`. With neither, its last ledger row.
 - `unterminated-subagent`: the unit's row.
 
-The entry is the last successful coordinator call that wrote that row. A call writes the row
-in one of these ways:
+The entry is the successful coordinator call that wrote that row last, by the time the
+call was issued, across every graded coordinator session of the chunk. A call recorded with no
+time counts as earlier than any timed one. A call writes the row in one of these ways:
 
 - An `edit` or `write` of the chunk's file whose text holds the row. For units.tsv that is
   a line opening with the unit id; for ledger.tsv, the row's SHA.
-- A chunk CLI call: `unit set|add <id>`, or `ledger record|carry <pr> <sha>` at the row's
-  SHA.
-- A shell statement that redirects into the file, appends with `tee -a`, or runs `sed -i` on
-  it, and names the row the same way. It counts only when the name and the write are in the
-  same statement. A SHA in a note appended to decisions.md by the same command is not a
-  write of the row.
+- A chunk CLI call (`chunk.ts` run as a command) whose `--state`, or
+  `IMPLEMENT_CHUNK_STATE` set in the same command, is the chunk's state folder: `unit
+  set|add <id>`, or `ledger record|carry <pr> <sha>` at the row's SHA. The same words
+  printed by `echo`, or a call for another chunk, do not write the row.
+- A shell statement that redirects into the chunk's file, appends with `tee -a`, or runs
+  `sed -i` on it, and names the row the same way. The target must resolve, as for
+  `root-edit`, to the file in this chunk's state folder. It counts only when the name and
+  the write are in the same statement. A SHA in a note appended to decisions.md by the same
+  command is not a write of the row.
 
 With no such call, the entry is `-`. The usual causes are a coordinator that continued in a
 session whose first user message is not the prompt, and a codemode call recorded without its

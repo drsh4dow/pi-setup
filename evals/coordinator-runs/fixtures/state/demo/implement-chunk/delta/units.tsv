@@ -5,3 +5,6 @@ r1	1	-	running bt-1	-
 d1	1	-	done(see notes)	-
 m1	1	-	merged at 1234abc	-
 c1	1	-	done: 0 act-on	-
+rc1	1	-	reconciled	-
+rc2	1	-	reconciled(notes)	-
+p1	1	-	planned-later	-

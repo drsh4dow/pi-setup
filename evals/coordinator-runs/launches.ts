@@ -3,7 +3,14 @@
 
 import { Option, Schema } from "effect";
 import { argument, customMessages, type ToolOperation } from "../lib/session.ts";
-import { commandWords, withoutHeredocBodies } from "./shell.ts";
+import {
+  commandIndices,
+  commandName,
+  CUT,
+  flagValue,
+  simpleCommands,
+  withoutHeredocBodies,
+} from "./shell.ts";
 
 export type Kind = "delegate" | "owner" | "unknown";
 
@@ -24,8 +31,6 @@ export interface Launch {
  */
 export interface UncountedLaunch {
   readonly entry: string;
-  /** The launch command as recorded, up to the cut. */
-  readonly command: string;
 }
 
 // The subagents skill's launch.ts, raw pi-subagent, or the spawn.sh wrapper past chunks kept in
@@ -38,49 +43,71 @@ interface LaunchCommand {
   readonly kind: Kind;
   readonly role: string;
   readonly text: string;
+  /** The session a `--session <id>` argument resumes. */
+  readonly resumed: string | undefined;
 }
 
-function kindIn(text: string): Kind {
-  const flag = /--kind[ =]["']?(delegate|owner)\b/.exec(text)?.[1];
-  const prompt = /(?:subagents\/|system\/generated\/)(delegate|owner)(?:\.md|\/)/.exec(text)?.[1];
-  const found = flag ?? prompt;
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f-]{27}$/;
+
+function kindIn(args: readonly string[]): Kind {
+  const flag = flagValue(args, "--kind");
+
+  const prompt = args
+    .map((arg) => /(?:subagents\/|system\/generated\/)(delegate|owner)(?:\.md|\/)/.exec(arg)?.[1])
+    .find((found) => found !== undefined);
+
+  const found = flag === "delegate" || flag === "owner" ? flag : prompt;
 
   return found === "delegate" || found === "owner" ? found : "unknown";
 }
 
-/** The launches a command makes, one per launcher it runs, leaving out dry runs and help. */
+const hasFlag = (args: readonly string[], flag: RegExp) => args.some((arg) => flag.test(arg));
+
+/**
+ * The launches a command makes, one per launcher it runs, leaving out dry runs and help. A
+ * launcher's arguments run to the end of its simple command, so a flag in a later statement or
+ * inside a quoted argument is not one of them.
+ */
 function launchCommands(command: string): LaunchCommand[] {
   const shell = withoutHeredocBodies(command);
 
-  const starts = commandWords(shell).filter((word) =>
-    LAUNCHERS.has(word.text.split("/").pop() ?? ""),
-  );
+  return simpleCommands(shell).flatMap((words) => {
+    const plain = words.filter((word) => word.redirect === undefined);
 
-  return starts.flatMap((start, index) => {
-    const text = shell.slice(start.start, starts[index + 1]?.start ?? shell.length);
-    const launcher = start.text.split("/").pop();
+    const starts = commandIndices(plain).filter((index) =>
+      LAUNCHERS.has(commandName(plain[index])),
+    );
 
-    if (/--dry-run|--help|--version/.test(text)) return [];
+    return starts.flatMap((start, index): LaunchCommand[] => {
+      const argWords = plain.slice(start + 1, starts[index + 1] ?? plain.length);
+      const args = argWords.map((word) => word.text);
+      const launcher = commandName(plain[start]);
+      const text = shell.slice(plain[start].start, (argWords.at(-1) ?? plain[start]).end);
+      const session = flagValue(args, "--session");
+      const resumed = session !== undefined && SESSION_ID.test(session) ? session : undefined;
 
-    if (launcher === "launch.ts" && !/--(?:kind|brief)\b/.test(text)) return [];
+      if (hasFlag(args, /^--(?:dry-run|help|version)(?:=|$)/)) return [];
 
-    if (
-      launcher === "pi-subagent" &&
-      !/--(?:append-)?system-prompt|--session-id|--name/.test(text)
-    ) {
-      return [];
-    }
+      if (launcher === "launch.ts" && !hasFlag(args, /^--(?:kind|brief)(?:=|$)/)) return [];
 
-    if (launcher === "spawn.sh") {
-      // spawn.sh <brief> <model> <thinking> <name> [owner]
-      const kind = /\bowner["']?\s*(?:[;&|)>]|$)/.test(text) ? "owner" : "delegate";
+      if (
+        launcher === "pi-subagent" &&
+        !hasFlag(args, /^--(?:(?:append-)?system-prompt|session-id|name)(?:=|$)/)
+      ) {
+        return [];
+      }
 
-      return [{ kind, role: "unknown", text }];
-    }
+      if (launcher === "spawn.sh") {
+        // spawn.sh <brief> <model> <thinking> <name> [owner]
+        return [
+          { kind: args.at(-1) === "owner" ? "owner" : "delegate", role: "unknown", text, resumed },
+        ];
+      }
 
-    return [
-      { kind: kindIn(text), role: /--role[ =]["']?([a-z-]+)/.exec(text)?.[1] ?? "unknown", text },
-    ];
+      const role = /^[a-z-]+/.exec(flagValue(args, "--role") ?? "")?.[0] ?? "unknown";
+
+      return [{ kind: kindIn(args), role, text, resumed }];
+    });
   });
 }
 
@@ -90,7 +117,7 @@ function launchCommands(command: string): LaunchCommand[] {
  */
 interface TerminalRun {
   readonly id: string;
-  /** The session file line the run starts at. */
+  /** The 0-based index of the session file line the run starts at. */
   readonly at: number;
   /** The top-level `bg_start` that reported starting it, absent for a run only reports show. */
   readonly startedBy: ToolOperation | undefined;
@@ -231,13 +258,6 @@ function terminalRuns(
   return runs;
 }
 
-/** Codemode cuts long recorded arguments and marks the cut with an ellipsis. */
-const CUT = /(?:\.\.\.|…)$/;
-
-export function launchesIn(jsonl: string, operations: readonly ToolOperation[]): Launch[] {
-  return launchCalls(jsonl, operations).launches;
-}
-
 /** The session's launches, and the calls that may have launched but are not counted. */
 export interface LaunchCalls {
   readonly launches: Launch[];
@@ -284,12 +304,17 @@ export function launchCalls(jsonl: string, operations: readonly ToolOperation[])
     const commands = launchCommands(fullCommand);
 
     commands.forEach((launch, index) => {
-      const resumed = /--session[ =]([0-9a-f]{8}-[0-9a-f-]{27})/.exec(launch.text)?.[1];
-      const child = reported[index] ?? (commands.length === 1 ? run?.child : undefined) ?? resumed;
+      const child =
+        reported[index] ?? (commands.length === 1 ? run?.child : undefined) ?? launch.resumed;
+
       const entry = operation.entryId ?? "-";
 
+      // A call that failed, such as one the delegate guard refused, and started no child ran
+      // no launch.
+      if (child === undefined && !operation.succeeded) return;
+
       if (cut && child === undefined) {
-        uncounted.push({ entry, command: launch.text });
+        uncounted.push({ entry });
 
         return;
       }

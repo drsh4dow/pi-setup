@@ -1,7 +1,7 @@
 ---
 name: swarm
 description: "Fan out N parallel workers, drain them, and return one report. Use for 'swarm this', or parallel coverage, races, gauntlets, and exploration."
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: false
 ---
 

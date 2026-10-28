@@ -1,7 +1,7 @@
 ---
 name: diagnosing-bugs
 description: Diagnosis loop for hard bugs and performance regressions. Use when the user says "diagnose", when a first fix attempt failed, or for an intermittent failure or a regression between two known states.
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: false
 ---
 

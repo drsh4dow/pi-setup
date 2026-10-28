@@ -1,7 +1,7 @@
 ---
 name: babysit
 description: Watch a GitHub PR or stack through review feedback, conflicts, and CI until it merges, closes, or reaches merge-ready. Use for "babysit this", "get it green", "address the bot comments", or "check on PR X". Opening a PR alone does not start it.
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: false
 ---
 

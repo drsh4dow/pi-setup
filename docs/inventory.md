@@ -7,9 +7,12 @@ skill's frontmatter.
 
 ### Installed skills
 
-"Who" says who starts a skill. **you**: only you, with `/skill:<name>`.
-**agent**: the agent loads it when its trigger matches, and it stays out of
-`/skill:`. **both**: either one.
+"Who" says who starts a skill. **agent**: the agent loads it, from its skill
+table when its trigger matches or by path from the router in `agent/SYSTEM.md`
+or another skill, and it stays out of `/skill:`. **you**: you start it with
+`/skill:<name>`, and it stays out of the agent's skill table, so the agent
+loads it only by path. **both**: it is in the agent's skill table and in
+`/skill:`.
 
 #### Agree on the problem
 
@@ -18,8 +21,8 @@ skill's frontmatter.
 | `grill-with-docs`      | you   | Get interviewed hard, and write the glossary and ADRs as you go |
 | `prototype`            | agent | Build a throwaway that settles a design question                |
 | `research`             | agent | Answer a question from primary sources in a background agent    |
-| `to-spec`              | both  | Turn the conversation into a spec ticket                        |
-| `to-tickets`           | both  | Split the spec into tickets under it, with blocking edges       |
+| `to-spec`              | you   | Turn the conversation into a spec ticket                        |
+| `to-tickets`           | you   | Split the spec into tickets under it, with blocking edges       |
 | `triage`               | you   | Make tickets others wrote agent-ready, as a spec over tickets   |
 | `grilling`             | agent | Question a plan hard when you say "grill me"                    |
 | `writing-good-tickets` | agent | Write one ticket an agent can take to one PR                    |
@@ -30,11 +33,11 @@ skill's frontmatter.
 | --------------------------- | ----- | ---------------------------------------------------------- |
 | `architect`                 | agent | Sketch types and signatures, then stop for review          |
 | `arena`                     | agent | Run N candidates, keep the best, graft in the rest         |
-| `code-review`               | both  | Review a branch with one persona subagent per lens         |
+| `code-review`               | you   | Review a branch with one persona subagent per lens         |
 | `babysit`                   | agent | Answer review threads and fix CI until merge-ready         |
 | `subagents`                 | agent | Delegate, with the model for each role                     |
 | `swarm`                     | agent | Fan out parallel workers and merge one report              |
-| `show-me-your-work`         | both  | Log each decision, audit it, and get a second-model review |
+| `show-me-your-work`         | you   | Log each decision, audit it, and get a second-model review |
 | `background-terminals`      | agent | Run services, watchers, and subagents alongside work       |
 | `tdd`                       | agent | Test-first loop for features and bug fixes                 |
 | `diagnosing-bugs`           | agent | Find the cause of a hard bug through a red loop            |
@@ -55,7 +58,7 @@ skill's frontmatter.
 | `maintain-verification-skill` | you   | Bring `verify-<app>` back in line with the app              |
 | `agent-browser`               | agent | Drive a browser or Electron app                             |
 | `benchmark-checklist`         | agent | Vet a performance number before you trust it                |
-| `hillclimb`                   | both  | Push one metric to a target, one measured attempt at a time |
+| `hillclimb`                   | you   | Push one metric to a target, one measured attempt at a time |
 | `blast-radius`                | agent | Find what a change breaks outside the diff                  |
 | `dumpfile`                    | agent | Publish screenshots and recordings as PR evidence           |
 
@@ -66,7 +69,7 @@ skill's frontmatter.
 | `improve-codebase-architecture`      | you   | Find modules that expose more than they do               |
 | `create-formal-verification-skill`   | you   | Model-check or prove the code where a bug costs the most |
 | `maintain-formal-verification-skill` | you   | Update the model when the code changes                   |
-| `statechart`                         | both  | Draw a TLA+ model's states, with each bug as a path      |
+| `statechart`                         | you   | Draw a TLA+ model's states, with each bug as a path      |
 | `correct`                            | you   | Turn a repeated agent mistake into a type, lint, or test |
 | `teach`                              | you   | Explain a body of work so a person understands it        |
 | `domain-modeling`                    | agent | Sharpen terms in `GLOSSARY.md` and record ADRs           |
@@ -81,7 +84,7 @@ skill's frontmatter.
 | `setup-sh4dow-skills` | you   | Record a repo's tracker, domain docs, and standards      |
 | `reflect`             | you   | Route each lesson from a session to a skill or the repo  |
 | `automate-me`         | you   | Capture your working style as a skill                    |
-| `eval`                | both  | Measure a skill or prompt change on blinded agent runs   |
+| `eval`                | you   | Measure a skill or prompt change on blinded agent runs   |
 | `recall`              | agent | Look up an earlier chat or what came before compaction   |
 | `catchup`             | you   | Hear what changed since your last message, and each call |
 | `catchup-video`       | you   | Watch the catchup as a short narrated video              |

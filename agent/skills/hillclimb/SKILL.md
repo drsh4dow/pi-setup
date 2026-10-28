@@ -1,7 +1,7 @@
 ---
 name: hillclimb
 description: "Improve one metric against a target through a loop of measured hypotheses: a frozen harness, a keep-or-revert call per attempt, a decision log, and one commit per kept win. Use for 'hillclimb X', or sustained work to push a speed, size, score, or other number to a target. A one-off perf fix is not a hillclimb."
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: true
 ---
 

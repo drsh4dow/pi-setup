@@ -280,20 +280,26 @@ test("reports each Who entry that disagrees with its skill's frontmatter", (t) =
   ]);
 });
 
-test("reports a skill whose frontmatter leaves no one able to start it", (t) => {
-  const root = repository(t, whoInventory({ example: "both", stuck: "you" }), {
-    "agent/skills/stuck/SKILL.md": skill({
-      "disable-model-invocation": true,
-      "user-invokable": false,
-    }),
+test("lists a skill hidden from the model and from /skill: as the agent's, which reaches it by path", (t) => {
+  const library = skill({ "disable-model-invocation": true, "user-invokable": false });
+
+  const listedAsYours = repository(t, whoInventory({ example: "both", library: "you" }), {
+    "agent/skills/library/SKILL.md": library,
   });
 
-  const result = run(root);
-  assert.notEqual(result.status, 0);
+  const mismatch = run(listedAsYours);
+  assert.notEqual(mismatch.status, 0);
   assert.equal(
-    result.stderr.trim(),
-    "agent/skills/stuck/SKILL.md: disable-model-invocation: true and user-invokable: false leave no one able to start it",
+    mismatch.stderr.trim(),
+    "docs/inventory.md Installed skills: library is listed as you, agent/skills/library/SKILL.md frontmatter makes it agent",
   );
+
+  const listedAsTheAgents = repository(t, whoInventory({ example: "both", library: "agent" }), {
+    "agent/skills/library/SKILL.md": library,
+  });
+
+  const result = run(listedAsTheAgents);
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("reports a skill whose frontmatter does not parse instead of crashing", (t) => {

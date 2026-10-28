@@ -1,7 +1,7 @@
 ---
 name: web-search
 description: Find and read live web sources when the answer needs evidence unavailable in the current context.
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: false
 ---
 

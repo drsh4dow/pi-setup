@@ -49,14 +49,15 @@ skill's frontmatter.
 
 #### Test it on the real app
 
-| Skill                         | Who   | Use it to                                                 |
-| ----------------------------- | ----- | --------------------------------------------------------- |
-| `create-verification-skill`   | you   | Generate `verify-<app>`, which drives the app like a user |
-| `maintain-verification-skill` | you   | Bring `verify-<app>` back in line with the app            |
-| `agent-browser`               | agent | Drive a browser or Electron app                           |
-| `benchmark-checklist`         | agent | Vet a performance number before you trust it              |
-| `blast-radius`                | agent | Find what a change breaks outside the diff                |
-| `dumpfile`                    | agent | Publish screenshots and recordings as PR evidence         |
+| Skill                         | Who   | Use it to                                                   |
+| ----------------------------- | ----- | ----------------------------------------------------------- |
+| `create-verification-skill`   | you   | Generate `verify-<app>`, which drives the app like a user   |
+| `maintain-verification-skill` | you   | Bring `verify-<app>` back in line with the app              |
+| `agent-browser`               | agent | Drive a browser or Electron app                             |
+| `benchmark-checklist`         | agent | Vet a performance number before you trust it                |
+| `hillclimb`                   | both  | Push one metric to a target, one measured attempt at a time |
+| `blast-radius`                | agent | Find what a change breaks outside the diff                  |
+| `dumpfile`                    | agent | Publish screenshots and recordings as PR evidence           |
 
 #### Keep the codebase easy to work in
 

@@ -1,7 +1,7 @@
 ---
 name: tdd
 description: "Test-first red-green loop for features and bug fixes. Use when building a feature or fixing a bug whose behavior has a cheap local test target, or when the user asks for TDD, a failing test, or a regression test. Skip when the test path is unclear, expensive, or integration-heavy."
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: false
 ---
 

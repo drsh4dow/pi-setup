@@ -1,7 +1,7 @@
 ---
 name: eval
 description: "Measure how a skill, prompt, system-prompt, or agent-file change affects agent behavior before promoting it: blinded candidates on an organic task, a hidden rubric, one blinded judge, and a check of each candidate's transcript. Use for 'eval this change', or before merging a change whose only test is how agents behave."
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: true
 ---
 

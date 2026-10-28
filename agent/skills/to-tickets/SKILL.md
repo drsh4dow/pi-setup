@@ -1,7 +1,7 @@
 ---
 name: to-tickets
 description: Break a plan, spec, or the current conversation into tracer-bullet tickets, each declaring its blocking edges, published to the project's issue tracker. Use when the user asks to split a spec or plan into tickets or issues.
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: true
 ---
 

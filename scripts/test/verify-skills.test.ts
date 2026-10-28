@@ -204,6 +204,7 @@ test("fails on an agent/skills SKILL.md that leaves an invocation flag to its de
       'disable-model-invocation: "false"\nuser-invokable: false\n',
     ),
     [project]: skillManifest(project, "Project skills keep the defaults.", ""),
+    "agent/prompts/route.md": "Load the **half-flagged** skill.\n",
   });
 
   const result = run(root);
@@ -256,4 +257,74 @@ test("loads .agents/skills and nested skills in the layout a session uses", (t) 
   execFileSync("git", ["add", "--all"], { cwd: root });
   const fixed = run(root);
   assert.equal(fixed.status, 0, fixed.stderr);
+});
+
+const HIDDEN_FLAGS = "disable-model-invocation: true\nuser-invokable: false\n";
+
+function unreachable(path: string) {
+  return `${path}: hidden from the model (disable-model-invocation: true), and no router entry, skill, role prompt, or mode prompt points to it`;
+}
+
+test("fails on a hidden skill that no router entry, skill, role prompt, or mode prompt points to", (t) => {
+  const library = "agent/skills/library/SKILL.md";
+  const visible = "agent/skills/visible/SKILL.md";
+
+  const root = repository(t, {
+    [library]: `${skillManifest(library, "A library skill.", HIDDEN_FLAGS)}See ~/.pi/agent/skills/library/SKILL.md.\n`,
+    "agent/skills/library/notes.md": "Back to the **library** skill.\n",
+    [visible]: skillManifest(visible, "A visible skill."),
+    "README.md": "Read `~/.pi/agent/skills/library/SKILL.md`, or run `/skill:library`.\n",
+    "docs/guide.md": "Use the **library** skill.\n",
+  });
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stderr.trim(), unreachable(library));
+});
+
+test("passes once a router entry, skill, role prompt, or mode prompt points to a hidden skill", (t) => {
+  const library = "agent/skills/library/SKILL.md";
+  const visible = "agent/skills/visible/SKILL.md";
+
+  const pointers = {
+    "agent/system/general.md": "| Write a spec | `~/.pi/agent/skills/library/SKILL.md` |\n",
+    "agent/SYSTEM.md": "| Write a spec | `~/.pi/agent/skills/library/SKILL.md` |\n",
+    "agent/system/roles/delegate/implementer.md": "Load the **library** skill.\n",
+    "agent/system/sh4dow.md": "Run `/skill:library` first.\n",
+    "agent/prompts/handoff.md": "Then load the **library** skill.\n",
+    [visible]: `${skillManifest(visible, "A visible skill.")}Read ~/.pi/agent/skills/library/SKILL.md.\n`,
+  };
+
+  for (const [path, pointer] of Object.entries(pointers)) {
+    const root = repository(t, {
+      [library]: skillManifest(library, "A library skill.", HIDDEN_FLAGS),
+      [visible]: skillManifest(visible, "A visible skill."),
+      [path]: pointer,
+    });
+
+    const result = run(root);
+    assert.equal(result.status, 0, `${path}: ${result.stderr}`);
+  }
+});
+
+test("fails on a router path that names a skill Pi does not load", (t) => {
+  const visible = "agent/skills/visible/SKILL.md";
+
+  const root = repository(t, {
+    [visible]: skillManifest(visible, "A visible skill."),
+    "agent/system/general.md": [
+      "| Task | Skill |",
+      "| --- | --- |",
+      "| Explain | `~/.pi/agent/skills/visible/SKILL.md` |",
+      "| Write a spec | `~/.pi/agent/skills/gone/SKILL.md` |",
+      "",
+    ].join("\n"),
+  });
+
+  const result = run(root);
+  assert.notEqual(result.status, 0);
+  assert.equal(
+    result.stderr.trim(),
+    'agent/system/general.md:4: points to skill "gone", which Pi does not load',
+  );
 });

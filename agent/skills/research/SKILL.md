@@ -1,7 +1,7 @@
 ---
 name: research
 description: Investigate a question against primary sources in a background subagent and save the cited findings to the state folder. Use when the user wants a topic researched across sources or reading legwork delegated. For a single docs or API fact, use docs-search instead.
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: false
 ---
 

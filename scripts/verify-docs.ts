@@ -190,14 +190,16 @@ type InvocationFlags = {
   readonly "user-invokable"?: unknown;
 };
 
-// Pi hides a skill from the model only on an explicit `disable-model-invocation: true`.
-function whoFromFrontmatter(frontmatter: InvocationFlags): Who | "nobody" {
-  const modelCanStart = frontmatter["disable-model-invocation"] !== true;
+// Pi hides a skill from the model's table only on an explicit `disable-model-invocation: true`.
+// A skill that /skill: leaves out is the agent's alone: it starts the skill from its table, or by
+// path when the skill is a library skill (GLOSSARY.md) hidden from that table.
+function whoFromFrontmatter(frontmatter: InvocationFlags): Who {
+  const inSkillTable = frontmatter["disable-model-invocation"] !== true;
   const userCanStart = allowsUserInvocation(frontmatter);
 
-  if (modelCanStart) return userCanStart ? "both" : "agent";
+  if (!userCanStart) return "agent";
 
-  return userCanStart ? "you" : "nobody";
+  return inSkillTable ? "both" : "you";
 }
 
 const skillWho = new Map<string, Who>();
@@ -220,15 +222,7 @@ for (const path of files) {
     continue;
   }
 
-  const who = whoFromFrontmatter(frontmatter);
-
-  if (who === "nobody") {
-    errors.push(
-      `${path}: disable-model-invocation: true and user-invokable: false leave no one able to start it`,
-    );
-  } else {
-    skillWho.set(name, who);
-  }
+  skillWho.set(name, whoFromFrontmatter(frontmatter));
 }
 
 function tableCells(line: string) {

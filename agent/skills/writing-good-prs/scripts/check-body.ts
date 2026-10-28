@@ -349,6 +349,27 @@ function historyWarnings(body: Body): Finding[] {
   });
 }
 
+// The forms that held most of the 65 open questions found in 2,439 3yhealth PRs, Aug-Oct 2026.
+// "should we", "not sure whether" and "confirm with" matched 36 passages there, and only 1 was one.
+// "Open question" outside a heading and "the owner's call" mostly named a Nexus entity or a decision made.
+const openQuestion =
+  /^\s*(#+|\*\*|- \*\*)\s*(open |unresolved )?questions?\b|\bquestions? for (the )?reviewers?\b|\bTBD\b|\bneeds? (a )?decision\b|\b(your|the reviewer'?s?|product'?s?) call\b|\blet me know\b|\bconfirm[.!?]?\s*$/i;
+
+function openQuestionWarnings(body: Body): Finding[] {
+  return proseLines(body.lines).flatMap((line) => {
+    const match = line.text.match(openQuestion);
+
+    if (match === null) return [];
+
+    return [
+      {
+        where: line.number,
+        message: `warning: "${match[0]}" may leave a choice open, settle it before review or keep the PR a draft`,
+      },
+    ];
+  });
+}
+
 function titleFindings(kind: Kind, title: string): Finding[] {
   const length = [...title].length;
   const form = titleFormFindings(kind, title);
@@ -421,7 +442,7 @@ function main(): number {
     ...headingFindings(body, shape),
     ...contentFindings(args.kind, body),
   ];
-  const warnings = args.kind === "pr" ? historyWarnings(body) : [];
+  const warnings = args.kind === "pr" ? [...historyWarnings(body), ...openQuestionWarnings(body)] : [];
 
   for (const finding of [...problems, ...warnings].sort((a, b) => order(a) - order(b))) {
     console.log(`${args.bodyFile}:${finding.where}: ${finding.message}`);

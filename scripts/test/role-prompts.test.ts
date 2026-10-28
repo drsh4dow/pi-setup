@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import test from "node:test";
 
-import { ROLES } from "../../agent/skills/subagents/scripts/brief.ts";
+import { promptRole, ROLES } from "../../agent/skills/subagents/scripts/brief.ts";
 
 const root = new URL("../..", import.meta.url).pathname;
 
@@ -22,8 +22,11 @@ const coreBlocks = readFileSync(join(root, "agent/system/core.md"), "utf8")
   .map((block) => block.trim())
   .filter((block) => block !== "");
 
-test("every launcher role has one role part, and every role part is a launcher role", () => {
-  assert.deepEqual(roleParts.map(({ role }) => role).toSorted(), [...ROLES].toSorted());
+test("every launcher role runs on one role part, and every role part is a launcher role", () => {
+  assert.deepEqual(
+    roleParts.map(({ role }) => role).toSorted(),
+    [...new Set(ROLES.map(promptRole))].toSorted(),
+  );
 });
 
 for (const { kind, role } of roleParts) {

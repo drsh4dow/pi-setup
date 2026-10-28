@@ -18,7 +18,7 @@ A **unit** is the scope of one brief: a ticket, a chain, a fix scope, a merge, o
 
 Launch every subagent from a brief per the **subagents** skill, with `--role` and `--orders <state folder>/orders.md`. Pass context as pointers, not copies. Give new work, whether a fix round, a follow-up, a retry, or the next queue item, to a fresh subagent with consolidated scope: the original brief, every later directive, and the prior subagent's report and branch. Resume a session only for state that is costly to move, because chained resumes silently drop directives.
 
-Roles. The babysitter is an owner and the rest are delegates. The verifier, live verifier, and brief auditor run as the subagents skill's `cross-family reviewer`.
+Roles. The babysitter is an owner and the rest are delegates. The verifier, live verifier, and brief auditor launch with their own role, which runs on the other family's model by default.
 
 - `explorer`: contract notes and exploration notes, in `notes/`.
 - `implementer`: one ticket, chain, or fix scope, delivered as one intermediate PR.
@@ -102,7 +102,7 @@ Start once every ticket of a final PR has merged into its integration branch. Ev
 
 1. Run the **code-review** skill yourself on the integration branch against its base. It compares the code against the whole spec, so it runs only here, and its simplification lens is the chunk's simplify pass. Have one implementer fix every finding, with focused checks for each fixed finding as its VERIFY, and record its self-reported row as the fix PR's verdict. Then stop. A second broad review loops for hours.
 2. Have a verifier record the integration head's verdict, with a witness per Verification for each lane. This verdict covers the fix round. It includes a **regression lane against the base branch**: the same load-bearing scenario at base and head. If base does not have the feature, the lane records that fact and gates the behavior the diff adds plus the end state the user waits for.
-3. While that verifier runs, have a PR writer draft the final PR's body to a file, then have a `cross-family reviewer` delegate run the expert read the writer hands back. Once the verdict lands, have a fresh PR writer apply the expert read, paste the verdict's witnesses, and open the final PR, ready, from the integration branch to the base branch, or to its parent's integration branch for a dependent final PR. Post what each `Part of` ticket still owes as a comment on that ticket.
+3. While that verifier runs, have a PR writer draft the final PR's body to a file, then have a delegate launched with `--role cross-family-reviewer` run the expert read the writer hands back. Once the verdict lands, have a fresh PR writer apply the expert read, paste the verdict's witnesses, and open the final PR, ready, from the integration branch to the base branch, or to its parent's integration branch for a dependent final PR. Post what each `Part of` ticket still owes as a comment on that ticket.
 
 ### 6. Babysit until merged
 

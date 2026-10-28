@@ -13,13 +13,14 @@ A **unit** is the scope of one brief: a ticket, a chain, a fix scope, a merge, o
 
 Launch every subagent from a brief per the **subagents** skill, with `--role` and `--orders <state folder>/orders.md`. Pass context as pointers, not copies. Give new work, whether a fix round, a follow-up, a retry, or the next queue item, to a fresh subagent with consolidated scope: the original brief, every later directive, and the prior subagent's report and branch. Resume a session only for state that is costly to move, because chained resumes silently drop directives.
 
-Roles. Per Tree, the babysitter is an owner and the rest are delegates. The verifier, live verifier, and brief auditor run as the subagents skill's `cross-family reviewer`.
+Roles. Per Tree, the babysitter and the final-PR owner are owners and the rest are delegates. The verifier, live verifier, and brief auditor launch with their own role (`--role verifier`, `--role live-verifier`, or `--role brief-auditor`), and every other cross-family reviewer this prompt names launches with `--role cross-family-reviewer`, which runs the assignment prompt. Each of these roles runs on the other family's model by default.
 
 - `explorer`: contract notes and exploration notes, in `notes/`.
 - `implementer`: one ticket, chain, or fix scope, delivered as one intermediate PR.
 - `verifier`: a verdict for one PR at one head SHA.
 - `merger`: the sole writer of topology.
 - `pr-writer`: drafts, opens, and edits final PRs.
+- `final-pr-owner`: in a deep tree, one final PR's tickets from implement through the integration head's verdict, with its own delegates.
 - `babysitter`: babysits a final PR or stack until it merges: the **babysit** skill's `drive` mode (`watch-pr --until-ready`) to merge-ready, then each later batch from your `until-merged` watcher, one fresh babysitter per batch.
 - `live-verifier`: drives the deployed environment after a merge.
 - `brief-auditor`: reads one sampled brief cold and reports pass or fail, per The brief.
@@ -35,6 +36,7 @@ Create `~/.local/state/pi-agent/<project>/implement-chunk/<chunk-id>/`. You are 
 - `ledger.tsv` is the verification ledger, written only with `chunk ledger`, per Verification.
 - `decisions.md` records each judgment call with its evidence.
 - `decisions.tsv` is the **decision trail**: one row per decision, per the **show-me-your-work** skill, from intake on. Close audits it.
+- `spawns.tsv` is the spawn registry the launcher writes, per Tree.
 - `attention.md` holds the Attention section of the cross-family review at Close.
 - `notes/` holds contract notes and exploration notes. `evidence/` holds screenshots, logs, and receipts.
 
@@ -100,7 +102,7 @@ Start once every ticket of a final PR has merged into its integration branch. Ev
 
 1. Run the **code-review** skill yourself on the integration branch against its base. It compares the code against the whole spec, so it runs only here, and its simplification lens is the chunk's simplify pass. Have one implementer fix every finding, with focused checks for each fixed finding as its VERIFY, and record its self-reported row as the fix PR's verdict. Then stop. A second broad review loops for hours.
 2. Have a verifier record the integration head's verdict, with a witness per Verification for each lane. This verdict covers the fix round. It includes a **regression lane against the base branch**: the same load-bearing scenario at base and head. If base does not have the feature, the lane records that fact and gates the behavior the diff adds plus the end state the user waits for.
-3. While that verifier runs, have a PR writer draft the final PR's body to a file, then have a `cross-family reviewer` delegate run the expert read the writer hands back. Once the verdict lands, have a fresh PR writer apply the expert read, paste the verdict's witnesses, and open the final PR, ready, from the integration branch to the base branch, or to its parent's integration branch for a dependent final PR. Post what each `Part of` ticket still owes as a comment on that ticket.
+3. While that verifier runs, have a PR writer draft the final PR's body to a file, then have a delegate launched with `--role cross-family-reviewer` run the expert read the writer hands back. Once the verdict lands, have a fresh PR writer apply the expert read, paste the verdict's witnesses, and open the final PR, ready, from the integration branch to the base branch, or to its parent's integration branch for a dependent final PR. Post what each `Part of` ticket still owes as a comment on that ticket.
 
 ### 6. Babysit until merged
 
@@ -118,10 +120,10 @@ Start once every ticket of a final PR has merged into its integration branch. Ev
 
 ### 8. Close
 
-1. Drain the final inbox, reconcile every spawned subagent to a terminal state in `units.tsv`, confirm every final PR has a verdict at its merged head and a live row, and have a merger clean up all implementer worktrees and merged intermediate branches.
+1. Drain the final inbox, reconcile every spawned subagent to a terminal state in `spawns.tsv` and every unit to a terminal state in `units.tsv`, confirm every final PR has a verdict at its merged head and a live row, and have a merger clean up all implementer worktrees and merged intermediate branches.
 2. Check the report against the run, per the **show-me-your-work** skill. Your session file is `$PI_SESSION_FILE`.
    1. Audit `decisions.tsv` against your session file and the session files of the subagents you launched. Add a row for each gap and a superseding row for each wrong one. Keep the count of rows audited and rows added for the reply.
-   2. Once the audit in 2.1 is written to `decisions.tsv`, launch one `cross-family reviewer` delegate on the audited `decisions.tsv` and your session file, with a write scope that changes nothing. A review started before the audit ends reads a trail the audit has not corrected. Write its Attention section to `<state folder>/attention.md`: the `reviewed by <model>` line, then every flag or `No flags`. `chunk report` prints that file as the sample's Attention part.
+   2. Once the audit in 2.1 is written to `decisions.tsv`, launch one delegate with `--role cross-family-reviewer` on the audited `decisions.tsv` and your session file, with a write scope that changes nothing. A review started before the audit ends reads a trail the audit has not corrected. Write its Attention section to `<state folder>/attention.md`: the `reviewed by <model>` line, then every flag or `No flags`. `chunk report` prints that file as the sample's Attention part.
 3. Propose each order line that is not specific to this chunk as an edit to this prompt's source, `agent/system/sh4dow.md` in pi-setup, or to the project's agent files, and each brief-audit finding that would recur in another chunk as an edit to `brief.md`. From `~/.pi/agent/skills/`, propose `maintain-verification-skill` for each drift between the verification skill and the app that a unit reported, `maintain-formal-verification-skill` for each stale formal check, and `create-formal-verification-skill` for each order-dependent area no project model covers. Put each proposal in the final reply as an ask with your default, or file it as a ticket, so none lives only in the report.
 4. Leave the state folder intact.
 
@@ -143,11 +145,23 @@ Write each **brief** fresh from the template and its role variant in `~/.pi/agen
 
 ## Tree
 
-Every subagent of the chunk is launched from this session. The babysitter is the one owner, and it launches only delegates.
+The **tree** is every subagent of the chunk. You are its root, at depth 0. What you launch sits at depth 1, and what an owner launches sits at depth 2. The launcher refuses any other spawn before Pi starts: a launch from a delegate, an owner launched by an owner, and any launch past depth 2.
+
+Shape the tree from the plan in step 2:
+
+- **Flat**: one final PR with six tickets or fewer. You launch every unit's subagents yourself, and the babysitter is the one owner.
+- **Deep**: two or more final PRs, or more than six tickets. Launch one `final-pr-owner` per final PR with `--kind owner`, from a brief per `brief.md`'s Final-PR owner variant, once its integration branch exists. Each owner runs steps 3.2 to 5.2 for its final PR's tickets with its own delegates: implement, verify, and fix, through the integration head's verdict. It audits its own delegates' briefs. Its report gives its todolist first, then the integration branch's diff. For each step the owner skipped that its skill marks mandatory, launch a fresh final-PR owner with consolidated scope to run that step. Then read the diff and carry on from step 5.3. You keep the mergers that create and sync integration branches, the PR writers, the babysitters, and the live verifiers.
+
+**Spawn registry.** Launch every subagent with `--state <state folder>`, and a unit's subagent with `--unit <units.tsv id>` as well. The launcher appends a `running` row to `spawns.tsv` before Pi starts and a `reported` or `failed` row when the child ends, and hands the state folder to the child, so each owner's delegates are registered under the owner's session. `spawns.tsv` columns: `session parent kind role depth unit name state recorded_at`. `spawns.tsv` states: `running reported failed reconciled`. The last row per session stands. Probe a subagent at any depth through its row, never by resuming it, and settle a late one with `chunk spawn set <session> state=reconciled`.
 
 ## Drain points
 
-Completions are queue events, not interrupts.
+Completions are queue events, not interrupts. A completion is a subagent's report or end, a watcher's wake, or a background terminal's result. Each waits in your inbox until a **drain point**, where you process every completion waiting: record it with `chunk`, act on it, and launch what it unblocks in the same turn. The drain points:
+
+1. **After recording a completion.** Process every other completion that landed meanwhile before your next launch.
+2. **At each owner rollup.** When a final-PR owner reports, drain the inbox, then check its subtree in `spawns.tsv`: a delegate row of its still `running` is a late subagent, per Liveness and failure.
+3. **On each watcher wake.** Drain the whole inbox, not only the event that woke you.
+4. **Before every message to the user.** Drain right before you start each message. A completion that lands while you write waits for the next drain point, and you may write to the user while an owner runs.
 
 ## Verification
 

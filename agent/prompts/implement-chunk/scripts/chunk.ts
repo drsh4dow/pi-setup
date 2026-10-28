@@ -1,21 +1,13 @@
 #!/usr/bin/env node
 
-// The implement-chunk lead's bookkeeping CLI: it writes units.tsv and ledger.tsv in the state
+// The coordinator's bookkeeping CLI: it writes units.tsv, ledger.tsv, and spawns.tsv in the state
 // folder and prints the merge-ready report from them and the live PRs.
 //
 // Exit codes: 0 clean, 1 a violation (not merge-ready, trees differ), 2 could not run or
 // refused input.
 
 import { spawnSync } from "node:child_process";
-import {
-  appendFileSync,
-  existsSync,
-  linkSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -42,6 +34,8 @@ import {
   parseLedger,
   parseUnits,
 } from "./state.ts";
+import { createWhole, withLock } from "./lock.ts";
+import { writeSpawn } from "./spawns.ts";
 import { Refusal, tsvLine } from "./tsv.ts";
 
 const USAGE = `Usage: chunk.ts --state <dir> <command>
@@ -50,6 +44,8 @@ const USAGE = `Usage: chunk.ts --state <dir> <command>
   ledger carry <pr> <new-sha> <from-sha> [-C <repo-dir>]
   unit add <id> <column>=<value>...
   unit set <id> <column>=<value>...
+  spawn add <session> <column>=<value>...
+  spawn set <session> <column>=<value>...   (kind, role, and unit stay as spawn add recorded them)
   report
 
 The state folder comes from --state, else $IMPLEMENT_CHUNK_STATE.
@@ -119,24 +115,6 @@ function runMode(state: string): RunMode {
 }
 
 /**
- * Creates the ledger with its header unless another writer got there first. The header lands
- * whole, by a hard link of a finished file, so a concurrent writer never reads it half written.
- */
-function createLedger(path: string, columns: readonly LedgerColumn[]): void {
-  const temporary = `${path}.${process.pid}.tmp`;
-
-  writeFileSync(temporary, `${tsvLine(columns)}\n`);
-
-  try {
-    linkSync(temporary, path);
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-  } finally {
-    rmSync(temporary, { force: true });
-  }
-}
-
-/**
  * Appends one row, and never rewrites what the ledger holds, so concurrent writers and older
  * CLI versions can share it. The run mode fixes the header of a ledger created now.
  */
@@ -181,7 +159,7 @@ function appendVerdict(state: string, verdict: NewVerdict): Result {
   const row = `${tsvLine(columns.map((column) => cells[column]))}\n`;
 
   if (existing === null) {
-    createLedger(path, columns);
+    createWhole(path, `${tsvLine(columns)}\n`);
 
     // ledgerColumnsOf returns one of the two column constants, so they compare by identity.
     if (ledgerColumnsOf(path, readFileSync(path, "utf8")) !== columns) {
@@ -335,22 +313,34 @@ const NEW_UNIT: Partial<Record<UnitColumn, string>> = {
   state: "planned",
 };
 
-function writeUnit(path: string, mode: string, args: readonly string[]): Result {
+type Action = "add" | "set";
+
+function writeUnit(path: string, action: Action, args: readonly string[]): Result {
   const [id = "", ...assignments] = args;
 
-  if (id === "" || (mode === "set" && assignments.length === 0)) {
-    throw new Refusal(`unit ${mode} takes <id> <column>=<value>...`);
+  if (id === "" || (action === "set" && assignments.length === 0)) {
+    throw new Refusal(`unit ${action} takes <id> <column>=<value>...`);
   }
 
   const values = columnValues(assignments);
+
+  return withLock(path, () => replaceUnit(path, action, id, values));
+}
+
+function replaceUnit(
+  path: string,
+  action: Action,
+  id: string,
+  values: ReadonlyMap<string, string>,
+): Result {
   const text = readIfPresent(path);
   const rows = text === null ? [] : parseUnits(path, text);
   const lines = rows.map((row) => row.cells.slice());
   const existing = lines.find((cells) => cells[0] === id);
 
-  if (mode === "add" && existing !== undefined) throw new Refusal(`${path}: unit ${id} exists`);
+  if (action === "add" && existing !== undefined) throw new Refusal(`${path}: unit ${id} exists`);
 
-  if (mode === "set" && existing === undefined) throw new Refusal(`${path}: no unit ${id}`);
+  if (action === "set" && existing === undefined) throw new Refusal(`${path}: no unit ${id}`);
 
   const cells =
     existing ?? UNIT_COLUMNS.map((column) => NEW_UNIT[column] ?? (column === "id" ? id : ""));
@@ -371,7 +361,7 @@ function writeUnit(path: string, mode: string, args: readonly string[]): Result 
     cells[index] ? [`${column}=${cells[index]}`] : [],
   );
 
-  return { out: `${path}: ${mode} ${filled.join(" ")}`, exit: 0 };
+  return { out: `${path}: ${action} ${filled.join(" ")}`, exit: 0 };
 }
 
 function lookupPr(ref: PrRef): Lookup {
@@ -467,6 +457,10 @@ function run(argv: readonly string[]): Result {
 
   if (group === "unit" && (command === "add" || command === "set")) {
     return writeUnit(join(state, "units.tsv"), command, args);
+  }
+
+  if (group === "spawn" && (command === "add" || command === "set")) {
+    return { out: writeSpawn(join(state, "spawns.tsv"), command, args), exit: 0 };
   }
 
   if (group === "report" && command === "") return report(state);

@@ -1,6 +1,6 @@
 # Tool-call guards
 
-Two extensions refuse a bash call before it runs, and the model reads the refusal as the tool result. The host guard (`host-guard`) runs in every session and refuses a kill by name or pattern and a glob delete under `/tmp`. `delegate-guard` runs only in a delegate session, one whose Pi was started with `--system-prompt` set to a role prompt under `agent/system/generated/delegate/`, and refuses any subagent launch there. An allowed command runs as usual.
+Two extensions refuse a bash call before it runs, and the model reads the refusal as the tool result. The host guard (`host-guard`) runs in every session and refuses a kill by name or pattern and a glob delete under `/tmp`. `delegate-guard` runs only in a delegate session, one whose Pi was started with `--system-prompt` set to a role prompt under `agent/system/generated/delegate/`, and refuses any subagent launch there. In an owner session, one on a role prompt under `agent/system/generated/owner/`, it refuses every launch but a delegate's, so the tree stops at depth 2: root, owner, delegate. `launch.ts` enforces the same depth on its own, from the `PI_SUBAGENT_KIND` and `PI_SUBAGENT_TREE_DEPTH` it gives each child, and its tests cover that, so no drive here reaches it. An allowed command runs as usual.
 
 ## Sub-features
 

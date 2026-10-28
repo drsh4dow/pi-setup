@@ -1,5 +1,4 @@
-// The two state files the CLI owns. implement-chunk.md names these columns, and a test holds
-// the prompt and these lists equal.
+// The coordinator prompts name these columns, and tests hold the prompts and these lists equal.
 
 import { type PrRef, parsePrRef, samePr } from "./pull-request.ts";
 import { Refusal, type Row, parseTsv } from "./tsv.ts";
@@ -126,6 +125,83 @@ export function parseLedger(file: string, text: string): Verdict[] {
       evidence: cell("evidence"),
       risk,
       riskReason,
+    };
+  });
+}
+
+/**
+ * The spawn registry, `spawns.tsv`: every subagent of a chunk at every depth. A row is written
+ * when the launcher starts a subagent and again whenever its state changes, always appended, so
+ * launches that run at once never lose a row. The last row per session stands. `parent` is a
+ * session id or `root`, and `unit` is a units.tsv id or `-`.
+ */
+export const SPAWN_COLUMNS = [
+  "session",
+  "parent",
+  "kind",
+  "role",
+  "depth",
+  "unit",
+  "name",
+  "state",
+  "recorded_at",
+] as const;
+
+export type SpawnColumn = (typeof SPAWN_COLUMNS)[number];
+
+/** A spawn's `state`: `running` from its launch until the launcher sees it report or fail. */
+export const SPAWN_STATES = ["running", "reported", "failed", "reconciled"] as const;
+
+export type SpawnState = (typeof SPAWN_STATES)[number];
+
+export const SPAWN_KINDS = ["delegate", "owner"] as const;
+
+export type SpawnKind = (typeof SPAWN_KINDS)[number];
+
+/** One registry row: a subagent's place in the tree and its state as of `recordedAt`. */
+export interface Spawn {
+  readonly line: number;
+  readonly session: string;
+  readonly parent: string;
+  readonly kind: SpawnKind;
+  readonly role: string;
+  readonly depth: number;
+  readonly unit: string;
+  readonly name: string;
+  readonly state: SpawnState;
+  readonly recordedAt: string;
+}
+
+/** A depth below the root: 1 for what the coordinator launches, 2 for what an owner launches. */
+export function isSpawnDepth(text: string): boolean {
+  return /^[1-9]\d*$/.test(text);
+}
+
+export function parseSpawns(file: string, text: string): Spawn[] {
+  return parseTsv(file, text, SPAWN_COLUMNS).map(({ line, cells }) => {
+    const cell = (column: SpawnColumn) => cells[SPAWN_COLUMNS.indexOf(column)] ?? "";
+    const kind = SPAWN_KINDS.find((name) => name === cell("kind"));
+    const state = SPAWN_STATES.find((name) => name === cell("state"));
+    const depth = cell("depth");
+
+    if (kind === undefined || state === undefined || !isSpawnDepth(depth)) {
+      throw new Refusal(
+        `${file}:${line}: a spawn has a kind (${SPAWN_KINDS.join(", ")}), a depth of 1 or more, ` +
+          `and a state (${SPAWN_STATES.join(", ")}); got ${cells.join(" ")}`,
+      );
+    }
+
+    return {
+      line,
+      session: cell("session"),
+      parent: cell("parent"),
+      kind,
+      role: cell("role"),
+      depth: Number(depth),
+      unit: cell("unit"),
+      name: cell("name"),
+      state,
+      recordedAt: cell("recorded_at"),
     };
   });
 }

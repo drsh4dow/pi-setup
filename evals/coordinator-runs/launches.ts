@@ -1,0 +1,302 @@
+// Finds the subagent launches a session made and the child session each one started, from its
+// tool calls and from the background terminal reports the launcher printed into.
+
+import { Option, Schema } from "effect";
+import { argument, customMessages, type ToolOperation } from "../lib/session.ts";
+import { commandWords, withoutHeredocBodies } from "./shell.ts";
+
+export type Kind = "delegate" | "owner" | "unknown";
+
+export interface Launch {
+  /** The id of the entry whose tool call made the launch. */
+  readonly entry: string;
+  readonly kind: Kind;
+  readonly role: string;
+  readonly command: string;
+  /** The child session id, absent when no record names it. */
+  readonly child: string | undefined;
+}
+
+/**
+ * A call that may have launched, whose recorded command codemode cut short and which started no
+ * child session. The session does not hold the rest of the command, so whether it was a dry run
+ * cannot be told, and it is not counted as a launch.
+ */
+export interface UncountedLaunch {
+  readonly entry: string;
+  /** The launch command as recorded, up to the cut. */
+  readonly command: string;
+}
+
+// The subagents skill's launch.ts, raw pi-subagent, or the spawn.sh wrapper past chunks kept in
+// their state folder.
+const LAUNCHERS = new Set(["launch.ts", "pi-subagent", "spawn.sh"]);
+
+const CHILD_SESSION = /launch: session ([0-9a-f]{8}-[0-9a-f-]{27})/g;
+
+interface LaunchCommand {
+  readonly kind: Kind;
+  readonly role: string;
+  readonly text: string;
+}
+
+function kindIn(text: string): Kind {
+  const flag = /--kind[ =]["']?(delegate|owner)\b/.exec(text)?.[1];
+  const prompt = /(?:subagents\/|system\/generated\/)(delegate|owner)(?:\.md|\/)/.exec(text)?.[1];
+  const found = flag ?? prompt;
+
+  return found === "delegate" || found === "owner" ? found : "unknown";
+}
+
+/** The launches a command makes, one per launcher it runs, leaving out dry runs and help. */
+function launchCommands(command: string): LaunchCommand[] {
+  const shell = withoutHeredocBodies(command);
+
+  const starts = commandWords(shell).filter((word) =>
+    LAUNCHERS.has(word.text.split("/").pop() ?? ""),
+  );
+
+  return starts.flatMap((start, index) => {
+    const text = shell.slice(start.start, starts[index + 1]?.start ?? shell.length);
+    const launcher = start.text.split("/").pop();
+
+    if (/--dry-run|--help|--version/.test(text)) return [];
+
+    if (launcher === "launch.ts" && !/--(?:kind|brief)\b/.test(text)) return [];
+
+    if (
+      launcher === "pi-subagent" &&
+      !/--(?:append-)?system-prompt|--session-id|--name/.test(text)
+    ) {
+      return [];
+    }
+
+    if (launcher === "spawn.sh") {
+      // spawn.sh <brief> <model> <thinking> <name> [owner]
+      const kind = /\bowner["']?\s*(?:[;&|)>]|$)/.test(text) ? "owner" : "delegate";
+
+      return [{ kind, role: "unknown", text }];
+    }
+
+    return [
+      { kind: kindIn(text), role: /--role[ =]["']?([a-z-]+)/.exec(text)?.[1] ?? "unknown", text },
+    ];
+  });
+}
+
+/**
+ * One run of a background terminal. A resumed session's new Pi process numbers its terminals
+ * from `bt-1` again, so an id names a run only between one start and the next.
+ */
+interface TerminalRun {
+  readonly id: string;
+  /** The session file line the run starts at. */
+  readonly at: number;
+  /** The top-level `bg_start` that reported starting it, absent for a run only reports show. */
+  readonly startedBy: ToolOperation | undefined;
+  command: string | undefined;
+  child: string | undefined;
+}
+
+/** What one terminal report, at one line of the session file, says about one terminal. */
+interface TerminalReport {
+  readonly id: string;
+  readonly at: number;
+  readonly command: string | undefined;
+  readonly child: string | undefined;
+}
+
+const TerminalDetails = Schema.Struct({
+  terminals: Schema.Array(Schema.Struct({ id: Schema.String, command: Schema.String })),
+});
+
+const decodeTerminalDetails = Schema.decodeUnknownOption(TerminalDetails);
+
+const decodeEntryId = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ id: Schema.String })),
+);
+
+/** The line each entry id sits on in the session file. */
+function entryLines(jsonl: string): Map<string, number> {
+  const lines = new Map<string, number>();
+
+  jsonl.split("\n").forEach((line, index) => {
+    const entry = decodeEntryId(line);
+
+    if (Option.isSome(entry)) lines.set(entry.value.id, index);
+  });
+
+  return lines;
+}
+
+function reportsIn(text: string, at: number, commands: ReadonlyMap<string, string>) {
+  const reports: TerminalReport[] = [];
+
+  for (const block of text.split(/^(?=bt-\d+ \[)/m)) {
+    const id = /^(bt-\d+) \[/.exec(block)?.[1];
+
+    if (id === undefined) continue;
+
+    reports.push({
+      id,
+      at,
+      command: commands.get(id) ?? /^command: (.*)$/m.exec(block)?.[1],
+      child: [...block.matchAll(CHILD_SESSION)][0]?.[1],
+    });
+  }
+
+  return reports;
+}
+
+/** Every terminal run the session shows, from its starts and from the reports that follow them. */
+function terminalRuns(
+  jsonl: string,
+  operations: readonly ToolOperation[],
+  lineOf: ReadonlyMap<string, number>,
+): TerminalRun[] {
+  const at = (id: string | undefined) => (id === undefined ? -1 : (lineOf.get(id) ?? -1));
+  const runs: TerminalRun[] = [];
+  const reports: TerminalReport[] = [];
+
+  for (const operation of operations) {
+    const started = /Started (bt-\d+)/.exec(operation.output)?.[1];
+    const command = argument(operation, "command");
+
+    if (operation.tool === "bg_start" && started !== undefined && command !== undefined) {
+      runs.push({
+        id: started,
+        at: at(operation.entryId),
+        startedBy: operation,
+        command,
+        child: undefined,
+      });
+    }
+
+    if (operation.tool === "bg_status" || operation.tool === "bg_list") {
+      reports.push(...reportsIn(operation.output, at(operation.entryId), new Map()));
+    }
+  }
+
+  for (const message of customMessages(jsonl)) {
+    if (message.customType !== "background-terminal-results") continue;
+
+    const details = decodeTerminalDetails(message.details);
+
+    const commands = new Map(
+      Option.isSome(details)
+        ? details.value.terminals.map((terminal) => [terminal.id, terminal.command])
+        : [],
+    );
+
+    reports.push(...reportsIn(message.text, at(message.id), commands));
+  }
+
+  // Each report belongs to the latest run of its id; one whose command differs belongs to a run
+  // no recorded start opened, such as one a codemode script started.
+  const latest = new Map<string, TerminalRun>();
+
+  const events = [
+    ...runs.map((run) => ({ at: run.at, run, report: undefined })),
+    ...reports.map((report) => ({ at: report.at, run: undefined, report })),
+  ].toSorted((a, b) => a.at - b.at || (a.run ? -1 : 0) - (b.run ? -1 : 0));
+
+  for (const event of events) {
+    if (event.run) {
+      latest.set(event.run.id, event.run);
+      continue;
+    }
+
+    const { report } = event;
+    let run = latest.get(report.id);
+
+    if (
+      run === undefined ||
+      (report.command !== undefined && run.command !== undefined && report.command !== run.command)
+    ) {
+      run = {
+        id: report.id,
+        at: report.at,
+        startedBy: undefined,
+        command: undefined,
+        child: undefined,
+      };
+      runs.push(run);
+      latest.set(report.id, run);
+    }
+
+    run.command ??= report.command;
+    run.child ??= report.child;
+  }
+
+  return runs;
+}
+
+/** Codemode cuts long recorded arguments and marks the cut with an ellipsis. */
+const CUT = /(?:\.\.\.|…)$/;
+
+export function launchesIn(jsonl: string, operations: readonly ToolOperation[]): Launch[] {
+  return launchCalls(jsonl, operations).launches;
+}
+
+/** The session's launches, and the calls that may have launched but are not counted. */
+export interface LaunchCalls {
+  readonly launches: Launch[];
+  readonly uncounted: UncountedLaunch[];
+}
+
+export function launchCalls(jsonl: string, operations: readonly ToolOperation[]): LaunchCalls {
+  const lineOf = entryLines(jsonl);
+  const runs = terminalRuns(jsonl, operations, lineOf);
+  const claimed = new Set<TerminalRun>();
+  const launches: Launch[] = [];
+  const uncounted: UncountedLaunch[] = [];
+
+  for (const operation of operations) {
+    if (operation.tool !== "bg_start" && operation.tool !== "bash") continue;
+
+    const recorded = argument(operation, "command");
+
+    if (recorded === undefined) continue;
+
+    const command = recorded.replace(CUT, "");
+    const at = operation.entryId === undefined ? -1 : (lineOf.get(operation.entryId) ?? -1);
+
+    // A top-level bg_start reports the run it started. A nested one does not, so the first later
+    // run whose full command its recorded prefix opens is its run.
+    const run =
+      operation.tool !== "bg_start"
+        ? undefined
+        : (runs.find((candidate) => candidate.startedBy === operation) ??
+          runs.find(
+            (candidate) =>
+              candidate.startedBy === undefined &&
+              !claimed.has(candidate) &&
+              candidate.at > at &&
+              candidate.command?.startsWith(command) === true,
+          ));
+
+    if (run !== undefined) claimed.add(run);
+
+    // A terminal's report holds the full command of a run whose recorded command is cut.
+    const fullCommand = run?.command ?? command;
+    const cut = CUT.test(recorded);
+    const reported = [...operation.output.matchAll(CHILD_SESSION)].map((match) => match[1]);
+    const commands = launchCommands(fullCommand);
+
+    commands.forEach((launch, index) => {
+      const resumed = /--session[ =]([0-9a-f]{8}-[0-9a-f-]{27})/.exec(launch.text)?.[1];
+      const child = reported[index] ?? (commands.length === 1 ? run?.child : undefined) ?? resumed;
+      const entry = operation.entryId ?? "-";
+
+      if (cut && child === undefined) {
+        uncounted.push({ entry, command: launch.text });
+
+        return;
+      }
+
+      launches.push({ entry, kind: launch.kind, role: launch.role, command: launch.text, child });
+    });
+  }
+
+  return { launches, uncounted };
+}

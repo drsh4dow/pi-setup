@@ -149,6 +149,43 @@ test("spawn set refuses an unknown session and a second add refuses a known one"
   assert.equal(readFileSync(join(state, "spawns.tsv"), "utf8"), before);
 });
 
+test("spawn set refuses a change to the recorded kind, role, or unit, each alone, and writes nothing", (t) => {
+  const state = scratch(t);
+
+  assert.equal(addOwner(state).status, 0);
+
+  const before = readFileSync(join(state, "spawns.tsv"), "utf8");
+
+  for (const change of ["kind=delegate", "role=babysitter", "unit=final-b"]) {
+    const result = run(["--state", state, "spawn", "set", OWNER, change]);
+    const column = change.split("=")[0] ?? "";
+
+    assert.equal(result.status, 2, `${change}: ${result.stdout}`);
+    assert.match(result.stderr, new RegExp(`recorded with ${column}=`), change);
+  }
+
+  assert.equal(readFileSync(join(state, "spawns.tsv"), "utf8"), before);
+
+  const same = run([
+    "--state",
+    state,
+    "spawn",
+    "set",
+    OWNER,
+    "kind=owner",
+    "role=final-pr-owner",
+    "unit=final-a",
+    "state=reported",
+  ]);
+
+  assert.equal(same.status, 0, same.stderr);
+  assert.equal(
+    registry(state).at(-1)?.[7],
+    "reported",
+    "the recorded identity with a new state is accepted",
+  );
+});
+
 test("spawn refuses a registry row it cannot read", (t) => {
   const state = scratch(t);
 

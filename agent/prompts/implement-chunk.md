@@ -18,7 +18,7 @@ A **unit** is the scope of one brief: a ticket, a chain, a fix scope, a merge, o
 
 Launch every subagent from a brief per the **subagents** skill, with `--role` and `--orders <state folder>/orders.md`. Pass context as pointers, not copies. Give new work, whether a fix round, a follow-up, a retry, or the next queue item, to a fresh subagent with consolidated scope: the original brief, every later directive, and the prior subagent's report and branch. Resume a session only for state that is costly to move, because chained resumes silently drop directives.
 
-Roles. The babysitter is an owner and the rest are delegates. The verifier and live verifier run as the subagents skill's `cross-family reviewer`.
+Roles. The babysitter is an owner and the rest are delegates. The verifier, live verifier, and brief auditor run as the subagents skill's `cross-family reviewer`.
 
 - `explorer`: contract notes and exploration notes, in `notes/`.
 - `implementer`: one ticket, chain, or fix scope, delivered as one intermediate PR.
@@ -27,6 +27,7 @@ Roles. The babysitter is an owner and the rest are delegates. The verifier and l
 - `pr-writer`: drafts, opens, and edits final PRs.
 - `babysitter`: babysits a final PR or stack until it merges: the **babysit** skill's `drive` mode (`watch-pr --until-ready`) to merge-ready, then each later batch from your `until-merged` watcher, one fresh babysitter per batch.
 - `live-verifier`: drives the deployed environment after a merge.
+- `brief-auditor`: reads one sampled brief cold and reports pass or fail, per The brief.
 
 ## State folder
 
@@ -78,7 +79,7 @@ The tickets form a **task graph** of blocking edges. Its **frontier** is the tic
 1. Have a merger create each integration branch from the base branch, or from its parent's integration branch for a final PR that depends on another.
 2. Have implementers take the frontier tickets, each in its own worktree on its own branch, to the Definition of Done in `definition-of-done.md`. Each delivers an **intermediate PR** against its integration branch.
 3. When four or more tickets are ready at once, spawn one first as a **pilot**, and fan out once its intermediate PR has a passing verdict. Fix the brief template or the contract notes from what the pilot showed before the rest spawn.
-4. Keep a rolling window of up to ten implementers: when one finishes, spawn the next ready ticket in the same turn you record the completion. Size the launcher's `--min-mem-gib` to the unit's heaviest gate.
+4. Keep a rolling window of up to ten implementers: when one finishes, spawn the next ready ticket in the same turn you record the completion, unless a brief audit has failed, per The brief. Size the launcher's `--min-mem-gib` to the unit's heaviest gate.
 5. A worktree holds only what git tracks, so tests that read gitignored fixtures, local databases, or credentials, and contract suites that need sandbox credentials, can silently skip there. Verify a ticket that depends on untracked material in the main checkout, one unit at a time.
 
 ### 4. Verify and merge each intermediate PR
@@ -119,7 +120,7 @@ Start once every ticket of a final PR has merged into its integration branch. Ev
 
 ### 8. Close
 
-Drain the final inbox, reconcile every spawned subagent to a terminal state in `units.tsv`, confirm every final PR has a verdict at its merged head and a live row, and have a merger clean up all implementer worktrees and merged intermediate branches. Propose each order line that is not specific to this chunk as an edit to this prompt or to the project's agent files. From `~/.pi/agent/skills/`, propose `maintain-verification-skill` for each drift between the verification skill and the app that a unit reported, `maintain-formal-verification-skill` for each stale formal check, and `create-formal-verification-skill` for each order-dependent area no project model covers. Put each proposal in the final reply as an ask with your default, or file it as a ticket, so none lives only in the report. Leave the state folder intact.
+Drain the final inbox, reconcile every spawned subagent to a terminal state in `units.tsv`, confirm every final PR has a verdict at its merged head and a live row, and have a merger clean up all implementer worktrees and merged intermediate branches. Propose each order line that is not specific to this chunk as an edit to this prompt or to the project's agent files, and each brief-audit finding that would recur in another chunk as an edit to `brief.md`. From `~/.pi/agent/skills/`, propose `maintain-verification-skill` for each drift between the verification skill and the app that a unit reported, `maintain-formal-verification-skill` for each stale formal check, and `create-formal-verification-skill` for each order-dependent area no project model covers. Put each proposal in the final reply as an ask with your default, or file it as a ticket, so none lives only in the report. Leave the state folder intact.
 
 ## Sizing the final PRs
 
@@ -134,6 +135,8 @@ Intermediate PRs exist for your verification. Final PRs exist for the human's tr
 ## The brief
 
 Write each **brief** fresh from the template and its role variant in `~/.pi/agent/prompts/implement-chunk/brief.md`. A brief made by search-and-replace on an earlier one keeps that unit's PR numbers and SHAs wherever the replace missed them. A field you cannot fill is a unit you have not scoped yet. Save the brief in the state folder and launch it; the launcher checks it. Launch each implementer and verifier with `--append ~/.pi/agent/prompts/implement-chunk/definition-of-done.md`, because its brief names a bar the child cannot otherwise read. Check each path the brief names yourself (`test -e`).
+
+**Brief audit.** The launcher checks a brief's fields and placeholders, not whether the brief is right, and brief quality decays late in a run. After the pilot, or from the first launch in a chunk with no pilot, audit one of every five implementer and verifier briefs you launch, picked at random from those five (`shuf -n1`), so a full window of ten carries two audits. A last group shorter than five gets one audit too, so every chunk with a launch past the pilot has at least one. Run the brief auditor alongside the units it samples, never as a gate in front of them. A failing brief stops the next refill, not the current units: spawn nothing new until you have fixed the source of the flaw (an order, a contract note, or a field you keep filling wrong) and recorded the finding in `decisions.md`. When the flaw would change the sampled unit's result, such as a stricter ACCEPTANCE or a wrong base branch, stop that unit and give it to a fresh subagent with a corrected brief.
 
 ## Verification
 

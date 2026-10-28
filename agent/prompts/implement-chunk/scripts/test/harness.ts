@@ -15,7 +15,11 @@ export const cli = join(scriptsDir, "chunk.ts");
 export const UNITS_HEADER =
   "id\tticket\tintake_state\tfinal_pr\tstate\tbranch\tintermediate_pr\thead_sha\tbrief";
 
+/** The ledger header chunk creates outside a sh4dow run, byte-identical to the one before risk calls. */
 export const LEDGER_HEADER = "pr\thead_sha\toutcome\tevidence\trecorded_at";
+
+/** The ledger header chunk creates in a state folder whose `mode` file reads sh4dow. */
+export const RISK_LEDGER_HEADER = "pr\thead_sha\toutcome\tevidence\trisk\trisk_reason\trecorded_at";
 
 export const DEFINED_OUTCOMES = [
   "live-deployed-verified",
@@ -73,7 +77,11 @@ export interface PrFixture {
 
 export interface Fixture {
   readonly units: readonly (readonly [string, string, string])[];
-  readonly ledger?: readonly (readonly [string, string, string, string])[];
+  /** Ledger rows: pr, sha, outcome, evidence, and optionally a risk level and its reason. */
+  readonly ledger?: readonly (
+    | readonly [string, string, string, string]
+    | readonly [string, string, string, string, string, string]
+  )[];
   readonly prs?: readonly PrFixture[];
 }
 
@@ -99,8 +107,10 @@ export function chunk(t: TestContext, fixture: Fixture) {
   writeFileSync(
     join(state, "ledger.tsv"),
     [
-      LEDGER_HEADER,
-      ...(fixture.ledger ?? []).map((row) => [...row, "2026-10-23T19:57:00Z"].join("\t")),
+      RISK_LEDGER_HEADER,
+      ...(fixture.ledger ?? []).map((row) =>
+        [...row, ...(row.length === 4 ? ["", ""] : []), "2026-10-23T19:57:00Z"].join("\t"),
+      ),
     ].join("\n") + "\n",
   );
 

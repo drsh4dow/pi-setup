@@ -1,6 +1,6 @@
 # Router
 
-General mode's system prompt, `agent/SYSTEM.md`, routes each task through the `<router>` table to one skill, named by path. The model reads that skill and opens its reply with the skill's steps as its todolist, each skipped step marked with its reason. A task that matches no row gets a reply that opens with `No workflow matched.`. Only principle skills and `unslop` stay in the model's skill table; every other skill is hidden from it but still loads by hand with `/skill:<name>`.
+General mode's system prompt, `agent/SYSTEM.md`, routes each task through the `<router>` table to one skill, named by path. The model reads that skill and opens its reply with the skill's steps as its todolist, each skipped step marked with its reason. A task that matches no row gets a reply that opens with `No workflow matched.`. Only principle skills and `unslop` appear in the model's skill table. The model reads every other skill by path, and the hidden skills that `docs/inventory.md` lists as **you** also load by hand with `/skill:<name>`.
 
 ## Sub-features
 

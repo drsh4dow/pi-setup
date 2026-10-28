@@ -191,8 +191,8 @@ type InvocationFlags = {
 };
 
 // Pi hides a skill from the model's table only on an explicit `disable-model-invocation: true`.
-// A hidden skill that /skill: also leaves out is a library skill: the agent reaches it by path
-// from the router or another skill, and verify-skills fails when nothing points to it.
+// A skill that /skill: leaves out is the agent's alone: it starts the skill from its table, or by
+// path when the skill is a library skill (GLOSSARY.md) hidden from that table.
 function whoFromFrontmatter(frontmatter: InvocationFlags): Who {
   const inSkillTable = frontmatter["disable-model-invocation"] !== true;
   const userCanStart = allowsUserInvocation(frontmatter);

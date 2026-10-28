@@ -119,12 +119,8 @@ function missingInvocationFlags(skills: readonly Skill[]) {
     });
 }
 
-// The forms one document uses to send the agent to a skill: "the **how** skill", "the **a** and
-// **b** principle skills" (a principle skill's name carries the `principle-` prefix),
-// "**principle-x**", "/skill:name", and a path such as the router's
-// `~/.pi/agent/skills/name/SKILL.md`. A bold term with no leading "the", such as "a
-// **model-invoked** skill", names a kind of skill. A quoted `'/skill:pre'` is a keystroke
-// string, such as an autocomplete prefix.
+// Each pattern captures a skill name in one form a document uses to send the agent to a skill.
+// A principle skill's name carries the `principle-` prefix that "the **x** principle skill" drops.
 const BOLD_SKILL_SERIES =
   /\bthe ((?:\*\*[a-z0-9-]+\*\*(?:,? (?:and|or) |, ))*\*\*[a-z0-9-]+\*\*) (principle )?skills?\b/g;
 
@@ -132,7 +128,7 @@ const BOLD_NAME = /\*\*([a-z0-9-]+)\*\*/g;
 
 const BOLD_PRINCIPLE = /\*\*(principle-[a-z0-9-]+)\*\*/g;
 
-const SLASH_COMMAND = /(?<!')\/skill:([a-z0-9-]+)(?![a-z0-9-]*')/g;
+const SLASH_COMMAND_OUTSIDE_QUOTES = /(?<!')\/skill:([a-z0-9-]+)(?![a-z0-9-]*')/g;
 
 const SKILL_PATH = /skills\/([a-z0-9-]+)\/SKILL\.md/g;
 
@@ -147,7 +143,7 @@ function pointedSkills(line: string) {
 
   for (const [, name] of line.matchAll(BOLD_PRINCIPLE)) names.add(name);
 
-  for (const [, name] of line.matchAll(SLASH_COMMAND)) names.add(name);
+  for (const [, name] of line.matchAll(SLASH_COMMAND_OUTSIDE_QUOTES)) names.add(name);
 
   for (const [, name] of line.matchAll(SKILL_PATH)) names.add(name);
 
@@ -185,9 +181,7 @@ function danglingSkillPointers(loaded: readonly Skill[]) {
   );
 }
 
-// A skill hidden from the model's table is a library skill: the model reaches it only through a
-// pointer in the router or another mode prompt, a role prompt, a prompt template, or another skill.
-function pointsIntoTheHarness(path: string, skillDirectories: readonly string[]) {
+function isHarnessDocument(path: string, skillDirectories: readonly string[]) {
   return (
     path === "agent/SYSTEM.md" ||
     path.startsWith("agent/system/") ||
@@ -196,6 +190,8 @@ function pointsIntoTheHarness(path: string, skillDirectories: readonly string[])
   );
 }
 
+// A skill hidden from the model's table is a library skill: the model reaches it only through a
+// pointer in a harness document, such as the router, another skill, or a prompt template.
 function unreachableHiddenSkills(loaded: readonly Skill[]) {
   const skillDirectories = loaded.map(({ baseDir }) => `${relative(root, baseDir)}/`);
 
@@ -208,7 +204,7 @@ function unreachableHiddenSkills(loaded: readonly Skill[]) {
       (pointer) =>
         pointer.name === name &&
         !pointer.path.startsWith(ownDirectory) &&
-        pointsIntoTheHarness(pointer.path, skillDirectories),
+        isHarnessDocument(pointer.path, skillDirectories),
     );
 
     if (reached) return [];

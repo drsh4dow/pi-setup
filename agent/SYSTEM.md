@@ -12,32 +12,32 @@ Principle skills and `unslop` stay in your skill table: load each one whose trig
 | Task | Skill |
 | --- | --- |
 | Grill a plan, or "grill me" | `~/.pi/agent/skills/grilling/SKILL.md` |
-| Get grilled while the glossary and ADRs get written | `~/.pi/agent/skills/grill-with-docs/SKILL.md` |
+| Grill a plan while writing the glossary and ADRs | `~/.pi/agent/skills/grill-with-docs/SKILL.md` |
 | Settle a design question with a throwaway | `~/.pi/agent/skills/prototype/SKILL.md` |
 | Research a question across primary sources | `~/.pi/agent/skills/research/SKILL.md` |
 | Write a spec of what was discussed | `~/.pi/agent/skills/to-spec/SKILL.md` |
 | Split a spec or plan into tickets | `~/.pi/agent/skills/to-tickets/SKILL.md` |
 | Make tickets others wrote agent-ready | `~/.pi/agent/skills/triage/SKILL.md` |
 | File or update one ticket | `~/.pi/agent/skills/writing-good-tickets/SKILL.md` |
-| How code works, or where a change belongs | `~/.pi/agent/skills/how/SKILL.md` |
-| Why code is the way it is | `~/.pi/agent/skills/why/SKILL.md` |
-| One docs or API fact | `~/.pi/agent/skills/docs-search/SKILL.md` |
-| Live web sources | `~/.pi/agent/skills/web-search/SKILL.md` |
-| An earlier chat, or context lost to compaction | `~/.pi/agent/skills/recall/SKILL.md` |
-| Glossary terms or an ADR | `~/.pi/agent/skills/domain-modeling/SKILL.md` |
+| Explain how code works, or where a change belongs | `~/.pi/agent/skills/how/SKILL.md` |
+| Explain why code is the way it is | `~/.pi/agent/skills/why/SKILL.md` |
+| Look up one docs or API fact | `~/.pi/agent/skills/docs-search/SKILL.md` |
+| Find and read live web sources | `~/.pi/agent/skills/web-search/SKILL.md` |
+| Recall an earlier chat, or context lost to compaction | `~/.pi/agent/skills/recall/SKILL.md` |
+| Edit glossary terms or record an ADR | `~/.pi/agent/skills/domain-modeling/SKILL.md` |
 | Sketch types and modules before code | `~/.pi/agent/skills/architect/SKILL.md` |
 | Find modules that expose more than they do | `~/.pi/agent/skills/improve-codebase-architecture/SKILL.md` |
-| Feature or bug fix with a cheap test | `~/.pi/agent/skills/tdd/SKILL.md` |
-| Hard bug, failed first fix, or regression | `~/.pi/agent/skills/diagnosing-bugs/SKILL.md` |
-| What a change could break beyond the diff | `~/.pi/agent/skills/blast-radius/SKILL.md` |
+| Build a feature or fix a bug that has a cheap test | `~/.pi/agent/skills/tdd/SKILL.md` |
+| Diagnose a hard bug, a failed first fix, or a regression | `~/.pi/agent/skills/diagnosing-bugs/SKILL.md` |
+| Find what a change could break beyond the diff | `~/.pi/agent/skills/blast-radius/SKILL.md` |
 | Read or edit TypeScript | `~/.pi/agent/skills/typescript-best-practices/SKILL.md` |
-| New or reshaped UI | `~/.pi/agent/skills/frontend-design/SKILL.md` |
+| Build or reshape a UI | `~/.pi/agent/skills/frontend-design/SKILL.md` |
 | Drive a browser or Electron app | `~/.pi/agent/skills/agent-browser/SKILL.md` |
 | Run a service, watcher, or long command beside other work | `~/.pi/agent/skills/background-terminals/SKILL.md` |
 | Delegate to a subagent | `~/.pi/agent/skills/subagents/SKILL.md` |
-| Parallel coverage by N workers | `~/.pi/agent/skills/swarm/SKILL.md` |
-| N candidates at one artifact, keep the best | `~/.pi/agent/skills/arena/SKILL.md` |
-| A wizard for steps only a human can do | `~/.pi/agent/skills/wizard/SKILL.md` |
+| Fan out N workers for parallel coverage | `~/.pi/agent/skills/swarm/SKILL.md` |
+| Run N candidates at one artifact and keep the best | `~/.pi/agent/skills/arena/SKILL.md` |
+| Write a wizard for steps only a human can do | `~/.pi/agent/skills/wizard/SKILL.md` |
 | Commit | `~/.pi/agent/skills/writing-good-commits/SKILL.md` |
 | Open or edit a PR | `~/.pi/agent/skills/writing-good-prs/SKILL.md` |
 | Watch a PR to merge-ready | `~/.pi/agent/skills/babysit/SKILL.md` |
@@ -56,9 +56,9 @@ Principle skills and `unslop` stay in your skill table: load each one whose trig
 | Capture the user's working style as a skill | `~/.pi/agent/skills/automate-me/SKILL.md` |
 | Record a repository's tracker, domain docs, and standards | `~/.pi/agent/skills/setup-sh4dow-skills/SKILL.md` |
 | Catch up on what changed | `~/.pi/agent/skills/catchup/SKILL.md` |
-| The catchup as a narrated video | `~/.pi/agent/skills/catchup-video/SKILL.md` |
+| Catch up on what changed, as a narrated video | `~/.pi/agent/skills/catchup-video/SKILL.md` |
 | Explain a body of work to a person | `~/.pi/agent/skills/teach/SKILL.md` |
-| Email | `~/.pi/agent/skills/mailbox/SKILL.md` |
+| Read, search, or send email | `~/.pi/agent/skills/mailbox/SKILL.md` |
 
 </router>
 

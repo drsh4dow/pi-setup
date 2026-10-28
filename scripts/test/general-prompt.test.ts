@@ -65,14 +65,35 @@ test("each router row names one skill by path, and that skill is hidden from the
   }
 });
 
-test("the model's skill table holds only principle skills and unslop", () => {
+// The visible set the router ticket selected: each skill here loaded in the coordinator-runs
+// baseline's skill reads, in the principle-loading `full` runs, or in both.
+const SELECTED_VISIBLE_SKILLS = [
+  "principle-attack-the-premise",
+  "principle-boundary-discipline",
+  "principle-build-the-lever",
+  "principle-encode-lessons-in-structure",
+  "principle-engineering-standards",
+  "principle-exhaust-the-design-space",
+  "principle-experience-first",
+  "principle-explain-the-number",
+  "principle-fix-root-causes",
+  "principle-laziness-protocol",
+  "principle-make-operations-idempotent",
+  "principle-minimize-reader-load",
+  "principle-model-the-domain",
+  "principle-prove-it-works",
+  "principle-redesign-from-first-principles",
+  "principle-separate-before-serializing-shared-state",
+  "principle-sequence-verifiable-units",
+  "principle-test-behavior-not-implementation",
+  "unslop",
+];
+
+test("the model's skill table holds exactly the selected principle skills and unslop", () => {
   const visible = readdirSync(skillsDirectory)
     .filter((name) => existsSync(join(skillsDirectory, name, "SKILL.md")))
-    .filter((name) => !hiddenFromTheModel(name));
+    .filter((name) => !hiddenFromTheModel(name))
+    .toSorted();
 
-  assert.deepEqual(
-    visible.filter((name) => !name.startsWith("principle-") && name !== "unslop"),
-    [],
-  );
-  assert.ok(visible.includes("unslop"));
+  assert.deepEqual(visible, SELECTED_VISIBLE_SKILLS);
 });

@@ -45,6 +45,7 @@ Keep implementation details out of the map. Name user paths, stable strings, req
 - [Background terminals](./background-terminals.md) covers model-started jobs, the `bg` footer count, and the completion wake-up.
 - [Session chrome](./session-chrome.md) covers the header, the session timer, and the per-response throughput line.
 - [Architecture review](./architecture-review.md) covers `/skill:improve-codebase-architecture` from the scan through grilling, architect, arena, and the sketch review to the checkpoint.
+- [sh4dow mode](./sh4dow-mode.md) covers `/sh4dow` opening a linked coordinator session, its recorded prompt through `/reload` and a resume, the refusals, the brand-new-session case, and `/implement-chunk` still expanding. Real model turns, escaped at the first tool call.
 - [Tool-call guards](./tool-call-guards.md) covers the host guard and `delegate-guard` refusing and allowing bash calls in a root and a delegate session.
 
 Not yet mapped: the `pi-subagent` launcher and Herdr panes (`subagents`), `sacrifice-preference`, `prompt-context`, and the prompt templates (`/deslop`, `/handoff`, `/bro`, `/restate-sharpened`).

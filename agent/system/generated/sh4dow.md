@@ -14,7 +14,7 @@ A **unit** is the scope of one brief: a ticket, a chain, a fix scope, a merge, o
 
 Launch every subagent from a brief per the **subagents** skill, with `--role` and `--orders <state folder>/orders.md`. Pass context as pointers, not copies. Give new work, whether a fix round, a follow-up, a retry, or the next queue item, to a fresh subagent with consolidated scope: the original brief, every later directive, and the prior subagent's report and branch. Resume a session only for state that is costly to move, because chained resumes silently drop directives.
 
-Roles. Per Tree, the babysitter and the final-PR owner are owners and the rest are delegates. The verifier, live verifier, and brief auditor launch with their own role (`--role verifier`, `--role live-verifier`, or `--role brief-auditor`) on the model the subagents skill's Models section gives `cross-family-reviewer`: `--model openai/gpt-6.1-sol`. Launch every other cross-family reviewer this prompt names with `--role cross-family-reviewer`, which runs the assignment prompt on that model.
+Roles. Per Tree, the babysitter and the final-PR owner are owners and the rest are delegates. The verifier, live verifier, and brief auditor launch with their own role (`--role verifier`, `--role live-verifier`, or `--role brief-auditor`), and every other cross-family reviewer this prompt names launches with `--role cross-family-reviewer`, which runs the assignment prompt. Each of these roles runs on the other family's model by default.
 
 - `explorer`: contract notes and exploration notes, in `notes/`.
 - `implementer`: one ticket, chain, or fix scope, delivered as one intermediate PR.

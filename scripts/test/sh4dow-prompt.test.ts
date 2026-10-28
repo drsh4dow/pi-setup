@@ -113,40 +113,21 @@ test("close audits the decision trail and has a cross-family reviewer write the 
   assert.match(close, /`<state folder>\/attention\.md`/);
 });
 
-/** The model the subagents skill's Models section gives the `cross-family-reviewer` role. */
-function crossFamilyModel(): string {
-  const models =
-    read("agent/skills/subagents/SKILL.md")
-      .split(/^## Models$/m)[1]
-      ?.split(/^## /m)[0] ?? "";
-
-  const bullet = models
-    .split(/\n(?=- )/)
-    .find((item) => item.includes("runs `cross-family-reviewer`"));
-
-  const model = bullet?.match(/^- `([^`]+)`/)?.[1];
-  assert.ok(
-    model,
-    "the subagents skill's Models section names no model for `cross-family-reviewer`",
-  );
-
-  return model;
-}
-
-test("each cross-family reviewer the sh4dow prompts name launches with a launcher role, and only a role without its own model names one", () => {
-  const model = crossFamilyModel();
-
+test("each cross-family reviewer the sh4dow and implement-chunk prompts name launches with a launcher role that brings its model", () => {
   for (const path of [
     "agent/system/generated/sh4dow.md",
     "agent/system/generated/owner/final-pr-owner.md",
+    "agent/prompts/implement-chunk.md",
   ]) {
     const text = read(path);
 
     const sentences = text
       .split(/\n|(?<=\.)\s+(?=[A-Z`(])/)
-      .filter((sentence) => /cross-family[ -]reviewer/.test(sentence));
+      .filter((sentence) =>
+        /cross-family[ -]reviewer|--role (verifier|live-verifier|brief-auditor)\b/.test(sentence),
+      );
 
-    assert.ok(sentences.length > 0, `${path} names no cross-family reviewer`);
+    assert.ok(sentences.length > 0, `${path} launches no cross-family reviewer`);
     assert.doesNotMatch(text, /--role assignment --model/, path);
 
     for (const sentence of sentences) {
@@ -160,13 +141,7 @@ test("each cross-family reviewer the sh4dow prompts name launches with a launche
           `${path}: --role ${role}`,
         );
 
-      if (roles.includes("cross-family-reviewer"))
-        assert.doesNotMatch(sentence, /--model/, `${path}: the role brings its model: ${sentence}`);
-      else
-        assert.ok(
-          sentence.includes(`--model ${model}`),
-          `${path}: no --model ${model} in: ${sentence}`,
-        );
+      assert.doesNotMatch(sentence, /--model/, `${path}: the role brings its model: ${sentence}`);
     }
   }
 });

@@ -36,11 +36,14 @@ an owner. Each role runs as one kind, the directory its prompt sits in, and the
 ## Models
 
 Every subagent runs at `--thinking high`, on the model of the role the
-launching skill names.
+launching skill names. The launcher holds each launcher role's default model
+and thinking level in `ROLE_DEFAULTS` in [`scripts/brief.ts`](scripts/brief.ts),
+and `vp run verify` fails when this section gives a launcher role another one.
 
 - `openai/gpt-6.1-sol` is exhaustive on details and edge cases: boundaries,
-  proofs, exploits, spec gaps. It runs `cross-family-reviewer`,
-  `code-review detail personas`, `reflect divergent`, and `researcher`.
+  proofs, exploits, spec gaps. It runs `cross-family-reviewer`, `verifier`,
+  `live-verifier`, `brief-auditor`, `code-review detail personas`,
+  `reflect divergent`, and `researcher`.
 - `anthropic/claude-opus-5-5` has taste: it writes, plans, and implements
   best, and judges whether code reads well and has the simplest shape. It runs
   every other role.
@@ -132,14 +135,13 @@ $HOME/.pi/agent/skills/subagents/scripts/launch.ts \
   --role <role> \
   --brief "<state folder>/<brief>.md" \
   --orders "<state folder>/orders.md" \
-  --model <model> \
-  --thinking high \
   --name "subagent: <short assignment>"
 ```
 
 The launcher starts the child on its role's prompt,
-`~/.pi/agent/system/generated/<kind>/<role>.md`, on `--model`, or without it
-on the model the Models section above gives the role, with skill discovery off and
+`~/.pi/agent/system/generated/<kind>/<role>.md`, on the role's model and
+thinking level from the Models section above, or on `--model` and `--thinking`
+when the launch passes them, with skill discovery off and
 one `--skill` per name in the brief's SKILLS field. SKILLS lists names
 separated by commas or `and`, and each item's leading name counts, so
 `**tdd** (red first)` names `tdd`, and a field that opens with `none` names

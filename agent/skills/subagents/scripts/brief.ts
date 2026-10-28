@@ -19,6 +19,37 @@ export const ROLES = [
 
 export type Role = (typeof ROLES)[number];
 
+// The levels pi accepts for --thinking.
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface RoleDefaults {
+  readonly model: string;
+  readonly thinking: ThinkingLevel;
+}
+
+const DETAIL: RoleDefaults = { model: "openai/gpt-6.1-sol", thinking: "high" };
+
+const TASTE: RoleDefaults = { model: "anthropic/claude-opus-5-5", thinking: "high" };
+
+// The model and thinking level a role launches on when the launch passes no --model or
+// --thinking. The roles that judge another family's work run on DETAIL, and a caller that picks
+// the model per seat, such as a code-review persona, passes --model. The subagents skill's Models
+// section says why each model runs each role, and scripts/verify-role-models.ts fails on drift.
+export const ROLE_DEFAULTS: { readonly [R in Role]: RoleDefaults } = {
+  implementer: TASTE,
+  explorer: TASTE,
+  verifier: DETAIL,
+  merger: TASTE,
+  "pr-writer": TASTE,
+  babysitter: TASTE,
+  "live-verifier": DETAIL,
+  persona: TASTE,
+  assignment: TASTE,
+  "cross-family-reviewer": DETAIL,
+  "brief-auditor": DETAIL,
+  "final-pr-owner": TASTE,
+};
+
 // The role whose generated prompt a role runs on. The cross-family reviewer runs the assignment
 // template, its prompt and its brief checks, on a model from the other family.
 export function promptRole(role: Role): Role {

@@ -270,30 +270,49 @@ for (const role of Object.keys(ROLE_KINDS) as (keyof typeof ROLE_KINDS)[]) {
   });
 }
 
-function withoutModel(args: readonly string[]): string[] {
-  const at = args.indexOf("--model");
-
-  return [...args.slice(0, at), ...args.slice(at + 2)];
+function without(args: readonly string[], ...flags: string[]): string[] {
+  return args.filter((word, index) => !flags.includes(word) && !flags.includes(args[index - 1] ?? ""));
 }
 
-test("a cross-family-reviewer runs the assignment template on openai/gpt-6.1-sol unless --model overrides it", (t) => {
+test("a cross-family-reviewer runs the assignment template and its brief checks", (t) => {
   const h = host(t);
   const brief = h.brief("review.md", "Review the diff `git diff main...HEAD` for gaps.\n");
-  const args = withoutModel(baseArgs(h, brief, "cross-family-reviewer"));
 
-  const run = launch(h, [...args, "--dry-run"]);
+  const run = launch(h, [...baseArgs(h, brief, "cross-family-reviewer"), "--dry-run"]);
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(flagValues(commandWords(run), "--system-prompt"), [`${AGENT_DIR}/system/generated/delegate/assignment.md`]);
-  assert.deepEqual(flagValues(commandWords(run), "--model"), ["openai/gpt-6.1-sol"], "the Models section's model");
-
-  const other = launch(h, [...args, "--model", "anthropic/claude-opus-5-5", "--dry-run"]);
-  assert.equal(other.status, 0, other.stderr);
-  assert.deepEqual(flagValues(commandWords(other), "--model"), ["anthropic/claude-opus-5-5"], "--model overrides it");
 
   const slot = h.brief("slot.md", "Review the diff at <sha>.\n");
-  assertRefused(h, launch(h, [...withoutModel(baseArgs(h, slot, "cross-family-reviewer")), "--dry-run"]), /unfilled placeholder/);
-  assertRefused(h, launch(h, [...withoutModel(baseArgs(h, brief)), "--dry-run"]), /--model is required/);
+  assertRefused(h, launch(h, [...baseArgs(h, slot, "cross-family-reviewer"), "--dry-run"]), /unfilled placeholder/);
 });
+
+// The defaults the user set: the roles that judge another family's work run on GPT, every other
+// role on Opus, and every subagent thinks high.
+const DEFAULT_MODELS: readonly (readonly [Role, string])[] = [
+  ["cross-family-reviewer", "openai/gpt-6.1-sol"],
+  ["verifier", "openai/gpt-6.1-sol"],
+  ["live-verifier", "openai/gpt-6.1-sol"],
+  ["brief-auditor", "openai/gpt-6.1-sol"],
+  ["implementer", "anthropic/claude-opus-5-5"],
+];
+
+for (const [role, model] of DEFAULT_MODELS) {
+  test(`the ${role} role runs on ${model} at high without --model or --thinking, and both flags override`, (t) => {
+    const h = host(t);
+    const args = without(baseArgs(h, h.brief("brief.md", roleBrief(role)), role), "--model", "--thinking");
+
+    const run = launch(h, [...args, "--dry-run"]);
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(flagValues(commandWords(run), "--model"), [model]);
+    assert.deepEqual(flagValues(commandWords(run), "--thinking"), ["high"]);
+
+    const other = model === "openai/gpt-6.1-sol" ? "anthropic/claude-opus-5-5" : "openai/gpt-6.1-sol";
+    const given = launch(h, [...args, "--model", other, "--thinking", "medium", "--dry-run"]);
+    assert.equal(given.status, 0, given.stderr);
+    assert.deepEqual(flagValues(commandWords(given), "--model"), [other]);
+    assert.deepEqual(flagValues(commandWords(given), "--thinking"), ["medium"]);
+  });
+}
 
 test("a resume directive's SKILLS field replaces the skills, and a directive without one loads none", (t) => {
   const h = host(t);

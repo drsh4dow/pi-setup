@@ -117,9 +117,13 @@ request. The message names the pull request and what `gh` printed.
 | `report-only-merge`     | a merged final PR (head branch `chunk/...`) whose merged head no `verifier` session's final message names                                                       | `<pr> <merged head> <state file>:<line>`          |
 | `unterminated-subagent` | a `units.tsv` row whose state's first word is not `merged`, `done`, `abandoned`, or `reconciled`, leaving out a `planned` row that no launch names by its brief | `<id> <state> <units file>:<line>`                |
 
-`root-edit` counts the `edit` and `write` tools, and the files a successful `bash` call
-writes through a redirection (`>`, `>>`), `tee`, `sed -i`, or as a `cp` or `mv`
-destination. The grader resolves a relative path from the session's directory, follows `cd`,
+`root-edit` counts the `edit` and `write` tools exactly: each successful call writes its path.
+For `bash` the count is an upper bound. A bash root-edit is a write target that the text of a
+successful command names, outside the chunk's state folder: a redirection (`>`, `>>`), a `tee`
+file, a file of `sed -i` in any valid option form (the script given by `-e`, `-eSCRIPT`,
+`--expression=SCRIPT`, `-f`, or as the first operand), or a `cp` or `mv` destination. The
+grader does not model control flow, so a target in a branch that may not run still counts:
+`false && printf x > f; true` exits 0 without writing `f`, and `f` counts. The grader resolves a relative path from the session's directory, follows `cd`,
 and expands variables the same command assigned. It leaves out a path it cannot resolve: one
 that holds a variable the command never set, a command substitution, or a glob, a relative
 path after a `cd` to such a place, and `/dev/` targets. A file written any other way, such
@@ -146,10 +150,12 @@ call was issued, across every graded coordinator session of the chunk. A call re
 time counts as earlier than any timed one. A call writes the row in one of these ways:
 
 - An `edit` or `write` of the chunk's file whose text holds the row. For units.tsv that is
-  a line opening with the unit id; for ledger.tsv, the row's SHA.
+  a line opening with the unit id; for ledger.tsv, a line naming both the row's pull request
+  and its SHA, since several pull requests can share a head SHA. The pull request may be
+  named in any form the state files use, such as `7`, `#7`, or `acme/app#7`.
 - A chunk CLI call (`chunk.ts` run as a command) whose `--state`, or
   `IMPLEMENT_CHUNK_STATE` set in the same command, is the chunk's state folder: `unit
-  set|add <id>`, or `ledger record|carry <pr> <sha>` at the row's SHA. The same words
+  set|add <id>`, or `ledger record|carry <pr> <sha>` for the row's pull request at its SHA. The same words
   printed by `echo`, or a call for another chunk, do not write the row.
 - A shell statement that redirects into the chunk's file, appends with `tee -a`, or runs
   `sed -i` on it, and names the row the same way. The target must resolve, as for
@@ -163,10 +169,11 @@ full arguments, whose cut ones end before the row.
 
 ## Test
 
-`vp run test:evals` runs `test/grade.test.ts` on the synthetic chunk under
-[`fixtures/`](fixtures/), with a stub `gh` on a `PATH` that cannot reach the real one. The
-test also gives the unrelated session a 4 GiB sparse tail, so a grader that read it past its
-first user message would fail. `evals/lib/test/session.test.ts` counts the bytes a head
+`vp run test:evals` runs `test/grade.test.ts` and `test/writers.test.ts` on the synthetic
+chunks under [`fixtures/`](fixtures/), with a stub `gh` on a `PATH` that cannot reach the real
+one. `writers.test.ts` covers pull requests whose ledger rows share a head SHA and `sed -i` in
+each option form. `grade.test.ts` gives the unrelated session a 4 GiB sparse tail, so a grader
+that read it past its first user message would fail. `evals/lib/test/session.test.ts` counts the bytes a head
 read takes from the kernel's `/proc/self/io`. It fails when the read takes more than one 4 KiB
 chunk past the end of the first user message. Where `/proc/self/io` is missing, as on macOS,
 that test is skipped.

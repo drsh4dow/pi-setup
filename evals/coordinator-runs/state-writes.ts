@@ -114,18 +114,41 @@ export function writesUnit(chunk: Chunk, id: string) {
     writesInto(operation, cwd, chunk, UNITS).some((text) => cli.test(text) || line.test(text));
 }
 
-/** Whether the call wrote a ledger.tsv row at head `sha`. */
-export function writesVerdict(chunk: Chunk, sha: string) {
-  return (operation: ToolOperation, cwd: string) =>
-    sha !== "" &&
-    writesInto(operation, cwd, chunk, LEDGER).some((text) => {
-      // `ledger record <pr> <sha> ...` and `ledger carry <pr> <new sha> <from sha>` write the
-      // row at their second argument.
-      const cli = /\bledger\s+(?:record|carry)\s+\S+\s+(\S+)/.exec(text)?.[1];
+/**
+ * A ledger row's identity: its pull request, as `owner/repo#n`, and its head SHA. `namesPr` says
+ * whether a word, such as a row's `pr` cell or a chunk CLI argument, names that pull request.
+ */
+export interface VerdictRow {
+  readonly sha: string;
+  readonly namesPr: (word: string) => boolean;
+}
 
-      return cli === undefined
-        ? namesAnySha(text, sha)
-        : /^[0-9a-f]{7,40}$/.test(cli) && sameSha(cli, sha);
+/**
+ * Whether the call wrote the ledger.tsv row of `row`'s pull request at its head SHA. Several
+ * pull requests can share a head SHA, so a written line must name both. A line of an edit, a
+ * write, or a shell statement names the row when it holds the SHA and a word naming the pull
+ * request; `ledger record <pr> <sha> ...` and `ledger carry <pr> <new sha> <from sha>` write the
+ * row of their first argument at their second.
+ */
+export function writesVerdict(chunk: Chunk, row: VerdictRow) {
+  const namesPrIn = (line: string) =>
+    line
+      .split(/[\s,'"]+/)
+      .filter((word) => word !== "")
+      .some(row.namesPr);
+
+  return (operation: ToolOperation, cwd: string) =>
+    row.sha !== "" &&
+    writesInto(operation, cwd, chunk, LEDGER).some((text) => {
+      const cli = /\bledger\s+(?:record|carry)\s+(\S+)\s+(\S+)/.exec(text);
+
+      if (cli !== null) {
+        const [, pr, sha] = cli;
+
+        return namesPrIn(pr) && /^[0-9a-f]{7,40}$/.test(sha) && sameSha(sha, row.sha);
+      }
+
+      return text.split("\n").some((line) => namesAnySha(line, row.sha) && namesPrIn(line));
     });
 }
 

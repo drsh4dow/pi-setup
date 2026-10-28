@@ -2,29 +2,21 @@
 // cannot reach the real one, and checks each count it writes.
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  cpSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  truncateSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
-
-const here = dirname(fileURLToPath(import.meta.url));
-
-const GRADE = join(here, "..", "grade.ts");
-
-const FIXTURES = join(here, "..", "fixtures");
-
-const id = (n: string) => `00000000-0000-4000-8000-${n.padStart(12, "0")}`;
+import {
+  type GhAnswer,
+  grade,
+  id,
+  notFound,
+  placeFixtures,
+  type Rows,
+  readTsv,
+  type Run,
+  stubGh,
+} from "./harness.ts";
 
 const COORDINATOR = id("c001");
 
@@ -49,108 +41,6 @@ const UNRELATED = id("9");
 const GAMMA = id("c004");
 
 const DELTA = id("c005");
-
-// What GitHub reports for each PR of the fixture chunk.
-const PULL_REQUESTS = {
-  "7": { state: "MERGED", headRefOid: "b".repeat(40), headRefName: "u/impl-a" },
-  "8": { state: "MERGED", headRefOid: "d".repeat(40), headRefName: "u/impl-b" },
-  "9": { state: "MERGED", headRefOid: "e".repeat(40), headRefName: "chunk/alpha/app" },
-  "10": { state: "MERGED", headRefOid: "f".repeat(40), headRefName: "chunk/alpha/second" },
-  "11": { state: "OPEN", headRefOid: "1".repeat(40), headRefName: "u/impl-c" },
-  "12": { state: "MERGED", headRefOid: "4444444".padEnd(40, "0"), headRefName: "u/impl-d" },
-} satisfies Record<string, PullRequest>;
-
-interface PullRequest {
-  readonly state: string;
-  readonly headRefOid: string;
-  readonly headRefName: string;
-}
-
-/** How the stub `gh` answers for one PR instead of reporting it. */
-interface GhAnswer {
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly status: number;
-}
-
-/** What gh prints for a PR number its repository does not have. */
-const notFound = (pr: string): GhAnswer => ({
-  stdout: "",
-  stderr: `GraphQL: Could not resolve to a PullRequest with the number of ${pr}. (repository.pullRequest)`,
-  status: 1,
-});
-
-interface Run {
-  readonly status: number | null;
-  readonly stdout: string;
-  readonly stderr: string;
-}
-
-type Rows = readonly Readonly<Record<string, string>>[];
-
-function readTsv(path: string): Rows {
-  const [header, ...rows] = readFileSync(path, "utf8").trimEnd().split("\n");
-  const columns = header.split("\t");
-
-  return rows.map((row) => {
-    const cells = row.split("\t");
-
-    return Object.fromEntries(columns.map((column, index) => [column, cells[index] ?? ""]));
-  });
-}
-
-/** Copies the fixtures into `root`, writing `root` wherever a fixture says `{{ROOT}}`. */
-function placeFixtures(root: string) {
-  cpSync(FIXTURES, root, { recursive: true });
-
-  for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-
-    const path = join(entry.parentPath, entry.name);
-
-    writeFileSync(path, readFileSync(path, "utf8").replaceAll("{{ROOT}}", root));
-  }
-}
-
-function stubGh(dir: string, answers: Readonly<Record<string, GhAnswer>> = {}) {
-  const path = join(dir, "gh");
-
-  writeFileSync(
-    path,
-    [
-      `#!${process.execPath}`,
-      `const prs = ${JSON.stringify(PULL_REQUESTS)};`,
-      `const answers = ${JSON.stringify(answers)};`,
-      `const args = process.argv.slice(2);`,
-      `const repo = args[args.indexOf("--repo") + 1];`,
-      `const number = args[args.indexOf("view") + 1];`,
-      `const answer = repo === "acme/app" ? answers[number] : undefined;`,
-      `if (answer) { process.stdout.write(answer.stdout); process.stderr.write(answer.stderr); process.exit(answer.status); }`,
-      `const pr = repo === "acme/app" ? prs[number] : undefined;`,
-      `if (!pr) { console.error(${JSON.stringify(notFound("<n>").stderr)}.replace("<n>", number)); process.exit(1); }`,
-      `console.log(JSON.stringify(pr));`,
-    ].join("\n"),
-  );
-  chmodSync(path, 0o755);
-}
-
-function grade(root: string, pathDir: string, out: string, chunk = "alpha"): Run {
-  const result = spawnSync(
-    process.execPath,
-    [
-      GRADE,
-      "--sessions",
-      join(root, "session-files"),
-      "--state",
-      join(root, `state/demo/implement-chunk/${chunk}`),
-      "--out",
-      out,
-    ],
-    { encoding: "utf8", env: { PATH: pathDir, HOME: join(root, "home") }, timeout: 60_000 },
-  );
-
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-}
 
 function skillTable(sessions: Rows, session: string) {
   const row = sessions.find((candidate) => candidate.session === session);

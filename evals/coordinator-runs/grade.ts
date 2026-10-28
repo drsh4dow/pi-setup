@@ -45,7 +45,14 @@ import type {
 } from "./model.ts";
 import { findingsTable, sessionsTable, summary } from "./report.ts";
 import { shellStatements } from "./shell-writes.ts";
-import { firstSha, rowLink, type StateRowLink, writesUnit, writesVerdict } from "./state-writes.ts";
+import {
+  firstSha,
+  rowLink,
+  type StateRowLink,
+  type VerdictRow,
+  writesUnit,
+  writesVerdict,
+} from "./state-writes.ts";
 
 export { FINDING_CLASSES, type Finding, type FindingClass } from "./model.ts";
 
@@ -291,6 +298,17 @@ async function chunkFindings(
     ...ledger.map((row) => row.cell("pr")),
   ]);
 
+  /** The identity of `pr`'s ledger row `row`: the pull request and the row's head SHA. */
+  const verdictOf = (pr: string, row: TableRow): VerdictRow => ({
+    sha: firstSha(row),
+    namesPr: (word) =>
+      looseRefs(word).some((loose) => {
+        const ref = resolveRef(loose);
+
+        return ref !== undefined && formatPr(ref) === pr;
+      }),
+  });
+
   // Pull requests the state files name, each looked up once.
   const refs = new Map<string, PrRef>();
 
@@ -337,7 +355,7 @@ async function chunkFindings(
     if (rows.some((row) => namesSha(row.cell("head_sha"), pull.headRefOid))) continue;
 
     const last = rows[rows.length - 1];
-    const link = rowLink(coordinators, ledgerFile, last, writesVerdict(chunk, firstSha(last)));
+    const link = rowLink(coordinators, ledgerFile, last, writesVerdict(chunk, verdictOf(pr, last)));
 
     findings.push({
       session: link.session,
@@ -379,7 +397,7 @@ async function chunkFindings(
         coordinators,
         ledgerFile,
         ledgerRow,
-        writesVerdict(chunk, firstSha(ledgerRow)),
+        writesVerdict(chunk, verdictOf(pr, ledgerRow)),
       );
     } else if (unitRow !== undefined) {
       link = rowLink(coordinators, unitsFile, unitRow, writesUnit(chunk, unitRow.cell("id")));

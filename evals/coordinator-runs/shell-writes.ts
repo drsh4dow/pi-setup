@@ -108,27 +108,98 @@ function assign(variables: Map<string, string>, words: readonly Word[]) {
 /** A word a command writes to, with where it ends in the statement. */
 type Target = Pick<Word, "text" | "end">;
 
+/** GNU sed's long options, to resolve the unique prefixes getopt accepts. */
+const SED_LONG = [
+  "binary",
+  "debug",
+  "expression",
+  "file",
+  "follow-symlinks",
+  "help",
+  "in-place",
+  "line-length",
+  "null-data",
+  "posix",
+  "quiet",
+  "regexp-extended",
+  "sandbox",
+  "separate",
+  "silent",
+  "unbuffered",
+  "version",
+  "zero-terminated",
+];
+
+/** The long option a `--name` names, exactly or by a unique prefix. */
+function sedLongOption(name: string): string | undefined {
+  if (SED_LONG.includes(name)) return name;
+
+  const matches = SED_LONG.filter((option) => option.startsWith(name));
+
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+/**
+ * The files a `sed` call edits in place, or none when it does not edit in place. Its script comes
+ * from `-e` or `-f` (separate, attached as `-eSCRIPT`, or ending a cluster such as `-ne`), or from
+ * `--expression` or `--file` (separate or after `=`); without one, the first operand is the
+ * script. `-i` takes the rest of its cluster as a backup suffix, and `-l` takes a line length.
+ */
+function sedInPlaceFiles(args: readonly Word[]): Word[] {
+  const operands: Word[] = [];
+  let inPlace = false;
+  let scripted = false;
+
+  for (let index = 0; index < args.length; index++) {
+    const text = args[index].text;
+
+    if (text === "--") {
+      operands.push(...args.slice(index + 1));
+      break;
+    }
+
+    if (text.startsWith("--")) {
+      const equals = text.indexOf("=");
+      const option = sedLongOption(text.slice(2, equals < 0 ? undefined : equals));
+
+      if (option === "in-place") inPlace = true;
+
+      if (option === "expression" || option === "file") scripted = true;
+
+      const takesValue = option === "expression" || option === "file" || option === "line-length";
+
+      if (takesValue && equals < 0) index++;
+    } else if (text.startsWith("-") && text.length > 1) {
+      for (let at = 1; at < text.length; at++) {
+        const flag = text[at];
+
+        if (flag === "i") {
+          inPlace = true;
+          break;
+        }
+
+        if (flag === "e" || flag === "f" || flag === "l") {
+          if (flag !== "l") scripted = true;
+
+          if (at === text.length - 1) index++;
+          break;
+        }
+      }
+    } else operands.push(args[index]);
+  }
+
+  if (!inPlace) return [];
+
+  return scripted ? operands : operands.slice(1);
+}
+
 /** The files one simple command writes, from the arguments after its command word. */
 function writtenBy(name: string, args: readonly Word[]): Target[] {
   const positional = args.filter((arg) => !arg.text.startsWith("-"));
 
   if (name === "tee") return positional;
 
-  if (name === "sed" && args.some((arg) => /^-[a-zA-Z]*i|^--in-place/.test(arg.text))) {
-    const files: Word[] = [];
-    let scripted = false;
-
-    for (let index = 0; index < args.length; index++) {
-      const arg = args[index];
-
-      if (["-e", "-f", "--expression", "--file"].includes(arg.text)) {
-        scripted = true;
-        index++;
-      } else if (!arg.text.startsWith("-")) files.push(arg);
-    }
-
-    return scripted ? files : files.slice(1);
-  }
+  if (name === "sed") return sedInPlaceFiles(args);
 
   if (name === "cp" || name === "mv") {
     const flag = args.findIndex((arg) => /^(?:-t|--target-directory)(?:=|$)/.test(arg.text));

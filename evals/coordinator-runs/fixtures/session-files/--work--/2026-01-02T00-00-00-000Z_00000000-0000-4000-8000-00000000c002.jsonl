@@ -1,0 +1,11 @@
+{"type":"session","version":3,"id":"00000000-0000-4000-8000-00000000c002","timestamp":"2026-01-01T00:00:00.000Z","cwd":"{{ROOT}}/work"}
+{"type":"custom","id":"m0000001","customType":"sh4dow-mode","data":{"version":1}}
+{"type":"message","id":"s0000012","message":{"role":"system","content":"","sections":{"preamble":"You are the coordinator.","cwd":"{{ROOT}}/work"}}}
+{"type":"message","id":"u0000013","message":{"role":"user","content":[{"type":"text","text":"The chunk: 2"}]}}
+{"type":"message","id":"m0000002","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","id":"q1","name":"read","arguments":{"path":"{{ROOT}}/state/demo/implement-chunk/alpha/plan.md"}}]}}
+{"type":"message","id":"r0000014","message":{"role":"toolResult","toolCallId":"q1","toolName":"read","isError":false,"content":[{"type":"text","text":"# Plan"}]}}
+{"type":"message","id":"m0000003","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","id":"q2","name":"read","arguments":{"path":"{{ROOT}}/home/.pi/agent/skills/babysit/SKILL.md"}}]}}
+{"type":"message","id":"r0000015","message":{"role":"toolResult","toolCallId":"q2","toolName":"read","isError":false,"content":[{"type":"text","text":"# Babysit"}]}}
+{"type":"message","id":"m0000004","timestamp":"2026-01-01T00:30:00.000Z","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","id":"q3","name":"edit","arguments":{"path":"{{ROOT}}/state/demo/implement-chunk/alpha/units.tsv","edits":[{"oldText":"final-10\t2\tOPEN\tacme/app#10\tplanned","newText":"final-10\t2\tOPEN\tacme/app#10\trunning"}]}}]}}
+{"type":"message","id":"r0000016","message":{"role":"toolResult","toolCallId":"q3","toolName":"edit","isError":false,"content":[{"type":"text","text":"ok"}]}}
+{"type":"message","id":"f0000016","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"Resumed chunk alpha."}]}}

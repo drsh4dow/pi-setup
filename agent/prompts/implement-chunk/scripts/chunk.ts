@@ -20,6 +20,11 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  type FinalPrHead,
+  reportOnlyMergeProblems,
+  unterminatedSubagentProblems,
+} from "./checks.ts";
 import { type Outcomes, parseOutcomes } from "./outcomes.ts";
 import {
   PR_VIEW_FIELDS,
@@ -41,6 +46,7 @@ import {
   isUnitColumn,
   ledgerColumnsOf,
   parseLedger,
+  parseSpawns,
   parseUnits,
 } from "./state.ts";
 import { withLock } from "./lock.ts";
@@ -403,16 +409,18 @@ function report(state: string): Result {
 
   if (unitsText === null) throw new Refusal(`${unitsPath}: missing`);
 
-  const tickets = ticketsOf(parseUnits(unitsPath, unitsText));
+  const units = parseUnits(unitsPath, unitsText);
+  const tickets = ticketsOf(units);
 
   if (tickets.length === 0) throw new Refusal(`${unitsPath}: no unit names a ticket`);
 
   const ledgerPath = join(state, "ledger.tsv");
+  const ledger = ledgerRows(ledgerPath);
   const lookups = new Map<string, Lookup>();
 
   const { text, exit } = renderReport({
     tickets,
-    ledger: ledgerRows(ledgerPath),
+    ledger,
     ledgerFile: ledgerPath,
     outcomes: readOutcomes(),
     outcomesFile: BRIEF,
@@ -428,7 +436,37 @@ function report(state: string): Result {
     },
   });
 
-  return { out: text, exit };
+  const finalPrs = tickets.flatMap(({ finalPr }): FinalPrHead[] => {
+    if (finalPr.kind !== "opened") return [];
+
+    const lookup = lookups.get(formatPrRef(finalPr.ref));
+
+    return lookup?.kind === "found" ? [{ ref: finalPr.ref, head: lookup.view.headRefOid }] : [];
+  });
+
+  // Only a sh4dow run keeps the spawn registry that says which subagents are verifiers.
+  const spawnsPath = join(state, "spawns.tsv");
+  const spawnsText = readIfPresent(spawnsPath);
+  const sh4dow = readIfPresent(join(state, "mode"))?.trim() === "sh4dow";
+
+  const problems = [
+    ...unterminatedSubagentProblems(unitsPath, units),
+    ...(sh4dow
+      ? reportOnlyMergeProblems({
+          ledgerFile: ledgerPath,
+          ledger,
+          spawns: spawnsText === null ? [] : parseSpawns(spawnsPath, spawnsText),
+          finalPrs: [...new Map(finalPrs.map((pr) => [formatPrRef(pr.ref), pr])).values()],
+        })
+      : []),
+  ];
+
+  if (problems.length === 0) return { out: text, exit };
+
+  return {
+    out: [text, "", "## Structural checks", "", ...problems].join("\n"),
+    exit: exit === 2 ? 2 : 1,
+  };
 }
 
 function run(argv: readonly string[]): Result {

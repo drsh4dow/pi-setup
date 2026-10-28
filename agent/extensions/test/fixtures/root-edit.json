@@ -1,0 +1,45 @@
+{
+  "about": "The five root-edit findings of the coordinator-runs baseline (graded at ecfaba4) that are not scratch files under /tmp: each coordinator's successful write or edit outside its state folder, with its session, entry, and working directory. The written content is left out.",
+  "calls": [
+    {
+      "session": "01a16906-f110-737a-a099-ac8aa9f9da10",
+      "entry": "5fd1ecba",
+      "cwd": "/home/drsh4dow/Projects/3yhealth",
+      "firstMessage": "# Implement a chunk",
+      "toolName": "write",
+      "path": "/home/drsh4dow/Projects/3yhealth/txt.txt"
+    },
+    {
+      "session": "01a16906-f110-737a-a099-ac8aa9f9da10",
+      "entry": "aff481d8",
+      "cwd": "/home/drsh4dow/Projects/3yhealth",
+      "firstMessage": "# Implement a chunk",
+      "toolName": "write",
+      "path": "/home/drsh4dow/Projects/3yhealth/txt.txt"
+    },
+    {
+      "session": "01a16906-f110-737a-a099-ac8aa9f9da10",
+      "entry": "4659d2fb",
+      "cwd": "/home/drsh4dow/Projects/3yhealth",
+      "firstMessage": "# Implement a chunk",
+      "toolName": "write",
+      "path": "/home/drsh4dow/Projects/3yhealth/txt.txt"
+    },
+    {
+      "session": "01a17890-7490-7168-bffe-dbc42d83d67f",
+      "entry": "84884e39",
+      "cwd": "/home/drsh4dow/.pi",
+      "firstMessage": "# Implement a chunk",
+      "toolName": "write",
+      "path": "/home/drsh4dow/.pi/.worktrees/subagent-model-table/agent/skills/subagents/SKILL.md"
+    },
+    {
+      "session": "01a17890-7490-7168-bffe-dbc42d83d67f",
+      "entry": "84884e39",
+      "cwd": "/home/drsh4dow/.pi",
+      "firstMessage": "# Implement a chunk",
+      "toolName": "edit",
+      "path": "/home/drsh4dow/.pi/.worktrees/subagent-model-table/agent/prompts/implement-chunk.md"
+    }
+  ]
+}

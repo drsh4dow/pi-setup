@@ -1,7 +1,19 @@
-import { type ExtensionAPI, parseArgs } from "@earendil-works/pi-coding-agent";
+// The guard judges each call synchronously inside Pi's handler, which has no Effect runtime.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import { homedir, tmpdir } from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import { isAbsolute, join, relative, resolve } from "node:path";
+
+import {
+  type ExtensionAPI,
+  type ExtensionContext,
+  isToolCallEventType,
+  parseArgs,
+} from "@earendil-works/pi-coding-agent";
 
 import { refuseCommands } from "../lib/command-tool-call.ts";
 import { basename, commandArgv, isShell, pipelines } from "../lib/shell-command.ts";
+import { SH4DOW_MODE_ENTRY } from "./sh4dow/index.ts";
 
 type LaunchKind = "root" | "owner" | "delegate";
 
@@ -170,7 +182,86 @@ export function spawnGuard(
   }
 }
 
+// A coordinator is a root session in sh4dow mode or one that runs the implement-chunk prompt, the
+// two kinds evals/coordinator-runs grades. It is read-only on code: subagents make every change,
+// so its own edit and write calls stay in the state root and the temp directory.
+const IMPLEMENT_CHUNK_HEADING = "# Implement a chunk";
+
+// The state folders of every project, which SYSTEM.md roots here. The guard cannot tell which
+// chunk folder a coordinator owns, so any folder under the root counts as its own.
+const STATE_ROOT = join(homedir(), ".local", "state", "pi-agent");
+
+const ROOT_EDIT_REASON =
+  "root-edit: a coordinator is read-only on code, so it writes only its state folder under " +
+  `${STATE_ROOT} and scratch files in the temp directory. Brief a subagent to make this change.`;
+
+type SessionEntries = ReturnType<ExtensionContext["sessionManager"]["getEntries"]>;
+
+function firstUserText(entries: SessionEntries): string | undefined {
+  for (const entry of entries) {
+    if (entry.type !== "message" || entry.message.role !== "user") continue;
+
+    const { content } = entry.message;
+
+    if (!Array.isArray(content)) return content;
+
+    return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+  }
+
+  return undefined;
+}
+
+export function isCoordinatorSession(entries: SessionEntries): boolean {
+  const sh4dow = entries.some(
+    (entry) => entry.type === "custom" && entry.customType === SH4DOW_MODE_ENTRY,
+  );
+
+  return (
+    sh4dow || (firstUserText(entries)?.trimStart().startsWith(IMPLEMENT_CHUNK_HEADING) ?? false)
+  );
+}
+
+// The file an edit or write call names, resolved as Pi's tools resolve it: a leading `@` dropped,
+// `~` expanded, and a relative path taken from the session's directory.
+function targetOf(path: string, cwd: string): string {
+  const named = path.startsWith("@") ? path.slice(1) : path;
+
+  if (named === "~") return homedir();
+
+  return resolve(cwd, named.startsWith("~/") ? join(homedir(), named.slice(2)) : named);
+}
+
+function isInside(directory: string, path: string): boolean {
+  const rest = relative(directory, path);
+
+  return rest !== "" && !rest.startsWith("..") && !isAbsolute(rest);
+}
+
+/** Why a coordinator may not write `path`, or undefined when it is in the state root or a temp directory. */
+export function rootEditRefusal(path: string, cwd: string): string | undefined {
+  const target = targetOf(path, cwd);
+  const allowed = [STATE_ROOT, tmpdir(), "/tmp"];
+
+  if (allowed.some((directory) => isInside(directory, target))) return undefined;
+
+  return `${ROOT_EDIT_REASON} Refused: ${target}`;
+}
+
+export function refuseRootEdits(pi: ExtensionAPI): void {
+  pi.on("tool_call", (event, ctx) => {
+    const writes = isToolCallEventType("edit", event) || isToolCallEventType("write", event);
+
+    if (!writes || !isCoordinatorSession(ctx.sessionManager.getEntries())) return undefined;
+
+    const reason = rootEditRefusal(event.input.path, ctx.cwd);
+
+    return reason === undefined ? undefined : { block: true, reason };
+  });
+}
+
 export default function delegateGuard(pi: ExtensionAPI): void {
+  if (promptKind(process.argv.slice(2)) === "root") refuseRootEdits(pi);
+
   const blockReason = spawnGuard(process.argv);
 
   if (blockReason === undefined) return;

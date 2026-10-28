@@ -79,7 +79,11 @@ export interface PrFixture {
 }
 
 export interface Fixture {
-  readonly units: readonly (readonly [string, string, string])[];
+  /** Units: id, ticket, final PR, and optionally a state, `merged` when left out. */
+  readonly units: readonly (
+    | readonly [string, string, string]
+    | readonly [string, string, string, string]
+  )[];
   /** Ledger rows: pr, sha, outcome, evidence, and optionally a risk level and its reason. */
   readonly ledger?: readonly (
     | readonly [string, string, string, string]
@@ -102,8 +106,8 @@ export function chunk(t: TestContext, fixture: Fixture) {
     join(state, "units.tsv"),
     [
       UNITS_HEADER,
-      ...fixture.units.map(([id, ticket, finalPr]) =>
-        [id, ticket, "open", finalPr, "", "", "", "", ""].join("\t"),
+      ...fixture.units.map(([id, ticket, finalPr, unitState = "merged"]) =>
+        [id, ticket, "open", finalPr, unitState, "", "", "", ""].join("\t"),
       ),
     ].join("\n") + "\n",
   );

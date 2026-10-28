@@ -7,9 +7,8 @@ import type { ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-
 import delegateGuardExtension, { spawnGuard } from "../delegate-guard.ts";
 import { extensionTestAdapter, unsafeFixture } from "./adapter.ts";
 import {
-  DELEGATE,
-  OWNER,
-  UNATTENDED,
+  DELEGATE_PROMPT,
+  OWNER_PROMPT,
   decodeDecision,
   delegateArgv,
   ownerArgv,
@@ -29,6 +28,15 @@ function guardFor(argv: readonly string[]): (command: string) => string | undefi
   return guard;
 }
 
+// The raw launch block's role prompt swapped for an owner's.
+function asOwnerPrompt(text: string): string {
+  return text.replace("generated/delegate/assignment.md", "generated/owner/babysitter.md");
+}
+
+function twoPrompts(first: string, last: string): string[] {
+  return ["node", "pi", "--system-prompt", first, "--system-prompt", last];
+}
+
 test("the subagents skill's launch block starts a delegate, which an owner may run", () => {
   const launch = skill.match(/## Launch[\s\S]*?```bash\n([\s\S]*?)```/)?.[1];
   assert.ok(launch, "subagents SKILL.md has a bash launch block under ## Launch");
@@ -39,10 +47,11 @@ test("the subagents skill's launch block starts a delegate, which an owner may r
     .split(/\s+/)
     .map((word) => word.replaceAll('"', ""));
 
-  const asOwner = argv.map((word) => word.replace("subagents/delegate.md", "subagents/owner.md"));
-  const ownerLaunch = launch.replace("subagents/delegate.md", "subagents/owner.md");
+  const asOwner = argv.map(asOwnerPrompt);
 
-  assert.notEqual(ownerLaunch, launch, "the launch block appends delegate.md");
+  const ownerLaunch = asOwnerPrompt(launch);
+
+  assert.notEqual(ownerLaunch, launch, "the launch block passes the assignment role prompt");
   assert.match(guardFor(argv)(launch) ?? "", DELEGATE_BLOCK, "a delegate may not spawn");
   assert.equal(guardFor(asOwner)(launch), undefined, "an owner may launch a delegate");
   assert.match(
@@ -85,15 +94,97 @@ test("an owner's launcher run is judged by its last --kind", () => {
   assert.match(ownerGuard(`${launcher} --kind delegate --kind owner`) ?? "", OWNER_BLOCK);
 });
 
-test("a process without unattended.md is a root and gets no guard", () => {
-  assert.equal(spawnGuard(rootArgv), undefined);
+test("a process without a role prompt is a root and gets no guard", () => {
+  for (const argv of [
+    rootArgv,
+    ["node", "pi", "--print", "--system-prompt", "/h/.pi/agent/SYSTEM.md"],
+    ["node", "pi", "--system-prompt", "/h/.pi/agent/system/generated/sh4dow.md"],
+    ["node", "pi", "--append-system-prompt", DELEGATE_PROMPT],
+    ["node", "pi", "-p", "--system-prompt", `rules\nLaunch a delegate on ${DELEGATE_PROMPT}`],
+  ]) {
+    assert.equal(spawnGuard(argv), undefined, argv.join(" "));
+  }
+});
+
+test("a process's kind is the directory of its last --system-prompt", () => {
+  const delegateLast = twoPrompts(OWNER_PROMPT, DELEGATE_PROMPT);
+
+  const ownerLast = twoPrompts(DELEGATE_PROMPT, OWNER_PROMPT);
+
+  assert.match(guardFor(delegateLast)("pi-subagent --model m") ?? "", DELEGATE_BLOCK);
+  assert.match(guardFor(ownerLast)("pi-subagent --model m") ?? "", OWNER_BLOCK);
+  assert.equal(guardFor(ownerLast)(`pi-subagent --system-prompt ${DELEGATE_PROMPT}`), undefined);
+});
+
+test("Pi's options end at --, so a --system-prompt after it is a message and names no kind", () => {
+  const delegateThenText = [...delegateArgv, "--", "--system-prompt", "plain.md"];
+
+  assert.match(guardFor(delegateThenText)("pi-subagent --model m") ?? "", DELEGATE_BLOCK);
+  assert.match(
+    guardFor(ownerArgv)(
+      `pi --print --system-prompt ${OWNER_PROMPT} -- --system-prompt ${DELEGATE_PROMPT}`,
+    ) ?? "",
+    OWNER_BLOCK,
+    "the child runs on the owner prompt",
+  );
   assert.equal(
-    spawnGuard(["node", "pi", "--print", "--append-system-prompt", DELEGATE]),
+    guardFor(ownerArgv)(
+      `pi --print --system-prompt ${DELEGATE_PROMPT} -- --system-prompt ${OWNER_PROMPT}`,
+    ),
     undefined,
+    "the child runs on the delegate prompt",
   );
 });
 
-test("a subagent without owner.md is a delegate and spawns no pi print launch", () => {
+test("an option's value that spells --system-prompt is a value, not the flag", () => {
+  assert.match(
+    guardFor(ownerArgv)(`pi --print --append-system-prompt --system-prompt ${DELEGATE_PROMPT}`) ??
+      "",
+    OWNER_BLOCK,
+    "Pi reads no --system-prompt there, so the child is a root",
+  );
+});
+
+test("an appended delegate kind part makes a delegate, whatever the system prompt", () => {
+  const kindPart = "/h/.pi/agent/system/kinds/delegate.md";
+
+  const generalText = [
+    "node",
+    "pi",
+    "-p",
+    "--system-prompt",
+    "You are a coding agent.\n<router>…</router>",
+  ];
+
+  for (const argv of [
+    [...generalText, "--append-system-prompt", kindPart],
+    [...ownerArgv, "--append-system-prompt", kindPart],
+  ]) {
+    assert.match(guardFor(argv)("pi-subagent --help") ?? "", DELEGATE_BLOCK, argv.join(" "));
+  }
+
+  assert.equal(
+    guardFor(ownerArgv)(
+      `pi-subagent --system-prompt 'general text' --append-system-prompt ${kindPart}`,
+    ),
+    undefined,
+    "an owner may launch a child that runs as a delegate",
+  );
+  assert.equal(
+    spawnGuard(["node", "pi", "--append-system-prompt", `The delegate part is\n${kindPart}`]),
+    undefined,
+    "a text that quotes the part's path names no kind",
+  );
+});
+
+test("an owner's refusal names both ways to launch a delegate", () => {
+  const reason = guardFor(ownerArgv)("pi-subagent --model m") ?? "";
+
+  assert.ok(reason.includes("--kind delegate"), reason);
+  assert.ok(reason.includes("system/generated/delegate/"), reason);
+});
+
+test("a subagent on a delegate role prompt spawns no pi print launch", () => {
   const delegateGuard = guardFor(delegateArgv);
 
   for (const command of [
@@ -102,7 +193,7 @@ test("a subagent without owner.md is a delegate and spawns no pi print launch", 
     'cd /tmp/app && pi --model anthropic/claude-opus-5-5 --print "hi"',
     "/home/u/.bun/bin/pi --print <<'EOF'\nhi\nEOF",
     "FOO=1 pi \\\n  --thinking high \\\n  --print",
-    `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE} "hi"`,
+    `pi --print --system-prompt ${DELEGATE_PROMPT} "hi"`,
   ]) {
     assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
   }
@@ -152,7 +243,7 @@ test("a quoted launch string is a search pattern, not a launch", () => {
 test("a launch inside a bash -c, sh -c, or eval string is judged like a direct one", () => {
   const delegateGuard = guardFor(delegateArgv);
   const ownerGuard = guardFor(ownerArgv);
-  const delegateLaunch = `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE}`;
+  const delegateLaunch = `pi --print --system-prompt ${DELEGATE_PROMPT}`;
 
   for (const command of [
     "bash -c 'pi --print hi'",
@@ -169,9 +260,9 @@ test("a launch inside a bash -c, sh -c, or eval string is judged like a direct o
   assert.equal(delegateGuard("bash -c \"grep -n 'a; pi --print' f\""), undefined);
 });
 
-test("an owner's guard judges each launch by its own appends", () => {
+test("an owner's guard judges each launch by its own role prompt", () => {
   const ownerGuard = guardFor(ownerArgv);
-  const delegateLaunch = `pi --print --append-system-prompt ${UNATTENDED} --append-system-prompt "${DELEGATE}"`;
+  const delegateLaunch = `pi --print --system-prompt "${DELEGATE_PROMPT}"`;
 
   assert.equal(ownerGuard(`cd /tmp/app && ${delegateLaunch} "hi"`), undefined);
   assert.equal(ownerGuard(`${delegateLaunch} "a" & ${delegateLaunch} "b"`), undefined);
@@ -184,9 +275,9 @@ test("an owner's guard judges each launch by its own appends", () => {
 
   for (const command of [
     'pi --print "hi"',
-    `pi --print --append-system-prompt ${DELEGATE} --append-system-prompt ${DELEGATE}; pi --print`,
+    `pi --print --system-prompt ${DELEGATE_PROMPT} --system-prompt ${OWNER_PROMPT}; pi --print`,
     `${delegateLaunch} <<'TASK'\nhi\nTASK\npi -p "again"`,
-    `${delegateLaunch} --append-system-prompt ${OWNER}`,
+    `${delegateLaunch} --system-prompt ${OWNER_PROMPT}`,
   ]) {
     assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
   }
@@ -199,7 +290,7 @@ test("a delegate is blocked from every pi-subagent launch", () => {
     "pi-subagent <<'EOF'\nhi\nEOF",
     "/home/u/.pi/.build/bin/pi-subagent --model anthropic/claude-opus-5-5",
     "cd /tmp/app && FOO=1 pi-subagent \\\n  --thinking high",
-    `pi-subagent --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE}`,
+    `pi-subagent --system-prompt ${DELEGATE_PROMPT}`,
   ]) {
     assert.match(delegateGuard(command) ?? "", DELEGATE_BLOCK, command);
   }
@@ -227,39 +318,29 @@ for (const command of [
   });
 }
 
-test("an owner's wrapped pi-subagent launch is judged by its appends", () => {
+test("an owner's wrapped pi-subagent launch is judged by its role prompt", () => {
   const ownerGuard = guardFor(ownerArgv);
 
-  assert.match(
-    ownerGuard(`timeout 900 pi-subagent --append-system-prompt ${UNATTENDED} --model m`) ?? "",
-    OWNER_BLOCK,
-  );
-  assert.equal(
-    ownerGuard(
-      `timeout 900 pi-subagent --append-system-prompt ${UNATTENDED} --append-system-prompt ${DELEGATE}`,
-    ),
-    undefined,
-  );
+  assert.match(ownerGuard(`timeout 900 pi-subagent --model m`) ?? "", OWNER_BLOCK);
+  assert.equal(ownerGuard(`timeout 900 pi-subagent --system-prompt ${DELEGATE_PROMPT}`), undefined);
 });
 
-test("an owner's pi-subagent launch without delegate.md is blocked", () => {
+test("an owner's pi-subagent launch without a delegate role prompt is blocked", () => {
   const ownerGuard = guardFor(ownerArgv);
 
   for (const command of [
     "pi-subagent <<'EOF'\nhi\nEOF",
-    `pi-subagent --append-system-prompt ${UNATTENDED} --append-system-prompt ${OWNER}`,
+    `pi-subagent --system-prompt ${OWNER_PROMPT}`,
   ]) {
     assert.match(ownerGuard(command) ?? "", OWNER_BLOCK, command);
   }
 });
 
-test("an owner's pi-subagent launch with delegate.md is allowed", () => {
+test("an owner's pi-subagent launch on a delegate role prompt is allowed", () => {
   const ownerGuard = guardFor(ownerArgv);
 
   assert.equal(
-    ownerGuard(
-      `pi-subagent --append-system-prompt ${UNATTENDED} --append-system-prompt "${DELEGATE}" <<'TASK'\nhi\nTASK`,
-    ),
+    ownerGuard(`pi-subagent --system-prompt "${DELEGATE_PROMPT}" <<'TASK'\nhi\nTASK`),
     undefined,
   );
 });
@@ -356,11 +437,11 @@ test("a launch string handed to a program that runs it is judged like a direct o
   }
 
   assert.equal(
-    ownerGuard(`tmux new-session -d "pi --print --append-system-prompt ${DELEGATE} hi"`),
+    ownerGuard(`tmux new-session -d "pi --print --system-prompt ${DELEGATE_PROMPT} hi"`),
     undefined,
   );
   assert.equal(
-    ownerGuard(`pi --print --append-system-prompt ${DELEGATE} "never run pi --print"`),
+    ownerGuard(`pi --print --system-prompt ${DELEGATE_PROMPT} "never run pi --print"`),
     undefined,
   );
 

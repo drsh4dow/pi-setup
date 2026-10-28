@@ -12,11 +12,14 @@ export const ROLES = [
   "live-verifier",
   "persona",
   "assignment",
+  "brief-auditor",
 ] as const;
 
 export type Role = (typeof ROLES)[number];
 
-export type Kind = "delegate" | "owner";
+export const KINDS = ["delegate", "owner"] as const;
+
+export type Kind = (typeof KINDS)[number];
 
 export interface Problem {
   readonly line: number | null;
@@ -62,6 +65,7 @@ function requiredFields(role: Role, collapsed: boolean): readonly Field[] {
     case "pr-writer":
     case "babysitter":
     case "live-verifier":
+    case "brief-auditor":
       return collapsed ? ["GOAL", "SCOPE", "VERIFY", "REPORT"] : TEMPLATE_FIELDS;
     default: {
       const unexpected: never = role;
@@ -223,6 +227,32 @@ export function briefProblems(check: BriefCheck): Problem[] {
   const fields = check.resume ? [] : fieldProblems(lines, check.role, check.kind);
 
   return [...fields, ...placeholderProblems(lines)];
+}
+
+const SKILL_NAME = /^[a-z0-9-]+/;
+
+// The skill names in the SKILLS field: items split on commas and a standalone "and", each
+// the leading name once emphasis, backticks, and parentheticals are gone, so
+// "**tdd** (red first), `unslop` and writing-good-commits" names three. The field is its
+// line and the indented lines that continue it, as in the template, so the prose after a
+// free-form brief's SKILLS line is not read as names. A field that opens with `none`,
+// whatever reason follows, names nothing, and so does a brief of any role without the field.
+export function briefSkills(text: string): readonly string[] {
+  const field = fieldValues(proseLines(text)).find(({ field: name }) => name === "SKILLS");
+  const [first = "", ...rest] = (field?.value ?? "").split("\n");
+  const end = rest.findIndex((line) => !/^\s+\S/.test(line));
+  const value = [first, ...rest.slice(0, end === -1 ? rest.length : end)].join(" ");
+  const items = value
+    .replaceAll(/\([^)]*\)/g, "")
+    .replaceAll(/[*`]/g, "")
+    .split(/,|\s+and\s+/);
+  const names = items.flatMap((item) => {
+    const name = SKILL_NAME.exec(item.trim().toLowerCase())?.[0];
+
+    return name === undefined ? [] : [name];
+  });
+
+  return names[0] === "none" ? [] : [...new Set(names)];
 }
 
 const BRANCH = String.raw`[A-Za-z0-9._][A-Za-z0-9._/-]*`;

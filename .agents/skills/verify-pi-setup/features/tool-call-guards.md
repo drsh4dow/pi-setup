@@ -1,6 +1,6 @@
 # Tool-call guards
 
-Two extensions refuse a bash call before it runs, and the model reads the refusal as the tool result. The host guard (`host-guard`) runs in every session and refuses a kill by name or pattern and a glob delete under `/tmp`. `delegate-guard` runs only in a delegate session, one whose Pi was started with `subagents/unattended.md` and `subagents/delegate.md` appended to its system prompt, and refuses any subagent launch there. An allowed command runs as usual.
+Two extensions refuse a bash call before it runs, and the model reads the refusal as the tool result. The host guard (`host-guard`) runs in every session and refuses a kill by name or pattern and a glob delete under `/tmp`. `delegate-guard` runs only in a delegate session, one whose Pi was started with `--system-prompt` set to a role prompt under `agent/system/generated/delegate/`, and refuses any subagent launch there. An allowed command runs as usual.
 
 ## Sub-features
 
@@ -12,7 +12,7 @@ Two extensions refuse a bash call before it runs, and the model reads the refusa
 ## How to get to it (user POV)
 
 - In a root session, ask the model to call bash with a kill by pattern, then with a search.
-- In a delegate session, ask the model to call bash with a subagent launch, then with a lookup. A delegate session is what `pi-subagent` starts for a delegate; here a `pi` wrapper first on PATH appends the same two files to the session `control-pi` launches.
+- In a delegate session, ask the model to call bash with a subagent launch, then with a lookup. A delegate session is what `pi-subagent` starts for a delegate; here a `pi` wrapper first on PATH passes the checkout's `assignment` role prompt to the session `control-pi` launches.
 
 ## Driving it with control-pi
 
@@ -31,17 +31,18 @@ Root session:
 
 Delegate session:
 
-- **Write the wrapper.** The wrapper appends the two files only to the Pi that `control-pi` starts in tmux, the one process that carries `VERIFY_PI_SETUP_RUN`, so the credential refresh and doctor's `pi --version` run plain `pi`. It records the argv it passes on in `$DLG/pi-argv.txt`, because Pi renames its process title and `ps` shows only `pi`:
+- **Write the wrapper.** Run it from the checkout under test, whose generated role prompts the wrapper names. The wrapper passes the role prompt only to the Pi that `control-pi` starts in tmux, the one process that carries `VERIFY_PI_SETUP_RUN`, so the credential refresh and doctor's `pi --version` run plain `pi`. It records the argv it passes on in `$DLG/pi-argv.txt`, because Pi renames its process title and `ps` shows only `pi`:
 
   ```bash
   DLG=$(mktemp -d)
   mkdir "$DLG/bin"
   REAL_PI=$(command -v pi)
+  ROLE_PROMPT="$(git rev-parse --show-toplevel)/agent/system/generated/delegate/assignment.md"
+  test -s "$ROLE_PROMPT"
   cat >"$DLG/bin/pi" <<EOF
   #!/usr/bin/env bash
   if [[ -n \${VERIFY_PI_SETUP_RUN:-} ]]; then
-    set -- "\$@" --append-system-prompt "\$PI_CODING_AGENT_DIR/skills/subagents/unattended.md" \\
-      --append-system-prompt "\$PI_CODING_AGENT_DIR/skills/subagents/delegate.md"
+    set -- "\$@" --system-prompt "$ROLE_PROMPT"
     printf '%s\n' "\$@" >"$DLG/pi-argv.txt"
   fi
   exec "$REAL_PI" "\$@"
@@ -50,7 +51,7 @@ Delegate session:
   echo "DLG=$DLG"
   ```
 
-- **Launch.** Run `PATH="$DLG/bin:$PATH" $CP launch "$DELEGATE"` and `$CP doctor "$DELEGATE" >"$($CP path "$DELEGATE" evidence)/doctor.txt"`. Doctor exits 0. Run `cp "$DLG/pi-argv.txt" "$($CP path "$DELEGATE" evidence)/"`. Its last four lines are `--append-system-prompt`, a path ending in `skills/subagents/unattended.md`, `--append-system-prompt`, and a path ending in `skills/subagents/delegate.md`.
+- **Launch.** Run `PATH="$DLG/bin:$PATH" $CP launch "$DELEGATE"` and `$CP doctor "$DELEGATE" >"$($CP path "$DELEGATE" evidence)/doctor.txt"`. Doctor exits 0. Run `cp "$DLG/pi-argv.txt" "$($CP path "$DELEGATE" evidence)/"`. Its last two lines are `--system-prompt` and a path ending in `agent/system/generated/delegate/assignment.md`.
 - **delegate-refuse.** Run `$CP send "$DELEGATE" 'Call the bash tool once with the command command pi-subagent --help and make no other tool call. Then reply with the word done.'`, `$CP wait-turn "$DELEGATE" 120`, and `$CP snap "$DELEGATE" delegate-refuse`. The snap shows the call and `Delegates spawn nothing.` under it.
 - **delegate-allow.** Run `$CP send "$DELEGATE" 'Call the bash tool once with the command command -v pi-subagent and make no other tool call. Then reply with the word done.'`, `$CP wait-turn "$DELEGATE" 120`, and `$CP snap "$DELEGATE" delegate-allow`. The snap shows the call and a path ending in `/pi-subagent`.
 - **Proof.** Run the session read with `RUN=$DELEGATE`. The `pi-subagent --help` result starts `Delegates spawn nothing.`, and the `-v` result is a path. Then run `$CP stop "$DELEGATE"` and `rm -rf "$DLG"`.

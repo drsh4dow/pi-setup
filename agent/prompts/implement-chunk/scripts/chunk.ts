@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-// The implement-chunk lead's bookkeeping CLI: it writes units.tsv and ledger.tsv in the state
-// folder and prints the merge-ready report from them and the live PRs.
+// The implement-chunk lead's bookkeeping CLI: it writes units.tsv, ledger.tsv, and spawns.tsv in
+// the state folder and prints the merge-ready report from them and the live PRs. A units.tsv
+// write holds units.tsv.lock, per lock.ts.
 //
 // Exit codes: 0 clean, 1 a violation (not merge-ready, trees differ), 2 could not run or
 // refused input.
@@ -42,6 +43,8 @@ import {
   parseLedger,
   parseUnits,
 } from "./state.ts";
+import { withLock } from "./lock.ts";
+import { writeSpawn } from "./spawns.ts";
 import { Refusal, tsvLine } from "./tsv.ts";
 
 const USAGE = `Usage: chunk.ts --state <dir> <command>
@@ -50,6 +53,8 @@ const USAGE = `Usage: chunk.ts --state <dir> <command>
   ledger carry <pr> <new-sha> <from-sha> [-C <repo-dir>]
   unit add <id> <column>=<value>...
   unit set <id> <column>=<value>...
+  spawn add <session> <column>=<value>...
+  spawn set <session> <column>=<value>...
   report
 
 The state folder comes from --state, else $IMPLEMENT_CHUNK_STATE.
@@ -328,6 +333,17 @@ function writeUnit(path: string, mode: string, args: readonly string[]): Result 
   }
 
   const values = columnValues(assignments);
+
+  // Owners and the coordinator set rows at once, and each rewrites the whole table.
+  return withLock(path, () => replaceUnit(path, mode, id, values));
+}
+
+function replaceUnit(
+  path: string,
+  mode: string,
+  id: string,
+  values: ReadonlyMap<string, string>,
+): Result {
   const text = readIfPresent(path);
   const rows = text === null ? [] : parseUnits(path, text);
   const lines = rows.map((row) => row.cells.slice());
@@ -453,6 +469,10 @@ function run(argv: readonly string[]): Result {
 
   if (group === "unit" && (command === "add" || command === "set")) {
     return writeUnit(join(state, "units.tsv"), command, args);
+  }
+
+  if (group === "spawn" && (command === "add" || command === "set")) {
+    return { out: writeSpawn(join(state, "spawns.tsv"), command, args), exit: 0 };
   }
 
   if (group === "report" && command === "") return report(state);

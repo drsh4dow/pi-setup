@@ -71,16 +71,23 @@ function host(t: TestContext): Host {
   );
   chmodSync(fake, 0o755);
 
+  // A launch reads its tree position and state folder from its environment, and this test may
+  // run inside a subagent, so the host launches as the root with no state folder.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    PI_LAUNCH_LOADAVG: loadavg,
+    PI_LAUNCH_MEMINFO: meminfo,
+  };
+
+  for (const name of ["PI_SUBAGENT_KIND", "PI_SUBAGENT_TREE_DEPTH", "PI_SUBAGENT_SESSION", "IMPLEMENT_CHUNK_STATE"])
+    delete env[name];
+
   return {
     dir,
     orders,
     marker,
-    env: {
-      ...process.env,
-      PATH: `${bin}:${process.env.PATH ?? ""}`,
-      PI_LAUNCH_LOADAVG: loadavg,
-      PI_LAUNCH_MEMINFO: meminfo,
-    },
+    env,
     brief(name, text) {
       const path = join(dir, name);
       writeFileSync(path, text);

@@ -1,7 +1,7 @@
 ---
 name: code-review
 description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) with a panel of persona subagents, one lens each: spec fidelity, standards, logical proof, simplification, readability, comments, prose, security, and tests. Use when the user wants a branch, a PR, or work-in-progress changes reviewed, asks to review since X, or asks for an adversarial or multi-model review, to challenge, stress-test, or tear apart code."
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: true
 ---
 

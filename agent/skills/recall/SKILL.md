@@ -1,7 +1,7 @@
 ---
 name: recall
 description: "Use when need to recall something from other chat or your own after a compaction episode"
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: false
 ---
 

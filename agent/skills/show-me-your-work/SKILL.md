@@ -1,7 +1,7 @@
 ---
 name: show-me-your-work
 description: "Keep a reviewable decision trail (one TSV row per decision with what, why, evidence, and result), audit it against the session transcript, and have a different model family flag what the user should check. Use for unattended or long-running work the user reviews after stepping away, such as a hillclimb, an eval, or an autonomous run."
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: true
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: why
 description: "Use for 'why does X work this way', 'why we picked Y', design rationale, regressions, postmortems, or data-backed thresholds. Use how for runtime behavior."
-disable-model-invocation: false
+disable-model-invocation: true
 user-invokable: false
 ---
 

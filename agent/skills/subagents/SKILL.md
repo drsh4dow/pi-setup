@@ -105,13 +105,13 @@ runs as a read-only Pi chat in a pane of the parent's workspace. Outside
 herdr, it runs `pi --print`. Either way, the launch prints the child's report
 on stdout and exits 0 on success, as `pi --print` does.
 
-The `assignment` prompt makes the child a delegate. `--no-skills` keeps every
-other skill out of its skill table, and each `--skill` loads one skill
-directory: pass one per skill the assignment names, and none when it names
-none. Pi leaves a skill hidden from the model out of the table even then, so
-the role prompt has the child read each named skill it does not hold, and it
-can read any other skill by path the same way. Launch an owner from a brief,
-below. Use the session name as the terminal title. Keep the `subagent:` prefix: the
+The `assignment` prompt makes the child a delegate. Pass one `--skill <dir>`
+per skill the assignment names, or none when it names none. `--no-skills`
+keeps every unnamed skill out of the child's skill table. Pi also leaves out a
+named skill that sets `disable-model-invocation: true`, so the role prompt
+tells the child to read by path each named skill its prompt does not hold. To
+launch an owner, use the launcher in Launch from a brief, below. Use the
+session name as the terminal title. Keep the `subagent:` prefix: the
 fast-mode extension reads it to apply each provider's `subagentsEnabled`
 setting. Pick a heredoc delimiter that does not occur as a standalone line in
 the assignment.
@@ -180,10 +180,10 @@ directive, which needs no template fields. Its SKILLS field, when it has one,
 sets the resumed child's skills; without one, the child resumes with none in
 its table. Pi sends a resumed child's current orders as a system update after
 the earlier text, so the launcher opens the directive with a note that the
-update is current. `--dry-run` runs every check, then prints the command, the
-role prompt, each skill with its directory, the content of every append, each
-skill's `SKILL.md` included, with
-the orders' line count, and the prompt, and starts no Pi.
+update is current. `--dry-run` runs every check and starts no Pi. It prints
+the command, the role prompt, each skill with its directory, the content of
+every append (each skill's `SKILL.md` among them), the orders' line count, and
+the prompt.
 
 ## Retry
 

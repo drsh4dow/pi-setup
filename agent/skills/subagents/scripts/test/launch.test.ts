@@ -206,7 +206,9 @@ function commandWords(run: Run): string[] {
   return command.split(" ");
 }
 
-// The kind of each role, from the subagents skill's role table: the babysitter owns its unit.
+const TDD_SKILL = `${AGENT_DIR}/skills/tdd/SKILL.md`;
+
+// The kind of each role, the directory of its part under agent/system/roles/: the babysitter owns its unit.
 const ROLE_KINDS = {
   implementer: "delegate",
   explorer: "delegate",
@@ -223,7 +225,8 @@ const ROLE_KINDS = {
 function roleBrief(role: keyof typeof ROLE_KINDS): string {
   const kind = ROLE_KINDS[role];
 
-  if (role === "persona" || role === "assignment") return "Review the diff `git diff main...HEAD`.\n";
+  if (role === "persona" || role === "assignment")
+    return "Review the diff `git diff main...HEAD`.\n\nSKILLS tdd\n";
 
   const brief = IMPLEMENTER_BRIEF.replace("KIND         delegate", `KIND         ${kind}`);
 
@@ -231,7 +234,7 @@ function roleBrief(role: keyof typeof ROLE_KINDS): string {
 }
 
 for (const role of Object.keys(ROLE_KINDS) as (keyof typeof ROLE_KINDS)[]) {
-  test(`the ${role} role runs on its role prompt alone, with no kind file appended`, (t) => {
+  test(`the ${role} role runs on its role prompt alone, with no kind file appended, and loads its brief's skills`, (t) => {
     const h = host(t);
     const kind = ROLE_KINDS[role];
     const args = baseArgs(h, h.brief("brief.md", roleBrief(role)), role);
@@ -248,8 +251,42 @@ for (const role of Object.keys(ROLE_KINDS) as (keyof typeof ROLE_KINDS)[]) {
     assert.doesNotMatch(run.stdout, /subagents\/(unattended|delegate|owner)\.md/, "no kind file is appended");
     assert.ok(run.stdout.includes(`--- system prompt: ${prompt} ---\n${readFileSync(prompt, "utf8").trimEnd()}\n`), run.stdout);
     assert.doesNotMatch(run.stdout, /<collaboration>|<skill_workflow>|<router>/, "no general-mode part");
+    assert.deepEqual(flagValues(words, "--skill"), [`${AGENT_DIR}/skills/tdd`], "the brief names tdd");
+    assert.ok(run.stdout.includes("--- system prompt append: literal text ---\n# Skill: tdd\n"), run.stdout);
+    assert.ok(run.stdout.includes(`--- system prompt append: ${TDD_SKILL} (skill tdd) ---\n${readFileSync(TDD_SKILL, "utf8").trimEnd()}\n`), run.stdout);
   });
 }
+
+test("a resume directive's SKILLS field replaces the skills, and a directive without one loads none", (t) => {
+  const h = host(t);
+  const resume = (name: string, text: string) =>
+    launch(h, [...baseArgs(h, h.brief(name, text)), "--resume", "session-1", "--dry-run"]);
+
+  const replaced = resume("unslop.md", "Also tighten the PR body.\n\nSKILLS unslop\n");
+  assert.equal(replaced.status, 0, replaced.stderr);
+  assert.deepEqual(flagValues(commandWords(replaced), "--skill"), [`${AGENT_DIR}/skills/unslop`]);
+  assert.ok(replaced.stdout.includes(`(skill unslop) ---`), replaced.stdout);
+  assert.ok(!replaced.stdout.includes("(skill tdd)"), "the first brief's tdd is gone");
+
+  const bare = resume("bare.md", "Also cover the timeout path.\n");
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.deepEqual(flagValues(commandWords(bare), "--skill"), []);
+  assert.doesNotMatch(bare.stdout, /\(skill \S+\) ---/, "no skill is appended");
+
+  assertRefused(h, resume("unknown.md", "Also cover it.\n\nSKILLS no-such-skill\n"), /SKILLS names no-such-skill/);
+});
+
+test("a brief-auditor brief needs every template field, or GOAL, SCOPE, VERIFY, and REPORT when collapsed", (t) => {
+  const h = host(t);
+  const noVerify = h.brief("auditor-no-verify.md", IMPLEMENTER_BRIEF.replace(/^VERIFY .*\n/m, ""));
+  const collapsed = h.brief(
+    "auditor-collapsed.md",
+    "COLLAPSED audit of three briefs. GOAL: name each brief's gaps. SCOPE: reads briefs/*.md. REPORT: one line per gap.\n",
+  );
+
+  assertRefused(h, dryRun(h, noVerify, "brief-auditor"), /brief-auditor brief is missing required field VERIFY/);
+  assertRefused(h, dryRun(h, collapsed, "brief-auditor"), /collapsed brief-auditor brief does not name required field VERIFY/);
+});
 
 test("a child loads exactly the skills its brief's SKILLS field names", (t) => {
   const h = host(t);
@@ -286,8 +323,9 @@ test("a free-form brief's SKILLS line ends at the prose after it", (t) => {
 test("a brief whose SKILLS is none, or that has no SKILLS field, loads no skill", (t) => {
   const h = host(t);
   const none = h.brief("none.md", IMPLEMENTER_BRIEF.replace("SKILLS       tdd", "SKILLS       none: the unit is one command"));
+  const free = h.brief("free.md", "Review the diff `git diff main...HEAD`.\n");
 
-  for (const run of [dryRun(h, none), dryRun(h, h.brief("free.md", roleBrief("assignment")), "assignment")]) {
+  for (const run of [dryRun(h, none), dryRun(h, free, "assignment")]) {
     assert.equal(run.status, 0, run.stderr);
     assert.ok(commandWords(run).includes("--no-skills"), run.stdout);
     assert.deepEqual(flagValues(commandWords(run), "--skill"), []);

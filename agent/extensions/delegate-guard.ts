@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, parseArgs } from "@earendil-works/pi-coding-agent";
 
 import { refuseCommands } from "../lib/command-tool-call.ts";
 import { basename, commandArgv, isShell, pipelines } from "../lib/shell-command.ts";
@@ -11,6 +11,9 @@ type PiLaunchArgv = readonly string[];
 const OWNER_PROMPTS = "system/generated/owner/";
 
 const DELEGATE_PROMPTS = "system/generated/delegate/";
+
+// The delegate kind part, which the worker-questions eval appends to general mode's prompt.
+const DELEGATE_KIND_PART = "system/kinds/delegate.md";
 
 const LAUNCHER = "skills/subagents/scripts/launch.ts";
 
@@ -35,22 +38,29 @@ const DELEGATE_REASON =
 const OWNER_REASON =
   "Owners launch only delegates. Pass --kind delegate to skills/subagents/scripts/launch.ts, and give every pi-subagent launch a --system-prompt from agent/system/generated/delegate/, per the subagents skill.";
 
-// Pi takes the last --system-prompt, as text or as a file path. Only a role prompt's path,
-// a single line ending in .md, names a kind, so a prompt text that quotes one stays a root.
-function promptKind(argv: readonly string[]): LaunchKind {
-  const prompt = argv
-    .flatMap((arg, index) => {
-      const next = argv[index + 1];
+// A prompt value that names a file: one line ending in .md. A prompt text that quotes a path is
+// longer than one line or ends elsewhere, so it names no kind.
+function isPromptPath(value: string): boolean {
+  return !value.includes("\n") && value.endsWith(".md");
+}
 
-      return arg === "--system-prompt" && next !== undefined ? [next] : [];
-    })
-    .at(-1);
+function isDelegateKindPart(value: string): boolean {
+  return isPromptPath(value) && value.endsWith(DELEGATE_KIND_PART);
+}
 
-  if (prompt === undefined || prompt.includes("\n") || !prompt.endsWith(".md")) return "root";
+// The kind of a Pi process started with these options. Pi's own parser reads them, so `--` and
+// option values count as they do for Pi, which takes the last --system-prompt as text or as a
+// file path. An appended delegate kind part makes a delegate whatever the system prompt.
+function promptKind(piOptions: readonly string[]): LaunchKind {
+  const { systemPrompt, appendSystemPrompt = [] } = parseArgs([...piOptions]);
 
-  if (prompt.includes(OWNER_PROMPTS)) return "owner";
+  if (appendSystemPrompt.some(isDelegateKindPart)) return "delegate";
 
-  if (prompt.includes(DELEGATE_PROMPTS)) return "delegate";
+  if (systemPrompt === undefined || !isPromptPath(systemPrompt)) return "root";
+
+  if (systemPrompt.includes(OWNER_PROMPTS)) return "owner";
+
+  if (systemPrompt.includes(DELEGATE_PROMPTS)) return "delegate";
 
   return "root";
 }
@@ -127,13 +137,14 @@ function launcherKind(launch: PiLaunchArgv): string | undefined {
 function launchesDelegate(launch: PiLaunchArgv): boolean {
   if (isLauncher(launch[0] ?? "")) return launcherKind(launch) === "delegate";
 
-  return promptKind(launch) === "delegate";
+  return promptKind(launch.slice(1)) === "delegate";
 }
 
 export function spawnGuard(
   argv: readonly string[],
 ): ((command: string) => string | undefined) | undefined {
-  const kind = promptKind(argv);
+  // process.argv holds the runtime and Pi's entry script before Pi's options.
+  const kind = promptKind(argv.slice(2));
 
   switch (kind) {
     case "root":

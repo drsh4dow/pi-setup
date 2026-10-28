@@ -20,19 +20,18 @@ import {
   briefProblems,
   briefSkills,
   inputBranches,
+  KINDS,
   ROLES,
   type Kind,
   type Problem,
   type Role,
 } from "./brief.ts";
 
-// This launcher sits in <agent dir>/skills/subagents/scripts, beside the harness's skills and
-// above its generated role prompts.
-const SKILLS_DIRECTORY = resolve(import.meta.dirname, "../..");
+const AGENT_DIRECTORY = resolve(import.meta.dirname, "../../..");
 
-const ROLE_PROMPTS = resolve(SKILLS_DIRECTORY, "../system/generated");
+const HARNESS_SKILLS = join(AGENT_DIRECTORY, "skills");
 
-const KINDS: readonly Kind[] = ["delegate", "owner"];
+const ROLE_PROMPTS = join(AGENT_DIRECTORY, "system", "generated");
 
 const USAGE = `usage: launch.ts --kind <delegate|owner> --role <role> --brief <file> --orders <file|none>
                  --model <model> --thinking <level> --name <short assignment>
@@ -117,7 +116,7 @@ function parseOptions(argv: readonly string[]): Options {
   }
 
   const kindValue = required(values.kind, "--kind");
-  const kind = kindValue === "delegate" || kindValue === "owner" ? kindValue : undefined;
+  const kind = KINDS.find((candidate) => candidate === kindValue);
 
   if (kind === undefined) throw new UsageError(`--kind must be delegate or owner, got ${kindValue}`);
 
@@ -181,7 +180,7 @@ interface Skill {
 
 // Each name resolves to the harness's skill first, then to the launch directory's project skill.
 function resolveSkills(brief: string, names: readonly string[]): Skill[] {
-  const roots = [SKILLS_DIRECTORY, join(process.cwd(), ".agents", "skills")];
+  const roots = [HARNESS_SKILLS, join(process.cwd(), ".agents", "skills")];
   const skills = names.map((name) => ({
     name,
     directory: roots.map((root) => join(root, name)).find((dir) => existsSync(join(dir, "SKILL.md"))),

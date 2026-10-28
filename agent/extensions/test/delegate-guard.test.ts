@@ -116,6 +116,67 @@ test("a process's kind is the directory of its last --system-prompt", () => {
   assert.equal(guardFor(ownerLast)(`pi-subagent --system-prompt ${DELEGATE_PROMPT}`), undefined);
 });
 
+test("Pi's options end at --, so a --system-prompt after it is a message and names no kind", () => {
+  const delegateThenText = [...delegateArgv, "--", "--system-prompt", "plain.md"];
+
+  assert.match(guardFor(delegateThenText)("pi-subagent --model m") ?? "", DELEGATE_BLOCK);
+  assert.match(
+    guardFor(ownerArgv)(
+      `pi --print --system-prompt ${OWNER_PROMPT} -- --system-prompt ${DELEGATE_PROMPT}`,
+    ) ?? "",
+    OWNER_BLOCK,
+    "the child runs on the owner prompt",
+  );
+  assert.equal(
+    guardFor(ownerArgv)(
+      `pi --print --system-prompt ${DELEGATE_PROMPT} -- --system-prompt ${OWNER_PROMPT}`,
+    ),
+    undefined,
+    "the child runs on the delegate prompt",
+  );
+});
+
+test("an option's value that spells --system-prompt is a value, not the flag", () => {
+  assert.match(
+    guardFor(ownerArgv)(`pi --print --append-system-prompt --system-prompt ${DELEGATE_PROMPT}`) ??
+      "",
+    OWNER_BLOCK,
+    "Pi reads no --system-prompt there, so the child is a root",
+  );
+});
+
+test("an appended delegate kind part makes a delegate, whatever the system prompt", () => {
+  const kindPart = "/h/.pi/agent/system/kinds/delegate.md";
+
+  const generalText = [
+    "node",
+    "pi",
+    "-p",
+    "--system-prompt",
+    "You are a coding agent.\n<router>…</router>",
+  ];
+
+  for (const argv of [
+    [...generalText, "--append-system-prompt", kindPart],
+    [...ownerArgv, "--append-system-prompt", kindPart],
+  ]) {
+    assert.match(guardFor(argv)("pi-subagent --help") ?? "", DELEGATE_BLOCK, argv.join(" "));
+  }
+
+  assert.equal(
+    guardFor(ownerArgv)(
+      `pi-subagent --system-prompt 'general text' --append-system-prompt ${kindPart}`,
+    ),
+    undefined,
+    "an owner may launch a child that runs as a delegate",
+  );
+  assert.equal(
+    spawnGuard(["node", "pi", "--append-system-prompt", `The delegate part is\n${kindPart}`]),
+    undefined,
+    "a text that quotes the part's path names no kind",
+  );
+});
+
 test("an owner's refusal names both ways to launch a delegate", () => {
   const reason = guardFor(ownerArgv)("pi-subagent --model m") ?? "";
 

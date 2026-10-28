@@ -17,7 +17,9 @@ export const ROLES = [
 
 export type Role = (typeof ROLES)[number];
 
-export type Kind = "delegate" | "owner";
+export const KINDS = ["delegate", "owner"] as const;
+
+export type Kind = (typeof KINDS)[number];
 
 export interface Problem {
   readonly line: number | null;
@@ -234,13 +236,12 @@ const SKILL_NAME = /^[a-z0-9-]+/;
 // "**tdd** (red first), `unslop` and writing-good-commits" names three. The field is its
 // line and the indented lines that continue it, as in the template, so the prose after a
 // free-form brief's SKILLS line is not read as names. A field that opens with `none`,
-// whatever reason follows, names nothing, and so does a brief with no SKILLS field, such as a
-// persona, an assignment, or a collapsed brief.
+// whatever reason follows, names nothing, and so does a brief of any role without the field.
 export function briefSkills(text: string): readonly string[] {
   const field = fieldValues(proseLines(text)).find(({ field: name }) => name === "SKILLS");
   const [first = "", ...rest] = (field?.value ?? "").split("\n");
-  const continued = rest.findIndex((line) => !/^\s+\S/.test(line));
-  const value = [first, ...rest.slice(0, continued === -1 ? rest.length : continued)].join(" ");
+  const end = rest.findIndex((line) => !/^\s+\S/.test(line));
+  const value = [first, ...rest.slice(0, end === -1 ? rest.length : end)].join(" ");
   const items = value
     .replaceAll(/\([^)]*\)/g, "")
     .replaceAll(/[*`]/g, "")

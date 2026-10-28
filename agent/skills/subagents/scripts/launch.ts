@@ -514,21 +514,23 @@ function runChunk(state: string, words: readonly string[]): ChunkResult {
 }
 
 // The child's row lands before Pi starts, so no subagent runs unregistered. A resume runs an
-// existing row again.
+// existing row again under the parent that resumed it, which may differ from the one that
+// launched it (the coordinator resumes a child whose owner ended); kind, role, unit, and name
+// stay as recorded.
 function registerSpawn(state: string, parent: TreePosition, child: Child, options: Options, launch: Launch): void {
+  const position = [`parent=${parent.kind === "root" ? "root" : parent.session}`, `depth=${child.depth}`];
   const words =
     options.resume === null
       ? [
           "add",
           child.session,
-          `parent=${parent.kind === "root" ? "root" : parent.session}`,
+          ...position,
           `kind=${child.kind}`,
           `role=${options.role}`,
-          `depth=${child.depth}`,
           `unit=${options.unit}`,
           `name=${launch.name}`,
         ]
-      : ["set", child.session, "state=running"];
+      : ["set", child.session, ...position, "state=running"];
   const result = runChunk(state, words);
 
   if (!result.ok)

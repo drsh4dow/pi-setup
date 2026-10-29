@@ -8,7 +8,7 @@ user-invokable: false
 
 # agent-browser
 
-Fast browser automation CLI for AI agents. Helium/Chromium (never use google-chrome) via CDP with accessibility-tree snapshots and compact `@eN` element refs.
+Fast browser automation CLI for AI agents. It drives an agent-owned Chromium over CDP, never the user's daily browser (such as Helium) and never google-chrome, with accessibility-tree snapshots and compact `@eN` element refs. When the project's skills define a shared agent browser, attach to it as that section says instead of launching another.
 
 Install: `bun add -g agent-browser && agent-browser install`
 

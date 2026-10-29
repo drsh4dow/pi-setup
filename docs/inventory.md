@@ -58,6 +58,7 @@ skill's frontmatter.
 | `hillclimb`                   | both  | Push one metric to a target, one measured attempt at a time |
 | `blast-radius`                | agent | Find what a change breaks outside the diff                  |
 | `dumpfile`                    | agent | Publish screenshots and recordings as PR evidence           |
+| `ui-walkthrough-video`        | both  | Record a narrated walkthrough of a live UI, then check it   |
 
 #### Keep the codebase easy to work in
 

@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"00000000-0000-4000-8000-000000000006","timestamp":"2026-01-01T00:06:00.000Z","cwd":"{{ROOT}}/work"}
+{"type":"message","id":"e0000001","message":{"role":"system","content":"","sections":{"preamble":"You are a coding agent.","addendum":"You are a delegate.","skills":"<available_skills></available_skills>"}}}
+{"type":"message","id":"e0000002","message":{"role":"user","content":[{"type":"text","text":"GOAL explore"}]}}
+{"type":"message","id":"e0000003","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"Explored."}]}}

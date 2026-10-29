@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"00000000-0000-4000-8000-0000000000a6","timestamp":"2026-01-04T01:00:00.000Z","cwd":"{{ROOT}}/work"}
+{"type":"message","id":"s0000061","message":{"role":"system","content":"","sections":{"preamble":"You are an owner.","skills":"<available_skills></available_skills>"}}}
+{"type":"message","id":"u0000062","message":{"role":"user","content":[{"type":"text","text":"Watch the PR."}]}}
+{"type":"message","id":"f0000063","message":{"role":"assistant","stopReason":"stop","content":[{"type":"text","text":"Watched."}]}}

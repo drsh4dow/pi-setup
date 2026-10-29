@@ -146,7 +146,8 @@ cycles the enabled models, and `Ctrl-Alt-M` toggles Fast mode.
 
 ```text
 agent/
-├── SYSTEM.md          # minimal system prompt
+├── SYSTEM.md          # generated general-mode prompt
+├── system/            # prompt parts and generated mode and role prompts
 ├── default.settings.json  # models, thinking level, compaction, and theme
 ├── keybindings.json
 ├── mcp.json           # Perplexity and Exa servers for the web-search skill

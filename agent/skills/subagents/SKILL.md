@@ -65,6 +65,12 @@ conversation. An assignment is ready when it states:
 - The report: changes made, findings with references, judgment calls, and open
   questions, sized to the user's request.
 
+A child cannot reach the user: a prompt it waits on times out with nobody
+watching. Before you spawn, clear every step that needs a human, such as a
+browser sign-in, an SSO login, or a 1Password approval written to a cached
+file, and pass the child the result (the endpoint, the file path, the expiry).
+Tell the child to stop and report when it hits one you missed, never to wait.
+
 Subagents share the worktree and the host, and a write scope is an instruction
 rather than a sandbox. Give concurrent children disjoint files, counting the
 generated files and caches their verification writes, or run them in sequence.

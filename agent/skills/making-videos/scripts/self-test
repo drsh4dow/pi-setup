@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Run every script's self-test on synthetic input. Needs ffmpeg, uv, node, Chromium ($CHROMIUM, default chromium),
+# and for window.py Xvfb and xdotool.
+# Prints one PASS or FAIL line per script and exits non-zero when any fails.
+set -uo pipefail
+cd "$(dirname "$0")"
+rc=0
+for s in drive.py window.py tts.py narrate.py frames.py check.sh framing.py overlays.py sync.py framediff.py mix.sh music.sh cut.py cdp.mjs; do
+  out="$(./"$s" --self-test 2>&1)"
+  code=$?
+  echo "$out" | grep -E 'self-test|^  ' || echo "$s self-test: no verdict printed"
+  [ "$code" = 0 ] || { echo "  $s exited $code"; rc=1; }
+done
+exit "$rc"

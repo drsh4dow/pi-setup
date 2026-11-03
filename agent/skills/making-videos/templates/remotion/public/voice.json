@@ -1,0 +1,12 @@
+{
+ "fps": 30, "duration": 10.36,
+ "chapters": [
+  {"id": "intro", "start": 0.4, "end": 5.44},
+  {"id": "demo", "start": 6.2, "end": 9.36}
+ ],
+ "lines": [
+  {"id": "l1", "chapter": "intro", "show": "Every picture waits for its word.", "start": 0.4, "end": 2.48, "words": [{"w": "Every", "t": 0.4, "end": 0.68}, {"w": "picture", "t": 0.76, "end": 1.04}, {"w": "waits", "t": 1.12, "end": 1.4}, {"w": "for", "t": 1.48, "end": 1.76}, {"w": "its", "t": 1.84, "end": 2.12}, {"w": "word.", "t": 2.2, "end": 2.48}], "captions": [{"text": "Every picture waits for its word.", "start": 0.4, "end": 2.48}]},
+  {"id": "l2", "chapter": "intro", "show": "Watch this card as it lights up.", "start": 3.0, "end": 5.44, "words": [{"w": "Watch", "t": 3.0, "end": 3.28}, {"w": "this", "t": 3.36, "end": 3.64}, {"w": "card", "t": 3.72, "end": 4.0}, {"w": "as", "t": 4.08, "end": 4.36}, {"w": "it", "t": 4.44, "end": 4.72}, {"w": "lights", "t": 4.8, "end": 5.08}, {"w": "up.", "t": 5.16, "end": 5.44}], "captions": [{"text": "Watch this card as it lights up.", "start": 3.0, "end": 5.44}]},
+  {"id": "l3", "chapter": "demo", "show": "Then a terminal types the command, and it passes.", "start": 6.2, "end": 9.36, "words": [{"w": "Then", "t": 6.2, "end": 6.48}, {"w": "a", "t": 6.56, "end": 6.84}, {"w": "terminal", "t": 6.92, "end": 7.2}, {"w": "types", "t": 7.28, "end": 7.56}, {"w": "the", "t": 7.64, "end": 7.92}, {"w": "command,", "t": 8.0, "end": 8.28}, {"w": "and", "t": 8.36, "end": 8.64}, {"w": "it", "t": 8.72, "end": 9.0}, {"w": "passes.", "t": 9.08, "end": 9.36}], "captions": [{"text": "Then a terminal types the command, and it passes.", "start": 6.2, "end": 9.36}]}
+ ]
+}

@@ -13,13 +13,14 @@ against the moment the voice says its first word, heard by a local speech recogn
 
 Captions: every frame's caption box (timeline caption_box) is decoded from the export and reduced to 8x8
 block means. A caption's span runs from one burst of change in the box to the next, where a burst is any block
-moving more than EVENT, so thin text fading in over a few frames still counts. The span shows a caption when its
-middle frame differs from the empty box by more than BLANK_MAX in any block; the empty box is the median of the
-frames the timeline marks caption-free, so a late caption does not count as empty. With no caption_box and soft
-subtitles (timeline "subtitles", or a VIDEO with a subtitle track), each cue's start, end and text are read from
-the export's own subtitle track, and a cue shows a caption only when its text is the caption's. The timeline only
-says which caption should appear near which time (within WINDOW s), never what time to report. voice.json's
-caption start and end stand for show and hide.
+moving more than EVENT, so thin text fading in over a few frames still counts. A burst that leaves the box within
+BLANK_MAX of what it showed before (an x264 keyframe redrawing the same caption) does not end a span. The span
+shows a caption when its middle frame differs from the empty box by more than BLANK_MAX in any block; the empty box
+is the median of the frames the timeline marks caption-free, so a late caption does not count as empty. With no
+caption_box and soft subtitles (timeline "subtitles", or a VIDEO with a subtitle track), each cue's start, end and
+text are read from the export's own subtitle track, and a cue shows a caption only when its text is the caption's.
+The timeline only says which caption should appear near which time (within WINDOW s), never what time to report.
+voice.json's caption start and end stand for show and hide.
 Holds (captions profile): each caption must stay on screen at least HOLD_BASE s plus PER_WORD s per word, and
 end a sentence (. ! ? or ...), so no sentence is split across captions. A caption that never shows fails. The
 narrated profile reports how long each caption holds and fails none: a narrated caption lasts as long as its
@@ -71,8 +72,12 @@ def band_cells(video: Path, box) -> np.ndarray:
 def caption_spans(cells: np.ndarray, blank: np.ndarray | None) -> list[tuple[int, int]]:
     hit = np.r_[0.0, np.abs(np.diff(cells, axis=0)).max(axis=(1, 2, 3))] > EVENT
     cuts = [0] + [f for f in range(1, len(cells)) if hit[f] and not hit[f - 1]] + [len(cells)]
-    return [(a, b) for a, b in zip(cuts, cuts[1:])
-            if blank is None or np.abs(cells[(a + b) // 2] - blank).max() > BLANK_MAX]
+    spans = []
+    for a, b in zip(cuts, cuts[1:]):
+        if spans and np.abs(cells[(a + b) // 2] - cells[sum(spans[-1]) // 2]).max() <= BLANK_MAX:
+            a = spans.pop()[0]
+        spans.append((a, b))
+    return [(a, b) for a, b in spans if blank is None or np.abs(cells[(a + b) // 2] - blank).max() > BLANK_MAX]
 
 
 def cues(video: Path) -> list[tuple[float, float, str]]:
@@ -261,12 +266,14 @@ def self_test() -> int:
                 return run(tl, None, d / name, d / words, profile, voice=voice)[:2]
             except SystemExit:
                 return "exit"
-        def burned(name, shown, planned=caps, profile="narrated", fade=0, audio=d / "voice.wav", **kw):
+        def burned(name, shown, planned=caps, profile="narrated", fade=0, audio=d / "voice.wav", keyframe=secs, **kw):
             def frames():
                 for k in range(int(secs * fps)):
                     img = Image.new("RGB", (640, 360), (226, 232, 240))
                     dr = ImageDraw.Draw(img)
                     dr.rectangle([20, 10, 620, 290], fill=(250, 250, 252))
+                    if k / fps >= keyframe:  # the band 10 levels brighter, as an x264 keyframe redraws a still caption
+                        dr.rectangle([0, 300, 640, 360], fill=(236, 242, 250))
                     for text, s, e in shown:
                         if s <= k / fps < e and not fade:
                             dr.rounded_rectangle([180, 305, 460, 350], 12, fill=(15, 23, 42))
@@ -299,6 +306,10 @@ def self_test() -> int:
             ("captions shown on their words", burned("ontime", caps), (True, True)),
             ("thin text with no box, fading in over 4 frames", burned("thin", caps, fade=4), (True, True)),
             ("a caption 0.6 s late", burned("late", late), (True, False)),
+            ("a keyframe redrawing a caption 0.6 s before the next one", burned("keyframe", caps, keyframe=2.2),
+             (True, True)),
+            ("captions-only, the same keyframe", burned("keyframe-c", caps, profile="captions", keyframe=2.2),
+             (True, None)),
             ("a caption that never appears", burned("missing", [caps[0], caps[2]]), (True, False)),
             ("captions-only, a caption that never appears", burned("missing-c", [caps[0], caps[2]], profile="captions"),
              (False, None)),

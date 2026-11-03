@@ -7,7 +7,8 @@ The window runs on its own virtual X display (Xvfb), so the user's desktop is ne
 screen-share consent prompt is needed. Chromium is headed there on its own profile with a CDP port, so
 agent-browser can attach for DOM boxes, waits and the mask.
 
-    window.py up --display :99 --size 1920x1080 --port 9333 --profile DIR [--url URL]   # Xvfb + Chromium
+    window.py up --display :99 --size 1920x1080 --port 9333 --profile DIR [--url URL] [--scale 1]
+                                                     # Xvfb + Chromium; --scale 1.5 grows tabs, address bar and page
     window.py down --display :99 --profile DIR       # stops only the Xvfb and Chromium that `up` started
     window.py shot --display :99 --out FILE.png      # one frame of the display, as a take would see it
     window.py --self-test                            # a real Xvfb + Chromium round trip on a free display
@@ -23,11 +24,12 @@ As a module (stdlib only), WindowTake is drive.py's Take with an OS-level record
     with t:                                   # ffmpeg x11grab starts; the clock starts at its first frame
         t.click(t.by_text("button", "Save"), "Save")       # DOM box -> window pixels -> xdotool
 
-Every box, click and mark is logged in window pixels (page CSS px plus the browser chrome's offset), and
-events.json width and height are the window's, so cut.py outlines and rings land on the recorded pixels.
-Pointer moves are eased and stepped at about 60 Hz inside one xdotool process; typing is one xdotool key
-event per character, 60-140 ms apart; scrolls are wheel button clicks at the pointer, WHEEL_PX each, so dy rounds to whole clicks. Needs Xvfb, xdotool,
-ffmpeg (x11grab), agent-browser and Chromium ($CHROMIUM, default chromium).
+Every box, click, mark and scroll is in window pixels (page CSS px times devicePixelRatio, plus the browser
+chrome's offset), and events.json width and height are the window's, so cut.py outlines and rings land on the
+recorded pixels. Pointer moves are eased and stepped at about 60 Hz inside one xdotool process; typing is one
+xdotool key event per character, 60-140 ms apart; scrolls are wheel button clicks at the pointer, WHEEL_PX x
+scale window px each, so dy rounds to whole clicks. Needs Xvfb, xdotool, ffmpeg (x11grab), agent-browser and
+Chromium ($CHROMIUM, default chromium).
 """
 from __future__ import annotations
 
@@ -49,7 +51,7 @@ sys.path.insert(0, str(HERE))
 from drive import Take, run_ab  # noqa: E402
 
 CHROMIUM = os.environ.get("CHROMIUM", "chromium")
-WHEEL_PX = 120  # Chromium on X11 scrolls 120 CSS px per wheel button click at scale 1 (measured, Chromium 14x)
+WHEEL_PX = 120  # Chromium on X11 scrolls 120 CSS px, 120 x scale window px, per wheel button click (measured, Chromium 14x)
 
 
 def xdo(display: str, *args: str, timeout: float = 60) -> str:
@@ -67,7 +69,7 @@ def grab(display: str, out: Path, w: int, h: int) -> Path:
 
 
 # ---------------------------------------------------------------------- the window
-def up(display: str, w: int, h: int, port: int, profile: Path, url: str = "about:blank") -> dict:
+def up(display: str, w: int, h: int, port: int, profile: Path, url: str = "about:blank", scale: float = 1) -> dict:
     profile.mkdir(parents=True, exist_ok=True)
     pids = profile / "uiw-window.json"
     if pids.exists():
@@ -82,7 +84,7 @@ def up(display: str, w: int, h: int, port: int, profile: Path, url: str = "about
         time.sleep(0.1)
     chrome = subprocess.Popen([CHROMIUM, "--ozone-platform=x11", f"--user-data-dir={profile}", "--no-first-run",
                                "--no-default-browser-check", "--password-store=basic", f"--remote-debugging-port={port}",
-                               "--window-position=0,0", f"--window-size={w},{h}", "--force-device-scale-factor=1",
+                               "--window-position=0,0", f"--window-size={w},{h}", f"--force-device-scale-factor={scale}",
                                "--disable-features=Translate,MediaRouter", "--hide-crash-restore-bubble", url],
                               env={**os.environ, "DISPLAY": display}, stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL, start_new_session=True)
@@ -134,29 +136,27 @@ class WindowTake(Take):
         super().__init__(name, session, out_dir, width, height, fps, mask_js, mask_terms, page_match="", runner=runner)
         self.display, self.wheel_px = display, wheel_px
         self.rec: subprocess.Popen | None = None
-        self.offset = (0, 0)
+        self.offset, self.scale = (0, 0), 1
 
     def x(self, *args: str) -> str:
         return xdo(self.display, *args)
 
-    def page_offset(self) -> tuple[int, int]:
-        """Window pixels of the page's top-left: the browser chrome sits above it."""
-        g = self.js("JSON.stringify({x:screenX+outerWidth-innerWidth,y:screenY+outerHeight-innerHeight,"
-                    "w:outerWidth,h:outerHeight,dpr:devicePixelRatio})")
-        if g["dpr"] != 1:
-            raise RuntimeError(f"devicePixelRatio {g['dpr']}: start the window with --force-device-scale-factor=1")
-        return int(g["x"]), int(g["y"])
-
     def box(self, js_expr: str) -> dict:
-        b = super().box(js_expr)
-        return {"x": b["x"] + self.offset[0], "y": b["y"] + self.offset[1], "w": b["w"], "h": b["h"]}
+        b = {k: v * self.scale for k, v in super().box(js_expr).items()}
+        return {**b, "x": b["x"] + self.offset[0], "y": b["y"] + self.offset[1]}
 
     def start(self) -> None:
         if self.mask_terms:
             self.ab("eval", f"window.__uiwMaskTerms={json.dumps(self.mask_terms)}")
         if self.mask_js:
             self.ab("eval", Path(self.mask_js).read_text())
-        self.offset = self.page_offset()
+        g = self.js("JSON.stringify({x:screenX+outerWidth-innerWidth,y:screenY+outerHeight-innerHeight,"
+                    "w:outerWidth,dpr:devicePixelRatio})")
+        if abs(g["w"] * g["dpr"] - self.width) > 2:  # outerWidth ignores page zoom, devicePixelRatio includes it
+            raise RuntimeError(f"page zoom is not 100% (devicePixelRatio {g['dpr']}): press ctrl+0, and grow the"
+                               " whole window with `window.py up --scale` instead")
+        self.scale = g["dpr"]
+        self.offset = (round(g["x"] * self.scale), round(g["y"] * self.scale))
         loc = self.x("getmouselocation", "--shell")
         mx, my = (int(line.split("=")[1]) for line in loc.splitlines()[:2])
         self.mouse = (mx, my)
@@ -182,7 +182,7 @@ class WindowTake(Take):
                 raise RuntimeError("x11grab wrote no frame in 10 s")
         threading_drain(self.rec.stdout)
         self.recorded_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-        self.log("record_start", display=self.display, offset=list(self.offset))
+        self.log("record_start", display=self.display, offset=list(self.offset), scale=self.scale)
 
     def stop(self) -> Path:
         self.log("record_stop")
@@ -237,7 +237,7 @@ class WindowTake(Take):
         self.x("mouseup", "1")
 
     def wheel(self, dy: int, steps: int, horizontal: bool = False) -> None:
-        clicks = max(1, round(abs(dy) / self.wheel_px))
+        clicks = max(1, round(abs(dy) / (self.wheel_px * self.scale)))
         btn = ("7" if dy > 0 else "6") if horizontal else ("5" if dy > 0 else "4")
         # one repeat click: a chain of click and sleep commands costs about 90 ms more per click in xdotool
         self.x("click", "--repeat", str(clicks), "--delay", str(int(self.rng.uniform(45, 70))), btn)
@@ -284,90 +284,101 @@ def threading_drain(stream) -> None:
 # ---------------------------------------------------------------------- self-test
 PAGE = """<!doctype html><html><body style="margin:0;background:#f0f4f8;font:16px sans-serif">
 <input id=f style="position:absolute;left:40px;top:40px;width:300px;height:30px">
-<button id=b style="position:absolute;left:400px;top:120px;width:160px;height:50px"
+<button id=b style="position:absolute;left:400px;top:120px;width:160px;height:50px;background:#00f;border:0"
  onclick="window.hits=(window.hits||[]).concat([[event.clientX,event.clientY]])">Save</button>
 <div style="height:3000px;width:3000px"></div></body></html>"""
 
 
 def self_test() -> int:
-    fails: list[str] = []
     for tool in ("Xvfb", "xdotool", "ffmpeg", "agent-browser", CHROMIUM):
         if not shutil.which(tool):
             print(f"window.py self-test: FAIL\n  {tool} is not installed")
             return 1
+    fails: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for scale in (1, 1.5):
+            d = Path(os.environ.get("UIW_KEEP") or tmp) / f"scale{scale}"
+            fails += [f"scale {scale}: {f}" for f in round_trip(d, scale)]
+    print("window.py self-test: " + ("PASS" if not fails else "FAIL\n  " + "\n  ".join(fails)))
+    return 0 if not fails else 1
+
+
+def round_trip(d: Path, scale: float) -> list[str]:
+    fails: list[str] = []
     disp = next(f":{n}" for n in range(140, 200) if not Path(f"/tmp/.X11-unix/X{n}").exists())
     port = 9400 + int(disp[1:])
     sess = f"uiw-window-selftest-{os.getpid()}"
-    with tempfile.TemporaryDirectory() as tmp:
-        d = Path(os.environ.get("UIW_KEEP") or tmp)
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "page.html").write_text(PAGE)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "page.html").write_text(PAGE)
+    try:
+        from PIL import Image  # noqa: PLC0415
+        up(disp, 960, 640, port, d / "profile", f"file://{d / 'page.html'}", scale)
+        time.sleep(1.5)
+        run_ab(["--session", sess, "connect", str(port)])
+        t = WindowTake("w1", sess, d / "takes", display=disp, width=960, height=640)
+        with t:
+            mark = t.mark_box("save", "document.getElementById('b')")
+            on_screen = Image.open(grab(disp, d / "mark.png", 960, 640)).convert("RGB")
+            t.click("document.getElementById('f')", "field")
+            t.type("synthetic", "field")
+            t.click("document.getElementById('b')", "Save")
+            t.scroll(400)
+            t.hscroll(240)
+            t.pause(0.6)
+            t.log("flash")
+            t.js("document.body.style.background = 'rgb(255, 0, 0)'")
+            t.pause(0.8)
+        got = t.js("JSON.stringify({v:document.getElementById('f').value,h:window.hits||[],y:scrollY,x:scrollX})")
+        ev = json.loads((d / "takes" / "w1.events.json").read_text())
+        if got["v"] != "synthetic":
+            fails.append(f"typed value {got['v']!r}, want 'synthetic' (OS key events did not land)")
+        if len(got["h"]) != 1 or abs(got["h"][0][0] - 480) > 1 or abs(got["h"][0][1] - 145) > 1:
+            fails.append(f"button clicks at {got['h']}, want one at its centre 480,145 (page px)")
+        clicks_y, clicks_x = round(400 / (WHEEL_PX * scale)), round(240 / (WHEEL_PX * scale))
+        if abs(got["y"] - clicks_y * WHEEL_PX) > 1:
+            fails.append(f"scrollY {got['y']} after a 400 px wheel scroll, want {clicks_y} clicks of {WHEEL_PX} CSS px")
+        if abs(got["x"] - clicks_x * WHEEL_PX) > 1:
+            fails.append(f"scrollX {got['x']} after a 240 px sideways scroll, want {clicks_x} clicks of {WHEEL_PX} CSS px")
         try:
-            up(disp, 960, 640, port, d / "profile", f"file://{d / 'page.html'}")
-            time.sleep(1.5)
-            run_ab(["--session", sess, "connect", str(port)])
-            t = WindowTake("w1", sess, d / "takes", display=disp, width=960, height=640)
-            with t:
-                t.mark_box("save", "document.getElementById('b')")
-                t.click("document.getElementById('f')", "field")
-                t.type("synthetic", "field")
-                t.click("document.getElementById('b')", "Save")
-                t.scroll(400)
-                t.hscroll(240)
-                t.pause(0.6)
-                t.log("flash")
-                t.js("document.body.style.background = 'rgb(255, 0, 0)'")
-                t.pause(0.8)
-            got = t.js("JSON.stringify({v:document.getElementById('f').value,h:window.hits||[],y:scrollY,x:scrollX})")
-            ev = json.loads((d / "takes" / "w1.events.json").read_text())
-            if got["v"] != "synthetic":
-                fails.append(f"typed value {got['v']!r}, want 'synthetic' (OS key events did not land)")
-            if got["h"] != [[480, 145]]:
-                fails.append(f"button clicks at {got['h']}, want one at its centre 480,145 (page px)")
-            if abs(got["y"] - 360) > 1:
-                fails.append(f"scrollY {got['y']} after a 400 px wheel scroll, want 360 (3 clicks of {WHEEL_PX} px)")
-            if abs(got["x"] - 240) > 1:
-                fails.append(f"scrollX {got['x']} after a 240 px sideways scroll, want 240 (2 clicks of {WHEEL_PX} px)")
-            try:
-                t.click_xy(100, 20, "the address bar")
-                fails.append("a click on the browser chrome was allowed without chrome=True")
-            except RuntimeError:
-                pass
-            mark = next(e for e in ev["events"] if e["kind"] == "mark")["box"]
-            click = [e for e in ev["events"] if e["kind"] == "click"][-1]
-            off = ev["events"][0]["offset"] if ev["events"][0]["kind"] == "record_start" else None
-            if not off or off[1] < 40:
-                fails.append(f"page offset {off}: the browser chrome above the page was not measured")
-            elif (mark["x"], mark["y"]) != (400 + off[0], 120 + off[1]) or (click["x"], click["y"]) != (480 + off[0], 145 + off[1]):
-                fails.append(f"mark {mark} or click {click} not in window pixels (offset {off})")
-            info = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries",
-                                   "stream=width,height,nb_read_frames", "-of", "json", str(d / "takes" / "w1.mp4")],
-                                  capture_output=True, text=True).stdout
-            st = json.loads(info)["streams"][0]
-            if (st["width"], st["height"]) != (960, 640) or int(st["nb_read_frames"]) < 30:
-                fails.append(f"take is {st}, want 960x640 with >= 30 frames")
-            # the take's clock must match its frames: the first red frame shows within a frame or two of the logged flash
-            flash = next(e["t"] for e in ev["events"] if e["kind"] == "flash")
-            px = subprocess.run(["ffmpeg", "-v", "error", "-i", str(d / "takes" / "w1.mp4"), "-vf", "crop=2:2:900:600",
-                                 "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
-            red = next((i for i in range(len(px) // 12) if px[12 * i] > 200 and px[12 * i + 1] < 60), None)
-            if red is None or abs(red / 30 - flash) > 0.1:
-                fails.append(f"first red frame at {None if red is None else round(red / 30, 3)} s, flash logged at {flash} s:"
-                             " the events clock and the video disagree")
-            png = grab(disp, d / "shot.png", 960, 640)
-            from PIL import Image  # noqa: PLC0415  (only the self-test needs it)
-            im = Image.open(png).convert("RGB")
-            top = [im.getpixel((x, 10)) for x in range(0, 960, 40)]
-            page = im.getpixel((900, 600))
-            if all(p == page for p in top):
-                fails.append("the frame's top rows look like the page: the browser chrome was not captured")
-        except Exception as e:  # noqa: BLE001
-            fails.append(f"{type(e).__name__}: {str(e)[-300:]}")
-        finally:
-            run_ab(["--session", sess, "close"])
-            down(disp, d / "profile")
-    print("window.py self-test: " + ("PASS" if not fails else "FAIL\n  " + "\n  ".join(fails)))
-    return 0 if not fails else 1
+            t.click_xy(100, 20, "the address bar")
+            fails.append("a click on the browser chrome was allowed without chrome=True")
+        except RuntimeError:
+            pass
+        off = ev["events"][0]["offset"] if ev["events"][0]["kind"] == "record_start" else None
+        if not off or off[1] < 40 * scale:
+            fails.append(f"page offset {off}: the browser chrome above the page was not measured")
+        blue = [i for i, px in enumerate(on_screen.get_flattened_data()) if px == (0, 0, 255)]
+        xs, ys = [i % 960 for i in blue], [i // 960 for i in blue]
+        seen = {"x": min(xs), "y": min(ys), "w": max(xs) + 1 - min(xs), "h": max(ys) + 1 - min(ys)} if blue else None
+        if not seen or any(abs(mark[k] - seen[k]) > 2 for k in "xywh"):
+            fails.append(f"mark {mark} is not the button's window pixels {seen}")
+        click = [e for e in ev["events"] if e["kind"] == "click"][-1]
+        if seen and (abs(click["x"] - seen["x"] - seen["w"] / 2) > 2 or abs(click["y"] - seen["y"] - seen["h"] / 2) > 2):
+            fails.append(f"click logged at {click['x']},{click['y']}, not the centre of the button's window pixels {seen}")
+        info = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries",
+                               "stream=width,height,nb_read_frames", "-of", "json", str(d / "takes" / "w1.mp4")],
+                              capture_output=True, text=True).stdout
+        st = json.loads(info)["streams"][0]
+        if (st["width"], st["height"]) != (960, 640) or int(st["nb_read_frames"]) < 30:
+            fails.append(f"take is {st}, want 960x640 with >= 30 frames")
+        flash = next(e["t"] for e in ev["events"] if e["kind"] == "flash")
+        px = subprocess.run(["ffmpeg", "-v", "error", "-i", str(d / "takes" / "w1.mp4"), "-vf", "crop=2:2:900:600",
+                             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+        red = next((i for i in range(len(px) // 12) if px[12 * i] > 200 and px[12 * i + 1] < 60), None)
+        if red is None or abs(red / 30 - flash) > 0.1:
+            fails.append(f"first red frame at {None if red is None else round(red / 30, 3)} s, flash logged at {flash} s:"
+                         " the events clock and the video disagree")
+        im = Image.open(grab(disp, d / "shot.png", 960, 640)).convert("RGB")
+        top = [im.getpixel((x, 10)) for x in range(0, 960, 40)]
+        page = im.getpixel((900, 600))
+        if all(p == page for p in top):
+            fails.append("the frame's top rows look like the page: the browser chrome was not captured")
+    except Exception as e:  # noqa: BLE001
+        fails.append(f"{type(e).__name__}: {str(e)[-300:]}")
+    finally:
+        run_ab(["--session", sess, "close"])
+        down(disp, d / "profile")
+    return fails
 
 
 def main() -> int:
@@ -381,7 +392,7 @@ def main() -> int:
     if a[0] == "up":
         w, h = map(int, g("--size", "1920x1080").split("x"))
         print(json.dumps(up(g("--display", ":99"), w, h, int(g("--port", 9333)), Path(g("--profile")).resolve(),
-                            g("--url", "about:blank"))))
+                            g("--url", "about:blank"), float(g("--scale", 1)))))
         return 0
     if a[0] == "down":
         down(g("--display", ":99"), Path(g("--profile")).resolve())

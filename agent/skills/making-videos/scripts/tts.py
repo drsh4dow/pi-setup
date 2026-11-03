@@ -16,7 +16,9 @@ never by stretching its audio.
 ElevenLabs returns character times. Gemini returns none, so local faster-whisper (WHISPER_MODEL, default
 small.en) hears the clip and its words are matched to the line by letters; a clip that does not say the line is
 voiced again, up to 3 tries in all. Either way each word's start and end then snap to the audible audio (10 ms frames
-above -35 dBFS), never spread by character count.
+above -35 dBFS), never spread by character count, on every read, so a cached line takes the current snap. A word
+whose recognized span holds a pause (PAUSE s or more of quiet) starts after it: the sound before it is the previous
+word's tail.
 Each line is cached under DIR as <sha256(text, provider, model, voice, style, speed)[:20]>.{wav,json}, so a rerun
 calls the API only for lines whose text or voice changed. offline=True turns a cache miss into an error, so a
 rebuild can never re-voice by accident. GEMINI_API_KEY and ELEVENLABS_API_KEY travel only in request headers, are
@@ -55,7 +57,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _media  # noqa: E402
 
-SR, HOP, LOUD_DB, MAX_WAIT, MIN_HEARD, BACKOFF = 48000, 0.01, -35.0, 300, 0.7, 2.0
+SR, HOP, LOUD_DB, PAUSE, MAX_WAIT, MIN_HEARD, BACKOFF = 48000, 0.01, -35.0, 0.15, 300, 0.7, 2.0
 MODELS = {"gemini": "gemini-3.8-flash-tts", "eleven": "eleven_v4"}
 ELEVEN_SPEED = 0.85
 ELEVEN_NAMES = {"Mark": "UgBBYS2sOqTuMpoF3BR0"}
@@ -200,12 +202,14 @@ def loud(a: np.ndarray) -> np.ndarray:
 
 
 def snap(s: float, e: float, lf: np.ndarray) -> tuple[float, float]:
-    """Move a start that falls on quiet forward to the word's first loud frame, and a quiet end back to its last."""
+    """Move a start forward to the first loud frame after the word's last pause, or after the quiet it falls on, and
+    a quiet end back to the word's last loud frame."""
     i = min(int(s / HOP), len(lf) - 1)
     j = max(i + 1, min(len(lf), int(np.ceil(e / HOP))))
     on = np.flatnonzero(lf[i:j])
     if len(on):
-        s = s if lf[i] else (i + on[0]) * HOP
+        pause = np.flatnonzero(np.diff(on) > round(PAUSE / HOP))
+        s = (i + on[pause[-1] + 1]) * HOP if len(pause) else s if lf[i] else (i + on[0]) * HOP
         e = e if lf[j - 1] else (i + on[-1] + 1) * HOP
     return round(s, 3), round(e, 3)
 
@@ -237,17 +241,17 @@ def synth(text: str, cache: Path, voice: Voice, offline: bool = False) -> dict:
         else:
             raise SystemExit(f"tts.py: {voice.voice} said something else 3 times ({heard:.0%} of the letters heard): "
                              f"{text[:60]!r}; respell the line")
-        a = _media.samples(wav, SR)
-        lf = loud(a)
+        n = len(_media.samples(wav, SR))
         raw[0] = (raw[0][0], 0.0, raw[0][2])  # the line's first sound belongs to its first word, its last to its last
-        raw[-1] = (*raw[-1][:2], len(a) / SR)
-        words = [dict(zip(("w", "start", "end"), (w, *snap(s, e, lf)))) for w, s, e in raw]
+        raw[-1] = (*raw[-1][:2], n / SR)
+        words = [dict(zip(("w", "start", "end"), w)) for w in raw]
         tmp = meta.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"text": text, "voice": voice._asdict(), "duration": len(a) / SR, "words": words}))
+        tmp.write_text(json.dumps({"text": text, "voice": voice._asdict(), "duration": n / SR, "words": words}))
         tmp.replace(meta)
-    m = json.loads(meta.read_text())
-    return {"wav": str(wav), "duration": m["duration"], "words": m["words"],
-            "voiced_start": m["words"][0]["start"], "voiced_end": m["words"][-1]["end"]}
+    m, lf = json.loads(meta.read_text()), loud(_media.samples(wav, SR))
+    words = [dict(zip(("w", "start", "end"), (w["w"], *snap(w["start"], w["end"], lf)))) for w in m["words"]]
+    return {"wav": str(wav), "duration": m["duration"], "words": words,
+            "voiced_start": words[0]["start"], "voiced_end": words[-1]["end"]}
 
 
 def self_test() -> int:
@@ -304,7 +308,7 @@ def self_test() -> int:
 
     def fake_hear(audio):
         said = "Something else" if garble else hits[-1][2]["input"][0]["content"][0]["text"]
-        heard = [{"w": w, "start": 0.05 + 0.7 * k, "end": 0.9 + 0.8 * k} for k, w in enumerate(said.split())]
+        heard = [{"w": w, "start": 0.05 + 0.6 * k, "end": 0.9 + 0.8 * k} for k, w in enumerate(said.split())]
         heard[0]["start"], heard[-1]["end"] = 0.4, heard[-1]["start"] + 0.55
         return heard
 
